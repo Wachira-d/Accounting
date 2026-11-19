@@ -7267,3 +7267,59 @@ MED-1 LINE ล็อกอินใหม่ทุกครั้ง + ล้า
 MED-3 DSR ด้วยอีเมล หรือ ชื่อ+เลขเอกสาร (หลายคน = DPO เลือก) · MED-4 ล้างอีเมล/IP/UA บนแถวความยินยอม + รายงาน · MED-5 ใบวางบิลจ่ายทั้งใบเข้างานหลังรับชำระ (ส่งใบเสร็จรายใบ) ·
 MED-6 ข้ามบริษัท/พนักงานบันทึกแทน ลงหลักฐานผ่านผู้เขียนเดียว + เส้น API ตั้งภาพฉาย · MED-7 ออก Rev ใบสั่งซื้อที่รับทราบต้องยืนยัน + ฉบับที่ลงนามก่อน · LOW-1…10 (ไม่แยกคีย์ของ LOW-3 พร้อมเหตุ) ·
 เทสต์ pure +10 · Db +1 (ขยาย 5) · กติกา R267f +30 + ฝ่ายค้าน R267F-1…6 · build + test + Db test ผ่านในเครื่องนี้ (PostgreSQL ฐานใหม่) · commit 69875c09_
+_Last verified against codebase: 2026-11-16 (รอบ 271 — §5.4 ผูกใบสำคัญจ่ายกับ 50 ทวิ ที่ออกไว้แล้ว: P0 ด่านลบใบมีเลข (271-1-1 · ปิด F1) + `WhtCertVoidGuard.CheckPeriodAsync` (271-0-4) + สแกนอ่านอย่างเดียว `scripts/wht_duplicate_cert_scan.sql` · P1 `Helpers/WhtCertLinkPlan` R1–R11 + กิ่ง `WhtCertIssueAction.LinkExisting` ใน `WhtCertIssuePlan.Decide` (ทุกทางอัตโนมัติ) + `Document.WhtLinkCertId/WhtLinkAckCodes` + ผูกล้ม = ไม่ผูก ไม่ออกใหม่ ล้มดัง 3 ที่ (271-1-4) + radio 3 ทางบนฟอร์มใบสำคัญจ่าย + กล่องยืนยันอนุมัติ · P2 `POST document/{id}/wht-link` เปลี่ยนการผูก (ใบเดิมยกเลิก + `SupersededByCertId` · 271-0-1 · เดือนยื่นแล้ว 409 เด็ดขาด 271-0-2 · ผูกครั้งแรกในเดือนยื่นแล้วได้ 271-1-2) + กล่อง "50 ทวิ ของใบนี้" + โมดัล · P3 หน้า 50 ทวิ ตัวกรอง/ค้นหา/การ์ดฝั่งเซิร์ฟเวอร์ (F2) · คอลัมน์ "ผูกกับ" · แถบอำพัน · อาจนับซ้ำ · D5 ไม่มีใบสำคัญจ่าย · escape (F3) · P4 ตัดทิ้ง (271-0-3) — เทสต์ pure `WhtCertLinkPlanTests` + Db `WhtCertLinkDbTests` · กติกา `_R271_*` + ฝ่ายค้าน R271-1…6 · build + test + Db test ผ่านในเครื่องนี้ (PostgreSQL) — commit 720884a8)_
+_Last verified against codebase: 2026-11-16 (รอบ 271 ชุดแก้ฝ่ายค้าน `erp-review/2026-11-16/review-271.md` — H1 ลบถาวรใบที่มี 50 ทวิ มีเลข = บล็อก + ด่านล็อกการยื่นตามใบ/เดือน · H2 ใบที่ผูกด้วยมือ (รวมร่าง) ครอบการจ่าย · H3 สร้างใบพร้อมเอกสาร = ผูกผ่านทางเข้าเดียว · M1–M6 · L1–L4 · L6 (L5 ไม่แก้พร้อมเหตุผล) · คำตัดสิน 271-2-1…9 — build + test + Db test ผ่านในเครื่องนี้ (PostgreSQL ฐานใหม่ + ดัชนีใหม่) — commit 9b41576f)_
+
+_รอบ 272 (2026-11-16 · `erp-review/2026-11-16/team-272-tax-slip-autoremit.md` · คำตัดสินเจ้าของ 272-0-1/2 · ผู้ประสานงาน 272-1-1…13 · ทีม 272-1-14/15):
+สลิปชำระภาษีที่ลูกค้าส่งในกลุ่ม LINE (OA กลาง)/อีเมลของสำนักงานบัญชี ⇒ บันทึกนำส่งในบัญชีลูกค้าเองเมื่อผ่านทุกด่าน + ตอบผลกลับทุกครั้ง ·
+P1 `OcrSlipText.Reading.Bill` (Comp Code · Ref1 · Control Code · Txn · Fee จากป้าย) + `Helpers/GovPaymentSlip` (ตารางแถวเดียว 98037@KBank · อื่น ๆ ไม่บันทึกเอง) ·
+P2 `ProviderAutomationConsents` (append-only/ห้ามลบ) + `ProviderConsentRequests` + `Helpers/ProviderConsent` + การ์ดศูนย์บิล · ระบบขอเอง T1/T2/T3 · หนังสือมอบอำนาจไม่เปิดบันทึกเอง ·
+P3 `TaxPaymentRequests` + หน้า `tax-slip-desk.html` · P4 `TaxSlipEvidences` · `Helpers/TaxSlipMatch` · `TaxSlipBankAccount` · `TaxSlipReplyCard` · `TaxSlipRefHash` · `TaxSlipRemitService` → `RemitAsync` (ร่วมธุรกรรม) ·
+ที่มาบน `StatutoryRemittances` (Source/SlipEvidenceId/ActedByProviderCompanyId/ProviderConsentId/ControlCodeLast4) · ป้ายหน้านำส่ง "ชำระแล้ว · ยังไม่ได้บันทึกเลขรับ" ·
+P5 `TaxSlipReviewService` (ธงเตือนเท่านั้น) · `TaxSlipJob` (JobLock) · P6 `/api/inbound-email` หลัง `IInboundEmailAdapter` (production fail-fast) ·
+เทสต์ pure +44 · Db +6 · กติกา R272 +18 + ฝ่ายค้าน R272-1…12 · `ocr_helper_test_check` ครอบ 3 ตัวตัดสินใหม่ · build + test + Db test ผ่านในเครื่องนี้ · commit cd71dee0_
+
+_รอบ 273 (ผู้ใช้รายงาน 2026-11-19): ภ.ง.ด.53 ต.ค. 2569 ร่าง ยอด 178.65 — กด "ยื่นภาษี" แล้ว `RD-WHT-002 … (357.30) ไม่เท่ากับ TotalTaxWithheld (178.65)`.
+ต้นเหตุ: `TaxComplianceChecker.CheckPnd3_53`/`CheckPnd1` บวก `r.Lines.Sum(TaxAmount)` ทุกแถว (ตั้งแต่ 50054adb) ขณะที่ยอดหัวนับเฉพาะ `!IsExcluded && != "SUMMARY"` ⇒
+แถว `[สรุป]` ต่อผู้ถูกหัก (ผู้ถูกหักที่มี ≥ 2 แถว — 50 ทวิ ใบเดียวสองประเภทเงินได้) นับซ้ำ ×2 + แถวติ๊กออกถูกบวก · ไม่ใช่ 50 ทวิ ซ้ำ (ถ้าซ้ำ ยอดหัวจะเป็น 357.30 ด้วย)
+และไม่เกี่ยวกับการผูกของรอบ 271/ร่างล้าสมัยของรอบ 269 (พ.ย. 2569 "ว่าง" = งวดปัจจุบันยังไม่มีใบ — ตามแบบ).
+แก้: ตัวตั้งเดียว `Helpers/WhtReportTotals` ใช้ร่วมยอดหัว (generate · ติ๊ก/บันทึก · ภ.พ.36 · `RecalcWhtTotals`) · ตัวตรวจ (RD-WHT-002/005 · RD-PND1-002) · `PndDetailLines` · ด่านยังจับยอดหัวที่ค้าง (ทิศตรงข้าม) ·
+ข้อมูลเดิมถูกอยู่แล้ว ไม่ต้อง migration/สร้างใหม่ · เทสต์ Db `WhtPreCheckDoubleCountDbTests` ×3 + pure `WhtReportTotalsTests` · กติกา `_R273W_*` · commit c488a356_
+
+_รอบ 272 ชุดแก้ฝ่ายค้าน (2026-11-19 · `erp-review/2026-11-16/review-272.md`): H1 `RemitRequest.ExpectedAmount` + ยอดสลิป=ผู้สมัครใต้ล็อก · H2 อ่านสลิปไม่ได้ ⇒ แถว `TAX-SLIP-OCR-OFF` คิว+การ์ด+กระดิ่ง ·
+H3 `InboundEmailRule.SenderVerified` (DMARC/DKIM/SPF align) · ไม่ align ⇒ `SenderUnverified` คิวเท่านั้น · M1 ช่วงยื่น/ค่าธรรมเนียมก่อน Many · M2 `RequestCcMismatch` · M3 `TaxSlipReplyCard.MaskNumbers` ·
+M4 hash PRC2 (ไฟล์หลักฐาน) + `ApprovePowerOfAttorneyAsync` (คนที่สอง) + trigger ครอบคอลัมน์เพิ่ม + clientFiler ของบริษัทจริง · M5 ปุ่มล้ม ⇒ คิว · M6 `PurgeClosedFilesAsync` + RoPA ·
+M7 ไม่สร้าง TaxReport จากเส้นสลิป · L1 เลือกสลิปพักต่อบริษัท + ผูกซ้ำ · L2 ปิดรับ = ตอบทุกกลุ่มที่ผูก · L3 ผู้แนบอัตโนมัติ = ไม่มีคน · L4 23505 ⇒ เหตุ · L5 CC ซ้ำ ⇒ คิว+กระดิ่ง · L6 trigger · L7 หลายบัญชีธนาคารเดียว · L8 เลขสังเคราะห์ ·
+เทสต์ pure +8 · Db +2 · กติกา R272F +9 + ฝ่ายค้าน R272F-1…5 · build + test + Db test ผ่านในเครื่องนี้ · commit 7c5a3cb4_
+
+_รอบ 273 (2026-11-19 · ผู้ใช้รายงาน: REC-20261029-0001 ของ TIV-20261026-0001 มูลค่า 700,000 + VAT 49,000 พิมพ์ "ยอดรวมก่อน VAT 749,000.00 · VAT 0.00"):
+ต้นเหตุ = ป้ายแถวยอดของใบที่ถือ VAT เองถูกใช้กับใบเสร็จรับชำระ (ข้อมูลที่ persist ถูก: VAT 0 · ไม่ถือบทบาทใบกำกับ · นอก ภ.พ.30/§87 ตามรอบ 269 — ไม่มี migration) ·
+ตัวตัดสินเดียว `Helpers/SettlementReceiptTotals` + ตัวโหลด `SettlementReceiptTotalsLoader` (PDF/HTML/QuestPDF/หัวอีเมล-LINE + `GetDocumentAsync`) ·
+แถวสุดท้าย "ยอดรับชำระ" · ซ่อน "ยอดรวมก่อน VAT"/VAT · บรรทัดอ้างอิง "(ตามใบกำกับภาษีเลขที่ … ลงวันที่ …: มูลค่า · VAT · รวม)" + หมายเหตุว่ารวม VAT แล้ว · รับบางส่วนบอกยอดเต็ม · มีภาษีหักคงแถว "ยอดตัดชำระ" ·
+ป้ายผ่าน `DocumentLabels` ไทย/อังกฤษ · `documents.html` แสดง `DocumentResponse.SettlementTotals` อย่างเดียว ·
+เทสต์ pure `SettlementReceiptTotalsTests` (12) + Db `SettlementReceiptTotalsDbTests` (3) · กติกา `_R273W_*` (8) + ฝ่ายค้าน R273-1…3 · build + test + Db test ผ่านในเครื่องนี้ — commit f929120b_
+
+_รอบ 273 ชุดแก้ฝ่ายค้านใบเสร็จรับชำระ (1 MED + 4 LOW): MED-1 "รับชำระบางส่วน" เดิมเทียบ `ใบเสร็จ.TotalAmount` กับ `ใบกำกับ.TotalAmount` ⇒ โอน 748,970 + ค่าธรรมเนียม 30 ปิดใบ
+และใบลดหนี้ 107,000 แล้วรับ 642,000 ครบ ถูกพิมพ์ว่าบางส่วน — ตอนนี้ตัดสินจากยอดคงค้างก่อนรับครั้งนี้ (การรับครั้งนี้ = เงิน + ค่าธรรมเนียม + บรรทัดปรับ · ไล่ใบลดหนี้/การรับ/การจัดสรรตามลำดับ ·
+ไม่มีรายการหลังจากนี้ ⇒ ยึด `BalanceDue` ปัจจุบัน) + บรรทัดอ้างอิงใบลดหนี้/การรับก่อนหน้า/ยอดคงค้างก่อน-หลัง · L1 ภาษีหักของการรับครั้งนี้แทนทั้งใบ ·
+L2 ใบแจ้งหนี้ (ไม่ใช่ใบกำกับ) พิมพ์ "รวม VAT ตามใบแจ้งหนี้ — ใบเสร็จนี้ไม่ใช่ใบกำกับภาษี" · L3 `pay-document.html` (`CustomerDocPageView.SettlementTotals`) · ฟอร์มแก้ไขร่าง ·
+พรีวิวสำรอง ใช้ผลเซิร์ฟเวอร์ (`SettlementReceiptTotalsLoader.ToDto/DtoForAsync`) · L4 ใบเสร็จรุ่นเก่าจากใบวางบิลรวมใบแจ้งหนี้อ้างใบในบิล · แสดงผลอย่างเดียว ไม่มี migration ·
+pure +9 · Db +3 · กติกา `_R273_*` +6 + ฝ่ายค้าน R273-4…7 — commit 1efe61da_
+
+_รอบ 274 (2026-11-19 · บั๊กเร่งด่วน): ไฟล์ ภ.ง.ด.1/1ก ช่อง "เลขประจำตัวผู้เสียภาษี" ของพนักงานยาว 5/7/8/10/14 หลัก และ 50 ทวิ ภ.ง.ด.1ก พิมพ์ 7 หลัก หลังผู้ใช้ตั้ง `ENCRYPTION_KEY`.
+สาเหตุ: `EncryptedColumnConverter` ถอดด้วยคีย์ปัจจุบันตัวเดียว ⇒ แถวที่เข้ารหัสด้วย dev key/config เดิมคืน ciphertext ⇒ `EmployeeTaxIdentity.Resolve` ตัดตัวเลขจาก base64 ลงแบบ.
+แก้: (1) converter ลอง `ENCRYPTION_KEY_PREVIOUS` → config เดิม → dev key (ถอดอย่างเดียว) + `PiiReprotectJob` ย้ายแถวไปคีย์ปัจจุบัน (JobLock · audit) ·
+(2) `EmployeeTaxIdentity.Inspect` คืนเฉพาะ 13 หลัก + mod-11 — ไฟล์ ภ.ง.ด.1/1ก/91 กันแถวพร้อมเหตุ · 50 ทวิ ไม่ออก/ไม่พิมพ์เลขผิด (HTML + QuestPDF ตัวเดียว) ·
+(2b) ทางออกอื่นของคอลัมน์ชุดเดียวกัน — ไฟล์ สปส. ไม่ลง ciphertext · ไฟล์โอนเงินเดือนไม่ตัดตัวเลขจาก ciphertext เป็นเลขบัญชี (ไม่พร้อมโอนพร้อมเหตุ) · (3) รายงานอ่านอย่างเดียว `GET payroll/tax-identity-health` · (4) production ปฏิเสธคีย์ placeholder · คำตัดสิน 274-1…7 · เทสต์ `PiiKeyRotationRound274Tests` · Db `PiiKeyRotationDbTests` ·
+กติกา `required_call_site_check` R274 — commit 150a9f17 + 11b8d39d (เปลี่ยนชื่อเป็นรอบ 274)_
+
+_รอบ 273 ชุดแก้ฝ่ายค้าน (ตรวจ c488a356 · 1 MED + 3 LOW): MED-1 ท้ายตาราง "รายการ" ของ tax.html ยังบวกแถว [สรุป] (357.30 vs การ์ด 178.65) ⇒ `TaxReportResponse.LinesTaxTotal`
+จาก `WhtReportTotals.Of` หน้าเว็บแสดงอย่างเดียว · LOW-2 RD-WHT-002 ตัดเงื่อนไข `sumWht > 0` · LOW-3 `WhtReportTotals.Apply` คำนวณแถว [สรุป] ใหม่ (`PayeeSummaryOf` — ตัวตั้งเดียวกับตอนสร้าง) ·
+LOW-4 ภ.ง.ด.91 แถว `TAX_ADDITIONAL`/`TAX_REFUND` ไม่นับเข้ายอดหัก (ตอนสร้างไม่นับ แต่ทางบันทึกบรรทัดนับ — ผิดความหมาย ⇒ แยกออก) · เทสต์ Db +2 · pure +5 · กติกา `_R273W_*` +2 · commit 111d67a6_
+
+_รอบ 274 ผลตรวจฝ่ายค้าน (2026-11-19): HIGH-1 ไฟล์ ภ.ง.ด.1/1ก ที่มีแถวถูกกันตอบ 200 เงียบ ⇒ ไม่ออกไฟล์ (422 + รายชื่อ/เหตุ/ภาษีที่ขาด · แนบอัตโนมัติเข้าแบนเนอร์) ·
+MED-1 ciphertext รุ่นก่อน (ไม่มีคำนำหน้า) = ถอดไม่ได้ · งานย้ายคีย์/รายงานครอบรุ่นก่อนและทุกคอลัมน์ PII · ไฟล์โอนใช้ตัวตัดสินกลาง ·
+MED-2 งานย้ายคีย์ทุก 6 ชม. ผลรันจริงลง JobRunLog (ล้ม = LogError + JobRunLog + รายงาน) · doc rolling deploy ·
+LOW-1 เตือน dev key (จำกัดความถี่) + audit `fromDevKey` · LOW-2 UPDATE+audit ธุรกรรมเดียว · LOW-3 export/import matching ไม่ใช้ ciphertext ·
+LOW-4 ใบมือ 40(1) ของคนที่ถูกกันไม่ลงไฟล์เงียบ (ไฟล์ถูกปฏิเสธทั้งไฟล์) · LOW-5 ไฟล์ สปส. ไม่ออกเมื่อเลขบัตรใช้ไม่ได้ — commit aa7fb732_
+

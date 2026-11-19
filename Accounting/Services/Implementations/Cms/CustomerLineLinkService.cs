@@ -352,10 +352,18 @@ public class CustomerLineLinkService : ICustomerLineLinkService
     }
 
     public async Task<byte[]?> DownloadMessageContentAsync(Guid companyId, string messageId, int maxBytes, CancellationToken ct = default)
+        => await DownloadContentAsync(CustomerNotifyChannel.ScopeCompany, companyId, messageId, maxBytes, ct);
+
+    /// <summary>รอบ 272: ไฟล์ในกลุ่มของ OA กลาง (token ของ OA กลาง) — ตัวดึงเดียวกับ OA บริษัท</summary>
+    public async Task<byte[]?> DownloadNextAccMessageContentAsync(string messageId, int maxBytes, CancellationToken ct = default)
+        => await DownloadContentAsync(CustomerNotifyChannel.ScopeNextAcc, null, messageId, maxBytes, ct);
+
+    private async Task<byte[]?> DownloadContentAsync(string scope, Guid? scopeCompanyId, string messageId, int maxBytes, CancellationToken ct)
     {
+        var companyId = scopeCompanyId ?? Guid.Empty;
         // messageId ของ LINE เป็นตัวเลขล้วน — กันต่อ path แปลก ๆ เข้า URL
         if (string.IsNullOrWhiteSpace(messageId) || messageId.Length > 32 || !messageId.All(char.IsAsciiDigit)) return null;
-        var token = await TokenForAsync(CustomerNotifyChannel.ScopeCompany, companyId, ct);
+        var token = await TokenForAsync(scope, scopeCompanyId, ct);
         if (string.IsNullOrWhiteSpace(token)) return null;
         try
         {

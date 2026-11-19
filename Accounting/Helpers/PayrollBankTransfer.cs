@@ -25,6 +25,9 @@ public static class PayrollBankTransfer
     /// <summary>เลขบัญชีธนาคารไทยสั้นสุดที่พบทั่วไป (ธนาคารพาณิชย์ 10 หลัก · ออมสิน/ธ.ก.ส. 12 หลัก)</summary>
     public const int MinAccountDigits = 10;
 
+    /// <summary>รอบ 274: สถานะแถวที่เลขบัญชีถอดรหัสไม่ได้</summary>
+    public const string UndecryptableStatus = "เลขบัญชีถอดรหัสไม่ได้";
+
     /// <summary>ป้ายสถานะของแถวที่จ่ายจากแหล่งอื่นที่ไม่ใช่ธนาคาร</summary>
     public const string NotFromBankStatus = "จ่ายจากแหล่งอื่น";
 
@@ -48,7 +51,9 @@ public static class PayrollBankTransfer
     {
         var isPaid = runStatus == "Paid";
         var amount = CashPaid(runStatus, netPay, advanceRecovered);
-        var digits = new string((bankAccountNumber ?? "").Where(char.IsDigit).ToArray());
+        // รอบ 274: ค่า enc1:… = converter ถอดไม่ออก (คีย์ถูกเปลี่ยน) — ห้ามตัดตัวเลขจาก ciphertext เป็นเลขบัญชี (โอนเงินเข้าบัญชีสุ่ม) ⇒ ไม่พร้อมโอนพร้อมเหตุ
+        var undecryptable = EncryptedColumnConverter.IsUnreadable(bankAccountNumber);   // ตัวตัดสินกลาง (enc1 + รุ่นก่อน · MED-1)
+        var digits = undecryptable ? "" : new string((bankAccountNumber ?? "").Where(char.IsDigit).ToArray());
         string? note = !isPaid && hasOutstandingAdvance
             ? "รอบยังไม่กดจ่าย และพนักงานมีเงินทดรองค้าง — ยอดโอนจริงจะถูกหักคืนตอนกดจ่าย ให้ส่งออกใหม่หลังกดจ่าย"
             : null;
@@ -62,6 +67,10 @@ public static class PayrollBankTransfer
             return new(amount, digits, false, NotFromBankStatus,
                 "แหล่งจ่ายไม่ใช่บัญชีธนาคาร (เงินสด/เงินสดย่อย/ช่องทางอื่น) — ห้ามอัปโหลดแถวนี้ให้ธนาคาร (จ่ายซ้ำ) · "
                 + "ถ้าจะโอนจริงให้เปลี่ยนแหล่งจ่ายเป็นบัญชีธนาคารก่อนกดจ่าย" + (note != null ? " · " + note : ""));
+        if (undecryptable)
+            return new(amount, digits, false, UndecryptableStatus,
+                "เลขบัญชีถอดรหัสไม่ได้ (คีย์เข้ารหัสไม่ตรงกับตอนบันทึก) — ตั้ง ENCRYPTION_KEY_PREVIOUS เป็นคีย์เดิมแล้วรีสตาร์ต หรือกรอกเลขบัญชีใหม่ที่ข้อมูลพนักงาน"
+                + (note != null ? " · " + note : ""));
         if (digits.Length == 0)
             return new(amount, digits, false, "ขาดเลขบัญชี", "เพิ่มธนาคาร/เลขบัญชีที่ข้อมูลพนักงานก่อนโอน" + (note != null ? " · " + note : ""));
         if (digits.Length < MinAccountDigits)

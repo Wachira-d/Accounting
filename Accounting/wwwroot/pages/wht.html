@@ -19,16 +19,28 @@
     </div>
 
     <!-- Summary Cards -->
+    <!-- รอบ 271 (F2): การ์ดนับทั้งชุดตามตัวกรองจากเซิร์ฟเวอร์ (GET withholding-tax-certs/summary) — ไม่ใช่เฉพาะ 20 แถวของหน้าที่โหลด ·
+         การ์ด "ยังไม่ผูกเอกสาร" (อำพัน) กดแล้วกรอง · "อาจนับซ้ำ" (แดง) = ใบไม่ผูกที่มีใบผูกเอกสารของผู้ถูกหัก+แบบ+เดือน+ภาษีเดียวกัน (อ่านอย่างเดียว) -->
     <div class="grid grid-4 gap-4" style="margin-bottom:16px">
       <div class="card"><div class="text-gray-500 text-xs" data-i18n="common.all">ทั้งหมด</div><div class="text-2xl font-bold" id="statTotal">0</div></div>
       <div class="card"><div class="text-gray-500 text-xs">ร่าง</div><div class="text-2xl font-bold text-warning" id="statDraft">0</div></div>
       <div class="card"><div class="text-gray-500 text-xs">ออกแล้ว</div><div class="text-2xl font-bold text-success" id="statIssued">0</div></div>
       <div class="card"><div class="text-gray-500 text-xs" data-i18n="common.cancel">ยกเลิก</div><div class="text-2xl font-bold text-danger" id="statVoid">0</div></div>
+      <button type="button" class="card" style="text-align:left;cursor:pointer;border-left:4px solid #f59e0b" onclick="Page.setLinkFilter('unlinked')" title="กดเพื่อแสดงเฉพาะใบที่ยังไม่ผูกเอกสาร">
+        <div class="text-gray-500 text-xs">ยังไม่ผูกเอกสาร</div><div class="text-2xl font-bold" style="color:#b45309" id="statUnlinked">0</div></button>
+      <button type="button" class="card" style="text-align:left;cursor:pointer;border-left:4px solid #dc2626" onclick="Page.setLinkFilter('duplicate')" title="ใบไม่ผูกที่มีใบผูกเอกสารของผู้ถูกหัก แบบ เดือน และภาษีเดียวกัน — น่าจะนับซ้ำในแบบ ภ.ง.ด.">
+        <div class="text-gray-500 text-xs">อาจนับซ้ำ</div><div class="text-2xl font-bold text-danger" id="statDuplicate">0</div></button>
     </div>
 
-    <!-- Filters -->
+    <!-- Filters — รอบ 271 (F2): ค้นหา · สถานะ · การผูก กรองที่เซิร์ฟเวอร์ทั้งชุด (เดิมกรองแค่หน้าที่โหลด) -->
     <div class="toolbar" style="margin-bottom:16px">
-      <input type="text" class="search-input" placeholder="ค้นหาเลขที่, ผู้ถูกหัก..." id="searchInput" oninput="Page.filter()">
+      <input type="text" class="search-input" placeholder="ค้นหาเลขที่, ผู้ถูกหัก, เลขผู้เสียภาษี, เลขเอกสาร..." id="searchInput" oninput="Page.filter()">
+      <select class="filter-select" id="linkFilter" onchange="Page.page=1;Page.load()" aria-label="การผูก">
+        <option value="">ทุกการผูก</option>
+        <option value="linked">ผูกแล้ว</option>
+        <option value="unlinked">ยังไม่ผูก</option>
+        <option value="duplicate">อาจนับซ้ำ</option>
+      </select>
       <select class="filter-select" id="formFilter" onchange="Page.load()">
         <option value="">ทุกแบบ</option>
         <option value="WithholdingTax3">ภ.ง.ด.3</option>
@@ -37,7 +49,7 @@
         <option value="WithholdingTax54">ภ.ง.ด.54</option>
         <option value="WithholdingTax1">ภ.ง.ด.1</option>
       </select>
-      <select class="filter-select" id="statusFilter" onchange="Page.filter()">
+      <select class="filter-select" id="statusFilter" onchange="Page.page=1;Page.load()">
         <option value="">ทุกสถานะ</option>
         <option value="Draft">ร่าง</option>
         <option value="Issued">ออกแล้ว</option>
@@ -49,7 +61,7 @@
 
     <div class="table-container">
       <table class="table">
-        <thead><tr><th>เลขที่</th><th>ผู้ถูกหัก</th><th>แบบ</th><th>ปี/เดือน</th><th class="text-right">เงินได้</th><th class="text-right">ภาษี</th><th data-i18n="common.status">สถานะ</th><th>เอกสาร</th><th data-i18n="common.manage">จัดการ</th></tr></thead>
+        <thead><tr><th>เลขที่</th><th>ผู้ถูกหัก</th><th>แบบ</th><th>ปี/เดือน</th><th class="text-right">เงินได้</th><th class="text-right">ภาษี</th><th data-i18n="common.status">สถานะ</th><th>ผูกกับ</th><th data-i18n="common.manage">จัดการ</th></tr></thead>
         <tbody id="tableBody"><tr><td colspan="9" class="text-center text-gray-400" style="padding:40px" data-i18n="common.loading">กำลังโหลด...</td></tr></tbody>
       </table>
     </div>
@@ -194,6 +206,7 @@
   <script src="/js/translations.js"></script>
   <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
+  <script src="/js/wht-link.js"></script>
   <script>
     const Page = {
       page: 1,
@@ -232,76 +245,139 @@
         Layout.setTitle('หนังสือรับรองหัก ณ ที่จ่าย');
         this._contactAC = Layout.contactPicker('fContact', 'fContactId', { side: 'supplier' });
         await this.loadIncomeTypes();
+        // deep-link (รอบ 271 — กรองที่เซิร์ฟเวอร์): `?documentId=` จากหน้ารายละเอียดเอกสาร · `?link=unlinked|linked|duplicate` จากแดชบอร์ด/ลิสต์ ·
+        // `?pending=1` จากกล่อง 50 ทวิ ของใบสำคัญจ่าย (เปิดลิสต์รอออกใบ)
+        const params = new URLSearchParams(location.search);
+        const deepDocId = params.get('documentId');
+        const deepLink = params.get('link');
+        if (deepLink && ['linked', 'unlinked', 'duplicate'].includes(deepLink)) document.getElementById('linkFilter').value = deepLink;
+        this._deepDocId = deepDocId || null;
         await this.load();
-        // deep-link จากหน้ารายละเอียดเอกสาร (`?documentId=`) — เดิมหน้านี้ไม่มี
-        // URLSearchParams เลย ⇒ ลิงก์ "ดูใบหัก ณ ที่จ่าย →" พาไปลิสต์ทั้งหมด
-        // แล้วผู้ใช้ต้องไล่หาเอง (ผลตรวจทีม F · F-03)
-        const deepDocId = new URLSearchParams(location.search).get('documentId');
-        if (deepDocId) {
-          const hit = this.allCerts.find(c => c.documentId === deepDocId);
-          if (hit) {
-            // กรองลิสต์ให้เหลือใบนั้น — ผู้ใช้เห็นทันทีว่ามาถูกที่ ไม่ต้องไล่หาเอง
-            const input = document.getElementById('searchInput');
-            if (input) { input.value = hit.certificateNumber || ''; this.filter(); }
-          } else {
-            // ไม่มีใบสำหรับเอกสารนี้ = ยังไม่เคยออก — บอกทางไปต่อ ห้ามเงียบ
-            Layout.toast('ยังไม่มีหนังสือรับรองหัก ณ ที่จ่ายของเอกสารนี้ — กด "สร้างใหม่" เพื่อออกใบ', 'warning');
-          }
+        if (deepDocId && !this.allCerts.length) {
+          // ไม่มีใบสำหรับเอกสารนี้ = ยังไม่เคยออก — บอกทางไปต่อ ห้ามเงียบ
+          Layout.toast('ยังไม่มีหนังสือรับรองหัก ณ ที่จ่ายของเอกสารนี้ — กด "รอออกใบ" เพื่อออกใบ หรือผูกใบที่ออกไว้แล้วจากหน้ารายละเอียดใบสำคัญจ่าย', 'warning', 8000);
         }
+        if (params.get('pending')) this.openPending();
       },
-      async load() {
-        const api = Layout.api(); if (!api) return;
-        let q = `?page=${this.page}&pageSize=20`;
+      /** ค่าตัวกรองทั้งหมด → query (เซิร์ฟเวอร์กรองทั้งชุด · F2) */
+      _filterQuery() {
+        let q = '';
         const form = document.getElementById('formFilter').value;
         const year = document.getElementById('yearFilter').value;
         const month = document.getElementById('monthFilter').value;
-        if (form) q += `&taxFormType=${form}`;
-        if (year) q += `&year=${year}`;
-        if (month) q += `&month=${month}`;
+        const search = (document.getElementById('searchInput').value || '').trim();
+        if (form) q += `&taxFormType=${encodeURIComponent(form)}`;
+        if (year) q += `&year=${encodeURIComponent(year)}`;
+        if (month) q += `&month=${encodeURIComponent(month)}`;
+        if (search) q += `&q=${encodeURIComponent(search)}`;
+        if (this._deepDocId) q += `&documentId=${encodeURIComponent(this._deepDocId)}`;
+        return q;
+      },
+      async load() {
+        const api = Layout.api(); if (!api) return;
+        const base = this._filterQuery();
+        const status = document.getElementById('statusFilter').value;
+        const link = document.getElementById('linkFilter').value;
+        const q = `?page=${this.page}&pageSize=20` + base + (status ? `&status=${encodeURIComponent(status)}` : '') + (link ? `&link=${encodeURIComponent(link)}` : '');
+        const seq = (this._loadSeq = (this._loadSeq || 0) + 1);
         try {
-          const res = await api.getWhtCerts(q);
+          const [res, sum] = await Promise.all([api.getWhtCerts(q), api.getWhtCertSummary('?' + base.replace(/^&/, ''))]);
+          if (seq !== this._loadSeq) return;
           const data = res.data;
           this.allCerts = data?.items || data || [];
-          this.updateStats();
-          this.filter();
+          this.updateStats(sum && sum.data);
+          this.render();
           const totalPages = data?.totalPages || 1;
           document.getElementById('pagination').innerHTML = Layout.renderPagination(this.page, totalPages, 'Page.goPage');
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
-      updateStats() {
-        const items = this.allCerts;
-        document.getElementById('statTotal').textContent = items.length;
-        document.getElementById('statDraft').textContent = items.filter(i => i.status === 'Draft').length;
-        document.getElementById('statIssued').textContent = items.filter(i => i.status === 'Issued').length;
-        document.getElementById('statVoid').textContent = items.filter(i => i.status === 'Voided').length;
+      /** การ์ดสรุป — ตัวเลขจากเซิร์ฟเวอร์ (นับทั้งชุดตามแบบ/ปี/เดือน/ค้นหา ไม่ใช่เฉพาะหน้าที่โหลด) */
+      updateStats(s) {
+        s = s || {};
+        document.getElementById('statTotal').textContent = Number(s.total || 0).toLocaleString();
+        document.getElementById('statDraft').textContent = Number(s.draft || 0).toLocaleString();
+        document.getElementById('statIssued').textContent = Number(s.issued || 0).toLocaleString();
+        document.getElementById('statVoid').textContent = Number(s.voided || 0).toLocaleString();
+        document.getElementById('statUnlinked').textContent = Number(s.unlinked || 0).toLocaleString();
+        document.getElementById('statDuplicate').textContent = Number(s.duplicateSuspect || 0).toLocaleString();
       },
+      setLinkFilter(v) {
+        document.getElementById('linkFilter').value = v;
+        this.page = 1;
+        this.load();
+      },
+      /** ช่องค้นหา — เซิร์ฟเวอร์ค้นทั้งชุด (debounce) */
       filter() {
-        const search = (document.getElementById('searchInput').value || '').toLowerCase();
-        const statusF = document.getElementById('statusFilter').value;
-        let items = this.allCerts;
-        if (search) items = items.filter(w => (w.certificateNumber || '').toLowerCase().includes(search) || (w.payeeName || '').toLowerCase().includes(search));
-        if (statusF) items = items.filter(w => w.status === statusF);
+        clearTimeout(this._searchTimer);
+        this._searchTimer = setTimeout(() => { this.page = 1; this.load(); }, 300);
+      },
+      /** ป้ายคอลัมน์ "ผูกกับ" — ข้อความ/สถานะจากเซิร์ฟเวอร์ (WhtCertLinkPlan.LinkLabel) · หน้าเว็บเลือกสีตามชื่อสถานะเท่านั้น */
+      _linkCell(w) {
+        const label = Layout.esc(w.linkLabel || (w.documentNumber || '-'));
+        let html;
+        if (w.linkState === 'Linked' && w.documentId) {
+          html = `<a href="/pages/documents.html?openDoc=${encodeURIComponent(w.documentId)}">${label}</a>`
+            + (w.linkedManually ? '<div style="font-size:10.5px;color:#475569">ผูกใบที่ออกไว้แล้ว</div>' : '');
+        } else if (w.linkState === 'Unlinked') {
+          html = `<span style="display:inline-block;padding:1px 8px;border-radius:999px;background:#FEF3C7;color:#92400E;font-size:11.5px">${label}</span>`;
+        } else if (w.linkState === 'NoSourceConfirmed') {
+          html = `<span style="display:inline-block;padding:1px 8px;border-radius:999px;background:#F1F5F9;color:#475569;font-size:11.5px">${label}</span>`;
+        } else {
+          html = `<span style="color:#475569">${label}</span>`;
+        }
+        if (w.duplicateSuspectLabel)
+          html += `<div style="margin-top:3px;font-size:11px;color:#991B1B">${Layout.esc(w.duplicateSuspectLabel)}</div>`;
+        return html;
+      },
+      render() {
+        const items = this.allCerts || [];
         const tbody = document.getElementById('tableBody');
-        if (!items.length) { tbody.innerHTML = '<tr><td colspan="8" class="text-center text-gray-400" style="padding:40px" data-i18n="common.noItems">ไม่มีรายการ</td></tr>'; return; }
+        if (!items.length) { tbody.innerHTML = '<tr><td colspan="9" class="text-center text-gray-400" style="padding:40px" data-i18n="common.noItems">ไม่มีรายการ</td></tr>'; return; }
         const formMap = { WithholdingTax3: 'ภ.ง.ด.3', WithholdingTax53: 'ภ.ง.ด.53', WithholdingTax2: 'ภ.ง.ด.2', WithholdingTax54: 'ภ.ง.ด.54', WithholdingTax1: 'ภ.ง.ด.1' };
-        tbody.innerHTML = items.map(w => `<tr>
-          <td class="font-medium">${w.certificateNumber || '-'}</td>
+        tbody.innerHTML = items.map(w => {
+          const amber = w.linkState === 'Unlinked' ? ' style="border-left:4px solid #f59e0b"' : '';
+          const id = Layout.jsArg(w.id);
+          const no = Layout.jsArg(w.certificateNumber || '');
+          return `<tr${amber}>
+          <td class="font-medium">${Layout.esc(w.certificateNumber || '-')}</td>
           <td>${Layout.esc(w.payeeName)}</td>
-          <td>${formMap[w.taxFormType] || w.taxFormName || w.taxFormType}</td>
-          <td>${w.taxYear}/${String(w.taxMonth).padStart(2,'0')}</td>
+          <td>${Layout.esc(formMap[w.taxFormType] || w.taxFormName || w.taxFormType)}</td>
+          <td>${Layout.esc(String(w.taxYear))}/${Layout.esc(String(w.taxMonth).padStart(2,'0'))}</td>
           <td class="text-right">${Layout.money(w.totalIncomeAmount)}</td>
           <td class="text-right font-semibold">${Layout.money(w.totalTaxAmount)}</td>
           <td>${Layout.statusBadge(w.status)}${w.partnerDeliveryLabel ? `<div style="font-size:10.5px;color:#475569;margin-top:2px">${Layout.esc(w.partnerDeliveryLabel)}</div>` : ''}</td>
-          <td>${w.documentNumber ? `<a href="/pages/documents.html" onclick="event.preventDefault();window.location='/pages/documents.html?search=${w.documentNumber}'">${w.documentNumber}</a>` : '-'}</td>
-          <td class="flex gap-1">
-            <button class="btn btn-sm btn-ghost" onclick="Page.viewDetail('${w.id}')" data-i18n="common.view">ดู</button>
-            ${w.isEditable ? `<button class="btn btn-sm btn-secondary" onclick="event.stopPropagation();Page.openEdit('${w.id}')" title="แก้ไขหนังสือรับรองฉบับร่าง (สร้างเอง)">✏️ แก้ไข</button>` : ''}
-            ${w.status === 'Issued' || w.status === 'Voided' ? `<button class="btn btn-sm btn-success" onclick="event.stopPropagation();Page.savePdfCert('${w.id}','${Layout.jsArg(w.certificateNumber||'')}')" title="ดาวน์โหลดไฟล์ PDF (มือถือ: บันทึกลงไฟล์/แชร์ได้)${w.status === 'Voided' ? ' — มีลายน้ำ ยกเลิก' : ''}">⬇️ PDF</button>
-            <button class="btn btn-sm btn-secondary" onclick="event.stopPropagation();Page.printCert('${w.id}')" title="${w.status === 'Voided' ? 'พิมพ์เอกสารที่ยกเลิก (มีลายน้ำ ยกเลิก)' : 'พิมพ์ (ฟอร์มเดียวกับที่ใช้ยื่นสรรพากร)'}">🖨 พิมพ์${w.status === 'Voided' ? ' (ยกเลิก)' : ''}</button>` : ''}
-            ${w.status === 'Draft' || w.status === 'Issued' ? `<button class="btn btn-sm btn-danger" onclick="event.stopPropagation();Page.voidCert('${w.id}')" title="ยกเลิกหนังสือรับรอง">ยกเลิก</button>` : ''}
-            <button class="btn btn-sm btn-danger" onclick="event.stopPropagation();Page.deleteCert('${w.id}','${Layout.jsArg(w.certificateNumber||'')}')" title="ลบหนังสือรับรองถาวร (Owner เท่านั้น)" style="background:var(--red-700)">ลบ</button>
+          <td>${this._linkCell(w)}</td>
+          <td class="flex gap-1" style="flex-wrap:wrap">
+            <button class="btn btn-sm btn-ghost" onclick="Page.viewDetail('${id}')" data-i18n="common.view">ดู</button>
+            ${w.isEditable ? `<button class="btn btn-sm btn-secondary" onclick="event.stopPropagation();Page.openEdit('${id}')" title="แก้ไขหนังสือรับรองฉบับร่าง (สร้างเอง)">✏️ แก้ไข</button>` : ''}
+            ${w.status === 'Issued' || w.status === 'Voided' ? `<button class="btn btn-sm btn-success" onclick="event.stopPropagation();Page.savePdfCert('${w.id}','${no}')" title="ดาวน์โหลดไฟล์ PDF (มือถือ: บันทึกลงไฟล์/แชร์ได้)${w.status === 'Voided' ? ' — มีลายน้ำ ยกเลิก' : ''}">⬇️ PDF</button>
+            <button class="btn btn-sm btn-secondary" onclick="event.stopPropagation();Page.printCert('${id}')" title="${w.status === 'Voided' ? 'พิมพ์เอกสารที่ยกเลิก (มีลายน้ำ ยกเลิก)' : 'พิมพ์ (ฟอร์มเดียวกับที่ใช้ยื่นสรรพากร)'}">🖨 พิมพ์${w.status === 'Voided' ? ' (ยกเลิก)' : ''}</button>` : ''}
+            ${w.canLinkToPv ? `<button class="btn btn-sm btn-secondary" onclick="event.stopPropagation();Page.linkToPv('${id}','${no}')" title="ผูกใบนี้กับใบสำคัญจ่ายของการจ่ายเดียวกัน (กันนับซ้ำในแบบ ภ.ง.ด.)">ผูกกับใบสำคัญจ่าย…</button>` : ''}
+            ${w.duplicateSuspectDocumentId ? `<button class="btn btn-sm btn-warning" onclick="event.stopPropagation();Page.checkPair('${Layout.jsArg(w.duplicateSuspectDocumentId)}','${id}')" title="เปิดตรวจคู่ที่ฝั่งใบสำคัญจ่าย — ผูกใบนี้แล้วยกเลิกใบที่ระบบออกซ้ำ">ตรวจคู่</button>` : ''}
+            ${w.linkState === 'Unlinked' ? `<button class="btn btn-sm btn-ghost" onclick="event.stopPropagation();Page.markNoSource('${id}','${no}')" title="ยืนยันว่าใบนี้ไม่มีใบสำคัญจ่ายในระบบ (จ่ายนอกระบบ) — ป้ายเปลี่ยนเป็นสีเทา">ไม่มีใบสำคัญจ่าย</button>` : ''}
+            ${w.linkState === 'NoSourceConfirmed' ? `<button class="btn btn-sm btn-ghost" onclick="event.stopPropagation();Page.clearNoSource('${id}')" title="ถอนการยืนยัน — กลับเป็น ยังไม่ผูก">ถอนยืนยัน</button>` : ''}
+            ${w.voidAllowed ? `<button class="btn btn-sm btn-danger" onclick="event.stopPropagation();Page.voidCert('${id}')" title="ยกเลิกหนังสือรับรอง (เลขคงอยู่ ประทับยกเลิก)">ยกเลิก</button>` : ''}
+            ${w.deleteAllowed ? `<button class="btn btn-sm btn-danger" onclick="event.stopPropagation();Page.deleteCert('${id}','${no}')" title="ลบหนังสือรับรองถาวร (Owner เท่านั้น)" style="background:var(--red-700)">ลบ</button>`
+              : `<button class="btn btn-sm btn-danger" disabled title="ใบมีเลขแล้ว — ลบถาวรไม่ได้ ยกเลิกแทน (เลขไม่ขาดช่วง · ไม่ถูกนำกลับมาใช้)" style="background:var(--red-700);opacity:.45">ลบ</button>`}
           </td>
-        </tr>`).join('');
+        </tr>`;
+        }).join('');
+      },
+      linkToPv(id, no) { WhtLink.openForCert(id, no, () => this.load()); },
+      checkPair(docId, certId) { WhtLink.openForDocument(docId, { presetCertId: certId, onDone: () => this.load() }); },
+      async markNoSource(id, no) {
+        const reason = await Layout.promptText({ title: 'ยืนยันว่า ' + (no || 'ใบนี้') + ' ไม่มีใบสำคัญจ่ายในระบบ',
+          message: 'ระบุเหตุผล (เช่น จ่ายนอกระบบ ลงบัญชีด้วยสมุดรายวันมือ) — ป้าย "ยังไม่ผูก" จะเปลี่ยนเป็นสีเทา · ลงประวัติ',
+          placeholder: 'เหตุผล', required: true, requiredMessage: 'ระบุเหตุผล' });
+        if (reason == null) return;
+        const api = Layout.api(); if (!api) return;
+        try { const r = await api.setWhtNoSource(id, { reason: String(reason).trim() }); Layout.toast(r.message || 'บันทึกแล้ว'); await this.load(); }
+        catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async clearNoSource(id) {
+        const api = Layout.api(); if (!api) return;
+        try { const r = await api.setWhtNoSource(id, { reason: null, clear: true }); Layout.toast(r.message || 'ถอนแล้ว'); await this.load(); }
+        catch (e) { Layout.toast(e.message, 'error'); }
       },
       goPage(p) { Page.page = p; Page.load(); },
       async viewDetail(id) {
@@ -313,13 +389,14 @@
           const certTypeMap = { Withhold: 'หัก ณ ที่จ่าย', PayAlways: 'ออกให้ตลอดไป', PayOnce: 'ออกให้ครั้งเดียว' };
           let html = `
             <div class="grid grid-2 gap-4" style="margin-bottom:16px">
-              <div><span class="text-gray-500 text-xs">เลขที่</span><div class="font-semibold">${d.certificateNumber || '-'}</div></div>
+              <div><span class="text-gray-500 text-xs">เลขที่</span><div class="font-semibold">${Layout.esc(d.certificateNumber || '-')}</div></div>
               <div><span class="text-gray-500 text-xs" data-i18n="common.status">สถานะ</span><div>${Layout.statusBadge(d.status)}</div></div>
               <div><span class="text-gray-500 text-xs">ผู้ถูกหักภาษี</span><div>${Layout.esc(d.payeeName || '-')}</div></div>
               <div><span class="text-gray-500 text-xs">เลขประจำตัวผู้เสียภาษี</span><div>${Layout.esc(d.payeeTaxId || '-')}</div></div>
-              <div><span class="text-gray-500 text-xs">แบบ</span><div>${formMap[d.taxFormType] || d.taxFormType}</div></div>
-              <div><span class="text-gray-500 text-xs" data-i18n="common.type">ประเภท</span><div>${certTypeMap[d.certificateType] || d.certificateType || '-'}</div></div>
-              <div><span class="text-gray-500 text-xs">ปี/เดือน</span><div>${d.taxYear}/${String(d.taxMonth).padStart(2,'0')}</div></div>
+              <div><span class="text-gray-500 text-xs">แบบ</span><div>${Layout.esc(formMap[d.taxFormType] || d.taxFormType)}</div></div>
+              <div><span class="text-gray-500 text-xs" data-i18n="common.type">ประเภท</span><div>${Layout.esc(certTypeMap[d.certificateType] || d.certificateType || '-')}</div></div>
+              <div><span class="text-gray-500 text-xs">ปี/เดือน</span><div>${Layout.esc(String(d.taxYear))}/${Layout.esc(String(d.taxMonth).padStart(2,'0'))}</div></div>
+              <div style="grid-column:1/-1"><span class="text-gray-500 text-xs">ผูกกับ</span><div>${Page._linkCell(d)}</div></div>
               <div><span class="text-gray-500 text-xs">วันที่ออก</span><div>${d.issuedDate ? Layout.date(d.issuedDate) : '-'}</div></div>
             </div>`;
           if (d.lines && d.lines.length) {
@@ -329,7 +406,7 @@
               <td>${Layout.esc(Page.incomeTypeLabel(l.incomeTypeCode))}</td>
               <td>${Layout.date(l.paymentDate)}</td>
               <td class="text-right">${Layout.money(l.incomeAmount)}</td>
-              <td class="text-right">${l.taxRate}%</td>
+              <td class="text-right">${Layout.esc(String(l.taxRate))}%</td>
               <td class="text-right font-semibold">${Layout.money(l.taxAmount)}</td>
             </tr>`).join('');
             html += '</tbody></table></div>';
@@ -354,9 +431,11 @@
               <button class="btn btn-secondary" onclick="Page.printCert('${d.id}')" title="พิมพ์เอกสารที่ยกเลิก — มีลายน้ำ ยกเลิก ประทับบนเอกสาร">🖨 พิมพ์ (ยกเลิก)</button>` + footer;
           }
           const myRole = await Layout.ensureMyRole();
-          if (myRole === 'Owner' || myRole === 'SystemAdmin') {
-            footer += ` <button class="btn btn-danger" onclick="Page.deleteCert('${d.id}','${Layout.jsArg(d.certificateNumber || '')}')" style="background:var(--red-700)">🗑 ลบทั้งหมด</button>`;
+          // รอบ 271 (271-1-1 = D1b · F1): ลบถาวรได้เฉพาะใบที่ยังไม่มีเลข (เซิร์ฟเวอร์ตัดสิน deleteAllowed) — ใบมีเลขแล้ว ⇒ ยกเลิกแทน
+          if ((myRole === 'Owner' || myRole === 'SystemAdmin') && d.deleteAllowed) {
+            footer += ` <button class="btn btn-danger" onclick="Page.deleteCert('${Layout.jsArg(d.id)}','${Layout.jsArg(d.certificateNumber || '')}')" style="background:var(--red-700)">🗑 ลบทั้งหมด</button>`;
           }
+          if (d.canLinkToPv) footer = `<button class="btn btn-secondary" onclick="Layout.closeModal('detailModal');Page.linkToPv('${Layout.jsArg(d.id)}','${Layout.jsArg(d.certificateNumber || '')}')">ผูกกับใบสำคัญจ่าย…</button> ` + footer;
           document.getElementById('detailFooter').innerHTML = footer;
           Layout.openModal('detailModal');
         } catch (e) { Layout.toast(e.message, 'error'); }
@@ -1131,13 +1210,19 @@
             <td class="text-right">${Layout.money(d.subTotal)}</td>
             <td class="text-right font-semibold text-danger">${Layout.money(d.withholdingTaxAmount)}</td>
             <td style="white-space:nowrap">
-              ${multi ? '' : `<button class="btn btn-sm btn-primary" onclick="Page.autoGenerate('${d.documentId}')">สร้างใบ</button>`}
+              ${multi ? '' : d.linkIntentCertId
+                ? `<button class="btn btn-sm btn-primary" onclick="Page.linkIntent('${Layout.jsArg(d.documentId)}','${Layout.jsArg(d.linkIntentCertId)}')" title="ผูก ${Layout.esc(d.linkIntentCertNumber || '')} ที่ออกไว้แล้วกับเอกสารนี้ (ไม่สร้างใบใหม่ — กันนับซ้ำ)">ผูก ${Layout.esc(d.linkIntentCertNumber || '')}</button>`
+                : `<button class="btn btn-sm btn-primary" onclick="Page.autoGenerate('${d.documentId}')">สร้างใบ</button>`}
               ${d.reviewReason ? `<button class="btn btn-sm btn-secondary" onclick="Page.openReviewAck('${d.documentId}')" title="จัดการ 50 ทวิ แล้ว (ยกเลิก/ออกใหม่/ยื่นเพิ่มเติม) — บันทึกเหตุผลลงประวัติ">รับทราบ</button>` : ''}
               <button class="btn btn-sm btn-secondary" onclick="Page.dismissPending('${d.documentId}','${Layout.jsArg(d.documentNumber||'')}')" title="ข้ามเอกสารนี้ — จะไม่แสดงในรายการรอออกอีก (ไม่ลบเอกสารต้นทาง)">ข้าม</button>
             </td>
           </tr>`;
           }).join('');
         } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      // รอบ 271 ฝ่ายค้าน M1: ใบที่ตั้งใจผูก — เปิดโมดัลผูก (ทางเข้าเดียว POST document/{id}/wht-link) แทนการสร้างใบใหม่
+      linkIntent(docId, certId) {
+        WhtLink.openForDocument(docId, { presetCertId: certId, onDone: async () => { await this.openPending(); await this.load(); } });
       },
       toggleCheckAll(el) {
         document.querySelectorAll('.pending-check').forEach(cb => cb.checked = el.checked);

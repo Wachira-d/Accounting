@@ -664,6 +664,9 @@ public class DocumentController : ControllerBase
         if (!await DocumentPermissionHelper.CanCreateAsync(_permissions, companyId, userIdGuid, request.DocumentType))
             return Forbid403<DocumentResponse>(
                 $"ไม่มีสิทธิ์สร้างเอกสาร {request.DocumentType} (ต้องการ Document.Create หรือ Document.{(DocumentPermissionHelper.IsRevenue(request.DocumentType) ? "Revenue" : "Purchase")}.Create)");
+        // รอบ 271 ฝ่ายค้าน L3: ตั้งใจผูก 50 ทวิ ที่ออกไว้แล้ว (+ รับทราบคำเตือนล่วงหน้า) = งานของคน — API key ไม่ได้ (ทางผูกจริงปิด API key อยู่แล้ว)
+        if (request.WhtLinkCertId is Guid cLink && cLink != Guid.Empty && OwnerActionGuard.IsApiKeyRequest(HttpContext))
+            return Forbid403<DocumentResponse>("ตั้งให้ผูก 50 ทวิ ที่ออกไว้แล้วทำด้วย API key ไม่ได้ — ทำที่หน้าเอกสารบนเว็บ (ต้องมีคนรับทราบคำเตือน)");
         var result = await _documentService.CreateDocumentAsync(companyId, request, userIdGuid.ToString());
         return StatusCode(201, new ApiResponse<DocumentResponse>(true, result, "สร้างเอกสารสำเร็จ"));
     }
@@ -676,6 +679,10 @@ public class DocumentController : ControllerBase
         var deny = await DenyDocAsync(companyId, JwtHelper.GetUserIdFromClaims(User),
             docType.Value, DocPerm.Create, "แก้ไข");
         if (deny != null) return Forbid403<DocumentResponse>(deny);
+        // รอบ 271 ฝ่ายค้าน L3: ตั้งใจผูก 50 ทวิ = งานของคน (ล้างค่า Guid.Empty ผ่าน API ได้)
+        if ((request.WhtLinkCertId is Guid uLink && uLink != Guid.Empty || request.WhtLinkAckCodes is { Count: > 0 })
+            && OwnerActionGuard.IsApiKeyRequest(HttpContext))
+            return Forbid403<DocumentResponse>("ตั้งให้ผูก 50 ทวิ ที่ออกไว้แล้วทำด้วย API key ไม่ได้ — ทำที่หน้าเอกสารบนเว็บ (ต้องมีคนรับทราบคำเตือน)");
         // รอบ 266 ฝ่ายค้าน M4 (266-1-10): ตั้ง/เปลี่ยนใบต้นทางของใบเสร็จร่างผ่านฟอร์ม = ด่านเดียวกับปุ่มผูก — API key ไม่ได้ ·
         // ตั้งใบต้นทาง = Approve ของชนิดใบปลายทาง · ล้าง = ระดับแก้ใบร่าง (Create — ผ่านด่านข้างบนแล้ว) · ค่าเดิม = ไม่ใช่การเปลี่ยน
         if (request.RelatedDocumentId is Guid reqSource)
@@ -1039,6 +1046,65 @@ public class DocumentController : ControllerBase
             && await _permissions.HasPermissionAsync(companyId, userIdGuid, Accounting.Models.Constants.PermissionKeys.TaxFile);
         var result = await _documentService.ChangeWhtPayeeAsync(companyId, documentId, request, userIdGuid.ToString(), userIdGuid, holdsTaxFile);
         return Ok(new ApiResponse<Accounting.Models.DTOs.Tax.ChangeWhtPayeeResponse>(true, result, "เปลี่ยนผู้ถูกหักภาษีแล้ว"));
+    }
+
+    // ── รอบ 271: ผูกใบสำคัญจ่ายกับ 50 ทวิ ที่ออกไว้แล้ว (ตัวตัดสินเดียว Helpers/WhtCertLinkPlan) ──
+
+    /// <summary>กล่อง "50 ทวิ ของใบนี้" ในหน้ารายละเอียด — ใบที่ผูก + เปลี่ยนการผูกได้ไหม (เซิร์ฟเวอร์ตัดสิน · ปุ่มปิดพร้อมเหตุ ไม่ซ่อน)</summary>
+    [HttpGet("{documentId:guid}/wht-link-status")]
+    public async Task<ActionResult<ApiResponse<Accounting.Models.DTOs.Tax.WhtDocumentLinkStatus>>> GetWhtLinkStatus(
+        Guid companyId, Guid documentId, [FromServices] IWithholdingTaxCertService whtCerts)
+    {
+        var sens = await DenySensitiveAsync(companyId, documentId, "ดู 50 ทวิ ของเอกสาร");
+        if (sens != null) return Forbid403<Accounting.Models.DTOs.Tax.WhtDocumentLinkStatus>(sens);
+        var result = await whtCerts.GetDocumentLinkStatusAsync(companyId, documentId);
+        return Ok(new ApiResponse<Accounting.Models.DTOs.Tax.WhtDocumentLinkStatus>(true, result));
+    }
+
+    /// <summary>ผู้สมัครของใบที่บันทึกแล้ว (โมดัลเปลี่ยนการผูก) — ใบเดิมหรือเดือนจ่ายอยู่ในเดือนที่ยื่นแล้ว ⇒ <c>filedBlock</c> (271-0-2)</summary>
+    [HttpGet("{documentId:guid}/wht-link-candidates")]
+    public async Task<ActionResult<ApiResponse<Accounting.Models.DTOs.Tax.WhtLinkCandidatesResponse>>> GetWhtLinkCandidates(
+        Guid companyId, Guid documentId, [FromQuery] Guid? paymentId, [FromServices] IWithholdingTaxCertService whtCerts)
+    {
+        var sens = await DenySensitiveAsync(companyId, documentId, "ดู 50 ทวิ ของเอกสาร");
+        if (sens != null) return Forbid403<Accounting.Models.DTOs.Tax.WhtLinkCandidatesResponse>(sens);
+        var result = await whtCerts.GetLinkCandidatesForDocumentAsync(companyId, documentId, paymentId);
+        return Ok(new ApiResponse<Accounting.Models.DTOs.Tax.WhtLinkCandidatesResponse>(true, result));
+    }
+
+    public record WhtLinkCheckBody(Guid CertId, Guid? PaymentId);
+
+    /// <summary>ตรวจเทียบก่อนกดยืนยัน (ไม่เขียน) — ใช้ทั้งโมดัลเปลี่ยนการผูกและกล่องยืนยันอนุมัติ</summary>
+    [HttpPost("{documentId:guid}/wht-link/check")]
+    public async Task<ActionResult<ApiResponse<Accounting.Models.DTOs.Tax.WhtLinkCheckResponse>>> CheckWhtLink(
+        Guid companyId, Guid documentId, [FromBody] WhtLinkCheckBody body, [FromServices] IWithholdingTaxCertService whtCerts)
+    {
+        var sens = await DenySensitiveAsync(companyId, documentId, "ดู 50 ทวิ ของเอกสาร");
+        if (sens != null) return Forbid403<Accounting.Models.DTOs.Tax.WhtLinkCheckResponse>(sens);
+        var result = await whtCerts.CheckLinkAsync(companyId, documentId, body.CertId, body.PaymentId);
+        return Ok(new ApiResponse<Accounting.Models.DTOs.Tax.WhtLinkCheckResponse>(true, result));
+    }
+
+    /// <summary>ผูก/เปลี่ยนการผูกหลังอนุมัติ (ทางเข้าเดียว · ใช้ทั้งจากหน้าเอกสารและโมดัลกลับทิศของหน้า 50 ทวิ) — สิทธิ์อนุมัติของชนิดเอกสาร ·
+    /// งานของคน (ปฏิเสธ API key) · เดือนที่ยื่นแล้ว = 409 <c>RD-50BIS-LINK-FILED</c> ไม่มีสิทธิ์ใดผ่าน (271-0-2)</summary>
+    [HttpPost("{documentId:guid}/wht-link")]
+    [Accounting.Filters.RejectApiKey("ผูก/เปลี่ยนการผูก 50 ทวิ")]
+    public async Task<ActionResult<ApiResponse<Accounting.Models.DTOs.Tax.WhtLinkResult>>> LinkWhtCert(
+        Guid companyId, Guid documentId, [FromBody] Accounting.Models.DTOs.Tax.WhtLinkRequest request,
+        [FromServices] IWithholdingTaxCertService whtCerts)
+    {
+        var userIdGuid = JwtHelper.GetUserIdFromClaims(User);
+        var docType = await GetDocumentTypeAsync(companyId, documentId);
+        if (docType == null)
+            return NotFound(new ApiResponse<Accounting.Models.DTOs.Tax.WhtLinkResult>(false, null, "ไม่พบเอกสาร"));
+        if (!await DocumentPermissionHelper.CanApproveAsync(_permissions, companyId, userIdGuid, docType.Value))
+            return Forbid403<Accounting.Models.DTOs.Tax.WhtLinkResult>(
+                $"ไม่มีสิทธิ์ผูก/เปลี่ยน 50 ทวิ ของเอกสาร {docType} (ต้องการ Document.Approve)");
+        // ฝ่ายค้าน L2: ชั้นความลับของเอกสาร — ด่านเดียวกับหน้าเอกสาร
+        var linkSens = await DenySensitiveAsync(companyId, documentId, "ผูก/เปลี่ยน 50 ทวิ ของเอกสาร");
+        if (linkSens != null) return Forbid403<Accounting.Models.DTOs.Tax.WhtLinkResult>(linkSens);
+        var result = await whtCerts.LinkCertToDocumentAsync(companyId, documentId, request, userIdGuid);
+        return Ok(new ApiResponse<Accounting.Models.DTOs.Tax.WhtLinkResult>(true, result, result.Message));
     }
 
     /// <summary>เปลี่ยน "แหล่งเงิน" (บัญชี Cr เงินสด/ธนาคาร) ของเอกสารจ่าย/รับ

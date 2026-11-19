@@ -211,6 +211,9 @@ public sealed record CustomerDocPageView(
     // ── รอบ 267 P4 (หลังจ่าย) ──
     /// <summary>สถานะสลิป · ข้อความใบเสร็จ · การ์ด 50 ทวิ (โหมดลิงก์/พอร์ทัล) · null = โหมดนี้ไม่มีส่วนหลังจ่าย</summary>
     public CustomerDocPageAfterPayView? AfterPay { get; init; }
+    /// <summary>รอบ 273 ชุดแก้ฝ่ายค้าน L3: ใบเสร็จรับชำระที่ไม่ถือ VAT ของใบต้นทาง — ป้าย "ยอดรับชำระ" + บรรทัดอ้างอิง (ตัวตัดสิน/ข้อความเดียวกับกระดาษ ·
+    /// <c>SettlementReceiptTotalsLoader.DtoForAsync</c>) · null = แถวยอดปกติ · หน้า pay-document.html แสดงอย่างเดียว</summary>
+    public Accounting.Models.DTOs.Document.SettlementTotalsDto? SettlementTotals { get; init; }
     /// <summary>ที่อยู่เส้นส่งหนังสือรับรอง 50 ทวิ ของโหมดนี้ (POST multipart) · null = ไม่มี — controller เติม</summary>
     public string? WhtCertPath { get; init; }
     /// <summary>ฐานของเส้น "เปิดหน้าเอกสารของใบที่เกี่ยวข้อง" (POST · ต่อท้ายด้วย <c>{relId}/page-link</c>) — ปุ่ม "ชำระใบนี้" · null = ไม่มี</summary>

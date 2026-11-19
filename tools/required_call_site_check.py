@@ -97,10 +97,13 @@ RULES = [
          forbid_lit=['"SsoSps110"'],
          why="หลักฐาน 'ยื่นแล้ว' ต้องอ่านปฏิทินภาษี (ทางเดียวบนจอ · C1) · 'นำส่งแล้ว' ผูกกับรอบ ไม่ใช่แถวนำส่งรายเดือน (C2)"),
     dict(file=PAYROLL, method="IssueMonthlyPnd1CertsAsync",
-         must=["EmployeeTaxIdentity.Resolve(emp.TaxId, emp.CitizenId)", "payeeTaxId == null"],
-         before=[("EmployeeTaxIdentity.Resolve(", "payeeTaxId == null")],
-         forbid=["string.IsNullOrWhiteSpace(emp.TaxId)", "string.IsNullOrEmpty(emp.TaxId)", "emp.TaxId == null"],
-         why="D-01 ด่าน 50 ทวิรายเดือนต้องใช้ resolver กลาง (TaxId → เลขบัตร) ไม่ใช่ emp.TaxId เดี่ยว ๆ"),
+         must=["EmployeeTaxIdentity.Inspect(emp.TaxId, emp.CitizenId)", "payeeIdentity.Value", "payeeTaxId == null"],
+         must_lit=["{payeeIdentity.Reason}"],
+         before=[("EmployeeTaxIdentity.Inspect(", "payeeTaxId == null")],
+         forbid=["string.IsNullOrWhiteSpace(emp.TaxId)", "string.IsNullOrEmpty(emp.TaxId)", "emp.TaxId == null",
+                 "ThaiTaxId.Normalize(emp.", "EmployeeTaxIdentity.Resolve("],
+         why="D-01 + รอบ 274: ด่าน 50 ทวิรายเดือนต้องใช้ตัวตรวจกลาง (TaxId → เลขบัตร · 13 หลัก + mod-11 · enc1 ที่ถอดไม่ออก = ข้ามพร้อมเหตุ) "
+             "— เดิมตัดตัวเลขจาก ciphertext แล้วสร้าง Contact ด้วยเลข 5–14 หลัก"),
     dict(file=POS, method="CompleteOrderAsync",
          call_args=[("CreateSalesJournalEntryAsync(", "saleCogs")],
          before=[("DeductSaleStockAsync(", "CreateSalesJournalEntryAsync(")],
@@ -7614,7 +7617,7 @@ RULES += [
          before=[("WhtCertIssuePlan.Decide(", "AutoGenerateFromDocumentAsync("),
                  ("SaveChangesAsync()", "CreateSavepointAsync(")],
          why="ตัดสินก่อนออก · ล้ม = ป้ายบนเอกสาร (ไม่กลืน) · savepoint กันการอนุมัติ/การจ่ายล้มตาม · บันทึกงานผู้เรียกก่อนตั้ง savepoint (ไม่ให้ถูกย้อนทิ้งเงียบ)"),
-    dict(file="Services/Implementations/WithholdingTaxCertService.cs", method="AutoGenerateFromDocumentAsync",
+    dict(file="Services/Implementations/WithholdingTaxCertService.cs", method="GenerateFromDocumentCoreAsync",
          must=["WhtPayeeSplit.EffectiveSinglePayee(", "WhtCertIssuePlan.PayeeTaxIdProblem(", "ResolveWhtFormType(payee", "PayeeContactId = payeeId",
                "WhtCertAutoFailedNote.Clear("],
          forbid=["PayeeContactId = doc.ContactId", "ResolveWhtFormType(doc.Contact"],
@@ -7744,7 +7747,7 @@ RULES += [
     dict(file="Services/Implementations/WithholdingTaxCertService.cs", method="MapLineToResponse",
          must=["CertificateRow: Accounting.Helpers.ThaiWhtRateTable.CertificateRow(l.IncomeTypeCode)"],
          why=_WHTADV + "M6 แถว 50 ทวิ ของหน้าเว็บมาจากเซิร์ฟเวอร์ (ตัวตัดสินเดียวกับ PDF) — หน้าไม่จับคู่รหัสเอง"),
-    dict(file="Services/Implementations/WithholdingTaxCertService.cs", method="AutoGenerateFromDocumentAsync",
+    dict(file="Services/Implementations/WithholdingTaxCertService.cs", method="GenerateFromDocumentCoreAsync",
          before=[("WhtCertIssuePlan.PayeeTaxIdProblem(", "WithholdingTaxCertStatus.Voided;")],
          why=_WHTADV + "L1 ตรวจผู้ถูกหัก/เลขผู้เสียภาษีก่อนยกเลิกใบร่างระดับเอกสาร — ด่านล้มต้องไม่ทิ้งใบร่างที่ถูกยกเลิกไปแล้ว"),
     dict(file=DOC, method="CreateDocumentAsync",
@@ -7786,7 +7789,7 @@ RULES += [
                   r"AddPayerBorneWhtExpense\(\)\s*;\s*var\s+claimableVatPi\b",
                   r"AddPayerBorneWhtExpense\(\)\s*;\s*var\s+claimableVatPv\b"],
          why=_WHTBORNE + "JE: Dr ส่วนที่ออกแทนทั้งสาม (ใบรับรองแทนใบเสร็จ · PI/ค่าใช้จ่าย · ใบสำคัญจ่ายเดี่ยว) — ไม่งั้นเจ้าหนี้/เงินออกรวมส่วนที่ออกแทนแต่ฝั่ง Dr ขาด (JE-BAL)"),
-    dict(file="Services/Implementations/WithholdingTaxCertService.cs", method="AutoGenerateFromDocumentAsync",
+    dict(file="Services/Implementations/WithholdingTaxCertService.cs", method="GenerateFromDocumentCoreAsync",
          must=["WhtGrossUp.Normalize(doc.WhtCertType)", "WhtGrossUp.ForLines(", "WhtGrossUp.MismatchReason("],
          must_re=[r"IncomeAmount\s*=\s*Prorate\(\s*line\.Amount\s*\+\s*borneByLine"],
          forbid=["CertificateType = WithholdingTaxCertType.Withhold"],
@@ -7929,7 +7932,7 @@ RULES += [
     dict(file=DOCSVC, method="CollectApprovalWarningsAsync",
          must=["WhtPayeeKind.Pnd2MixWarning("], must_lit=['ApprovalWarningPrefix + " " + pnd2Mix'],
          why=_PND2 + "ใบปนดอกเบี้ย/ปันผลกับเงินได้อื่นของบุคคล ⇒ เตือนให้แยกใบ ([WHT-PAYEE] เตือน ไม่บล็อก)"),
-    dict(file="Services/Implementations/WithholdingTaxCertService.cs", method="AutoGenerateFromDocumentAsync",
+    dict(file="Services/Implementations/WithholdingTaxCertService.cs", method="GenerateFromDocumentCoreAsync",
          must=["ResolveWhtFormType(payee, null, doc.IsForeignService,", "LoadWithheldAsync(companyId, doc)",
                "WhtIncomeCodes.WithheldForPayee(doc.Lines, doc.ContactId, doc.WhtPayeeContactId, formPayee)"],
          why=_PND2 + "50 ทวิ อัตโนมัติลงแบบตามประเภทเงินได้ (ตรงผังของ JE)"),
@@ -8065,7 +8068,7 @@ RULES += [
          must=["WhtPayeeSplit.EffectiveSinglePayee("],
          forbid=["WhtCertIssuePlan.PayeeOf(d.ContactId, d.WhtPayeeContactId)"],
          why=_WHT204_ADV + "P1: หน้าตรวจข้อมูลใช้ผู้ถูกหักที่มีผลจริง"),
-    dict(file=_CERTSVC, method="AutoGenerateFromDocumentAsync",
+    dict(file=_CERTSVC, method="GenerateFromDocumentCoreAsync",
          must=["NextCertificateNumberAsync("],
          must_re=[r"askedPayee\s*!=\s*payeeId\s*\)\s*throw\b"],
          forbid=["?? WhtCertIssuePlan.PayeeOf(doc.ContactId, doc.WhtPayeeContactId)", "CertificateNumber.StartsWith(", ".Max() + 1"],
@@ -8345,7 +8348,7 @@ RULES += [
     dict(file=_CERTSVC, method="ResolveWhtFormType",
          must=["requested != TaxType.WithholdingTax3", "IndividualForm(withheldIncomeTypeCodes, royaltyAsPnd2: true)"],
          why=_TEAMC + "ใบคีย์มือเลือก 2/3 เองได้สำหรับค่าสิทธิ (ไม่ล็อกแข็ง) · บังคับ ภ.ง.ด.2 เฉพาะ ม.40(4) ทั้งใบ"),
-    dict(file=_CERTSVC, method="AutoGenerateFromDocumentAsync",
+    dict(file=_CERTSVC, method="GenerateFromDocumentCoreAsync",
          must=["royaltyAsPnd2: (await WhtRoyaltyPolicy.LoadAsync(_db, companyId)).AppliesTo(WhtRoyaltyPolicy.PolicyDate(paymentDate, doc.PaymentDate, doc.DocumentDate))"],
          why=_TEAMC + "50 ทวิ อัตโนมัติลงแบบเดียวกับ JE (ค่าตั้ง ณ วันจ่ายของงวด — ตัวตัดสินวันเดียว PolicyDate)"),
     dict(file=_CERTSVC, method="CreateAsync",
@@ -8454,7 +8457,7 @@ RULES += [
          before=[("WhtCertVoidGuard.CheckAsync(", "WhtFiledPeriodAck.AckProblem("),
                  ("WhtFiledPeriodAck.AckProblem(", "cert.Status = WithholdingTaxCertStatus.Voided")],
          why=_TEAM_D + "#23 ยกเลิก 50 ทวิ ที่ยื่นแล้ว: ด่านยื่นแล้วคำนวณก่อน · ไม่รับทราบ = 409 พร้อมทางไปต่อ · รับทราบ (Tax.File + เหตุผล) = ยกเลิก + ป้ายยื่นเพิ่มเติม + audit"),
-    dict(file=_WHTSVC, method="AutoGenerateFromDocumentAsync",
+    dict(file=_WHTSVC, method="GenerateFromDocumentCoreAsync",
          must=["WhtCertPayeeTaxIdDraft.DraftInstead(payeeProblem, manualRequest, autoIssue)", "WhtCertPayeeTaxIdDraft.WarningFor("],
          must_re=[r"payeeProblem\s*!=\s*null\s*&&\s*!draftForMissingTaxId\s*\)\s*throw\b"],
          why=_TEAM_D + "#20 ไม่มีเลขผู้เสียภาษี: คนกด \"สร้างใบ\" ได้ร่าง + คำเตือน + audit · ทางอัตโนมัติ/ออกทันทียังล้มดัง (ห้ามออกใบเข้าแบบยื่นโดยไม่มีเลข)"),
@@ -9911,7 +9914,7 @@ RULES += [
 # เดิมหน้านำส่ง/ปฏิทิน/ตัวกระทบ GL รวม d.WithholdingTaxAmount สกุลเอกสาร ⇒ ใบ USD ต่ำ ~36 เท่า (docs/PER_LINE_WHT_DESIGN.md)
 _PLWHT = "ทีม F หัก ณ ที่จ่ายเป็นบาท: "
 RULES += [
-    dict(file="Services/Implementations/WithholdingTaxCertService.cs", method="AutoGenerateFromDocumentAsync",
+    dict(file="Services/Implementations/WithholdingTaxCertService.cs", method="GenerateFromDocumentCoreAsync",
          # คำตัดสินข้อ 162 (รอบ 205 W7): อัตราฐานภาษีของงวดผ่าน DocumentFx.WhtRateFor ตัวเดียวกับขา 2191x — ForDocument/DocumentWhtThb ต้องรับอัตราตัวนั้น
          must=["PerLineWht.ForDocument(doc, whtFxRate)", "PerLineWht.DocumentWhtThb(v, whtFxRate)", "PerLineWht.TieOut(",
                "DocumentFx.WhtRateFor(whtFxBasis, whtRecognition, doc.ExchangeRate, paymentFx)"],
@@ -12219,8 +12222,11 @@ RULES += [
          must=["PassThrough.ContainsKey(", "EncryptionHelper.Encrypt("],
          forbid=["LooksLikeLegacyCiphertext(", "FromBase64String(", "if (EncryptionHelper.IsEncrypted(value)) return value;"],
          why="รอบ 231: คอลัมน์ PII เข้ารหัสเสมอ — ปล่อยผ่านเฉพาะค่า enc1 ที่ DecryptOnRead อ่านมาแล้วถอดไม่ออก (S2: 'มีคำนำหน้าแล้วข้าม' = oracle)"),
+    dict(file="Helpers/EncryptedColumnConverter.cs", method="Inspect",   # รอบ 274: ตัวตัดสินย้ายจาก DecryptOnRead ไป Inspect (pure · คีย์เดิมด้วย)
+         must=["EncryptionHelper.IsEncrypted(", "EncryptionHelper.LooksLikeLegacyCiphertext(", "PiiCipherState.Undecryptable"],
+         why="รอบ 231/273: อ่านแถว PII รุ่นก่อน (ไม่มีคำนำหน้า) ต้องลองถอดก่อนปล่อยผ่าน · มีคำนำหน้าถอดไม่ออกทุกคีย์ = Undecryptable (ไม่ใช่ plaintext)"),
     dict(file="Helpers/EncryptedColumnConverter.cs", method="DecryptOnRead",
-         must=["EncryptionHelper.IsEncrypted(", "EncryptionHelper.LooksLikeLegacyCiphertext(", "PassThrough.TryAdd("],
+         must=["PassThrough.TryAdd("],
          why="รอบ 231: อ่านแถว PII รุ่นก่อน (ไม่มีคำนำหน้า) ต้องลองถอดก่อนปล่อยผ่าน · ค่า enc1 ที่ถอดไม่ออกต้องถูกจำไว้ให้ EncryptOnSave ปล่อยผ่าน (ไม่ห่อซ้อนแถวเดิม)"),
     dict(file="Helpers/EmployeeRecordEdit.cs", method="ThaiIdNumber",
          must=["SecretInputRule.CipherPrefixProblem("],
@@ -20998,6 +21004,365 @@ REVIEWER_CASES += [
      "        await AnonymizeConsentsAsync(\n            _db, companyId, consentIds, now, ct);\n", False),
 ]
 
+# ── รอบ 271: ผูกใบสำคัญจ่ายกับ 50 ทวิ ที่ออกไว้แล้ว (ตัวตัดสินเดียว Helpers/WhtCertLinkPlan · คำตัดสิน 271-0-1…4 / 271-1-1…6) ──
+# ด่าน: (1) ทางอัตโนมัติทุกทางเดิน Decide → LinkExisting → ตัวตัดสินผูก (ห้ามตกไปออกใบใหม่) (2) เปลี่ยนการผูก: ตัดสินก่อนเขียน · เดือนยื่นแล้ว = 409 เด็ดขาด
+# (ไม่มีทางรับทราบ) · ใบเดิมยกเลิกผ่าน VoidAsync (ไม่ลบ) (3) "ยื่นแล้ว" จากตัวกลาง WhtCertVoidGuard.CheckPeriodAsync ตัวเดียว (4) ลบถาวร = DeleteAllowed ก่อน DELETE
+# (5) ผูกล้มตอนอนุมัติ = ป้าย + audit (ล้มดัง) (6) endpoint ผูก = สิทธิ์อนุมัติก่อน
+_R271_SVC = "Services/Implementations/WithholdingTaxCertService.cs"
+_R271_LINK = "Services/Implementations/WithholdingTaxCertService.Link.cs"
+_R271_WHY = "รอบ 271 (erp-review/2026-11-16/team-271-pv-wht-link.md): "
+RULES += [
+    dict(file="Helpers/WhtCertIssuePlan.cs", method="Decide",
+         must=["WhtCertIssueAction.LinkExisting", "f.LinkCertRequested"],
+         before=[("if (covered)", "f.LinkCertRequested"), ("f.ViaEWithholding", "f.LinkCertRequested"),
+                 ("f.LinkCertRequested", "f.AutoIssueEnabled")],
+         why=_R271_WHY + "กิ่งผูกอยู่หลังมีใบแล้ว/e-Withholding และก่อนติ๊กสร้างอัตโนมัติ (ผูกชนะ) — ทุกทางอัตโนมัติผ่านจุดเดียว"),
+    dict(file=_R271_SVC, method="TryAutoIssueCoreAsync",
+         must=["WhtCertIssuePlan.Decide(", "LinkCertRequested:", "WhtCertIssueAction.LinkExisting", "LinkRequestedCertAsync("],
+         must_re=[r"WhtCertIssueAction\.LinkExisting\s*\)\s*return\s+await\s+LinkRequestedCertAsync\("],
+         before=[("LinkRequestedCertAsync(", "AutoGenerateFromDocumentAsync(")],
+         why=_R271_WHY + "ตั้งใจผูก ⇒ ผูกผ่านตัวตัดสิน ไม่ตกไปออกใบใหม่ (ออกใหม่ = นับซ้ำ F6)"),
+    dict(file=_R271_LINK, method="LinkRequestedCertAsync",
+         must=["WhtCertLinkPlan.Decide(", "BuildPvLinkFactsAsync(", "PeriodFactsAsync(", "decision.Unacknowledged(", "AddChainedAuditLog(",
+               "WhtCertAutoFailedNote.Append(", "WhtCertLinkPlan.FailedRuleCode", "w.CompanyId == companyId", "w.DocumentId == null"],
+         before=[("WhtCertLinkPlan.Decide(", "ExecuteUpdateAsync(")],
+         forbid=["AutoGenerateFromDocumentAsync(", "_db.AuditLogs.Add("],
+         why=_R271_WHY + "271-1-4 (D7): ผูกล้ม = ไม่ผูก ไม่ออกใหม่ ล้มดัง 3 ที่ (ป้าย · ผลลัพธ์ · audit) · UPDATE มีเงื่อนไข (กันผูกสองที่)"),
+    dict(file=_R271_LINK, method="LinkCertToDocumentAsync",
+         must=["WhtCertLinkPlan.Decide(", "PeriodFactsAsync(", "decision.BlockedByFiledPeriod", "WhtCertLinkPlan.FiledRuleCode",
+               "decision.Unacknowledged(", "VoidAsync(", "SupersededByCertId", "AddChainedAuditLog(", "WhtCertLinkPlan.UnlinkedOutcome(",
+               "w.DocumentId == null", "LockDocumentRowAsync(", "request.ExpectedCurrentCertId", "WhtCertLinkPlan.StaleRuleCode",
+               "w.UpdatedAt == cert.UpdatedAt"],
+         before=[("WhtCertLinkPlan.Decide(", "ExecuteUpdateAsync("), ("decision.Unacknowledged(", "ExecuteUpdateAsync("),
+                 ("request.ExpectedCurrentCertId", "WhtCertLinkPlan.Decide("),
+                 ("VoidAsync(", "ExecuteUpdateAsync(")],   # ฝ่ายค้าน M4: ยกเลิกใบเดิมก่อนผูก (ดัชนี unique)
+         forbid=["AcknowledgeFiled", "_db.AuditLogs.Add(", "DeleteAsync("],
+         why=_R271_WHY + "271-0-2 เดือนยื่นแล้ว = 409 ไม่มีทางรับทราบ · 271-0-1 ใบเดิมยกเลิกเสมอ (ไม่ลบ) · ล็อกแถวใบสำคัญจ่าย · ตัดสินก่อนเขียน"),
+    dict(file=_R271_LINK, method="PeriodFactsAsync",
+         must=["WhtCertVoidGuard.CheckPeriodAsync(", "WithholdingTaxCertStatus.Voided", "voidedFiled"],
+         forbid=["TaxReportStatus.Filed", "DeclaredOrFiledStatuses", "StatutoryRemittances"],
+         why=_R271_WHY + "271-0-4 ตัวตัดสิน \"ยื่นแล้ว\" ตัวเดียว (ห้ามเขียนเงื่อนไขชุดที่สอง)"),
+    dict(file=_R271_LINK, method="CandidatesForAsync",
+         must=["WhtCertLinkPlan.Decide(", "WhtCertVoidGuard.CheckPeriodAsync(", "w.CompanyId == companyId", "w.DocumentId == null",
+               "WhtCertLinkPlan.CandidateScore("],
+         why=_R271_WHY + "ผู้สมัคร: ผลตรวจรายใบจากตัวตัดสินเดียว · ใบผูกเอกสารอื่นไม่ใช่ผู้สมัคร (271-0-3) · เดือนยื่นแล้ว = กล่องแดง"),
+    dict(file=_R271_LINK, method="DecorateLinkAsync",
+         must=["WhtCertLinkPlan.StateOf(", "WhtCertLinkPlan.LinkLabel(", "WhtCertLinkPlan.DeleteAllowed(", "WhtCertLinkPlan.VoidAllowed("],
+         why=_R271_WHY + "server computes · page displays — ป้าย \"ผูกกับ\" + ปุ่มลบ/ยกเลิกจากตัวตัดสินเดียว"),
+    dict(file=_R271_LINK, method="FilteredCerts",
+         must=["WhtCertLinkPlan.IsUnlinked", "WhtCertLinkPlan.IsLinked", "w.CompanyId == companyId", "c.CompanyId == companyId"],
+         why=_R271_WHY + "F2 ตัวกรองฝั่งเซิร์ฟเวอร์ใช้นิยาม \"ยังไม่ผูก\" ตัวเดียวกับป้าย/การ์ด"),
+    dict(file="Helpers/WhtCertVoidGuard.cs", method="CheckPeriodAsync",
+         must=["TaxFilingLockPolicy.DeclaredOrFiledStatuses", "PeriodReason(", "t.CompanyId == companyId", "r.CompanyId == companyId",
+               "RemittanceTypesOf("],
+         why=_R271_WHY + "271-0-4 ระดับงวด = รายงานที่ประกาศว่ายื่น หรือบันทึกนำส่ง (หลักฐานชุดเดียวกับ CheckAsync)"),
+    dict(file=_R271_SVC, method="DeleteAsync#1",
+         must=["WhtCertLinkPlan.DeleteAllowed(", "WhtCertLinkPlan.DeleteRuleCode"],
+         before=[("WhtCertLinkPlan.DeleteAllowed(", "ExecuteSqlRawAsync(")],
+         why=_R271_WHY + "271-1-1 (D1b · ปิด F1 HIGH): ใบที่มีเลขแล้วลบถาวรไม่ได้ทุกทาง — ยกเลิกแทน"),
+    dict(file="Controllers/DocumentController.cs", method="LinkWhtCert",
+         must=["DocumentPermissionHelper.CanApproveAsync(", "LinkCertToDocumentAsync("],
+         before=[("DocumentPermissionHelper.CanApproveAsync(", "LinkCertToDocumentAsync(")],
+         why=_R271_WHY + "ผูก/เปลี่ยนการผูก = สิทธิ์อนุมัติของชนิดเอกสาร (กระทบแบบ ภ.ง.ด.)"),
+    # ── ชุดแก้ฝ่ายค้าน review-271 ──
+    dict(file=_R271_LINK, method="LockDocumentRowAsync", must_lit=["FOR UPDATE", "CompanyId"],
+         why=_R271_WHY + "M4 ล็อกแถวใบสำคัญจ่ายตัวเดียว (ผูก · เปลี่ยนการผูก · ออกใบจากเอกสาร) · tenant"),
+    dict(file=_R271_SVC, method="GenerateFromDocumentCoreAsync",
+         must=["LockDocumentRowAsync(", "manualRequest && doc.WhtLinkCertId"],
+         before=[("LockDocumentRowAsync(", "NextCertificateNumberAsync(")],
+         why=_R271_WHY + "M4 ออกใบถือล็อกเดียวกับทางผูก · M1 ใบที่ตั้งใจผูก ห้ามกด \"สร้างใบ\" (นับซ้ำ)"),
+    dict(file=_R271_SVC, method="AutoGenerateFromDocumentAsync",
+         must=["BeginTransactionAsync(", "CommitAsync("],
+         why=_R271_WHY + "M4 ทางกดสร้างใบเองไม่มีธุรกรรมของผู้เรียก ⇒ เปิดเอง (ล็อกแถวมีผล)"),
+    dict(file=_R271_SVC, method="TryAutoIssueCoreAsync#0",
+         must=["LinkedCertCovers:", "linkedCover"],
+         why=_R271_WHY + "H2 ใบที่ผูกด้วยมือ (รวมร่าง) ครอบการจ่าย ⇒ ไม่ออกใบที่สอง"),
+    dict(file=_R271_SVC, method="IssueAsync#1",
+         must=["cert.LinkedAt != null", "WhtCertVoidGuard.CheckPeriodAsync("],
+         why=_R271_WHY + "M3 ออกใบร่างที่ผูกด้วยมือในเดือนที่ยื่นแล้ว = เปลี่ยนตัวเลขที่ยื่น ⇒ บล็อก"),
+    dict(file=_R271_SVC, method="VoidAsync#0",
+         must=["d.WhtLinkCertId == certId"],
+         why=_R271_WHY + "L4 ยกเลิกใบ ⇒ ล้างความตั้งใจผูกที่ชี้ใบนี้"),
+    dict(file=_R271_SVC, method="GetPendingDocumentsAsync",
+         must=["LinkIntentCertId:", "hasIntent"],
+         why=_R271_WHY + "M1 ลิสต์รอออกใบเคารพความตั้งใจผูก (ไม่เสนอสร้างใบใหม่)"),
+    dict(file=_R271_LINK, method="CreateLinkedAsync",
+         must=["LinkCertToDocumentAsync(", "DocumentId = null", "RollbackAsync("],
+         forbid=["request.DocumentId)"],
+         why=_R271_WHY + "H3 สร้างใบที่ระบุเอกสาร = สร้างเดี่ยวแล้วผูกผ่านทางเข้าเดียว (R1–R11 + เดือนยื่นแล้ว) · ล้ม = ย้อนทั้งหมด"),
+    dict(file="Controllers/WithholdingTaxCertController.cs", method="Create",
+         must=["OwnerActionGuard.DenyResult(", "CreateLinkedAsync(", "DocumentPermissionHelper.CanApproveAsync("],
+         before=[("OwnerActionGuard.DenyResult(", "CreateLinkedAsync(")],
+         why=_R271_WHY + "H3 ระบุเอกสาร = งานของคน (ปฏิเสธ API key) + สิทธิ์อนุมัติ + ด่านผูกเดียว"),
+    dict(file=_R271_LINK, method="DuplicateSuspect",
+         must=["WhtCertDuplicateSuspect.Predicate("], forbid=["y.TaxMonth == w.TaxMonth"],
+         why=_R271_WHY + "M5 \"อาจนับซ้ำ\" เจ้าของตัวเดียว Helpers/WhtCertDuplicateSuspect (ห้ามสำเนาเงื่อนไข)"),
+    dict(file=_R271_LINK, method="DecorateLinkAsync",
+         must=["WhtCertDuplicateSuspect.PeersOf(", "WhtCertDuplicateSuspect.Label(", "DuplicateSuspect(companyId)"],
+         forbid=["p.Tax == c.TotalTaxAmount"],
+         why=_R271_WHY + "M5 ป้ายต่อแถวใช้เงื่อนไขเดียวกับตัวกรอง/การ์ด"),
+    dict(file=DOCSVC, method="BuildPurgePlanAsync",
+         must=["WhtCertLinkPlan.DeleteAllowed(", "NumberedWhtCerts ="],
+         why=_R271_WHY + "H1 แผนลบถาวรเห็น 50 ทวิ ที่มีเลขแล้ว ⇒ บล็อก (ทางไปต่อ = ยกเลิกใบสำคัญจ่าย)"),
+    dict(file=DOCSVC, method="PurgeOneDocumentCoreAsync",
+         must=["WhtCertLinkPlan.DeleteAllowed(", "DocumentCascadePurgePolicy.RuleWhtCertNumbered"],
+         before=[("numberedWht.Count > 0", "whtIds.Any()")],
+         why=_R271_WHY + "H1 ด่านซ้ำในขั้นลบ — ใบที่มีเลขห้ามถูก DELETE ทุกทาง"),
+    dict(file="Services/Implementations/TaxService.RdCompliance.cs", method="IsDocumentFilingLockedAsync",
+         must=["WhtCertFilingScope.Filed.Contains(", "r.TaxType == w.TaxFormType", "w.CompanyId == companyId"],
+         why=_R271_WHY + "H1 ด่านล็อกการยื่นเห็นใบที่ผูกเข้ามาทีหลัง (ตรวจตามใบ+เดือน ไม่ใช่แค่แถวรายงาน)"),
+    dict(file=DOCSVC, method="ResolveWhtLinkIntentAsync",
+         must=["w.CompanyId == companyId", "WhtCertIssuePlan.AppliesTo("],
+         why=_R271_WHY + "ความตั้งใจผูกบนร่าง: ใบต้องเป็นของบริษัทนี้ (tenant) · ไม่ผูกเอกสารอื่น · ฝั่งผู้จ่ายเท่านั้น (ห้าม silent no-op)"),
+]
+REVIEWER_CASES += [
+    # ถอดกิ่งผูกในแกนออกใบอัตโนมัติ ⇒ ตั้งใจผูกแล้วตกไปออกใบใหม่ (นับซ้ำ) ⇒ ต้องฟ้อง
+    ("R271-1", "TryAutoIssueCoreAsync", "if (decision.Action == WhtCertIssueAction.LinkExisting)\n            return await LinkRequestedCertAsync(",
+     "if (false)\n            return await LinkRequestedCertAsync(", True),
+    # เดือนยื่นแล้วตอบรหัสธรรมดา (หน้าเว็บไม่รู้ว่าเป็นกล่องแดง) ⇒ ต้องฟ้อง
+    ("R271-2", "LinkCertToDocumentAsync", "decision.BlockedByFiledPeriod ? WhtCertLinkPlan.FiledRuleCode : WhtCertLinkPlan.RuleCode",
+     "WhtCertLinkPlan.RuleCode", True),
+    # เขียนเงื่อนไข "ยื่นแล้ว" ชุดที่สองแทนตัวกลาง ⇒ ต้องฟ้อง
+    ("R271-3", "PeriodFactsAsync", "await WhtCertVoidGuard.CheckPeriodAsync(_db, companyId, form, y, m)",
+     "(await _db.TaxReports.AnyAsync(t => t.Status == TaxReportStatus.Filed)) ? \"x\" : null", True),
+    # ถอดด่านลบ ⇒ ต้องฟ้อง
+    ("R271-4", "DeleteAsync#1", "if (!WhtCertLinkPlan.DeleteAllowed(cert.CertificateNumber))", "if (false)", True),
+    # ผูกล้มแล้วไม่ติดป้ายบนเอกสาร ⇒ ต้องฟ้อง
+    ("R271-5", "LinkRequestedCertAsync", "doc.InternalNotes = WhtCertAutoFailedNote.Append(doc.InternalNotes, reason);", ";", True),
+    # ชุดแก้ฝ่ายค้าน: ถอดด่านใบที่มีเลขในขั้นลบ ⇒ ต้องฟ้อง
+    ("R271-7", "PurgeOneDocumentCoreAsync", "if (numberedWht.Count > 0)", "if (false)", True),
+    # ถอดการเทียบใบปัจจุบันที่คาดไว้ (M6) ⇒ ต้องฟ้อง
+    ("R271-8", "LinkCertToDocumentAsync", "if (request.ExpectedCurrentCertId != a?.Id)", "if (false)", True),
+    # เขียนเงื่อนไข "อาจนับซ้ำ" สำเนาในตัวกรอง (M5) ⇒ ต้องฟ้อง
+    ("R271-9", "DuplicateSuspect", "WhtCertDuplicateSuspect.Predicate(", "SomeLocalCopy(", True),
+    # ทิศตรงข้าม: จัดบรรทัดใหม่ของการตัดสิน ⇒ ต้องไม่ฟ้อง
+    ("R271-6", "LinkRequestedCertAsync", "decision = WhtCertLinkPlan.Decide(ctx.Facts, row.Facts, period);",
+     "decision = WhtCertLinkPlan\n                .Decide(ctx.Facts, row.Facts, period);", False),
+]
+
+
+# ═══ รอบ 272 — สลิปชำระภาษีจากกลุ่ม LINE/อีเมล ⇒ บันทึกนำส่งในบัญชีลูกค้า (erp-review/2026-11-16/team-272-tax-slip-autoremit.md · คำตัดสิน 272-0-1/2 · 272-1-x) ═══
+_R272_WHY = "รอบ 272 (272-0-1/272-0-2 · DECISIONS 272-1-x): "
+_R272_REMIT = "Services/Implementations/TaxSlipRemitService.cs"
+_R272_INTAKE = "Services/Implementations/TaxSlipIntakeService.cs"
+_R272_CONSENT = "Services/Implementations/ProviderConsentService.cs"
+RULES += [
+    dict(file=_R272_REMIT, method="ApplyAsync",
+         must=["_consent.CheckForWriteAsync(", "_remit.RemitAsync(", "_files.UploadBytesAsync(", "AddChainedAuditLog("],
+         must_lit=["pg_advisory_xact_lock", "FOR UPDATE"],
+         must_re=[r"if\s*\(\s*a\.StaffUserId\s*==\s*null\s*&&\s*!\s*verdict\.Ok\s*\)\s*throw\b",
+                  r"if\s*\(\s*a\.StaffUserId\s*!=\s*null\s*&&\s*!\s*verdict\.AllowsStaffClick\s*&&\s*!\s*a\.StaffIsClientTaxFiler\s*\)\s*throw\b",
+                  r"if\s*\(\s*a\.BankAccountId\s*==\s*null\s*&&\s*a\.BankGlAccountId\s*==\s*null\s*\)\s*throw\b"],
+         before=[("_consent.CheckForWriteAsync(", "_remit.RemitAsync("), ("ExecuteSqlRawAsync(", "_consent.CheckForWriteAsync(")],
+         forbid=["new StatutoryRemittance", "CreateJournalEntryAsync(", "PostJournalEntryAsync(", "_db.AuditLogs.Add("],
+         why=_R272_WHY + "ผู้เขียนเดียว: ความยินยอมตรวจใต้ล็อกก่อน RemitAsync ตัวเดียว (ไม่สร้าง JE/แถวนำส่งเอง) · ไม่รู้บัญชีที่จ่าย = ไม่บันทึก (ไม่ถอยไปบัญชีตั้งต้น) · audit chain"),
+    dict(file=_R272_INTAKE, method="HandleLineMediaAsync",
+         must=["_channel.GroupBindingAsync(", "_links.DownloadNextAccMessageContentAsync(", "IntakeAsync("],
+         must_re=[r"if\s*\(\s*!\s*binding\.AnyEndpoint\s*\|\|\s*binding\.ContactIds\.Count\s*==\s*0\s*\)\s*return\s+false\s*;"],
+         before=[("_channel.GroupBindingAsync(", "_links.DownloadNextAccMessageContentAsync(")],
+         why=_R272_WHY + "ด่านผูกกลุ่มก่อนแตะไฟล์: กลุ่มที่ไม่ผูกผู้ติดต่อของบริษัทผู้ให้บริการ = ไม่อ่าน ไม่เก็บ (PDPA ม.22)"),
+    dict(file=_R272_INTAKE, method="IntakeAsync",
+         must=["GovPaymentSlip.Identify(", "SlipEvidenceRule.Sha256Hex(", "TaxSlipRefHash.BankTxn(", "ProcessAsync("],
+         before=[("SlipEvidenceRule.Sha256Hex(", "_reader.ReadAsync("), ("GovPaymentSlip.Identify(", "_db.TaxSlipEvidences.Add(")],
+         forbid=["Agency.ControlCode;", "ControlCodeHash = agency.ControlCode"],
+         why=_R272_WHY + "กันซ้ำไฟล์ก่อนอ่าน · ระบุหน่วยงานก่อนเก็บ · Control Code เก็บเป็นแฮชเท่านั้น"),
+    dict(file=_R272_INTAKE, method="DecideAndActAsync",
+         must=["TaxSlipMatch.Decide(", "clientIds.Contains(c.Id)", "_remit.GetDashboardAsync("],
+         forbid=["c.TaxId == agency.TaxId", "Companies.AsNoTracking().Where(c => c.TaxId"],
+         why=_R272_WHY + "บริษัทเลือกจากชุดที่ช่องทางผูกเท่านั้น (ห้ามค้นเลขภาษีทั้งฐาน · กฎ M) · ยอดค้างจาก dashboard ตัวเดียว"),
+    dict(file=_R272_INTAKE, method="AutoApplyAsync",
+         must=["_consent.CheckAsync(", "BankAsync(", "ApplyAndReplyAsync(", "_consent.EnsureRequestAsync("],
+         must_re=[r"if\s*\(\s*!\s*bank\.CanAuto\s*\)"],
+         before=[("_consent.CheckAsync(", "ApplyAndReplyAsync("), ("BankAsync(", "ApplyAndReplyAsync(")],
+         why=_R272_WHY + "ความยินยอม + บัญชีที่จ่ายตัดสินก่อนบันทึก · ยังไม่ยินยอม ⇒ พัก + เปิดคำขอ (T3)"),
+    dict(file=_R272_INTAKE, method="BankAsync", must=["SlipAccountMatch.Match(", "TaxSlipBankAccount.Decide(", "b.CompanyId == client"],
+         why=_R272_WHY + "บัญชีที่จ่ายจากตัวตัดสินเดียว (ชั้น 1-4) ในบัญชีของบริษัทลูกค้าเท่านั้น"),
+    dict(file=_R272_INTAKE, method="ApplyAndReplyAsync", must=["_remitter.ApplyAsync(", "FinishAsync("],
+         forbid=["catch { }", "catch {}", "catch (Exception)"],
+         why=_R272_WHY + "ด่าน/RemitAsync ปฏิเสธ ⇒ คิวพนักงานพร้อมเหตุจริง + การ์ด (ไม่กลืน · กฎ #4 E)"),
+    dict(file=_R272_INTAKE, method="HandleChoicePostbackAsync", must=["TaxSlipRefHash.Verify(", "ParseCandidates(", "AutoApplyAsync("],
+         before=[("TaxSlipRefHash.Verify(", "AutoApplyAsync(")],
+         why=_R272_WHY + "ปุ่มเลือกในกลุ่มต้องลงลายเซ็นของช่องทางเดิม · เลือกได้เฉพาะในชุดผู้สมัคร · ไม่ใช่การยินยอม (ตรวจซ้ำตอนบันทึก)"),
+    dict(file=_R272_INTAKE, method="FinishAsync", must=["_channel.SendSlipCardAsync(", "TaxSlipReplyCard.Text("],
+         why=_R272_WHY + "ทุกผลมีการ์ดตอบกลับ (ห้าม silent no-op)"),
+    dict(file="Controllers/LineWebhookController.cs", method="TryTaxSlipAsync",
+         must=["LineGroupBindRule.CentralGroupSlipRoute(", "_taxSlips!.HandleLineMediaAsync(", "_taxSlips!.HandleChoicePostbackAsync("],
+         before=[("LineGroupBindRule.CentralGroupSlipRoute(", "_taxSlips!.HandleLineMediaAsync(")],
+         why=_R272_WHY + "event กลุ่มของ OA กลางไปเส้นสลิปภาษีผ่านตัวตัดสินเส้นเดียว"),
+    dict(file=_R272_CONSENT, method="CheckForWriteAsync", must=["_db.Database.CurrentTransaction == null", "EvaluateAsync("],
+         must_lit=["FOR SHARE"], before=[("ExecuteSqlInterpolatedAsync(", "EvaluateAsync(")],
+         why=_R272_WHY + "ตัวตรวจตอนเขียนต้องอยู่ในธุรกรรมและล็อกแถวความยินยอมก่อนประเมิน (ถอนแทรกไม่ได้)"),
+    dict(file=_R272_CONSENT, method="EvaluateAsync", must=["ProviderConsent.Allows(", "GrantProblemForAsync("],
+         why=_R272_WHY + "ตรวจสดทุกครั้ง รวมสิทธิ์ผู้ให้ ณ ตอนนี้"),
+    dict(file=_R272_CONSENT, method="GrantAsync",
+         must=["GrantProblemForAsync(", "ProviderConsent.ConfirmProblem(", "ProviderConsent.Hash(", "ProviderConsent.NormalizeTypes(", "AddChainedAuditLog("],
+         before=[("GrantProblemForAsync(", "_db.ProviderAutomationConsents.Add(")],
+         why=_R272_WHY + "272-1-7 ผู้ให้ (เจ้าของ หรือ Tax.File+CompanySettings.Edit · ไม่ใช่พนักงานผู้ให้บริการ) · hash canonical · พิมพ์ยืนยัน"),
+    dict(file=_R272_CONSENT, method="GrantProblemForAsync", must=["ProviderConsent.GrantProblem(", "cu.CompanyId == providerId"],
+         why=_R272_WHY + "ผู้ขอให้เองไม่ได้ (สมาชิกบริษัทผู้ให้บริการ ⇒ ปฏิเสธ)"),
+    dict(file="Services/Implementations/TaxPaymentRequestService.cs", method="CreateAsync",
+         must=["TaxSlipMatch.RequestProblem(", "TaxSlipRefHash.ControlCode(", "TaxSlipRefHash.Last4(", "AddChainedAuditLog(", "_consent.EnsureRequestAsync(", "_channel.PostToClientAsync("],
+         forbid=["ControlCodeHash = cc,", "ControlCodeHash = req.ControlCode"],
+         why=_R272_WHY + "272-1-2 ใบขอชำระ: สมุดต้องตรงก่อนส่ง · Control Code เก็บเป็นแฮช · T2 ขอความยินยอมเอง"),
+    dict(file="Services/Implementations/TaxSlipReviewService.cs", method="ReviewAsync",
+         must=["Verdict(", "AddChainedAuditLog("], forbid=["MatchedJournalEntryId = r.JournalEntryId", "ReverseJournalEntryAsync(", "VoidRemittanceAsync("],
+         why=_R272_WHY + "P5 ตัวตรวจทานเป็นธงเตือนเท่านั้น — ไม่ผูก/ไม่กลับรายการเอง"),
+    dict(file="Services/Background/TaxSlipJob.cs", method="ExecuteAsync", must=["JobLock.RunExclusiveAsync("],
+         why=_R272_WHY + "งานเบื้องหลังกันรันซ้ำข้ามเครื่อง (F4 ข้อ 6)"),
+    dict(file="Services/Implementations/StatutoryRemittanceService.cs", method="RemitAsync", must=["_db.Database.CurrentTransaction == null"],
+         why=_R272_WHY + "RemitAsync ร่วมธุรกรรมของเส้นสลิป (ล็อกความยินยอมจน commit) · เส้นมือเปิดเอง"),
+]
+REVIEWER_CASES += [
+    # ถอดด่านความยินยอมของการบันทึกเอง ⇒ ต้องฟ้อง
+    ("R272-1", "ApplyAsync", "if (a.StaffUserId == null && !verdict.Ok)", "if (false)", True),
+    # ตรวจความยินยอมนอกล็อก (อ่านอย่างเดียว) ⇒ ต้องฟ้อง
+    ("R272-2", "ApplyAsync", "await _consent.CheckForWriteAsync(c.CompanyId", "await _consent.CheckAsync(c.CompanyId", True),
+    # ไม่รู้บัญชีแล้วปล่อยให้ RemitAsync ถอยไปบัญชีตั้งต้น ⇒ ต้องฟ้อง
+    ("R272-3", "ApplyAsync", "if (a.BankAccountId == null && a.BankGlAccountId == null)", "if (a.BankAccountId == Guid.Empty)", True),
+    # พนักงานกดโดยไม่มีทั้งความยินยอม/หนังสือมอบอำนาจ/สิทธิ์ในบริษัทลูกค้า ⇒ ต้องฟ้อง
+    ("R272-4", "ApplyAsync", "if (a.StaffUserId != null && !verdict.AllowsStaffClick && !a.StaffIsClientTaxFiler)", "if (a.StaffUserId != null && false)", True),
+    # ดาวน์โหลดรูปก่อนตรวจว่ากลุ่มผูก ⇒ ต้องฟ้อง
+    ("R272-5", "HandleLineMediaAsync", "if (!binding.AnyEndpoint || binding.ContactIds.Count == 0) return false;", "", True),
+    # ค้นบริษัทด้วยเลขภาษีทั้งฐาน ⇒ ต้องฟ้อง
+    ("R272-6", "DecideAndActAsync", "Where(c => clientIds.Contains(c.Id))", "Where(c => c.TaxId == agency.TaxId)", True),
+    # บัญชีที่จ่ายตัดสินไม่ได้แต่บันทึกต่อ ⇒ ต้องฟ้อง
+    ("R272-7", "AutoApplyAsync", "if (!bank.CanAuto)", "if (bank.Kind == TaxSlipBankAccount.Kind.NotOurs)", True),
+    # ปุ่มเลือกไม่ตรวจลายเซ็น ⇒ ต้องฟ้อง
+    ("R272-8", "HandleChoicePostbackAsync", "if (!TaxSlipRefHash.Verify(pb, idHash))", "if (pb == null)", True),
+    # ตัวตรวจตอนเขียนนอกธุรกรรม ⇒ ต้องฟ้อง
+    ("R272-9", "CheckForWriteAsync", "if (_db.Database.CurrentTransaction == null)", "if (false)", True),
+    # ใบขอชำระเก็บ Control Code ดิบ ⇒ ต้องฟ้อง
+    ("R272-10", "CreateAsync", "ControlCodeHash = TaxSlipRefHash.ControlCode(cc)!,", "ControlCodeHash = cc,", True),
+    # ตัวตรวจทานผูกรายการเดินบัญชีเอง ⇒ ต้องฟ้อง
+    ("R272-11", "ReviewAsync", "r.ReviewStatus = verdict;", "r.ReviewStatus = verdict; var __t = new BankTransaction(); __t.MatchedJournalEntryId = r.JournalEntryId;", True),
+    # ทิศตรงข้าม: จัดบรรทัดใหม่ของด่านความยินยอม ⇒ ต้องไม่ฟ้อง
+    ("R272-12", "ApplyAsync", "if (a.StaffUserId == null && !verdict.Ok)", "if (a.StaffUserId == null\n                && !verdict.Ok)", False),
+]
+
+# ── รอบ 273: ใบเสร็จรับชำระที่ไม่ถือ VAT — "ยอดรับชำระ" + บรรทัดอ้างอิงใบต้นทาง แทน "ยอดรวมก่อน VAT 749,000 · VAT 0.00" (ผู้ใช้รายงาน 2026-11-19) ──
+_R273_WHY = "รอบ 273 (ใบเสร็จรับชำระ REC ของ TIV 700k+VAT 49k พิมพ์ยอดก่อน VAT 749k): "
+_R273_RENDER = "Services/Implementations/PdfGenerationService.SettlementTotals.cs"
+_R273_LOADER = "Services/Implementations/SettlementReceiptTotalsLoader.cs"
+RULES += [
+    dict(file=_R273_LOADER, method="ResolveAsync",
+         must=["SettlementReceiptTotals.Decide(", "d.Id == srcId && d.CompanyId == companyId", "doc.SettlementTotals = null"],
+         forbid=["doc.VatAmount != 0m", "doc.IsDeposit ||"],
+         why=_R273_WHY + "ตัวโหลดเดียว · tenant · ตัดสินผ่าน Helpers/SettlementReceiptTotals ตัวเดียว (ห้ามกรองซ้ำเอง = สำเนากติกา)"),
+    dict(file=PDFSVC, method="ResolveServedAsReceiptAsync", must=["SettlementReceiptTotalsLoader.ResolveAsync(db, companyId, doc)"],
+         why=_R273_WHY + "ตัวโหลด transient กลางของทั้งสอง renderer + หัวเอกสารช่องทางอีเมล/LINE"),
+    dict(file=PDFSVC, method="ResolvePrintTotals", must=["doc.SettlementTotals is", "L.TotalAmountReceived"],
+         why=_R273_WHY + "แถวสุดท้าย \"ยอดรับชำระ\" ผ่านตัวตัดสินแถวยอดตัวเดียวของสอง renderer"),
+    dict(file=PDFSVC, method="BuildDocumentHtml",
+         must=["SettlementSubtotalLabel(doc, L)", "AppendSettlementTotalsHtml(sb, doc, L)", "doc.SettlementTotals == null"],
+         why=_R273_WHY + "HTML: ป้ายแถวยอดก่อน VAT/ซ่อน VAT/บรรทัดอ้างอิง จากตัวกลาง"),
+    dict(file="Services/Implementations/PdfGenerationService.DocumentRenderer.cs", method="ComposeSummary",
+         must=["SettlementSubtotalLabel(doc, L)", "ComposeSettlementTotals(col, doc, L)", "doc.SettlementTotals == null"],
+         forbid=["Row(L.TotalSubtotal"],
+         why=_R273_WHY + "QuestPDF: ตัวตัดสินเดียวกับ HTML (สอง renderer ห้าม drift)"),
+    dict(file=_R273_RENDER, method="AppendSettlementTotalsHtml", must=["labels.SettlementTotalsLines(st)", "WebUtility.HtmlEncode(line)"],
+         why=_R273_WHY + "HTML ใช้ข้อความ DocumentLabels ตัวเดียว + หนี HTML (เลขที่เอกสารมาจากผู้ใช้)"),
+    dict(file=_R273_RENDER, method="ComposeSettlementTotals", must=["labels.SettlementTotalsLines(st)"],
+         why=_R273_WHY + "QuestPDF ใช้ข้อความ DocumentLabels ตัวเดียวกับ HTML"),
+    dict(file=DOC, method="GetDocumentAsync",
+         must=["SettlementReceiptTotalsLoader.ResolveAsync(_db, companyId, doc)", "SettlementReceiptTotalsLoader.ToDto(settleView"],
+         forbid=["new SettlementTotalsDto("],
+         why=_R273_WHY + "หน้ารายละเอียดแสดงผลที่เซิร์ฟเวอร์คำนวณ (ตัวโหลด/ข้อความเดียวกับกระดาษ — หน้าเว็บไม่มีสำเนากติกา)"),
+    # ── ชุดแก้ฝ่ายค้าน (MED-1 · L1 · L2 · L3 · L4) ──
+    dict(file=_R273_LOADER, method="ResolveAsync",
+         must=["ThisSettlementAsync(db, companyId, doc, srcId)", "LedgerEventsAsync(", "SourcesOutstandingNow = parent.BalanceDue",
+               "BillingNoteChildren.MapAsync(", "ViaBillingNote ="],
+         why=_R273_WHY + "MED-1 ยอดคงค้างก่อนรับ (การรับครั้งนี้ + รายการตัดยอดอื่น + ยอดค้างปัจจุบัน) · L4 ใบรุ่นเก่าจากใบวางบิล"),
+    dict(file=_R273_LOADER, method="ThisSettlementAsync",
+         must=["p.FeeAmount", "p.SettlementAdjustmentAmount", "p.WithholdingTaxAmount", "a.WithholdingTaxAmount", "x.CompanyId == companyId"],
+         why=_R273_WHY + "MED-1 ยอดที่ครั้งนี้ตัด = เงิน + ค่าธรรมเนียม + บรรทัดปรับ · L1 ภาษีหักของงวดนี้ (ไม่ใช่ทั้งใบ)"),
+    dict(file=_R273_LOADER, method="LedgerEventsAsync",
+         must=["DocumentType.CreditNote", "db.PaymentAllocations", "!d.IsSettlementReceipt", "x.Amount + x.FeeAmount + x.SettlementAdjustmentAmount"],
+         why=_R273_WHY + "MED-1 รายการตัดยอดอื่นของใบต้นทาง (ใบลดหนี้ · การจัดสรร · การรับ — สามตัวเดียวกับ PaidAmount) · ใบรับชำระอัตโนมัติไม่นับซ้ำ"),
+    dict(file="Helpers/SettlementReceiptTotals.cs", method="Decide",
+         must=["me.Settled", "SourcesOutstandingNow is decimal now", "VatNote.InvoiceNotTaxInvoice", "var partial = after > Eps;"],
+         why=_R273_WHY + "MED-1 บางส่วน/ครบจากยอดคงค้างก่อนรับ ไม่ใช่ยอดรับเทียบยอดใบ · L2 ใบแจ้งหนี้ไม่ใช่ใบกำกับ"),
+    dict(file="Services/Implementations/Pdf/DocumentLabels.cs", method="SettlementTotalsLines",
+         must=["M(me.WithholdingTaxAmount)", "VatNote.InvoiceNotTaxInvoice", "v.PriorCreditNotes", "v.ViaBillingNote", "v.BalanceBefore"],
+         forbid=["s.WithholdingTaxAmount"],
+         why=_R273_WHY + "L1 ภาษีหักของการรับครั้งนี้ (ไม่ใช่ทั้งใบ) · L2 ข้อความใบแจ้งหนี้ · MED-1 อ้างใบลดหนี้ · L4 อ้างใบวางบิล"),
+    dict(file="Services/Implementations/DocumentPayLinkService.CustomerPage.cs", method="BuildPageAsync",
+         must=["SettlementReceiptTotalsLoader.DtoForAsync(_db, companyId, d.Id, isEnglish)", "SettlementTotals = settlementTotals"],
+         why=_R273_WHY + "L3 หน้าเอกสารของลูกค้าใช้ตัวโหลด/ข้อความเดียวกับกระดาษ (server computes · page displays)"),
+]
+REVIEWER_CASES += [
+    # HTML กลับไปพิมพ์ "ยอดรวมก่อน VAT" ตรง ๆ ⇒ ต้องฟ้อง
+    ("R273-1", "BuildDocumentHtml", "var subtotalLabel = SettlementSubtotalLabel(doc, L);", "var subtotalLabel = L.TotalSubtotal;", True),
+    # QuestPDF ไม่วาดบรรทัดอ้างอิง ⇒ ต้องฟ้อง
+    ("R273-2", "ComposeSummary", "ComposeSettlementTotals(col, doc, L);", "", True),
+    # ตัวโหลดไม่กรองบริษัท ⇒ ต้องฟ้อง
+    ("R273-3", "ResolveAsync", "d.Id == srcId && d.CompanyId == companyId", "d.Id == srcId", True),
+    # ชุดแก้ฝ่ายค้าน MED-1: กลับไปเทียบยอดรับกับยอดใบ (ไม่ดูค่าธรรมเนียม/ใบลดหนี้) ⇒ ต้องฟ้อง
+    ("R273-4", "Decide", "var partial = after > Eps;", "var partial = f.ReceiptTotalAmount < sourcesTotal - Eps;", True),
+    # MED-1: ยอดที่ครั้งนี้ตัดไม่รวมค่าธรรมเนียม ⇒ ต้องฟ้อง
+    ("R273-5", "ThisSettlementAsync", "p.FeeAmount", "0m", True),
+    # L1: กลับไปพิมพ์ภาษีหักทั้งใบ ⇒ ต้องฟ้อง
+    ("R273-6", "SettlementTotalsLines", "M(me.WithholdingTaxAmount)", "M(s.WithholdingTaxAmount)", True),
+    # L3: หน้าลูกค้าไม่ส่งผลตัวตัดสิน ⇒ ต้องฟ้อง
+    ("R273-7", "BuildPageAsync", "SettlementTotals = settlementTotals", "SettlementTotals = null", True),
+]
+
+
+# ── รอบ 273 (ผู้ใช้รายงาน ภ.ง.ด.53 ต.ค. 2569: RD-WHT-002 357.30 vs 178.65 = ×2): ยอดหัว ภ.ง.ด. กับตัวตรวจก่อนยื่น
+#    ต้องเดินตัวตั้งเดียว Helpers/WhtReportTotals — ตัวตรวจเดิม r.Lines.Sum ทุกแถว (รวมแถว [สรุป] + แถวติ๊กออก) ──
+_R273W_WHY = "รอบ 273 · ยอดหัว ภ.ง.ด. = ตัวตรวจ RD-WHT-002 = ไฟล์ยื่น (ตัวตั้งเดียว WhtReportTotals · F2 ข้อ 4) · "
+_R273W_CHECK = "Services/Implementations/Tax/TaxComplianceChecker.cs"
+RULES += [
+    dict(file=_R273W_CHECK, method="CheckPnd3_53", must=["WhtReportTotals.Of(", "WhtReportTotals.CountedLines("],
+         forbid=["r.Lines.Sum(", "r.Lines.Count(", "sumWht > 0 &&"],
+         why=_R273W_WHY + "ตัวตรวจห้ามบวกทุกแถวเอง (แถว [สรุป] ⇒ ×2)"),
+    dict(file=_R273W_CHECK, method="CheckPnd1", must=["WhtReportTotals.Of("], forbid=["r.Lines.Sum("],
+         why=_R273W_WHY + "ภ.ง.ด.1 กติกาเดียวกัน"),
+    dict(file="Services/Implementations/TaxService.cs", method="GenerateWhtReport", must=["WhtReportTotals.Apply("],
+         forbid=["report.TotalTaxWithheld = report.Lines"],
+         why=_R273W_WHY + "ยอดหัวตอน generate"),
+    dict(file="Services/Implementations/TaxService.cs", method="RecalcWhtTotals", must=["WhtReportTotals.Apply("],
+         why=_R273W_WHY + "ยอดหัวตอนคำนวณใหม่"),
+    dict(file="Services/Implementations/TaxService.cs", method="LinesTaxTotalOf", must=["WhtReportTotals.Of("],
+         why=_R273W_WHY + "ฝ่ายค้านข้อ 1: ท้ายตารางบนจอจากตัวตั้งเดียว (หน้าเว็บแสดงอย่างเดียว · tax.html ล็อกใน WhtReportTotalsTests)"),
+    dict(file="Services/Implementations/TaxService.cs", method="GeneratePnd91Report", must=["WhtReportTotals.Apply(", "WhtReportTotals.Pnd91TaxAdditional"],
+         forbid=["report.TotalTaxWithheld = totalTax"], forbid_lit=['"TAX_ADDITIONAL"', '"TAX_REFUND"'],
+         why=_R273W_WHY + "ฝ่ายค้านข้อ 4: ภ.ง.ด.91 ยอดหัวสูตรเดียวกับตอนบันทึกบรรทัด (แถวผลต่างไม่นับ)"),
+]
+
+# ═══ รอบ 272 ชุดแก้ฝ่ายค้าน (erp-review/2026-11-16/review-272.md · H1–H3 · M1–M7 · L1–L8) ═══
+_R272F_WHY = "รอบ 272 ฝ่ายค้าน (review-272): "
+RULES += [
+    dict(file=_R272_REMIT, method="ApplyAsync", must=["ExpectedAmount: c.Amount"],
+         must_re=[r"if\s*\(\s*slip\.Amount\s+is\s+decimal\s+paid\s*&&", r"if\s*\(\s*slip\.SenderUnverified\s*&&\s*a\.StaffUserId\s*==\s*null\s*\)\s*throw\b"],
+         why=_R272F_WHY + "H1 ยอดสลิป = ผู้สมัคร + ยอดสมุดสดต้องเท่ายอดที่คาด (RemitAsync ปฏิเสธ) · H3 อีเมลยืนยันผู้ส่งไม่ได้ ⇒ ไม่บันทึกเอง"),
+    dict(file="Services/Implementations/StatutoryRemittanceService.cs", method="RemitAsync",
+         must_re=[r"if\s*\(\s*req\.ExpectedAmount\s+is\s+decimal\s+expected", r"isPp36\s*&&\s*ownTx"],
+         why=_R272F_WHY + "H1 ยอดค้างตอนบันทึกต้องเท่ายอดที่เส้นสลิปคาด · M7 ร่วมธุรกรรมแล้วไม่สร้างรายงาน ภ.พ.36"),
+    dict(file=_R272_INTAKE, method="IntakeAsync", must=["OcrOffRuleCode", "EnsureRopaAsync("],
+         must_re=[r"var\s+unreadable\s*=\s*!\s*_reader\.IsAvailable\s*\|\|", r"if\s*\(\s*!\s*unreadable\s*&&\s*agency\.Kind\s*==\s*GovPaymentSlip\.Kind\.NotGovernment\s*\)"],
+         why=_R272F_WHY + "H2 อ่านไม่ได้ ⇒ แถวเข้าคิว + การ์ด + กระดิ่ง (ไม่ตอบว่าไม่ใช่สลิปภาษี) · M6 RoPA"),
+    dict(file="Controllers/InboundEmailController.cs", method="Receive", must=["InboundEmailRule.SenderVerified(", "WebhookSignature.Verify("],
+         why=_R272F_WHY + "H3 alignment กับโดเมนของ From จากผลผู้ให้บริการ"),
+    dict(file=_R272_CONSENT, method="ApprovePowerOfAttorneyAsync", must=["AddChainedAuditLog(", "NotifyClientPoaAsync("],
+         must_re=[r"if\s*\(\s*row\.GrantedByUserId\s*==\s*approverUserId\s*\)\s*throw\b"],
+         why=_R272F_WHY + "M4 ผู้อนุมัติหนังสือมอบอำนาจต้องไม่ใช่ผู้แนบ + แจ้งเจ้าของลูกค้า"),
+    dict(file=_R272_INTAKE, method="StaffRemitAsync", must=["cu.CompanyId == cand.CompanyId", "PermissionKeys.TaxFile"],
+         why=_R272F_WHY + "M4 สิทธิ์ผู้ยื่นภาษีของลูกค้าตรวจกับบริษัทที่บันทึกลงจริง"),
+    dict(file=_R272_INTAKE, method="HandleChoicePostbackAsync", must=["NotifyStaffAsync(", "_channel.GroupBindingAsync("],
+         why=_R272F_WHY + "M5 ปุ่มล้ม ⇒ คิวพนักงานจริง + กระดิ่ง · L1 กลุ่มต้องยังผูก"),
+    dict(file=_R272_INTAKE, method="PurgeClosedFilesAsync", must=["s.StatutoryRemittanceId == null", "s.Status == Statuses.Rejected"],
+         why=_R272F_WHY + "M6 ลบเฉพาะไฟล์ของแถวที่ปิดโดยไม่บันทึก (legal hold/รอตัดสิน ไม่แตะ)"),
+    dict(file="Services/Background/LineChatSlipRetentionJob.cs", method="ExecuteAsync", must=["TaxSlipIntakeService.PurgeClosedFilesAsync(", "JobLock.RunExclusiveAsync("],
+         why=_R272F_WHY + "M6 ลบไฟล์สลิปภาษีในงาน retention เดิม (JobLock)"),
+]
+REVIEWER_CASES += [
+    ("R272F-1", "ApplyAsync", "ExpectedAmount: c.Amount", "ExpectedAmount: null", True),
+    ("R272F-2", "IntakeAsync", "if (!unreadable && agency.Kind == GovPaymentSlip.Kind.NotGovernment)", "if (agency.Kind == GovPaymentSlip.Kind.NotGovernment)", True),
+    ("R272F-3", "Receive", "InboundEmailRule.SenderVerified(msg)", "true", True),
+    ("R272F-4", "ApprovePowerOfAttorneyAsync", "if (row.GrantedByUserId == approverUserId) throw", "if (false) throw", True),
+    ("R272F-5", "PurgeClosedFilesAsync", "s.StatutoryRemittanceId == null && ", "", True),
+]
+
 
 def main() -> int:
     errs = []
@@ -21043,5 +21408,85 @@ def main() -> int:
     return 0
 
 
+# รอบ 274 — เลขผู้เสียภาษีพนักงานผิดจำนวนหลักในไฟล์ ภ.ง.ด.1/1ก/91 และ 50 ทวิ หลังเปลี่ยน ENCRYPTION_KEY:
+# ตัวตรวจกลาง EmployeeTaxIdentity.Inspect (13 หลัก + mod-11 · enc1 ที่ถอดไม่ออก) ต้องอยู่หน้าทุกทางออกที่เขียนเลขลงแบบ/กระดาษ ·
+# converter ต้องลองคีย์เดิม · ไฟล์ยื่นชั้นสุดท้ายห้ามเขียนเลขผิดรูป · กล่อง 13 หลักของ 50 ทวิ (HTML + QuestPDF) จากตัวเดียว
+_R274_WHY = "รอบ 274 (ห้ามเขียนเลขที่ตัดจาก ciphertext ลงแบบ ภ.ง.ด./50 ทวิ): "
+RULES += [
+    dict(file="Helpers/EncryptedColumnConverter.cs", method="DecryptOnRead",
+         must=["Inspect(value, _key, _previousKeys)"],
+         forbid=["EncryptionHelper.Decrypt(value, _key)"],
+         why=_R274_WHY + "ฝั่งอ่านของ EF ลองคีย์ปัจจุบันแล้วคีย์เดิม ผ่านตัวตัดสินเดียว (Inspect) — เดิมคีย์เดียว ⇒ แถวคีย์เดิมคืน ciphertext"),
+    dict(file="Helpers/Pnd1FilingData.cs", method="Build",
+         must=["EmployeeTaxIdentity.Inspect(e.TaxId, e.CitizenId)", "EmployeeTaxIdentity.InspectValue(contact?.TaxId)", "blocked.Add("],
+         before=[("BlockEmployee(d.Employee", "PayrollRow(d.Employee"), ("BlockEmployee(g.Emp", "PayrollRow(g.Emp")],
+         forbid=["ThaiTaxId.Normalize(contact?.TaxId)"],
+         why=_R274_WHY + "ตัวโหลดเดียวของไฟล์ ภ.ง.ด.1/1ก กันแถวที่เลขใช้ไม่ได้พร้อมเหตุก่อนประกอบแถว"),
+    dict(file="Helpers/Pnd1FileFormat.cs", method="FieldsCore",
+         must=["ThaiTaxId.IsValid(payeeDigits)"],
+         must_re=[r"!\s*ThaiTaxId\.IsValid\(payeeDigits\)\s*\)\s*throw\b"],
+         why=_R274_WHY + "ชั้นสุดท้ายของไฟล์ยื่น: เลขผู้มีเงินได้ผิดรูปที่ข้ามตัวโหลดมา = ล้มดัง ไม่เขียน"),
+    dict(file="Services/Implementations/TaxFilingExportService.cs", method="ExportPnd91Async",
+         must=["EmployeeTaxIdentity.Inspect(x.Employee.TaxId, x.Employee.CitizenId)", "pnd91Blocked.Add("],
+         forbid=["EmployeeTaxIdentity.Resolve("],
+         why=_R274_WHY + "ภ.ง.ด.91 กันแถวที่เลขใช้ไม่ได้ + บอกในสรุป"),
+    dict(file="Services/Implementations/TaxService.cs", method="GeneratePnd91Report",
+         must=["EmployeeTaxIdentity.Inspect(emp.TaxId, emp.CitizenId)", "TaxPayerId = empIdentity.Value", "badIdentity.Add("],
+         forbid=["EmployeeTaxIdentity.Resolve("],
+         why=_R274_WHY + "รายงาน ภ.ง.ด.91 ไม่เก็บเลขที่ใช้ไม่ได้ + Notes บอกรายคน"),
+    dict(file=PAYROLL, method="GenerateAnnualEmployeeWhtCertsAsync",
+         must=["EmployeeTaxIdentity.Inspect(emp.TaxId, emp.CitizenId)", "annualBlocked.Add("],
+         before=[("EmployeeTaxIdentity.Inspect(", "BuildEmployeeAnnualCertPdfAsync(")],
+         why=_R274_WHY + "50 ทวิ ภ.ง.ด.1ก ตรวจเลขก่อนพิมพ์ — ใบเดียว: ปฏิเสธพร้อมเหตุ · หลายใบ: ข้าม + ไฟล์เหตุใน zip"),
+    dict(file="Services/Implementations/PdfGenerationService.cs", method="GenerateWithholdingTaxCertPdfAsync",
+         must=["WhtCertFormText.PayeeTaxIdProblem("],
+         before=[("WhtCertFormText.PayeeTaxIdProblem(", "BuildWhtCertPdf(")],
+         why=_R274_WHY + "50 ทวิ ที่บันทึกแล้ว: ผู้รับที่เลขใช้ไม่ได้ = ไม่ออกไฟล์ + ทางแก้ (สร้างเอกสารใหม่)"),
+    dict(file="Services/Implementations/PdfGenerationService.cs", method="BuildWithholdingTaxCertHtml",
+         must=["WhtCertFormText.TaxIdBoxDigits("],
+         forbid=["ThaiTaxId.Normalize(taxId).PadRight("],
+         why=_R274_WHY + "กล่อง 13 หลัก HTML จากตัวเดียวกับ QuestPDF — เลขใช้ไม่ได้ = กล่องว่าง"),
+    dict(file="Services/Implementations/PdfGenerationService.WhtCert.cs", method="DrawTinBoxes",
+         must=["WhtCertFormText.TaxIdBoxDigits("],
+         forbid=["ThaiTaxId.Normalize(taxId).PadRight("],
+         why=_R274_WHY + "กล่อง 13 หลัก QuestPDF จากตัวเดียวกับ HTML"),
+    # ── ผลตรวจฝ่ายค้านรอบ 274 ──
+    dict(file="Services/Implementations/TaxFilingExportService.cs", method="Pnd1Result",
+         must=["data.BlockedRows.Count > 0 && !previewOnly", "Pnd1FilingData.BlockedMessage(", "Pnd1FilingData.BlockedRuleCode"],
+         why=_R274_WHY + "HIGH-1: มีแถวถูกกัน ⇒ ไม่ออกไฟล์ยื่นทุกรูปแบบ (ห้ามไฟล์บางส่วนตอบ 200) · พรีวิวยังแสดง"),
+    dict(file="Helpers/EncryptedColumnConverter.cs", method="Inspect",
+         must=["return new(PiiCipherState.Undecryptable, stored);"],
+         forbid=["new(PiiCipherState.Plaintext, stored);\n    }"],
+         why=_R274_WHY + "MED-1: ciphertext รุ่นก่อน (ไม่มีคำนำหน้า) ที่ถอดไม่ออก = Undecryptable ไม่ใช่ plaintext"),
+    dict(file="Helpers/EncryptedColumnConverter.cs", method="IsUnreadable",
+         must=["EncryptionHelper.IsEncrypted(", "EncryptionHelper.LooksLikeLegacyCiphertext("],
+         why=_R274_WHY + "MED-1: ตัวตัดสินกลาง 'ถอดรหัสไม่ได้' ของผู้อ่านปลายทาง ครอบทั้ง enc1 และรุ่นก่อน"),
+    dict(file="Helpers/EmployeeTaxIdentity.cs", method="InspectValue", must=["EncryptedColumnConverter.IsUnreadable("],
+         forbid=["EncryptionHelper.IsEncrypted("], why=_R274_WHY + "MED-1: ตัวตรวจเลขใช้ตัวตัดสินกลาง (enc1 + รุ่นก่อน)"),
+    dict(file="Helpers/PayrollBankTransfer.cs", method="Evaluate", must=["EncryptedColumnConverter.IsUnreadable("],
+         forbid=["EncryptionHelper.IsEncrypted("], why=_R274_WHY + "MED-1: ไฟล์โอนใช้ตัวตัดสินกลาง ไม่ตัดตัวเลขจาก ciphertext เป็นเลขบัญชี"),
+    dict(file="Services/Background/PiiReprotectJob.cs", method="RunAsync",
+         must=["BeginTransactionAsync(", "up.Transaction = dbTx", "await tx.CommitAsync(", "fromDevKey"],
+         must_lit=["{CandidateSql(col.Column)}"],
+         forbid_lit=["LIKE 'enc1:%'\""],
+         why=_R274_WHY + "MED-1/LOW-1/LOW-2: เลือกทั้ง enc1 และรุ่นก่อน · UPDATE + audit ในธุรกรรมเดียวต่อชุด · audit แยก dev key"),
+    dict(file="Services/Background/PiiReprotectJob.cs", method="RunOnceAsync",
+         must=["JobLock.RunExclusiveAsync(", "recorder.RecordAsync(JobName, true", "recorder.RecordAsync(JobName, false", "_logger.LogError("],
+         why=_R274_WHY + "MED-2: ผลรันจริง (สำเร็จ/ล้ม) ลง JobRunLog — รายงานอ่านจากที่นี่ · ล้มดัง"),
+    dict(file="Helpers/EmployeeIdentityHealth.cs", method="BuildAsync",
+         must=["PiiReprotectPass.Columns(db)", "PiiReprotectJob.JobName", "ActionFor(issue, job)"],
+         why=_R274_WHY + "MED-1/MED-2: รายงานครอบทุกคอลัมน์ PII ทะเบียนเดียวกับงานย้ายคีย์ · ทางไปต่อตามผลรันจริง"),
+    dict(file="Services/Implementations/TaxFilingExportService.cs", method="ExportSso110Async", must=["SsoInsuredNumber.ThrowIfUnusable("],
+         why=_R274_WHY + "LOW-5: ไฟล์ สปส. เลขบัตรใช้ไม่ได้ ⇒ ไม่ออกไฟล์พร้อมรายชื่อ (สอดคล้อง ภ.ง.ด.1)"),
+    dict(file="Services/Implementations/TaxFilingExportService.cs", method="ExportSso110ExcelAsync", must=["SsoInsuredNumber.ThrowIfUnusable("],
+         why=_R274_WHY + "LOW-5"),
+    dict(file="Services/Implementations/TaxFilingExportService.cs", method="ExportSps103Async", must=["SsoInsuredNumber.ThrowIfUnusable("],
+         why=_R274_WHY + "LOW-5"),
+    dict(file="Services/Implementations/TaxFilingExportService.cs", method="ExportSps609Async", must=["SsoInsuredNumber.ThrowIfUnusable("],
+         why=_R274_WHY + "LOW-5"),
+]
+
+
 if __name__ == "__main__":
     sys.exit(main())
+

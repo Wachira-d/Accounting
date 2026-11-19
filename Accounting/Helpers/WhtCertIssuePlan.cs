@@ -30,6 +30,9 @@ public enum WhtCertIssueAction
     ManualPending,
     /// <summary>มีใบที่ครอบการจ่ายนี้อยู่แล้ว (idempotent — ไม่ใช่ความล้มเหลว)</summary>
     AlreadyIssued,
+    /// <summary>รอบ 271: ผู้ใช้บอกว่า "ออกใบไว้แล้ว" (<c>Document.WhtLinkCertId</c>) ⇒ <b>ผูก</b>ใบนั้นผ่าน <see cref="WhtCertLinkPlan"/> แทนการออกใหม่ ·
+    /// ผูกไม่ผ่าน = ไม่ผูก + <b>ไม่ออกใบใหม่</b> (กันนับซ้ำ) + ล้มดัง</summary>
+    LinkExisting,
 }
 
 /// <summary>ข้อเท็จจริงของเอกสาร ณ จุดที่ขอออกใบ (ผู้เรียกโหลดจากฐาน · ตัวตัดสินไม่แตะฐาน)</summary>
@@ -42,6 +45,10 @@ public enum WhtCertIssueAction
 /// และยังไม่ได้กด "รับทราบ" · ค่าตั้งต้น false = พฤติกรรมเดิม</param>
 /// <param name="ViaEWithholding">รอบ 204 (c3): เอกสารหักผ่าน e-Withholding ของธนาคาร (<c>Document.WhtViaEWithholding</c>) — ธนาคารนำส่ง/กรมสรรพากรออกหลักฐาน ⇒
 /// ไม่ออก 50 ทวิ อัตโนมัติ (กดทีละใบยังออกได้ พร้อมคำเตือน) · ค่าตั้งต้น false = พฤติกรรมเดิม</param>
+/// <param name="LinkCertRequested">รอบ 271: เอกสารตั้งใจผูก 50 ทวิ ที่ออกไว้แล้ว (<c>Document.WhtLinkCertId</c>) และใบนั้นยังไม่ผูกกับเอกสารนี้ ·
+/// ค่าตั้งต้น false = พฤติกรรมเดิมทุกประการ</param>
+/// <param name="LinkedCertCovers">รอบ 271 ฝ่ายค้าน H2: เอกสารนี้มี 50 ทวิ ที่ "ผูกด้วยมือ" แล้ว (<c>LinkedAt</c> หรือเป็นใบตาม <c>WhtLinkCertId</c>) ทุกสถานะรวมร่าง ⇒
+/// ใบนั้นครอบการจ่ายของเอกสารนี้ (1 ใบ : 1 การจ่าย) — ห้ามออกใบใหม่ (ออกใหม่ = นับซ้ำ F6) · ค่าตั้งต้น false = พฤติกรรมเดิม</param>
 public sealed record WhtCertIssueFacts(
     WhtCertIssueTrigger Trigger,
     DocumentType DocumentType,
@@ -56,7 +63,9 @@ public sealed record WhtCertIssueFacts(
     int ActiveFullDocCertsNotDraft,
     int ActiveCertsAny,
     bool PayeeReviewPending = false,
-    bool ViaEWithholding = false);
+    bool ViaEWithholding = false,
+    bool LinkCertRequested = false,
+    bool LinkedCertCovers = false);
 
 /// <summary>คำตอบ: ทำอะไร · ออกในนามใคร · เหตุผลภาษาไทย (แสดงผู้ใช้ได้)</summary>
 public sealed record WhtCertIssueDecision(WhtCertIssueAction Action, Guid PayeeContactId, string Reason);
@@ -130,6 +139,9 @@ public static class WhtCertIssuePlan
             : f.ActiveCertsAny > 0;
         if (covered)
             return D(WhtCertIssueAction.AlreadyIssued, "มีหนังสือรับรองหัก ณ ที่จ่ายของการจ่ายนี้แล้ว");
+        // รอบ 271 ฝ่ายค้าน H2: ใบที่ผูกด้วยมือ (รวมร่าง) ครอบการจ่ายแล้ว — ทางอัตโนมัติใช้ใบที่ผูก (LinkExisting) ไม่ออกใบใหม่ · กด "สร้างใบ" เองยังเดินด่านใบซ้ำของตัวออกใบ
+        if (f.LinkedCertCovers && f.Trigger != WhtCertIssueTrigger.Manual)
+            return D(WhtCertIssueAction.LinkExisting, "ใช้ 50 ทวิ ที่ผูกไว้แล้วกับเอกสารนี้ (ไม่ออกใบใหม่)");
 
         // รอบ 204 (c3): e-Withholding — ธนาคารหัก/นำส่ง + กรมสรรพากรออกหลักฐานเอง ⇒ ทางอัตโนมัติไม่ออก (ไม่ใช่ "รอออกเอง" — ไม่ต้องมีใบ) ·
         // กดทีละใบ = ผู้ใช้ตั้งใจ ⇒ ออกได้ พร้อมคำเตือน (ไม่ล็อกแข็ง · คำสั่งเจ้าของ 2026-10-13)
@@ -137,6 +149,13 @@ public static class WhtCertIssuePlan
             return f.Trigger == WhtCertIssueTrigger.Manual
                 ? D(WhtCertIssueAction.IssueNow, EWithholdingManualWarning)
                 : D(WhtCertIssueAction.NotApplicable, EWithholdingLabel);
+
+        // รอบ 271: "ออกใบไว้แล้ว — ผูกกับ 50 ทวิ ที่มีอยู่" ชนะติ๊ก "สร้างอัตโนมัติ" (ทางอัตโนมัติทุกทางเดินจุดนี้จุดเดียว) ·
+        // อนุมัติแต่ยังไม่จ่าย ⇒ ผูกตอนบันทึกจ่าย (เดือนจ่ายจริงรู้ตอนนั้น — ภ.ง.ด.3/53 cash basis) · กด "สร้างใบ" เอง (Manual) = ผู้ใช้ตั้งใจออกใบใหม่ ⇒ ทางเดิม
+        if (f.LinkCertRequested && f.Trigger != WhtCertIssueTrigger.Manual)
+            return f.Trigger == WhtCertIssueTrigger.Approve && !f.PaidAtTrigger
+                ? D(WhtCertIssueAction.WaitForPayment, "ยังไม่จ่ายเงิน — ระบบจะผูก 50 ทวิ ที่เลือกไว้ตอนบันทึกจ่าย (ไม่ออกใบใหม่)")
+                : D(WhtCertIssueAction.LinkExisting, "ผูก 50 ทวิ ที่ออกไว้แล้วกับการจ่ายนี้ (ไม่ออกใบใหม่)");
 
         if (f.Trigger != WhtCertIssueTrigger.Manual)
         {

@@ -801,7 +801,7 @@
                 ${String(d.taxType).startsWith('WithholdingTax') ? `
                 <div><span class="text-gray-500 text-xs">เงินได้ที่จ่าย (ฐานหัก)</span><div class="text-lg font-bold">${Layout.money(d.totalIncome)}</div></div>
                 <div><span class="text-gray-500 text-xs">จำนวนผู้ถูกหัก/รายการ</span><div class="text-lg font-bold">${(d.lines || []).filter(l => l.side !== 'summary').length}</div></div>
-                <div><span class="text-gray-500 text-xs">ภาษีนำส่ง</span><div class="text-lg font-bold ${d.totalTaxWithheld > 0 ? 'text-danger' : ''}">${Layout.money(d.totalTaxWithheld)}</div><div class="text-xs text-gray-400">ยื่นภายในวันที่ 7 (e-Filing 15) เดือนถัดไป</div></div>
+                <div><span class="text-gray-500 text-xs">ภาษีนำส่ง</span><div class="text-lg font-bold ${d.totalTaxWithheld > 0 ? 'text-danger' : ''}" id="kpiWhtTax">${Layout.money(d.totalTaxWithheld)}</div><div class="text-xs text-gray-400">ยื่นภายในวันที่ 7 (e-Filing 15) เดือนถัดไป</div></div>
                 ` : d.taxType === 'CorporateIncomeTax' ? `
                 <div><span class="text-gray-500 text-xs">รายได้รวมทั้งปี</span><div class="text-lg font-bold">${Layout.money(d.totalIncome)}</div></div>
                 <div><span class="text-gray-500 text-xs">กำไรสุทธิก่อนภาษี</span><div class="text-lg font-bold">${Layout.money(d.netVat)}</div></div>
@@ -850,6 +850,10 @@
             const esc = (s) => Layout.esc(s);
             const renderRow = (ln) => {
               const ex = !!ln.isExcluded;
+              // รอบ 273: แถว [สรุป] ของ ภ.ง.ด. (มี linesTaxTotal จากเซิร์ฟเวอร์) = ยอดที่เซิร์ฟเวอร์คำนวณใหม่ทุกครั้งที่บันทึก ⇒ ล็อกช่องยอด + บอกเหตุผล
+              // (ห้าม silent no-op — เดิมแก้ได้แต่ถูกคำนวณทับเงียบ ๆ)
+              const derived = ln.side === 'summary' && d.linesTaxTotal != null;
+              const ro = derived ? ' readonly tabindex="-1" title="ยอดรวมของผู้ถูกหักรายนี้ — ระบบคำนวณจากบรรทัดรายการ (แก้ที่บรรทัดรายการแทน)" style="background:var(--bg-secondary);' : ' style="';
               const rowStyle = ex ? 'opacity:.45;text-decoration:line-through' : '';
               const chk = editable
                 ? `<input type="checkbox" data-line="${ln.id}" data-field="include" ${ex ? '' : 'checked'} title="ใช้รายการนี้ในรายงาน">`
@@ -859,18 +863,21 @@
                 <td>${ln.lineOrder}</td>
                 <td>${editable ? `<input class="form-input form-input-sm" data-line="${ln.id}" data-field="description" value="${esc(ln.description)}" style="min-width:160px">` : (ln.description || '-')}</td>
                 <td class="text-xs">${esc(ln.taxPayerName) || '-'}</td>
-                <td class="text-right">${editable ? `<input type="number" class="form-input form-input-sm text-right" data-line="${ln.id}" data-field="incomeAmount" value="${ln.incomeAmount}" step="0.01" style="width:100px">` : Layout.money(ln.incomeAmount)}</td>
-                <td class="text-right">${editable ? `<input type="number" class="form-input form-input-sm text-right" data-line="${ln.id}" data-field="taxRate" value="${ln.taxRate}" step="0.01" style="width:64px">` : ln.taxRate}</td>
-                <td class="text-right">${editable ? `<input type="number" class="form-input form-input-sm text-right" data-line="${ln.id}" data-field="taxAmount" value="${ln.taxAmount}" step="0.01" style="width:100px">` : Layout.money(ln.taxAmount)}</td>
+                <td class="text-right">${editable ? `<input type="number" class="form-input form-input-sm text-right" data-line="${ln.id}" data-field="incomeAmount" value="${ln.incomeAmount}" step="0.01"${ro}width:100px">` : Layout.money(ln.incomeAmount)}</td>
+                <td class="text-right">${editable ? `<input type="number" class="form-input form-input-sm text-right" data-line="${ln.id}" data-field="taxRate" value="${ln.taxRate}" step="0.01"${ro}width:64px">` : ln.taxRate}</td>
+                <td class="text-right">${editable ? `<input type="number" class="form-input form-input-sm text-right" data-line="${ln.id}" data-field="taxAmount" value="${ln.taxAmount}" step="0.01"${ro}width:100px">` : Layout.money(ln.taxAmount)}</td>
               </tr>`;
             };
-            const renderTable = (title, color, rows) => {
-              const sub = rows.filter(r => !r.isExcluded).reduce((s, r) => s + Number(r.taxAmount || 0), 0);
+            // รอบ 273 ฝ่ายค้านข้อ 1: ยอดท้ายตาราง "รายการ" มาจากเซิร์ฟเวอร์ (linesTaxTotal · ตัวตั้งเดียวกับยอดหัว/ตัวตรวจก่อนยื่น) —
+            // เดิมบวกเองรวมแถว [สรุป] ⇒ ท้ายตาราง 357.30 ขณะการ์ดหัว 178.65 · null (ตารางยกเว้น/เครดิตของ ภ.พ.30 · ภ.ง.ด.50) = บวกแถวที่เลือกใช้ที่ไม่ใช่แถวสรุป
+            const renderTable = (title, color, rows, serverTotal) => {
+              const sub = serverTotal != null ? Number(serverTotal)
+                : rows.filter(r => !r.isExcluded && r.side !== 'summary').reduce((s, r) => s + Number(r.taxAmount || 0), 0);
               return `<div style="margin:14px 0 4px;font-weight:600;font-size:13px;color:${color}">${title} <span class="text-xs text-gray-400">(${rows.length} รายการ)</span></div>
                 <div class="table-container"><table class="table">
                 <thead><tr><th style="width:36px" title="เลือกใช้/ไม่ใช้">ใช้</th><th>#</th><th>รายการ</th><th>ผู้เสียภาษี</th><th class="text-right">มูลค่า</th><th class="text-right">อัตรา%</th><th class="text-right">ภาษี</th></tr></thead>
                 <tbody>${rows.map(renderRow).join('')}</tbody>
-                <tfoot><tr style="font-weight:700;background:var(--bg-secondary)"><td colspan="6" class="text-right">รวมภาษี (เฉพาะรายการที่เลือกใช้)</td><td class="text-right">${Layout.money(sub)}</td></tr></tfoot>
+                <tfoot><tr style="font-weight:700;background:var(--bg-secondary)"><td colspan="6" class="text-right">รวมภาษี (เฉพาะรายการที่เลือกใช้)</td><td class="text-right"${serverTotal != null ? ' id="linesTaxTotal"' : ''}>${Layout.money(sub)}</td></tr></tfoot>
                 </table></div>`;
             };
             // ── ฟอร์มราชการ §87 (ฉบับที่ 104): ลำดับ · วันที่ใบกำกับ · เลขที่ใบกำกับ ·
@@ -943,7 +950,7 @@
                 html += (key === 'summary') ? renderTable(title, color, rows) : renderVatTable(title, color, rows);
               }
             } else {
-              html += renderTable('รายการ', '#334155', d.lines);
+              html += renderTable('รายการ', '#334155', d.lines, d.linesTaxTotal);
             }
           }
           html += `<div class="form-group" style="margin-top:12px"><label class="form-label text-xs text-gray-500" data-i18n="common.note">หมายเหตุ</label>${editable ? `<textarea class="form-input" id="taxNotes" rows="2" placeholder="หมายเหตุ...">${Layout.esc(d.notes || '')}</textarea>` : `<div>${Layout.esc(d.notes || '-')}</div>`}</div>`;
@@ -1078,6 +1085,13 @@
           // อัปเดต KPI ภาษีขาย/ซื้อ/สุทธิ ถ้ามี element
           const set = (elid, v) => { const e = document.getElementById(elid); if (e && v != null) e.textContent = Layout.money(v); };
           set('kpiOutputVat', d?.outputVat); set('kpiInputVat', d?.inputVat); set('kpiNetVat', d?.netVat);
+          // รอบ 273: ภ.ง.ด. — ยอดหัว + ท้ายตาราง + แถว [สรุป] จากเซิร์ฟเวอร์หลังคำนวณใหม่ (ไม่บวกเองฝั่งหน้า)
+          set('kpiWhtTax', d?.totalTaxWithheld); set('linesTaxTotal', d?.linesTaxTotal);
+          (d?.lines || []).filter(l => l.side === 'summary').forEach(l => {
+            const inc = document.querySelector(`#detailContent input[data-line="${l.id}"][data-field="incomeAmount"]`);
+            const tax = document.querySelector(`#detailContent input[data-line="${l.id}"][data-field="taxAmount"]`);
+            if (inc) inc.value = l.incomeAmount; if (tax) tax.value = l.taxAmount;
+          });
           if (ind) { ind.textContent = '✓ บันทึกอัตโนมัติแล้ว'; ind.style.color = '#10b981'; setTimeout(() => { if (ind.textContent.includes('บันทึก')) ind.textContent = ''; }, 2500); }
         } catch (e) {
           if (ind) { ind.textContent = '⚠ บันทึกไม่สำเร็จ กด "บันทึก"'; ind.style.color = '#dc2626'; }

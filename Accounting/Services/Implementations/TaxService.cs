@@ -2062,10 +2062,9 @@ public partial class TaxService : ITaxService
                 TaxPayerId = group.Key,
                 TaxPayerName = vendorName,
                 Description = $"[สรุป] {vendorName}",
-                IncomeAmount = group.Sum(l => l.IncomeAmount),
+                // ยอดจาก Apply ท้ายเมธอด (PayeeSummaryOf — ตัวตั้งเดียวกับตอนติ๊ก/แก้บรรทัด)
                 TaxRate = 0,
-                TaxAmount = group.Sum(l => l.TaxAmount),
-                IncomeTypeCode = "SUMMARY"
+                IncomeTypeCode = Accounting.Helpers.VatReportLineKind.Summary
             });
         }
 
@@ -2176,10 +2175,8 @@ public partial class TaxService : ITaxService
         // เดิมตรงนี้ไม่กรอง IsExcluded ⇒ ยอดหัวตอน generate กับตอน recalc หลัง
         // ติ๊กบรรทัด ใช้คนละสูตร (defect class "สูตรเดียวกันต้องมีที่เดียว") —
         // สำคัญขึ้นเมื่อรายงานมีบรรทัด cert ร่างที่ excluded ตั้งแต่ generate
-        report.TotalIncome = report.Lines
-            .Where(l => l.IncomeTypeCode != "SUMMARY" && !l.IsExcluded).Sum(l => l.IncomeAmount);
-        report.TotalTaxWithheld = report.Lines
-            .Where(l => l.IncomeTypeCode != "SUMMARY" && !l.IsExcluded).Sum(l => l.TaxAmount);
+        // รอบ 273: ผ่านตัวตั้งตัวเดียว Helpers/WhtReportTotals (ตัวเดียวกับตัวตรวจก่อนยื่น RD-WHT-002)
+        Accounting.Helpers.WhtReportTotals.Apply(report);
         // ใบแนบ ภ.ง.ด.3/53 เรียงตามวันที่จ่ายเหมือนกัน (ตรวจง่าย + ตรงแบบยื่น)
         NormalizeReportLineOrder(report);
     }
@@ -2619,9 +2616,13 @@ public partial class TaxService : ITaxService
 
         // Group by employee to summarize annual income
         var employeeGroups = payrollDetails.GroupBy(d => d.EmployeeId);
+        var badIdentity = new List<string>();   // รอบ 274: เลขประจำตัวถอดรหัสไม่ได้/ไม่ถูกต้อง ⇒ ช่องเลขว่าง + แจ้งใน Notes (ไม่ลงตัวเลขที่ตัดจาก ciphertext)
         foreach (var group in employeeGroups)
         {
             var emp = group.First().Employee;
+            var empIdentity = Accounting.Helpers.EmployeeTaxIdentity.Inspect(emp.TaxId, emp.CitizenId);
+            if (empIdentity.Problem is Accounting.Helpers.TaxIdProblem.Undecryptable or Accounting.Helpers.TaxIdProblem.Invalid)
+                badIdentity.Add($"{emp.EmployeeCode} — {empIdentity.Reason}");
             var annualGross = group.Sum(d => d.GrossIncome);
             var annualTax = group.Sum(d => d.WithholdingTax);
             var annualSso = group.Sum(d => d.SocialSecurityEmployee);
@@ -2640,7 +2641,7 @@ public partial class TaxService : ITaxService
             {
                 TaxReportId = report.Id,
                 LineOrder = lineOrder++,
-                TaxPayerId = Accounting.Helpers.EmployeeTaxIdentity.Resolve(emp.TaxId, emp.CitizenId),
+                TaxPayerId = empIdentity.Value,
                 TaxPayerName = $"{emp.TitleTh}{emp.FirstNameTh} {emp.LastNameTh}",
                 TransactionDate = new DateTime(year, 12, 31),
                 Description = $"รหัส {emp.EmployeeCode} | เงินได้รวม {annualGross:N2} | หักค่าลดหย่อน {totalDeductions:N2}",
@@ -2658,7 +2659,7 @@ public partial class TaxService : ITaxService
                 {
                     TaxReportId = report.Id,
                     LineOrder = lineOrder++,
-                    TaxPayerId = Accounting.Helpers.EmployeeTaxIdentity.Resolve(emp.TaxId, emp.CitizenId),
+                    TaxPayerId = empIdentity.Value,
                     TaxPayerName = $"{emp.FirstNameTh} {emp.LastNameTh}",
                     TransactionDate = new DateTime(year, 12, 31),
                     Description = taxDiff > 0
@@ -2667,7 +2668,7 @@ public partial class TaxService : ITaxService
                     IncomeAmount = 0,
                     TaxRate = 0,
                     TaxAmount = taxDiff,
-                    IncomeTypeCode = taxDiff > 0 ? "TAX_ADDITIONAL" : "TAX_REFUND"
+                    IncomeTypeCode = taxDiff > 0 ? Accounting.Helpers.WhtReportTotals.Pnd91TaxAdditional : Accounting.Helpers.WhtReportTotals.Pnd91TaxRefund
                 });
             }
 
@@ -2676,8 +2677,11 @@ public partial class TaxService : ITaxService
             totalSso += annualSso;
         }
 
-        report.TotalIncome = totalIncome;
-        report.TotalTaxWithheld = totalTax;
+        if (badIdentity.Count > 0)
+            report.Notes = ((report.Notes ?? "") + $"\n⛔ {badIdentity.Count} คนเลขประจำตัวใช้ไม่ได้ (ช่องเลขว่าง — ห้ามยื่นจนกว่าจะแก้): "
+                + string.Join(" · ", badIdentity.Take(20))).Trim();
+        // รอบ 273 ฝ่ายค้านข้อ 4: ยอดหัวผ่านตัวตั้งเดียวกับตอนกดบันทึกบรรทัด (แถวผลต่างภาษีไม่นับ) — เดิมสองทางให้ความหมายต่างกัน
+        Accounting.Helpers.WhtReportTotals.Apply(report);
         report.OutputVat = totalSso; // Reuse field for SSO total
         report.Notes = $"จำนวนพนักงาน: {employeeGroups.Count()} คน | ปีภาษี: {year}";
     }
@@ -3388,8 +3392,7 @@ public partial class TaxService : ITaxService
                 // ภ.พ.36 เก็บยอดนำส่งใน OutputVat/NetVat — เดิมเข้า else ล่างซึ่ง
                 // อัปเดตแค่ TotalTaxWithheld ⇒ ติ๊กบรรทัดออกแล้ว "VAT นำส่ง" บนจอ
                 // (อ่าน outputVat/netVat) ค้างค่าเดิม
-                var pp36Active = report.Lines
-                    .Where(l => !l.IsExcluded && l.IncomeTypeCode != "SUMMARY").ToList();
+                var pp36Active = Accounting.Helpers.WhtReportTotals.CountedLines(report.Lines).ToList();
                 report.TotalIncome = pp36Active.Sum(l => l.IncomeAmount);
                 report.OutputVat = pp36Active.Sum(l => l.TaxAmount);
                 report.InputVat = 0;
@@ -3397,9 +3400,7 @@ public partial class TaxService : ITaxService
             }
             else
             {
-                var active = report.Lines.Where(l => !l.IsExcluded && l.IncomeTypeCode != "SUMMARY");
-                report.TotalIncome = active.Sum(l => l.IncomeAmount);
-                report.TotalTaxWithheld = active.Sum(l => l.TaxAmount);
+                Accounting.Helpers.WhtReportTotals.Apply(report);   // รอบ 273: ตัวตั้งเดียวกับตัวตรวจก่อนยื่น
             }
         }
 
@@ -3575,11 +3576,7 @@ public partial class TaxService : ITaxService
     {
         if (report.TaxType is not (TaxType.WithholdingTax1 or TaxType.WithholdingTax2 or TaxType.WithholdingTax3
             or TaxType.WithholdingTax53 or TaxType.WithholdingTax54)) return;
-        var active = report.Lines
-            .Where(l => !l.IsExcluded && l.IncomeTypeCode != "SUMMARY")
-            .ToList();
-        report.TotalIncome = active.Sum(l => l.IncomeAmount);
-        report.TotalTaxWithheld = active.Sum(l => l.TaxAmount);
+        Accounting.Helpers.WhtReportTotals.Apply(report);   // รอบ 273: ตัวตั้งเดียวกับตัวตรวจก่อนยื่น RD-WHT-002
     }
 
     // หมายเหตุ §82/5(6) (ดึงเอกสาร): ตัวตัดอัตโนมัติจาก keyword (IsProhibitedVehicleExpense)
@@ -4694,5 +4691,13 @@ public partial class TaxService : ITaxService
         r.Notes,
         // echo CitAmount กลับด้วย (กฎ "เก็บแล้วต้อง echo กลับ") — UI/รายงานจะได้
         // แยกยอด CIT ออกจากยอดหัก ณ ที่จ่ายได้โดยไม่ต้องเดาจากชนิดรายงาน
-        CitAmount: r.CitAmount);
+        CitAmount: r.CitAmount,
+        LinesTaxTotal: LinesTaxTotalOf(r));
+
+    /// <summary>ยอดท้ายตาราง "รายการ" บนจอ — ตัวตั้งเดียวกับยอดหัว/ตัวตรวจก่อนยื่น (รอบ 273 ฝ่ายค้านข้อ 1)</summary>
+    internal static decimal? LinesTaxTotalOf(TaxReport r)
+    {
+        if (r.TaxType is TaxType.VAT or TaxType.CorporateIncomeTax || r.Lines == null) return null;
+        return Accounting.Helpers.WhtReportTotals.Of(r.Lines).Tax;
+    }
 }

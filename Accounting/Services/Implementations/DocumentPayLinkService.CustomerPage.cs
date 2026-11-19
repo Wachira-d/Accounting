@@ -173,6 +173,9 @@ public partial class DocumentPayLinkService
             : new List<CustomerDocPageRelated>();
         // รอบ 267 P4: ส่วนหลังจ่าย (สถานะสลิป · ข้อความใบเสร็จ · การ์ด 50 ทวิ) — แสดงผลอย่างเดียว (ไม่ออกใบเสร็จ/ไม่ตัดสินสลิปจากการเปิดหน้า)
         var afterPay = await AfterPayAsync(companyId, d, row, mode, isEnglish, payOnly, related, ct);
+        // รอบ 273 ชุดแก้ฝ่ายค้าน L3: ใบเสร็จรับชำระ — แถวยอด/บรรทัดอ้างอิงจากตัวโหลด/ตัวตัดสินเดียวกับกระดาษ (หน้าแสดงอย่างเดียว · ภาษาเดียวกับเอกสาร)
+        var settlementTotals = show && SettlementReceiptTotals.IsReceiptType(d.Type)
+            ? await SettlementReceiptTotalsLoader.DtoForAsync(_db, companyId, d.Id, isEnglish) : null;
         return new CustomerDocPageView(
             Mode: CustomerDocPage.ModeCode(mode),
             LinkState: CustomerDocPage.LinkState.Usable.ToString(),
@@ -199,7 +202,7 @@ public partial class DocumentPayLinkService
             RespondedBy: respondedBy,
             RespondedAt: respondedAt,
             ExpiresAt: mode == CustomerDocPage.Mode.Link ? row.PayLinkExpiresAt : null)
-        { Respond = respondForm, Responses = responses, AfterPay = afterPay };
+        { Respond = respondForm, Responses = responses, AfterPay = afterPay, SettlementTotals = settlementTotals };
     }
 
     /// <summary>

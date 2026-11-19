@@ -1021,7 +1021,7 @@
           <div style="margin-top:16px;display:flex;justify-content:flex-end">
             <div style="width:320px;max-width:100%;background:var(--gray-50);border:1px solid var(--gray-200);border-radius:10px;padding:14px 18px">
               <div style="display:grid;grid-template-columns:1fr auto;gap:8px 16px;font-size:14px;align-items:center">
-                <span style="color:var(--gray-500)">ยอดรวมก่อน VAT</span><strong id="sumSubTotal" style="text-align:right">0.00</strong>
+                <span id="sumSubTotalLabel" style="color:var(--gray-500)">ยอดรวมก่อน VAT</span><strong id="sumSubTotal" style="text-align:right">0.00</strong>
                 <span style="color:var(--gray-500)" title="ส่วนลดจากยอดรวม — ระบบเฉลี่ยลงแต่ละรายการให้ VAT ถูกต้อง">ส่วนลดท้ายบิล</span>
                 <span style="display:flex;gap:4px;justify-content:flex-end;align-items:center">
                   <input type="number" id="fBillDiscount" inputmode="decimal" value="0" min="0" step="0.01" oninput="Page.calcSum()" style="width:84px;text-align:right;padding:4px 6px;border:1px solid var(--gray-300);border-radius:6px;font-size:13px">
@@ -1034,7 +1034,7 @@
                      เพื่อให้เห็นชัดว่า VAT/WHT คิดจากฐานนี้ (ถูกหลักบัญชี) -->
                 <span id="sumAfterDiscLabel" style="color:var(--gray-600);font-weight:600;display:none">ยอดหลังหักส่วนลด (ฐานภาษี)</span>
                 <strong id="sumAfterDisc" style="text-align:right;display:none">0.00</strong>
-                <span style="color:var(--gray-500)">VAT</span><strong id="sumVat" style="text-align:right">0.00</strong>
+                <span id="sumVatLabel" style="color:var(--gray-500)">VAT</span><strong id="sumVat" style="text-align:right">0.00</strong>
                 <span style="color:var(--gray-500)">หัก ณ ที่จ่าย</span><strong id="sumWht" style="text-align:right">0.00</strong>
                 <!-- รอบ 193 (คำตัดสินเจ้าของข้อ 8): ผลต่างจากการปัดเศษ — SubTotal = Σ รายการ + ค่านี้ (|x| < 1 บาท) ·
                      ใบจากสแกนที่ราคาต่อหน่วย × จำนวน ต่างจากยอดที่พิมพ์ (Lazada −0.01) ระบบเติมให้ · ลงบัญชี 54960 -->
@@ -1075,9 +1075,11 @@
                    แต่ต้องบอกผู้ใช้ว่าต่างเท่าไรและกดอะไรถึงจะคิดใหม่ -->
               <div id="sumVatKeptNote" style="display:none;font-size:11px;color:#92400e;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;padding:6px 8px;margin-top:6px;line-height:1.6"></div>
               <div style="display:grid;grid-template-columns:1fr auto;gap:16px;margin-top:10px;padding-top:10px;border-top:1px solid var(--gray-200);font-size:18px;font-weight:700;color:var(--primary)">
-                <span>ยอดสุทธิ</span><span id="sumTotal" style="text-align:right">0.00</span>
+                <span id="sumTotalLabel">ยอดสุทธิ</span><span id="sumTotal" style="text-align:right">0.00</span>
               </div>
               <div id="sumTotalWords" style="font-size:11px;color:var(--gray-500);margin-top:4px;font-style:italic;text-align:right"></div>
+              <!-- รอบ 273 ชุดแก้ฝ่ายค้าน L3: ร่างใบเสร็จรับชำระที่ไม่ถือ VAT — บรรทัดอ้างอิงจากเซิร์ฟเวอร์ (settlementTotals.lines) · แสดงอย่างเดียว -->
+              <div id="sumSettlementNote" style="display:none;font-size:11px;color:#374151;margin-top:6px;line-height:1.6"></div>
               <!-- หักมัดจำที่เลือกไว้ (จะ apply ตอนบันทึกและอนุมัติ) — แสดงให้เห็นก่อน
                    บันทึกว่าใบนี้จะเหลือเก็บจริงเท่าไร. ยอดสุทธิของใบ (ตาม §86/4)
                    ยังเป็นยอดเต็ม — มัดจำไปลด "ยอดค้างชำระ" หลังอนุมัติ ไม่ใช่ลดยอดใบ -->
@@ -1096,11 +1098,34 @@
                ติ๊ก "สร้างอัตโนมัติ" (ค่าตั้งต้น = เปิด = พฤติกรรมเดิม) + ผู้ถูกหักที่ไม่ใช่ผู้รับเงิน (ซื้อประกันผ่านโบรกเกอร์ → 50 ทวิ ในนามบริษัทประกัน) ·
                แสดง/ซ่อนโดย Page.refreshWhtCertPanel (เรียกจาก calcSum) · ค่าเก็บบนเอกสาร (WhtCertAutoIssue/WhtPayeeContactId) echo กลับตอนแก้ไข -->
           <div id="whtCertPanel" style="display:none;margin-top:12px;padding:12px 14px;border:1px solid #c7d2fe;background:#eef2ff;border-radius:10px">
-            <label style="display:flex;gap:8px;align-items:flex-start;font-size:13px;cursor:pointer">
-              <input type="checkbox" id="fWhtCertAutoIssue" checked style="margin-top:3px">
-              <span><b>สร้างหนังสือรับรองหัก ณ ที่จ่าย (50 ทวิ) อัตโนมัติเมื่ออนุมัติ/จ่าย</b><br>
-                <span style="color:#475569;font-size:12px">ไม่ติ๊ก = ระบบไม่สร้างใบเอง — ใบจะรอในหน้า "หนังสือรับรองหัก ณ ที่จ่าย" → "เอกสารรอออกใบ" ให้ออกเอง (ไม่ถูกลืม)</span></span>
+            <!-- รอบ 271 — "ใบ 50 ทวิ ของการจ่ายนี้มาจากไหน" เป็นคำถามเดียว ⇒ ตัวเลือก 3 ทาง (radio) แทนติ๊กซ้อน ·
+                 ข้อ 1/3 = WhtCertAutoIssue true/false เดิม (#fWhtCertAutoIssue ซ่อนไว้ ตั้งตามตัวเลือก) · ข้อ 2 = WhtLinkCertId (+ คำเตือนที่รับทราบ) ·
+                 ผู้สมัคร + ผลตรวจรายใบมาจากเซิร์ฟเวอร์ (WhtCertLinkPlan) — หน้าเว็บแสดงอย่างเดียว · หลังอนุมัติล็อก + บอกทางไปหน้ารายละเอียด -->
+            <div style="font-size:13px;font-weight:600;color:#334155">หนังสือรับรองหัก ณ ที่จ่าย (50 ทวิ) ของการจ่ายนี้</div>
+            <input type="checkbox" id="fWhtCertAutoIssue" checked style="display:none" aria-hidden="true" tabindex="-1">
+            <label style="display:flex;gap:8px;align-items:flex-start;font-size:13px;cursor:pointer;margin-top:4px">
+              <input type="radio" name="whtCertSource" id="fWhtSrcAuto" value="auto" checked style="margin-top:3px" onchange="Page.onWhtCertSourceChange()">
+              <span><b>ให้ระบบออกใบใหม่อัตโนมัติเมื่ออนุมัติ/จ่าย</b></span>
             </label>
+            <label id="fWhtSrcLinkWrap" style="display:flex;gap:8px;align-items:flex-start;font-size:13px;cursor:pointer;margin-top:4px">
+              <input type="radio" name="whtCertSource" id="fWhtSrcLink" value="link" style="margin-top:3px" onchange="Page.onWhtCertSourceChange()">
+              <span><b>ออกใบไว้แล้ว — ผูกกับ 50 ทวิ ที่มีอยู่</b> <span style="color:#64748b;font-size:12px">(ระบบไม่ออกใบใหม่ — กันนับซ้ำในแบบ ภ.ง.ด.)</span></span>
+            </label>
+            <label style="display:flex;gap:8px;align-items:flex-start;font-size:13px;cursor:pointer;margin-top:4px">
+              <input type="radio" name="whtCertSource" id="fWhtSrcManual" value="manual" style="margin-top:3px" onchange="Page.onWhtCertSourceChange()">
+              <span><b>ยังไม่ออก — ฉันจะออกเองภายหลัง</b><br>
+                <span style="color:#475569;font-size:12px">ระบบไม่สร้างใบเอง — ใบจะรอในหน้า "หนังสือรับรองหัก ณ ที่จ่าย" → "เอกสารรอออกใบ" ให้ออกเอง (ไม่ถูกลืม)</span></span>
+            </label>
+            <div id="whtSrcLockedHint" class="form-help" style="display:none;margin-top:4px;font-size:12px;color:#92400e"></div>
+            <div id="whtLinkBox" style="display:none;margin-top:8px;padding:8px 10px;background:#fff;border:1px solid #c7d2fe;border-radius:8px">
+              <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+                <div id="whtLinkHead" style="font-size:12.5px;font-weight:600;color:#334155"></div>
+                <button type="button" class="btn btn-sm btn-ghost" onclick="Page.loadWhtLinkCandidates(true)" title="ค้นใบที่ออกไว้แล้วใหม่ตามยอด/ผู้ถูกหักบนฟอร์ม">🔄 ค้นใหม่</button>
+              </div>
+              <div id="whtLinkList" style="margin-top:6px"></div>
+              <div id="whtLinkAcks" style="margin-top:6px;font-size:12.5px"></div>
+              <div id="whtLinkNote" class="form-help" style="margin-top:6px;font-size:12px"></div>
+            </div>
             <div style="margin-top:10px">
               <div style="font-size:13px;font-weight:600;color:#334155">ผู้ถูกหักภาษี ณ ที่จ่าย (ชื่อบน 50 ทวิ และแบบ ภ.ง.ด.)</div>
               <label style="display:flex;gap:8px;align-items:flex-start;font-size:13px;cursor:pointer;margin-top:4px">
@@ -1764,6 +1789,7 @@
   <script src="/js/translations.js"></script>
   <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
+  <script src="/js/wht-link.js"></script>
   <script src="/js/export.js"></script>
   <script src="/js/product-lookup.js"></script>
   <script src="/js/partner-outbound-pay.js"></script>
@@ -2465,6 +2491,40 @@
       },
 
       // ── รอบ 204 (ข้อ 145): เปลี่ยนผู้ถูกหักภาษีหลังอนุมัติ ──
+      /** รอบ 271 — กล่อง "50 ทวิ ของใบนี้" ในรายละเอียด (เซิร์ฟเวอร์ตัดสินว่าเปลี่ยน/ผูกได้ไหม — ปุ่มที่ใช้ไม่ได้ = ปิด + เหตุผล ไม่ซ่อน) */
+      async renderWhtLinkStatus(docId) {
+        const el = document.getElementById('whtLinkStatus_' + docId);
+        const api = Layout.api();
+        if (!el || !api) return;
+        let s;
+        try { s = (await API.quietly(() => api.getDocWhtLinkStatus(docId))).data; }
+        catch (e) { el.innerHTML = `<div class="text-xs" style="color:#b91c1c">โหลด 50 ทวิ ของใบนี้ไม่สำเร็จ: ${Layout.esc(e.message || '')}</div>`; return; }
+        if (!s || !s.applies) { el.innerHTML = ''; return; }
+        const btn = (label, onclick, enabled, why) => enabled
+          ? `<button type="button" class="btn btn-sm btn-secondary" style="padding:2px 10px;font-size:11.5px" onclick="${Layout.esc(onclick)}">${Layout.esc(label)}</button>`
+          : `<button type="button" class="btn btn-sm btn-secondary" style="padding:2px 10px;font-size:11.5px" disabled title="${Layout.esc(why || '')}">${Layout.esc(label)}</button>`;
+        const rows = (s.certs || []).map(c => `<div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:3px${c.status === 'Voided' ? ';opacity:.6' : ''}">`
+          + `<span><b>${Layout.esc(c.certificateNumber)}</b> · ${Layout.esc(c.statusLabel)} · ${Layout.esc(c.formLabel)} ${Layout.esc(String(c.taxMonth).padStart(2, '0'))}/${Layout.esc(String(Number(c.taxYear) + 543))}`
+          + ` · ภาษี ${Layout.money(c.totalTaxAmount)} · ${Layout.esc(c.originLabel)}</span>`
+          + (c.status === 'Voided' ? '' : btn('🔁 เปลี่ยน 50 ทวิ ที่ผูก',
+              `Page.openWhtLinkModal('${Layout.jsArg(docId)}','${Layout.jsArg(c.sourcePaymentId || '')}')`, c.canRelink, c.relinkBlockedReason))
+          + (c.status !== 'Voided' && !c.canRelink && c.relinkBlockedReason
+              ? `<div class="text-xs" style="flex-basis:100%;color:#991b1b">⛔ ${Layout.esc(c.relinkBlockedReason)}</div>` : '')
+          + '</div>').join('');
+        const active = (s.certs || []).some(c => c.status !== 'Voided');
+        const first = active ? '' : `<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:4px">`
+          + btn('ผูกกับ 50 ทวิ ที่ออกไว้แล้ว', `Page.openWhtLinkModal('${Layout.jsArg(docId)}','')`, s.canLinkFirst, s.linkFirstBlockedReason)
+          + `<a class="btn btn-sm btn-secondary" style="padding:2px 10px;font-size:11.5px" href="/pages/wht.html?pending=1">สร้างใบ (ลิสต์รอออกใบ)</a></div>`
+          + (!s.canLinkFirst && s.linkFirstBlockedReason ? `<div class="text-xs" style="color:#64748b">${Layout.esc(s.linkFirstBlockedReason)}</div>` : '');
+        el.innerHTML = `<div style="padding:6px 10px;border:1px solid #c7d2fe;background:#eef2ff;border-radius:8px;font-size:12px">`
+          + `<div style="font-weight:600;color:#334155">50 ทวิ ของใบนี้</div>`
+          + (rows || '<div style="color:#64748b">ยังไม่มีหนังสือรับรองหัก ณ ที่จ่าย</div>')
+          + (s.linkIntentCertNumber && !active ? `<div class="text-xs" style="color:#3730a3">ตั้งไว้ให้ผูก ${Layout.esc(s.linkIntentCertNumber)} ตอนอนุมัติ/จ่าย</div>` : '')
+          + first + '</div>';
+      },
+      openWhtLinkModal(docId, paymentId) {
+        WhtLink.openForDocument(docId, { paymentId: paymentId || null, onDone: async () => { await this.detail(docId); } });
+      },
       async openWhtPayeeChange(docId) {
         const api = Layout.api(); if (!api) return;
         let d;
@@ -3486,8 +3546,85 @@
         if (show) {
           this._ensureWhtPayeeAutocomplete();
           this._renderWhtPayeeInfo();
+          if (this._whtSource() === 'link') this.loadWhtLinkCandidates();
         }
         this._refreshLineWhtPayeeRows();
+      },
+      // ── รอบ 271: "ใบ 50 ทวิ ของการจ่ายนี้มาจากไหน" (radio 3 ทาง) ──
+      _whtSource() {
+        return document.querySelector('input[name="whtCertSource"]:checked')?.value || 'auto';
+      },
+      onWhtCertSourceChange() {
+        const src = this._whtSource();
+        const auto = document.getElementById('fWhtCertAutoIssue');
+        if (auto) auto.checked = src !== 'manual';
+        const box = document.getElementById('whtLinkBox');
+        if (box) box.style.display = src === 'link' ? '' : 'none';
+        if (src === 'link') this.loadWhtLinkCandidates(true);
+      },
+      /** ผู้สมัครจากค่าที่ฟอร์มแสดง (debounce) — ผลตรวจรายใบจากเซิร์ฟเวอร์ · ผลตอบช้ากว่าคำขอถัดไป ⇒ ทิ้ง (seq) */
+      loadWhtLinkCandidates(now) {
+        clearTimeout(this._whtLinkTimer);
+        const seq = (this._whtLinkSeq = (this._whtLinkSeq || 0) + 1);
+        const run = async () => {
+          const api = Layout.api(); if (!api) return;
+          const list = document.getElementById('whtLinkList');
+          const head = document.getElementById('whtLinkHead');
+          const note = document.getElementById('whtLinkNote');
+          if (!list) return;
+          const differs = document.getElementById('fWhtPayeeDiffers')?.checked;
+          const payeeId = (differs && document.getElementById('fWhtPayeeContactId')?.value) || document.getElementById('fContactId')?.value || '';
+          if (!payeeId) { list.innerHTML = '<span style="color:#64748b">เลือกผู้ติดต่อ/ผู้ถูกหักก่อน แล้วระบบจะค้นใบที่ออกไว้แล้วให้</span>'; return; }
+          const date = document.getElementById('fPaymentDate')?.value || document.getElementById('fDate')?.value || '';
+          const codes = [...document.querySelectorAll('#linesBody .line-card')]
+            .filter(row => (parseFloat(row.querySelector('[data-f="wht"]')?.value) || 0) > 0)
+            .map(row => row.querySelector('[data-f="incomeType"]')?.value || '8');
+          const q = `?payeeId=${encodeURIComponent(payeeId)}&wht=${encodeURIComponent(this._whtFormWht || 0)}`
+            + `&income=${encodeURIComponent(this._whtFormIncome || 0)}&date=${encodeURIComponent(date)}`
+            + `&certType=${encodeURIComponent(document.getElementById('fWhtCertType')?.value || 'Withhold')}`
+            + `&codes=${encodeURIComponent(codes.join(','))}&foreign=${document.getElementById('fIsForeignService')?.checked ? 'true' : 'false'}`
+            + (this.editingId ? `&documentId=${encodeURIComponent(this.editingId)}` : '');
+          let r;
+          try { r = (await API.quietly(() => api.getWhtLinkCandidatesForm(q))).data; }
+          catch (e) { if (seq === this._whtLinkSeq) list.innerHTML = `<span style="color:#b91c1c">ค้นใบที่ออกไว้แล้วไม่สำเร็จ: ${Layout.esc(e.message || '')}</span>`; return; }
+          if (seq !== this._whtLinkSeq || !r) return;
+          this._whtLinkCands = r.candidates || [];
+          if (head) head.textContent = 'ใบที่ออกไว้แล้วของ "' + (r.pv?.payeeName || '') + '" (ยังไม่ผูกเอกสารใด)';
+          if (!this._whtLinkCands.length) {
+            list.innerHTML = `<div style="color:#92400e">${Layout.esc(r.hiddenReason || 'ไม่พบใบที่ผูกได้')}</div>`;
+          } else {
+            list.innerHTML = WhtLink.candidatesTableHtml(this._whtLinkCands, 'whtLinkPick', this._whtLinkSelected);
+            list.querySelectorAll('input[name="whtLinkPick"]').forEach(rb => {
+              rb.onchange = () => { this._whtLinkSelected = rb.value; this._renderWhtLinkAcks(); };
+            });
+          }
+          this._renderWhtLinkAcks();
+        };
+        if (now) run(); else this._whtLinkTimer = setTimeout(run, 350);
+      },
+      /** ช่องรับทราบต่อคำเตือนของใบที่เลือก (บังคับก่อนบันทึก) + ข้อความผล · ใบที่เลือกกลายเป็น ⛔ ⇒ บอกตรง ๆ */
+      _renderWhtLinkAcks() {
+        const acks = document.getElementById('whtLinkAcks');
+        const note = document.getElementById('whtLinkNote');
+        if (!acks || !note) return;
+        const sel = (this._whtLinkCands || []).find(c => c.certId === this._whtLinkSelected);
+        const keep = new Set([...acks.querySelectorAll('.wht-link-ack')].filter(x => x.checked).map(x => x.value).concat(this._whtLinkAckSaved || []));
+        if (!this._whtLinkSelected) { acks.innerHTML = ''; note.textContent = 'เลือกใบที่ออกไว้แล้ว 1 ใบ — ใบ ⛔ เลือกไม่ได้ (ดูเหตุผลในคอลัมน์ผลตรวจ)'; return; }
+        if (!sel) {
+          acks.innerHTML = '';
+          note.innerHTML = '<span style="color:#b91c1c">ใบที่เลือกไว้ไม่อยู่ในรายการที่ผูกได้แล้ว (ยอด/ผู้ถูกหักบนฟอร์มเปลี่ยน หรือใบถูกผูก/ยกเลิก) — เลือกใบอื่นหรือกลับไปข้อ 1</span>';
+          return;
+        }
+        if (sel.verdict === 'Blocked') {
+          acks.innerHTML = '';
+          note.innerHTML = `<span style="color:#b91c1c">ยอดใบสำคัญจ่ายเปลี่ยน — ${Layout.esc(sel.certificateNumber)} ไม่ตรงแล้ว: ${Layout.esc(sel.resultLabel)} · เลือกใบอื่นหรือกลับไปข้อ 1 (บันทึกร่างได้ แต่ตอนอนุมัติระบบจะไม่ผูก/ไม่ออกใบ)</span>`;
+          return;
+        }
+        acks.innerHTML = (sel.warnings || []).map(w => `<label style="display:flex;gap:8px;align-items:flex-start;margin-top:4px">`
+          + `<input type="checkbox" class="wht-link-ack" value="${Layout.esc(w.code)}"${keep.has(w.code) ? ' checked' : ''} style="margin-top:3px">`
+          + `<span>รับทราบ: ${Layout.esc(w.message)}</span></label>`).join('');
+        note.textContent = `ℹ️ ระบบจะไม่ออกใบใหม่ — ใบ ${sel.certificateNumber} จะถูกผูกกับใบสำคัญจ่ายนี้ตอนอนุมัติ/จ่าย และนับในแบบ ${sel.formLabel} เดือน `
+          + `${String(sel.taxMonth).padStart(2, '0')}/${Number(sel.taxYear) + 543} ครั้งเดียว`;
       },
       // ── รอบ 204 (ข้อ 143): ผู้ถูกหักรายบรรทัด ──
       // แสดงเฉพาะชนิดฝั่งผู้จ่าย + บรรทัดที่มีอัตราหัก · ซ่อน = ไม่ส่ง (เซิร์ฟเวอร์ normalize เป็น "ตามหัวเอกสาร" เอง)
@@ -3679,6 +3816,25 @@
       async _hydrateWhtCertPanel(d) {
         const auto = document.getElementById('fWhtCertAutoIssue');
         if (auto) auto.checked = !d || d.whtCertAutoIssue !== false;
+        // รอบ 271 — ที่มาของ 50 ทวิ (radio): echo กลับ (ผูก = whtLinkCertId · ไม่สร้างอัตโนมัติ = ออกเอง) · ฟอร์มใหม่/โคลน = ข้อ 1 เสมอ (ห้ามค้างใบก่อน) ·
+        // หลังอนุมัติล็อก + บอกทางไปหน้ารายละเอียด (เซิร์ฟเวอร์ปฏิเสธการเปลี่ยนที่นี่ — ไม่ใช่กดแล้วไม่มีผลเงียบ ๆ)
+        const srcVal = d && d.whtLinkCertId ? 'link' : (!d || d.whtCertAutoIssue !== false) ? 'auto' : 'manual';
+        document.querySelectorAll('input[name="whtCertSource"]').forEach(rb => { rb.checked = rb.value === srcVal; });
+        this._whtLinkSelected = (d && d.whtLinkCertId) || null;
+        this._whtLinkAckSaved = (d && d.whtLinkAckCodes) || [];
+        this._whtLinkCands = [];
+        const srcLocked = !!(d && d.status && !['Draft', 'Rejected', 'WaitingApproval'].includes(d.status));
+        this._whtSrcLocked = srcLocked;
+        document.querySelectorAll('input[name="whtCertSource"]').forEach(rb => { rb.disabled = srcLocked; });
+        const srcHint = document.getElementById('whtSrcLockedHint');
+        if (srcHint) {
+          srcHint.style.display = srcLocked ? '' : 'none';
+          srcHint.textContent = srcLocked ? 'ใบนี้อนุมัติแล้ว — เปลี่ยนการผูกที่หน้ารายละเอียด → "เปลี่ยน 50 ทวิ ที่ผูก" (ระบบตรวจเดือนที่ยื่นแล้ว + ยกเลิกใบเดิมให้)' : '';
+        }
+        ['whtLinkList', 'whtLinkAcks', 'whtLinkNote'].forEach(id => { const el = document.getElementById(id); if (el) el.innerHTML = ''; });
+        const linkBox = document.getElementById('whtLinkBox');
+        if (linkBox) linkBox.style.display = srcVal === 'link' && !srcLocked ? '' : 'none';
+        if (srcVal === 'link' && !srcLocked) setTimeout(() => this.loadWhtLinkCandidates(true), 0);
         // รอบ 204 — เงื่อนไขการหักภาษี: echo กลับ (ฟอร์มใหม่/ใบเก่า = หัก ณ ที่จ่าย · ห้ามค้างค่าใบก่อน)
         const certType = document.getElementById('fWhtCertType');
         if (certType) certType.value = (d && ['PayOnce', 'PayAlways'].includes(d.whtCertType)) ? d.whtCertType : 'Withhold';
@@ -3734,7 +3890,15 @@
         if (!panel || panel.style.display === 'none') return {};
         const differs = document.getElementById('fWhtPayeeDiffers')?.checked;
         const payeeId = document.getElementById('fWhtPayeeContactId')?.value || '';
+        // รอบ 271 — ข้อ 2 "ผูกกับ 50 ทวิ ที่มีอยู่": ส่งใบที่เลือก + รหัสคำเตือนที่ติ๊กรับทราบ · ข้ออื่นตอนแก้ไข ⇒ Guid.Empty = ล้าง · ล็อก (อนุมัติแล้ว) ⇒ ไม่ส่ง
+        const src = this._whtSource();
+        const EMPTY_LINK = '00000000-0000-0000-0000-000000000000';
+        const linkPayload = this._whtSrcLocked ? {} : src === 'link'
+          ? { whtLinkCertId: this._whtLinkSelected || null,
+              whtLinkAckCodes: [...document.querySelectorAll('#whtLinkAcks .wht-link-ack')].filter(x => x.checked).map(x => x.value) }
+          : (this.editingId ? { whtLinkCertId: EMPTY_LINK, whtLinkAckCodes: [] } : {});
         return {
+          ...linkPayload,
           whtCertAutoIssue: !!document.getElementById('fWhtCertAutoIssue')?.checked,
           whtCertType: document.getElementById('fWhtCertType')?.value || 'Withhold',
           // รอบ 204 ทีม B — สร้าง: ยังไม่แตะ ⇒ ไม่ส่ง (เซิร์ฟเวอร์ใช้ค่าตั้งต้นของผู้ถูกหัก) · แก้ไข: ส่งค่าบนจอเสมอ
@@ -3746,6 +3910,17 @@
           whtPayeeContactId: (differs && payeeId) ? payeeId
             : (this.editingId ? '00000000-0000-0000-0000-000000000000' : null),
         };
+      },
+      /** รอบ 271 — ข้อ 2 ต้องเลือกใบ + รับทราบคำเตือนครบ (null = ผ่าน) · ใบ ⛔ บันทึกร่างได้ (ความตั้งใจ) แต่ตอนอนุมัติจะไม่ผูก — กล่องยืนยันอนุมัติบอก */
+      _whtLinkProblem() {
+        const panel = document.getElementById('whtCertPanel');
+        if (!panel || panel.style.display === 'none' || this._whtSrcLocked || this._whtSource() !== 'link') return null;
+        if (!this._whtLinkSelected) return 'เลือกใบ 50 ทวิ ที่ออกไว้แล้ว (ข้อ 2) หรือเปลี่ยนเป็น "ให้ระบบออกใบใหม่"';
+        const sel = (this._whtLinkCands || []).find(c => c.certId === this._whtLinkSelected);
+        if (!sel || sel.verdict === 'Blocked') return null;
+        const acked = [...document.querySelectorAll('#whtLinkAcks .wht-link-ack')].filter(x => x.checked).map(x => x.value);
+        const missing = (sel.warnings || []).filter(w => !acked.includes(w.code));
+        return missing.length ? 'ติ๊ก "รับทราบ" คำเตือนของใบ ' + sel.certificateNumber + ' ให้ครบก่อนบันทึก' : null;
       },
       // ผล 50 ทวิ อัตโนมัติจากคำตอบอนุมัติ/บันทึกจ่าย — ล้มต้องดัง (เดิมกลืนที่เซิร์ฟเวอร์ ผู้ใช้ไม่รู้)
       _toastWhtCertNotice(msg) {
@@ -5174,6 +5349,26 @@
         }
         // ใบใหม่: ให้ตัวเติมอัตรา BoT ทำงานตามปกติ
         if (!doc) { try { this.onCurrencyOrDateChange?.(); } catch (e) {} }
+      },
+
+      /** รอบ 273 ชุดแก้ฝ่ายค้าน L3: ฟอร์มแก้ไขร่างใบเสร็จรับชำระที่ไม่ถือ VAT — ป้ายแถวยอด + บรรทัดอ้างอิงจากเซิร์ฟเวอร์ (DocumentResponse.settlementTotals ·
+       *  ตัวตัดสินเดียวกับกระดาษ) · ใบใหม่/ใบอื่น (null) = ป้ายเดิมทุกตัวอักษร (ห้ามค้างค่าใบก่อน) · หน้าไม่มีสำเนากติกา */
+      _hydrateSettlementTotals(doc) {
+        const st = doc && doc.settlementTotals ? doc.settlementTotals : null;
+        const el = id => document.getElementById(id);
+        const subL = el('sumSubTotalLabel'), sub = el('sumSubTotal'), vatL = el('sumVatLabel'), vat = el('sumVat'), totL = el('sumTotalLabel'), note = el('sumSettlementNote');
+        if (subL && subL.dataset.defaultLabel === undefined) subL.dataset.defaultLabel = subL.textContent;
+        if (totL && totL.dataset.defaultLabel === undefined) totL.dataset.defaultLabel = totL.textContent;
+        const showSub = !st || !!st.settledGrossLabel;
+        if (subL) { subL.textContent = st && st.settledGrossLabel ? st.settledGrossLabel : subL.dataset.defaultLabel; subL.style.display = showSub ? '' : 'none'; }
+        if (sub) sub.style.display = showSub ? '' : 'none';
+        if (vatL) vatL.style.display = st ? 'none' : '';
+        if (vat) vat.style.display = st ? 'none' : '';
+        if (totL) totL.textContent = st ? st.amountLabel : totL.dataset.defaultLabel;
+        if (note) {
+          note.innerHTML = st && Array.isArray(st.lines) ? st.lines.map(x => `<div>${Layout.esc(x)}</div>`).join('') : '';
+          note.style.display = st ? '' : 'none';
+        }
       },
 
       async _hydrateBrand(doc) {
@@ -8806,6 +9001,9 @@
         document.getElementById('sumWht').textContent = Layout.money(wht);
         // รอบ 204 — ฐาน/อัตรารายบรรทัดสุดท้ายสำหรับพรีวิวผู้จ่ายออกภาษีแทน (เซิร์ฟเวอร์คิด)
         this._whtPreviewRows = rows.map(r => ({ base: r.net, ratePercent: r.whtR, vatRate: r.vatR }));   // vatRate: ภ.พ.36 บนฐานรวมออกแทน (ทีม B)
+        // รอบ 271 — ค่าที่ฟอร์มแสดง (ภาษีหัก + ฐานของบรรทัดที่หัก) ส่งให้เซิร์ฟเวอร์ตรวจคู่ผู้สมัคร 50 ทวิ (เซิร์ฟเวอร์ตัดสิน · ตรวจซ้ำตอนผูกจริง)
+        this._whtFormWht = wht;
+        this._whtFormIncome = r2(rows.filter(r => r.whtR > 0).reduce((s, r) => s + r.net, 0));
         this.refreshWhtCertPanel(wht);
         // บอกตรง ๆ เมื่อยอด VAT ที่แสดง = "ค่าที่บันทึกไว้" และต่างจากการคิดจาก
         // ฐานรวม — ผู้ใช้จะได้ไม่งงว่าดีดเครื่องคิดเลขแล้วไม่ตรง และรู้ว่าต้องทำ
@@ -9223,6 +9421,7 @@
         this.editingId = null;
         this._hydrateWhtCertPanel(null);   // 50 ทวิ: ใบใหม่ = สร้างอัตโนมัติ + ผู้ถูกหัก = ผู้รับเงิน (ห้ามค้างจากใบก่อน)
         this._hydrateBrand(null);   // ใบใหม่ = ชื่อบริษัท ไม่ใช่ค่าค้างจากใบก่อน
+        this._hydrateSettlementTotals(null);   // รอบ 273 L3: ป้ายแถวยอดเดิม (ห้ามค้างจากร่างใบเสร็จรับชำระใบก่อน)
         this._hydrateBranch(null);  // และสาขา = ตามค่าบริษัท (ห้ามค้างจากใบก่อน)
         this._hydrateTemplate(null);
         this._hydrateCurrencyReadonly(null);  // ปลดล็อก + คืนค่า THB ให้ใบใหม่
@@ -9510,6 +9709,7 @@
           const d = res.data;
           this.editingId = id;
           this._hydrateBrand(d);   // echo กลับค่าที่บันทึกไว้ (ไม่งั้นบันทึกแล้วค่าหาย)
+          this._hydrateSettlementTotals(d);   // รอบ 273 L3: ร่างใบเสร็จรับชำระ — ป้ายแถวยอดจากเซิร์ฟเวอร์
           this._hydrateBranch(d);
           this._hydrateTemplate(d);
           // เก็บสถานะใบที่กำลังแก้ — chain "จ่ายแล้ว" (อนุมัติ+ชำระ) เปิดให้เฉพาะ
@@ -9910,6 +10110,9 @@
         const api = Layout.api(); if (!api) return;
         // หัวเอกสาร vs ผังรายบรรทัด — ถามก่อนเมื่อขัดกัน (JE ลงตามบรรทัด)
         if (!(await this._confirmHeaderLineAccountAgreement())) return;
+        // รอบ 271 — "ออกใบไว้แล้ว": ต้องเลือกใบ + ติ๊กรับทราบคำเตือนของใบนั้นครบก่อนบันทึก (ผลตรวจจากเซิร์ฟเวอร์)
+        const whtLinkProblem = this._whtLinkProblem();
+        if (whtLinkProblem) { Layout.toast(whtLinkProblem, 'error', 8000); return; }
         // ── ด่านความขัดแย้ง: ติ๊ก "มีใบกำกับภาษีซื้อ (ขอเครดิต ภ.พ.30)" แต่
         // ทุกบรรทัดเป็น 🚫 ไม่เคลม (เคสจริง: OCR ตั้ง 🚫 จากใบอย่างย่อ แล้ว
         // ผู้ใช้ได้ใบเต็มรูปมาทีหลัง) — ถามเป็นภาษาคนก่อนบันทึก ไม่ปล่อยให้
@@ -11346,17 +11549,22 @@
               <div class="text-sm" title="ฐาน (ก่อน VAT) ของมัดจำที่ออกใบกำกับภาษีไปแล้ว — ระบบรับรู้มัดจำเป็นรายได้ให้เองตอนอนุมัติ">หักมูลค่ามัดจำตามใบกำกับภาษี ${this.escapeHtml(d.depositAppliedRef || '')}: <strong>-${Layout.money(d.depositBaseDeducted)}</strong></div>` : ''}
               ${Number(d.roundingAdjustment || 0) !== 0 ? `
               <div class="text-sm" title="เศษสตางค์ระหว่าง จำนวน × ราคาต่อหน่วย กับยอดบนกระดาษ — ลงบัญชี 54960">ผลต่างจากการปัดเศษ: <strong>${Number(d.roundingAdjustment) > 0 ? '+' : '-'}${Layout.money(Math.abs(Number(d.roundingAdjustment)))}</strong></div>` : ''}
+              ${d.settlementTotals ? (d.settlementTotals.settledGrossLabel ? `
+              <div class="text-sm">${Layout.esc(d.settlementTotals.settledGrossLabel)}: <strong>${Layout.money(d.subTotal)}</strong></div>` : '') : `
               <div class="text-sm">ยอดรวมก่อน VAT${(Number(d.billDiscountAmount || 0) > 0 || Number(d.depositBaseDeducted || 0) > 0) ? ' (หลังส่วนลด)' : ''}: <strong>${Layout.money(d.subTotal)}</strong></div>
-              <div class="text-sm">ภาษีมูลค่าเพิ่ม (VAT): <strong>${Layout.money(d.vatAmount)}</strong></div>
+              <div class="text-sm">ภาษีมูลค่าเพิ่ม (VAT): <strong>${Layout.money(d.vatAmount)}</strong></div>`}
               ${Number(d.withholdingTaxAmount || 0) > 0 ? `
-              <div class="text-sm">ภาษีหัก ณ ที่จ่าย: <strong>-${Layout.money(d.withholdingTaxAmount)}</strong> <a href="/pages/wht.html?documentId=${d.id}" style="font-size:11px;margin-left:8px">ดูใบหัก ณ ที่จ่าย →</a></div>
+              <div class="text-sm">ภาษีหัก ณ ที่จ่าย: <strong>-${Layout.money(d.withholdingTaxAmount)}</strong> <a href="/pages/wht.html?documentId=${encodeURIComponent(d.id)}" style="font-size:11px;margin-left:8px">ดูใบหัก ณ ที่จ่าย →</a></div>
+              ${this.WHT_PAYER_TYPES.includes(d.documentType) ? `<div id="whtLinkStatus_${Layout.esc(d.id)}" style="margin-top:4px"></div>` : ''}
               ${d.whtCertAutoFailedReason ? `<div class="text-sm" style="margin-top:4px;padding:6px 10px;background:#FEF2F2;border:1px solid #FCA5A5;border-radius:6px;color:#991B1B">⚠️ ออก 50 ทวิ อัตโนมัติไม่สำเร็จ: ${Layout.esc(d.whtCertAutoFailedReason)} — แก้ตามข้อความแล้วกด "สร้างใบ" ที่ <a href="/pages/wht.html">หน้าหนังสือรับรองหัก ณ ที่จ่าย → เอกสารรอออกใบ</a></div>` : ''}
               ${d.whtCertAutoIssue === false ? `<div class="text-xs" style="margin-top:2px;color:#64748b">ตั้งไว้ไม่ให้สร้าง 50 ทวิ อัตโนมัติ — ออกใบเองที่หน้าหนังสือรับรองหัก ณ ที่จ่าย</div>` : ''}
               ${d.whtPayeeContactId ? `<div class="text-xs" style="margin-top:2px;color:#3730a3">ผู้ถูกหักภาษีตั้งแยกจากผู้รับเงิน — 50 ทวิ ออกในนามผู้ถูกหักที่เลือกไว้ (เปิดแก้ไขใบร่างเพื่อดู/เปลี่ยน)</div>` : ''}
               ${Number(d.whtPayeeCount || 0) > 1 ? `<div class="text-xs" style="margin-top:2px;color:#3730a3">ผู้ถูกหักภาษี ${Number(d.whtPayeeCount)} ราย (ตั้งรายบรรทัด) — 50 ทวิ แยกใบต่อผู้ถูกหัก</div>` : ''}
               ${d.whtCertReviewReason ? `<div class="text-sm" style="margin-top:4px;padding:6px 10px;background:#FFFBEB;border:1px solid #FCD34D;border-radius:6px;color:#92400E">⚠️ 50 ทวิ ต้องตรวจ: ${Layout.esc(d.whtCertReviewReason)} — จัดการแล้วกด "รับทราบ" (ที่นี่ หรือ <a href="/pages/wht.html">หน้าหนังสือรับรองหัก ณ ที่จ่าย → เอกสารรอออกใบ</a>) <button type="button" class="btn btn-sm btn-secondary" style="margin-left:6px;padding:2px 10px;font-size:11.5px" onclick="Page.ackWhtCertReview('${Layout.jsArg(d.id)}')" title="บันทึกว่าจัดการ 50 ทวิ แล้ว (เหตุผลบังคับ · ลงประวัติ) — ต้องมีสิทธิ์ยื่นภาษี (Tax.File)">✔ รับทราบ</button></div>` : ''}
               ${(this.WHT_PAYER_TYPES.includes(d.documentType) && ['Approved', 'Sent', 'PartiallyPaid', 'Paid', 'Overdue'].includes(d.status)) ? `<div style="margin-top:4px"><button type="button" class="btn btn-sm btn-secondary" onclick="Page.openWhtPayeeChange('${d.id}')" title="ยกเลิก 50 ทวิ เดิม · ย้ายผังหนี้ภาษีหัก ณ ที่จ่ายเมื่อแบบเปลี่ยน · ออกใบใหม่ในนามผู้ถูกหักที่ถูก">เปลี่ยนผู้ถูกหักภาษี</button></div>` : ''}` : ''}
-              <div class="text-xl font-bold" style="margin-top:8px;padding-top:8px;border-top:2px solid var(--gray-200)">ยอดสุทธิ: ${Layout.money(d.totalAmount)}</div>
+              <div class="text-xl font-bold" style="margin-top:8px;padding-top:8px;border-top:2px solid var(--gray-200)">${d.settlementTotals ? `${Layout.esc(d.settlementTotals.amountLabel)}: ${Layout.money(d.settlementTotals.amountReceived)}` : `ยอดสุทธิ: ${Layout.money(d.totalAmount)}`}</div>
+              ${d.settlementTotals && Array.isArray(d.settlementTotals.lines) ? `
+              <div class="text-xs" style="margin-top:6px;color:#374151">${d.settlementTotals.lines.map(x => `<div>${Layout.esc(x)}</div>`).join('')}</div>` : ''}
               ${d.actualPaidAmount != null ? `
               <div class="text-sm" style="color:#92400e" title="ใบกำกับคงยอดเต็มตามใบ — ส่วนต่างลงที่ปรับปรุงรายการบัญชี (ใบสำคัญจ่าย) หรือบรรทัดปรับตอนบันทึกการชำระ">ยอดชำระจริง: <strong>${Layout.money(d.actualPaidAmount)}</strong> (ต่างจากยอดเอกสาร ${Layout.money(Number(d.actualPaidAmount) - Number(d.totalAmount))})</div>` : ''}
               ${Number(d.postVatDeductionAmount || 0) > 0 ? `
@@ -11409,6 +11617,7 @@
           this.renderAutoSendSection(d.id);
           this.renderCustomerTimeline(d.id);   // รอบ 267 P3
           this.renderPayQrNotice(d.id);
+          this.renderWhtLinkStatus(d.id);   // รอบ 271 — กล่อง "50 ทวิ ของใบนี้" + ปุ่มเปลี่ยน/ผูก
           this.renderAdjustingLinesSection(d.id, d.status);
           // Partial-fulfilment status (delivery / billing progress per line)
           this.renderFulfillmentSection(d.id);
@@ -15596,10 +15805,11 @@
           <!-- Totals -->
           <div style="display:flex;justify-content:flex-end">
             <div style="width:100%;max-width:300px">
-              <div style="display:flex;justify-content:space-between;padding:6px 0;font-size:13px"><span>ยอดรวมก่อนภาษี</span><span>${Layout.money(d.subTotal)}</span></div>
-              ${hasVat ? `<div style="display:flex;justify-content:space-between;padding:6px 0;font-size:13px"><span>ภาษีมูลค่าเพิ่ม 7%</span><span>${Layout.money(d.vatAmount)}</span></div>` : ''}
+              ${d.settlementTotals ? (d.settlementTotals.settledGrossLabel ? `<div style="display:flex;justify-content:space-between;padding:6px 0;font-size:13px"><span>${Layout.esc(d.settlementTotals.settledGrossLabel)}</span><span>${Layout.money(d.subTotal)}</span></div>` : '') : `<div style="display:flex;justify-content:space-between;padding:6px 0;font-size:13px"><span>ยอดรวมก่อนภาษี</span><span>${Layout.money(d.subTotal)}</span></div>`}
+              ${hasVat && !d.settlementTotals ? `<div style="display:flex;justify-content:space-between;padding:6px 0;font-size:13px"><span>ภาษีมูลค่าเพิ่ม 7%</span><span>${Layout.money(d.vatAmount)}</span></div>` : ''}
               ${Number(d.withholdingTaxAmount || 0) > 0 ? `<div style="display:flex;justify-content:space-between;padding:6px 0;font-size:13px"><span>หัก ณ ที่จ่าย</span><span>-${Layout.money(d.withholdingTaxAmount)}</span></div>` : ''}
-              <div style="display:flex;justify-content:space-between;padding:10px 0;font-size:18px;font-weight:700;border-top:2px solid #4F46E5;margin-top:4px"><span>ยอดสุทธิ</span><span style="color:#4F46E5">${Layout.money(d.totalAmount)}</span></div>
+              <div style="display:flex;justify-content:space-between;padding:10px 0;font-size:18px;font-weight:700;border-top:2px solid #4F46E5;margin-top:4px"><span>${d.settlementTotals ? Layout.esc(d.settlementTotals.amountLabel) : 'ยอดสุทธิ'}</span><span style="color:#4F46E5">${Layout.money(d.settlementTotals ? d.settlementTotals.amountReceived : d.totalAmount)}</span></div>
+              ${d.settlementTotals && Array.isArray(d.settlementTotals.lines) ? `<div style="font-size:11px;color:#374151;margin-top:6px">${d.settlementTotals.lines.map(x => `<div>${Layout.esc(x)}</div>`).join('')}</div>` : ''}
             </div>
           </div>
 

@@ -146,8 +146,11 @@ public class TaxComplianceChecker : ITaxComplianceChecker
                 "ทั้ง TotalIncome และ TotalTaxWithheld = 0 — รายงานเปล่า.",
                 "ถ้าไม่มียอด withhold ในเดือนนี้ ไม่จำเป็นต้องยื่น."));
 
-        var sumWht = r.Lines.Sum(l => l.TaxAmount);
-        if (sumWht > 0 && Math.Abs(sumWht - r.TotalTaxWithheld) > 0.50m)
+        // รอบ 273 (ผู้ใช้รายงาน ภ.ง.ด.53 ต.ค. 2569: 357.30 vs 178.65 = ×2): เดิม r.Lines.Sum ทุกแถว ⇒ แถว [สรุป] ต่อผู้ถูกหัก
+        // + แถวที่ติ๊กออก ถูกบวกซ้ำ · ตอนนี้ใช้ตัวตั้งเดียวกับยอดหัว (Helpers/WhtReportTotals) — ด่านยังจับยอดหัวที่ค้าง/ถูกแก้มือ
+        var (_, sumWht) = Accounting.Helpers.WhtReportTotals.Of(r.Lines);
+        // รอบ 273 ฝ่ายค้านข้อ 2: ฟ้องไม่ว่า Σ จะเป็นเท่าไร — เดิม `sumWht > 0 &&` ⇒ ติ๊กออกครบทุกแถวแต่ยอดหัวค้างค่าเก่า = ผ่านเงียบ
+        if (Math.Abs(sumWht - r.TotalTaxWithheld) > 0.50m)
             f.Add(new("RD-WHT-002", "Error",
                 $"ผลรวมภาษีหัก ณ ที่จ่ายในรายการย่อย ({sumWht:N2}) ไม่เท่ากับ TotalTaxWithheld ({r.TotalTaxWithheld:N2}).",
                 "กดคำนวณใหม่หรือเพิ่ม/ลบบรรทัดให้ครบ."));
@@ -171,7 +174,8 @@ public class TaxComplianceChecker : ITaxComplianceChecker
         // PND.53 = juristic → expect juristic IDs (also 13 but different ranges).
         // Per-line tax-ID format checks live in RdComplianceValidator;
         // here we just count "no tax ID" lines.
-        var missingTaxId = r.Lines.Count(l => string.IsNullOrWhiteSpace(l.TaxPayerId));
+        // เฉพาะแถวที่ยื่นจริง — แถวติ๊กออก/แถว [สรุป] ไม่ลงไฟล์ยื่น (ตัวกรองเดียวกับ PndDetailLines)
+        var missingTaxId = Accounting.Helpers.WhtReportTotals.CountedLines(r.Lines).Count(l => string.IsNullOrWhiteSpace(l.TaxPayerId));
         if (missingTaxId > 0)
             f.Add(new("RD-WHT-005", "Error",
                 $"{missingTaxId} บรรทัดไม่มีเลขประจำตัวผู้เสียภาษีของผู้รับ.",
@@ -186,7 +190,7 @@ public class TaxComplianceChecker : ITaxComplianceChecker
             f.Add(new("RD-PND1-001", "Warning",
                 "TotalIncome = 0 — ตรวจสอบว่ามี payroll record เดือนนี้.", null));
 
-        var sumWht = r.Lines.Sum(l => l.TaxAmount);
+        var (_, sumWht) = Accounting.Helpers.WhtReportTotals.Of(r.Lines);   // รอบ 273: ตัวตั้งเดียวกับยอดหัว
         if (Math.Abs(sumWht - r.TotalTaxWithheld) > 0.50m)
             f.Add(new("RD-PND1-002", "Error",
                 $"ผลรวมภาษีหัก ({sumWht:N2}) ไม่เท่ากับ TotalTaxWithheld ({r.TotalTaxWithheld:N2}).",

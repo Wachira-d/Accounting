@@ -40,7 +40,8 @@ IDENT = r"(?<![A-Za-z0-9_]){}(?![A-Za-z0-9_])"
 
 # รอบ 264 แพ็ก P2: ตัวตัดสินบนสลิปที่ชื่อไม่ขึ้นต้นด้วย Ocr แต่ตัดสินตัวเลข/บทบาทบนสแกนเหมือนกัน — ต้องมีเทสต์จากกระดาษจริงเช่นกัน
 # (QR ตรวจสลิป · ตารางธนาคาร · ตัวจับคู่เลขบัญชีปิดบาง) — เพิ่มไฟล์ที่นี่เมื่อมีตัวตัดสินสลิปตัวใหม่
-EXTRA_SCAN_HELPERS = ("ThaiSlipQr.cs", "ThaiBankCodes.cs", "SlipAccountMatch.cs")
+# รอบ 272: สลิปชำระภาษี (ระบุหน่วยงานรัฐ · จับงวดค้าง · บัญชีที่จ่าย) — ตัวตัดสินบนสแกนเช่นกัน
+EXTRA_SCAN_HELPERS = ("ThaiSlipQr.cs", "ThaiBankCodes.cs", "SlipAccountMatch.cs", "GovPaymentSlip.cs", "TaxSlipMatch.cs", "TaxSlipBankAccount.cs")
 
 
 def ocr_helper_classes(helpers_dir=HELPERS):

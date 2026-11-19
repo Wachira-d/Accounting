@@ -244,6 +244,9 @@ public partial class PdfGenerationService : IPdfGenerationService
             .FirstOrDefaultAsync(w => w.Id == certId && w.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบหนังสือรับรองหัก ณ ที่จ่าย");
         await _db.HydratePayeeContactAsync(companyId, cert);
+        // รอบ 274: ผู้รับที่เลขประจำตัวใช้ไม่ได้ (Contact ที่ระบบเคยสร้างจากเลขที่ตัดจาก ciphertext) ⇒ ไม่ออกไฟล์ + บอกทางแก้
+        if (WhtCertFormText.PayeeTaxIdProblem(cert.CertificateNumber, cert.PayeeContact?.TaxId) is string payeeProblem)
+            throw new BusinessRuleException(payeeProblem, "RD-50TWI-PAYEE-TAXID", 422);
 
         var company = await _db.Companies.FirstAsync(c => c.Id == companyId);
 
@@ -1420,9 +1423,12 @@ public partial class PdfGenerationService : IPdfGenerationService
     internal static DocumentPrintTotals ResolvePrintTotals(Document doc, Pdf.DocumentLabels L)
     {
         var selfAssessed = ForeignServiceVat.VatNotPaidToPayee(doc.DocumentType, doc.IsForeignService) && doc.VatAmount > 0m;
-        return selfAssessed
-            ? new DocumentPrintTotals(ForeignServiceVat.PayeeAmount(doc), true, L.TotalVatSelfAssessedPp36, L.TotalPayeeAmount)
-            : new DocumentPrintTotals(doc.TotalAmount, false, $"{L.TotalVat} 7%", L.TotalNet);
+        if (selfAssessed)
+            return new DocumentPrintTotals(ForeignServiceVat.PayeeAmount(doc), true, L.TotalVatSelfAssessedPp36, L.TotalPayeeAmount);
+        // รอบ 273: ใบเสร็จรับชำระที่ไม่ถือ VAT ของใบต้นทาง (Helpers/SettlementReceiptTotals) ⇒ แถวสุดท้าย "ยอดรับชำระ" (ยอดเดิม · VAT อยู่ที่ใบต้นทาง)
+        if (doc.SettlementTotals is { } st)
+            return new DocumentPrintTotals(st.AmountReceived, false, $"{L.TotalVat} 7%", L.TotalAmountReceived);
+        return new DocumentPrintTotals(doc.TotalAmount, false, $"{L.TotalVat} 7%", L.TotalNet);
     }
 
     /// <summary>ใบเสร็จ/ใบสำคัญรับ "เงินมัดจำ" ที่ VAT ยังพักรอ (21913 — tax point
@@ -2010,6 +2016,7 @@ public partial class PdfGenerationService : IPdfGenerationService
         doc.ServedAsReceipt = false;
         doc.SettlesTaxInvoiceSource = false;
         await ResolveReplacementReferenceAsync(db, companyId, doc);   // รอบ 266 แพ็ก B: "ออกแทนใบเลขที่ …" (transient ของทั้งสอง renderer)
+        await SettlementReceiptTotalsLoader.ResolveAsync(db, companyId, doc);   // รอบ 273: ใบเสร็จรับชำระที่ไม่ถือ VAT — "ยอดรับชำระ" + อ้างอิงใบต้นทาง (ทั้งสอง renderer)
 
         // ใบเสร็จ settlement: เช็คประเภทเอกสารต้นทางที่อ้าง
         if (doc.DocumentType is DocumentType.Receipt or DocumentType.ReceiptVoucher
@@ -2466,7 +2473,10 @@ public partial class PdfGenerationService : IPdfGenerationService
         // (คู่กับ DocumentRenderer — สอง renderer ห้าม drift)
         if (doc.RoundingAdjustment != 0m && !hideVatBreakdown)
             sb.AppendLine($"<div class='sum-row'><span>{L.TotalRounding}</span><span>{doc.RoundingAdjustment:+#,##0.00;-#,##0.00}</span></div>");
-        if (template.ShowSubTotal && !hideVatBreakdown) sb.AppendLine($"<div class='sum-row'><span>{L.TotalSubtotal}</span><span>{preBillSubTotal:N2}</span></div>");
+        // รอบ 273: ใบเสร็จรับชำระที่ไม่ถือ VAT (SettlementTotals) ⇒ ไม่มีแถว "ยอดรวมก่อน VAT" (ยอดที่รับรวม VAT ตามใบต้นทางแล้ว) · มีภาษีหัก ⇒ แถว "ยอดตัดชำระ" แทน
+        // ตัวตัดสินเดียวกับ QuestPDF (SettlementSubtotalLabel) — ห้าม drift
+        var subtotalLabel = SettlementSubtotalLabel(doc, L);
+        if (template.ShowSubTotal && !hideVatBreakdown && subtotalLabel != null) sb.AppendLine($"<div class='sum-row'><span>{subtotalLabel}</span><span>{preBillSubTotal:N2}</span></div>");
         if (template.ShowDiscountTotal && doc.DiscountAmount > 0) sb.AppendLine($"<div class='sum-row'><span>{L.TotalDiscount}</span><span>{doc.DiscountAmount:N2}</span></div>");
         if (billDeductTotal > 0)
         {
@@ -2487,7 +2497,7 @@ public partial class PdfGenerationService : IPdfGenerationService
         }
         // ป้าย/ยอดแถว VAT + แถวสุดท้าย — ตัวตัดสินเดียวกับ QuestPDF (ResolvePrintTotals · รอบ PP36 ทีม F2 · ใบปกติเหมือนเดิมทุกตัวอักษร)
         var printTotals = ResolvePrintTotals(doc, L);
-        if (template.ShowVatSummary && doc.VatAmount > 0 && !hideVatBreakdown) sb.AppendLine($"<div class='sum-row'><span>{printTotals.VatLabel}</span><span>{doc.VatAmount:N2}</span></div>");
+        if (template.ShowVatSummary && doc.VatAmount > 0 && !hideVatBreakdown && doc.SettlementTotals == null) sb.AppendLine($"<div class='sum-row'><span>{printTotals.VatLabel}</span><span>{doc.VatAmount:N2}</span></div>");
         if (template.ShowWithholdingTaxSummary && doc.WithholdingTaxAmount > 0) sb.AppendLine($"<div class='sum-row'><span>{L.TotalWht}</span><span>({doc.WithholdingTaxAmount:N2})</span></div>");
         // ทีม F — หัก ณ ที่จ่ายหลายอัตราในใบเดียว ⇒ แถวย่อยต่ออัตรา (อัตราเดียว = ไม่มีแถว · กระดาษเดิมเหมือนเดิม) · คู่กับ QuestPDF renderer ห้าม drift
         if (template.ShowWithholdingTaxSummary && doc.WithholdingTaxAmount > 0)
@@ -2535,6 +2545,7 @@ public partial class PdfGenerationService : IPdfGenerationService
         }
         if (hideVatBreakdown)
             sb.AppendLine($"<div style='margin-top:8px;font-size:11px;color:#555;font-style:italic'>* {L.NotTaxInvoiceNote}</div>");
+        AppendSettlementTotalsHtml(sb, doc, L);   // รอบ 273: บรรทัดอ้างอิงใบต้นทาง (คู่กับ ComposeSettlementTotals ฝั่ง QuestPDF)
         sb.AppendLine("</div>");
 
         // CertificateInLieu — reason, certifier, witness, payment date
@@ -2789,9 +2800,9 @@ public partial class PdfGenerationService : IPdfGenerationService
             cert.PayeeContact.SubDistrict, cert.PayeeContact.District, cert.PayeeContact.Province, cert.PayeeContact.PostalCode);
         var lines = cert.Lines.OrderBy(l => l.LineOrder).ToList();
 
-        string TaxIdBoxes(string? taxId)
+        string TaxIdBoxes(string? taxId, bool payee = true)
         {
-            var dg = Accounting.Helpers.ThaiTaxId.Normalize(taxId).PadRight(13);
+            var dg = WhtCertFormText.TaxIdBoxDigits(taxId, payee);   // รอบ 274: ตัวเดียวกับ QuestPDF — เลขที่ใช้ไม่ได้ ⇒ กล่องว่าง
             int[][] groups = { new[]{0,1}, new[]{1,5}, new[]{5,10}, new[]{10,12}, new[]{12,13} };
             var r = new StringBuilder();
             for (int g = 0; g < groups.Length; g++)
@@ -2886,7 +2897,7 @@ public partial class PdfGenerationService : IPdfGenerationService
 
             // Payer
             sb.AppendLine("<tr><td class='sec-cell'>");
-            sb.AppendLine($"<table class='inner' cellspacing='0'><tr><td class='sec-hdr' style='width:210px;vertical-align:top'>{WhtCertFormText.PayerHeading}</td><td style='white-space:nowrap;text-align:right'>{WhtCertFormText.TaxId13}<span style='color:#900'>*</span> {TaxIdBoxes(company.TaxId)}</td></tr></table>");
+            sb.AppendLine($"<table class='inner' cellspacing='0'><tr><td class='sec-hdr' style='width:210px;vertical-align:top'>{WhtCertFormText.PayerHeading}</td><td style='white-space:nowrap;text-align:right'>{WhtCertFormText.TaxId13}<span style='color:#900'>*</span> {TaxIdBoxes(company.TaxId, payee: false)}</td></tr></table>");
             // ช่องเลขเดิม 10 หลักอยู่บรรทัดเดียวกับ "ชื่อ" (ชิดขวา) ตามแบบทางการ — รอบ 204 (เดิมแยกบรรทัดเหนือชื่อ)
             sb.AppendLine($"<table class='inner' cellspacing='0'><tr><td class='f-lbl'>{WhtCertFormText.Name}</td><td><u class='ul'>&nbsp;{WebUtility.HtmlEncode(WhtCertFormText.PartyName(null, company.Name, company.TaxId, company.BranchCode, company.BranchName))}&nbsp;</u></td><td style='white-space:nowrap;text-align:right;font-size:12px;padding-left:8px'>{WhtCertFormText.TaxId10} {OldTaxIdBoxes()}</td></tr></table>");
             sb.AppendLine($"<div class='hint-text'>{WhtCertFormText.NameHint}</div>");

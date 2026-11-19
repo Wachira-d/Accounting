@@ -227,7 +227,7 @@ public class Pnd1FileFormatTests
     {
         var rows = new[]
         {
-            Salary() with { PayeeTaxId = "0105556000001" },   // เลขขึ้นต้น 0 ต้องไม่หาย
+            Salary() with { PayeeTaxId = "0105561012346" },   // เลขขึ้นต้น 0 ต้องไม่หาย (รอบ 274: เลขที่ผ่าน mod-11 — เลข checksum ผิดถูกกันจากไฟล์ยื่นแล้ว)
             Salary("WHT-1", 20000m, 600m) with { Category = Pnd1FileFormat.Section40_2Resident, TaxRate = 3m },
         };
         var bytes = Pnd1FileFormat.BuildXlsx(rows, Sep2026);
@@ -243,7 +243,7 @@ public class Pnd1FileFormatTests
             var cells = Enumerable.Range(0, 20).Select(c => read[i][((char)('A' + c)).ToString()]?.ToString() ?? "").ToArray();
             Assert.Equal(txt[i].Split('|'), cells);                       // สองรูปแบบห้าม drift
         }
-        Assert.Equal("0105556000001", read[0]["E"]?.ToString());
+        Assert.Equal("0105561012346", read[0]["E"]?.ToString());
         Assert.Equal("0000", read[0]["D"]?.ToString());
         Assert.Equal("09", read[0]["M"]?.ToString());
         Assert.False(read[0].ContainsKey("U") && read[0]["U"] != null);   // 20 คอลัมน์ ไม่มีคอลัมน์อ้างอิง
@@ -410,7 +410,7 @@ public class Pnd1FileFormatTests
     [Fact]
     public void Build_ผู้รับนิติบุคคล_ชื่อเต็มอยู่ช่องชื่อ_ไม่มีนามสกุลและคำนำหน้า()
     {
-        var cert = Cert("WHT-J", "0105556000001", "บริษัท ตัวแทนดี จำกัด", "2", 10000m, 300m, contactType: ContactType.JuristicPerson);
+        var cert = Cert("WHT-J", "0105561012346", "บริษัท ตัวแทนดี จำกัด", "2", 10000m, 300m, contactType: ContactType.JuristicPerson);
         var row = Assert.Single(Pnd1FilingData.Build(Array.Empty<PayrollDetail>(), new[] { cert }, annual: false).Rows);
         Assert.Equal("บริษัท ตัวแทนดี จำกัด", row.FirstName);
         Assert.Equal("", row.LastName);

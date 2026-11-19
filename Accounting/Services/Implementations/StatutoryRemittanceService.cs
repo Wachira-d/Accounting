@@ -519,7 +519,10 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
                 Pp36Recognized: r.RemittanceType == "VatPp36" ? Pp36RecognizedOf(r) : (bool?)null,
                 Penalty: r.Penalty, OtherFine: r.OtherFine,
                 PeriodLabel: PeriodLabelOf(r.RemittanceType, r.PeriodYear, r.RemittanceType == Accounting.Helpers.StampDutySchedule.RemittanceType ? r.Note : null),
-                SettledOutside: r.SettledOutside))
+                SettledOutside: r.SettledOutside,
+                SourceLabel: Accounting.Helpers.TaxSlipRemitView.SourceLabel(r.Source, r.ControlCodeLast4),
+                FilingNote: Accounting.Helpers.TaxSlipRemitView.FilingNote(r.Source, r.FilingNumber),
+                ReviewLabel: Accounting.Helpers.TaxSlipRemitView.ReviewLabel(r.Source, r.ReviewStatus)))
             .ToList();
 
         pending = pending.OrderByDescending(p => p.IsOverdue)
@@ -1317,6 +1320,12 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
                 Accounting.Helpers.WhtUnissuedCertGate.RuleCode);
 
         var amount = item.Amount;
+        // รอบ 272 ฝ่ายค้าน H1: เส้นสลิปส่งยอดที่สลิปจ่าย — สมุดเปลี่ยนหลังตัดสิน (ลงบิลเพิ่ม/แก้ยอด) ⇒ ไม่ประทับ "ชำระแล้ว" ด้วยยอดสมุด ณ วันที่กด
+        if (req.ExpectedAmount is decimal expected
+            && Math.Round(expected, 2, MidpointRounding.AwayFromZero) != Math.Round(amount, 2, MidpointRounding.AwayFromZero))
+            throw new Accounting.Helpers.BusinessRuleException(
+                $"{form} งวด {req.PeriodMonth:D2}/{req.PeriodYear}: ยอดค้างในสมุดตอนนี้ {amount:N2} ไม่ตรงยอดที่ชำระตามสลิป {expected:N2} — ไม่บันทึก (สมุดเปลี่ยนหลังระบบตัดสิน) ให้พนักงานตรวจ",
+                Accounting.Helpers.TaxSlipMatch.Codes.BooksChanged, 409);
         // ══ เงินเพิ่ม / เบี้ยปรับ / ค่าปรับ (รอบ 220 · คำตัดสินข้อ 181) ══ ทุกแบบ — ค่าที่ผู้ใช้เห็น/แก้บนจอชนะ ·
         // ไม่ส่งเงินเพิ่ม = ปกส./ภ.พ.36 ใช้ค่าเสนอ (เดิม) · แบบอื่น 0 · ไม่ส่งเบี้ยปรับ/ค่าปรับ = 0 · ติดลบ = ปฏิเสธ
         // ⚠️ ภ.พ.30 คิดจากยอดที่ต้องชำระสุทธิ (amount = NetVat) — งวดเครดิตไม่มียอดค้าง จึงไม่ถึงบรรทัดนี้
@@ -1515,7 +1524,10 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
             }
         }
 
-        await using var tx = await _db.Database.BeginTransactionAsync();
+        // รอบ 272 (ดีไซน์ §4.1): เส้นสลิปภาษี (TaxSlipRemitService) เรียกภายในธุรกรรมของตัวเองที่ล็อกความยินยอมไว้ (FOR SHARE จน commit) ⇒ ร่วมธุรกรรมนั้น ·
+        // เส้นมือเดิมไม่มีธุรกรรมรอบนอก ⇒ เปิดเอง (พฤติกรรมเดิมทุกประการ)
+        var ownTx = _db.Database.CurrentTransaction == null;
+        await using var tx = ownTx ? await _db.Database.BeginTransactionAsync() : null;
         try
         {
             if (isWcf)
@@ -1614,7 +1626,7 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
             }
 
             await _db.SaveChangesAsync();
-            await tx.CommitAsync();
+            if (tx != null) await tx.CommitAsync();
 
             _logger.LogInformation("Remitted {Type} {Month}/{Year} amount {Amt} (+fee {Fee} +penalty {Pen} +fine {Fine}) → JE {Je}",
                 type, req.PeriodMonth, req.PeriodYear, amount, lateFee, applied.Penalty, applied.OtherFine, je.Id);
@@ -1625,7 +1637,9 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
             // ไปแล้ว. งวดที่นำส่งแล้ว = ยืนยันตัวเลขแล้ว จึงต้องมีรายงานคู่เสมอ
             // ⚠️ อยู่ **นอก** transaction ของการนำส่งโดยตั้งใจ (commit ไปแล้ว) —
             // สร้างรายงานพลาดต้องไม่ทำให้การนำส่ง (JE เงินจริง) ล้มตาม
-            var reportNote = isPp36
+            // รอบ 272 ฝ่ายค้าน M7: ร่วมธุรกรรมของผู้เรียก (เส้นสลิป) ⇒ ไม่สร้างรายงานภาษีจากเส้นนี้ (272-1-4 ไม่แตะ TaxReport) และงานหลัง commit
+            // ต้องไม่อยู่ในธุรกรรมที่ยังไม่ commit (ล้มแล้วธุรกรรมนอก abort ⇒ การนำส่งถูกย้อน) — เส้นมือ (ownTx) เหมือนเดิม
+            var reportNote = isPp36 && ownTx
                 ? await TryEnsurePp36ReportAsync(companyId, req.PeriodYear, req.PeriodMonth)
                 : "";
 
@@ -1636,7 +1650,7 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
         }
         catch
         {
-            await tx.RollbackAsync();
+            if (tx != null) await tx.RollbackAsync();
             // P0-2 คลาสเดียวกัน: ของที่แก้/เพิ่มค้างใน change tracker (รายการนำส่ง · แถวผูก · ธงบนเอกสาร) ต้องไม่ถูก SaveChanges ถัดไปของผู้เรียกบันทึกครึ่งเดียว
             _db.ChangeTracker.Clear();
             throw;

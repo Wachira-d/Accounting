@@ -106,7 +106,11 @@ public record RemittanceHistoryItem(
     // รอบ 228: ป้ายงวดของแบบรายครึ่งปี/รายปี/รายตราสาร — null = แบบรายเดือน
     string? PeriodLabel = null,
     // รอบ 228 ฝ่ายค้าน S3: ผูกใบสำคัญที่ลงเอง (ไม่ใช่ JE ของเส้นนำส่ง) — ยกเลิกไม่กลับรายการ
-    bool SettledOutside = false);
+    bool SettledOutside = false,
+    // รอบ 272: ป้ายที่มา (บันทึกจากสลิปภาษีโดย NextAcc) · บรรทัดรองเรื่องเลขรับ (272-1-4) · ธงตรวจทานกับรายการเดินบัญชี (P5) — server computes (Helpers/TaxSlipRemitView) · null = ไม่มี
+    string? SourceLabel = null,
+    string? FilingNote = null,
+    string? ReviewLabel = null);
 
 /// <summary>ภ.พ.36 ที่นำส่งแล้วแต่ยัง "ไม่ได้กดรับรู้ภาษีซื้อ" — ภาษีซื้อจึงยัง
 /// ไม่ขึ้นใน ภ.พ.30 (ผู้ใช้เจอจริง: นำส่งแล้วหาใบใน ภ.พ.30 ไม่เจอ เพราะขั้นที่
@@ -158,7 +162,9 @@ public record RemitRequest(
     decimal? Penalty = null,
     decimal? OtherFine = null,
     // รอบ 220 ฝ่ายค้านข้อ 1: ยื่นแบบกระดาษ ⇒ ครบกำหนดวันกระดาษเสมอ (ไม่มีสิทธิ์ขยาย e-Filing)
-    bool PaperFiling = false);
+    bool PaperFiling = false,
+    // รอบ 272 ฝ่ายค้าน H1: ยอดภาษีที่ผู้เรียกคาดไว้ (จากสลิป/ผู้สมัคร) — มีค่า ⇒ ยอดค้างในสมุดตอนบันทึกต้องเท่านี้ทุกสตางค์ มิฉะนั้นปฏิเสธ (สมุดเปลี่ยนหลังตัดสิน) · null = เส้นมือเดิม
+    decimal? ExpectedAmount = null);
 
 /// <summary>รอบ 228 — จ่ายอากรแสตมป์ (หน้าอากรแสตมป์ → <c>RemitStampDutyAsync</c>) · DutyAmount null = ยอดบนรายการ ·
 /// Surcharge/OtherFine null = 0 (หน้าเติมค่าเสนอให้เห็นก่อนกด) · ExpenseAccountId null = 54810</summary>

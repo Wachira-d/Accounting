@@ -114,7 +114,7 @@ public partial class PdfGenerationService
                             BuildPartyBlock(form, WhtCertFormText.PayeeHeading, cert.PayeeContact.TaxId,
                                 WhtCertFormText.PartyName(cert.PayeeContact.TitleTh, cert.PayeeContact.Name, cert.PayeeContact.TaxId,
                                     cert.PayeeContact.BranchCode, cert.PayeeContact.BranchName), payeeAddr,
-                                formTypeOf: cert);
+                                formTypeOf: cert, payee: true);
                             BuildIncomeTable(form, lines, cert.TotalIncomeAmount, cert.TotalTaxAmount);
                             BuildTotalInWords(form, cert.TotalTaxAmount);
                             BuildFundLine(form, funds);
@@ -218,7 +218,7 @@ public partial class PdfGenerationService
 
     // ── Party block (ผู้หัก/ผู้ถูกหัก) — .sec-cell { padding:2px 8px 3px } ──────────────
     private static void BuildPartyBlock(QuestPDF.Fluent.ColumnDescriptor col, string heading,
-        string? taxId, string name, string fullAddress, WithholdingTaxCert? formTypeOf = null)
+        string? taxId, string name, string fullAddress, WithholdingTaxCert? formTypeOf = null, bool payee = false)
     {
         col.Item().BorderBottom(Px(1.5f)).BorderColor(WhtInk).PaddingTop(Px(2)).PaddingBottom(Px(3)).PaddingHorizontal(Px(8)).Column(c =>
         {
@@ -233,7 +233,7 @@ public partial class PdfGenerationService
                         t.Span(WhtCertFormText.TaxId13);
                         t.Span("*").FontColor("#990000");
                     });
-                    rr.AutoItem().AlignMiddle().Element(e => DrawTinBoxes(e, taxId));
+                    rr.AutoItem().AlignMiddle().Element(e => DrawTinBoxes(e, taxId, payee));
                 });
             });
             // ชื่อ + ช่องเลขเดิม 10 หลักบรรทัดเดียวกัน (ชิดขวา) ตามแบบทางการ
@@ -268,9 +268,9 @@ public partial class PdfGenerationService
         => r.AutoItem().Width(Px(5)).AlignMiddle().AlignCenter().Text("-").FontSize(Px(11)).Bold().LineHeight(1f);
 
     // ── 13 ช่องเลขประจำตัวผู้เสียภาษี กลุ่ม 1-4-5-2-1 ──
-    private static void DrawTinBoxes(QuestPDF.Infrastructure.IContainer e, string? taxId)
+    private static void DrawTinBoxes(QuestPDF.Infrastructure.IContainer e, string? taxId, bool payee)
     {
-        var digits = Accounting.Helpers.ThaiTaxId.Normalize(taxId).PadRight(13);
+        var digits = WhtCertFormText.TaxIdBoxDigits(taxId, payee);   // รอบ 274: ตัวเดียวกับ HTML — เลขที่ใช้ไม่ได้ ⇒ กล่องว่าง (ไม่พิมพ์ตัวเลขที่ตัดจาก ciphertext)
         e.Row(r =>
         {
             int[][] groups = { new[]{0,1}, new[]{1,5}, new[]{5,10}, new[]{10,12}, new[]{12,13} };

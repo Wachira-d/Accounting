@@ -86,6 +86,9 @@ END $$;";
                 // ทุกเทสต์ ขณะคลาสอื่นรันขนาน ⇒ ล็อก AccessExclusive ชนกับเทสต์อื่น/ฐานรูปไม่คงที่ระหว่างรัน)
                 db.Database.ExecuteSqlRaw(Accounting.Data.DatabaseMigrationHelper.OneShotDataFixesTableSql);
                 db.Database.ExecuteSqlRaw(ProductionFkShapeSql);
+                // รอบ 271 ฝ่ายค้าน M4: ดัชนี "50 ทวิ ที่ไม่ยกเลิก 1 ใบต่อ (เอกสาร, ผู้ถูกหัก, งวดจ่าย)" ของ production (สร้างด้วย SQL — โมเดลอธิบาย COALESCE ไม่ได้)
+                // ⇒ ทุกเทสต์ Db เดินบนรูปเดียวกับ production (ทางใดออกใบที่สองของการจ่ายเดียว = ล้มในเทสต์)
+                db.Database.ExecuteSqlRaw(Accounting.Helpers.Round271Migration.UniqueActiveCertIndexSql);
                 _schemaReady = true;
             }
         }

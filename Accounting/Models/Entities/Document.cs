@@ -121,6 +121,12 @@ public class Document : TenantEntity
     [System.ComponentModel.DataAnnotations.Schema.NotMapped]
     public DateTime? ReplacementOfDate { get; set; }
 
+    /// <summary>รอบ 273 (transient · renderer ×2 + หน้ารายละเอียด): ใบเสร็จรับชำระที่ไม่ถือ VAT ของใบต้นทางที่มี VAT ⇒ แถว "ยอดรับชำระ" + บรรทัดอ้างอิง
+    /// "(ตามใบกำกับภาษีเลขที่ … : มูลค่า · VAT · รวม)" แทน "ยอดรวมก่อน VAT / VAT 0.00" — เติมโดย <c>SettlementReceiptTotalsLoader.ResolveAsync</c> ·
+    /// ตัวตัดสิน <c>Helpers/SettlementReceiptTotals</c> · null = แถวยอดปกติ</summary>
+    [System.ComponentModel.DataAnnotations.Schema.NotMapped]
+    public Accounting.Helpers.SettlementReceiptTotals.View? SettlementTotals { get; set; }
+
     /// <summary>Transient (ไม่เก็บ DB) — ข้อมูลใบต้นฉบับสำหรับกล่อง §86/9-10 บน
     /// ใบลดหนี้/ใบเพิ่มหนี้ (เลขที่+วันที่+มูลค่าใบเดิม → มูลค่าที่ถูกต้อง+ผลต่าง)
     /// โหลดตอน render ใน ResolveServedAsReceiptAsync ทั้ง HTML และ QuestPDF.</summary>
@@ -709,6 +715,13 @@ public class Document : TenantEntity
     /// (จ่ายเงินให้โบรกเกอร์ แต่ผู้มีเงินได้ = บริษัทประกัน) · ตัวแทนรับเงินแทนตัวการ · 50 ทวิ ภ.ง.ด.3/53/54 และผัง 2191x
     /// ตัดสินจากผู้ถูกหักคนนี้ ไม่ใช่ผู้รับเงิน · อ่านผ่าน <c>WhtCertIssuePlan.PayeeOf</c> ตัวเดียว</summary>
     public Guid? WhtPayeeContactId { get; set; }
+
+    /// <summary>รอบ 271 — "ใบนี้ออก 50 ทวิ ไว้แล้ว": ตอนอนุมัติ(จ่ายแล้ว)/บันทึกจ่าย ให้ <b>ผูก</b>ใบนี้แทนการออกใบใหม่ (<c>WhtCertIssueAction.LinkExisting</c>) ·
+    /// null = พฤติกรรมเดิม · ตรวจด้วย <c>Helpers/WhtCertLinkPlan</c> ตอนผูก · <b>ห้ามสืบทอด</b> (โคลน/แปลง/รายการประจำ — ใบหนึ่งผูกได้การจ่ายเดียว · 271-0-3)</summary>
+    public Guid? WhtLinkCertId { get; set; }
+
+    /// <summary>รอบ 271 — รหัสคำเตือนของการผูกที่ผู้ใช้รับทราบไว้บนร่าง (คั่นด้วย ",") · ตอนผูกจริง คำเตือนใหม่ที่ไม่อยู่ในชุดนี้ ⇒ ไม่ผูก + ล้มดัง</summary>
+    public string? WhtLinkAckCodes { get; set; }
 
     /// <summary>รอบ 204 (คำตัดสินข้อ 148 (4)) — เงื่อนไขการหักภาษี ณ ที่จ่ายของใบฝั่งผู้จ่าย: หัก ณ ที่จ่าย (ค่าตั้งต้น = พฤติกรรมเดิม) ·
     /// ผู้จ่ายออกให้ตลอดไป · ออกให้ครั้งเดียว · ภาษีคิดผ่าน <c>Helpers/WhtGrossUp</c> ตัวเดียว · ออก 50 ทวิ เป็นประเภทเดียวกัน (ช่อง (1)(2)(3))</summary>

@@ -13,6 +13,23 @@ public interface IWithholdingTaxCertService
     Task<WithholdingTaxCertResponse> UpdateAsync(Guid companyId, Guid certId, CreateWithholdingTaxCertRequest request, string updatedBy);
     Task<WithholdingTaxCertResponse> GetByIdAsync(Guid companyId, Guid certId);
     Task<PagedResponse<WithholdingTaxCertResponse>> GetAllAsync(Guid companyId, TaxType? taxFormType, int? year, int? month, PagedRequest request);
+
+    // ── รอบ 271: ผูกใบสำคัญจ่ายกับ 50 ทวิ ที่ออกไว้แล้ว (ตัวตัดสินเดียว Helpers/WhtCertLinkPlan) ──
+    /// <summary>รายการ 50 ทวิ พร้อมตัวกรองฝั่งเซิร์ฟเวอร์ (แบบ · ปี · เดือน · สถานะ · การผูก · ค้นหา) — แก้ F2 (เดิมกรองเฉพาะหน้าที่โหลด)</summary>
+    Task<PagedResponse<WithholdingTaxCertResponse>> GetListAsync(Guid companyId, WhtCertListFilter filter, PagedRequest request);
+    /// <summary>การ์ดสรุปของชุดที่กรอง (ไม่ใช่เฉพาะหน้าที่โหลด)</summary>
+    Task<WhtCertListSummary> GetListSummaryAsync(Guid companyId, WhtCertListFilter filter);
+    Task<WhtLinkCandidatesResponse> GetLinkCandidatesForDocumentAsync(Guid companyId, Guid documentId, Guid? paymentId);
+    Task<WhtLinkCandidatesResponse> GetLinkCandidatesForFormAsync(Guid companyId, WhtLinkFormQuery query);
+    Task<WhtLinkCheckResponse> CheckLinkAsync(Guid companyId, Guid documentId, Guid certId, Guid? paymentId);
+    /// <summary>ผูก/เปลี่ยนการผูก (ทางเข้าเดียว) — เดือนที่ยื่นแล้ว + ยกเลิกใบเดิม = 409 เด็ดขาด (271-0-2) · ใบเดิมยกเลิกเสมอ (271-0-1)</summary>
+    Task<WhtLinkResult> LinkCertToDocumentAsync(Guid companyId, Guid documentId, WhtLinkRequest request, Guid? userId);
+    /// <summary>ฝ่ายค้าน H3: สร้างใบที่ระบุ DocumentId ⇒ สร้างเดี่ยวแล้วผูกผ่าน <c>LinkCertToDocumentAsync</c> (ทางเข้าเดียว) ในธุรกรรมเดียว</summary>
+    Task<WithholdingTaxCertResponse> CreateLinkedAsync(Guid companyId, CreateWithholdingTaxCertRequest request, string createdBy, Guid? userId);
+    Task<WhtDocumentLinkStatus> GetDocumentLinkStatusAsync(Guid companyId, Guid documentId);
+    Task<IReadOnlyList<WhtCertPvCandidateDto>> GetPvCandidatesForCertAsync(Guid companyId, Guid certId);
+    /// <summary>D5: ยืนยัน/ยกเลิกการยืนยันว่าใบมือนี้ไม่มีใบสำคัญจ่ายในระบบ (เหตุผล + audit)</summary>
+    Task SetNoSourceDocumentAsync(Guid companyId, Guid certId, WhtCertNoSourceRequest request, Guid? userId);
     Task<WithholdingTaxCertResponse> IssueAsync(Guid companyId, Guid certId);
     /// <summary>ฝ่ายค้านรอบ 204 L5: ออกใบ — ผู้ถูกหักไม่มีเลขผู้เสียภาษี (ไม่ใช่ผู้รับต่างประเทศ) ⇒ 409 <c>RD-50BIS-ISSUE-NO-TAXID</c> พร้อมทางไปต่อ ·
     /// <paramref name="ack"/>.AcknowledgeMissingTaxId ⇒ ออกได้ + คำเตือน + audit</summary>

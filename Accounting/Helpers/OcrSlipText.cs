@@ -28,10 +28,12 @@ public static class OcrSlipText
     /// <param name="Roles">บทบาทของสองบล็อกมาจากอะไร (ป้าย · QR · ไม่รู้)</param>
     /// <param name="Qr">QR ตรวจสลิปที่ถอดได้และ CRC ถูก (<see cref="ThaiSlipQr"/>) · null = ไม่มี/อ่านไม่ได้</param>
     /// <param name="Memo">ข้อความบันทึกช่วยจำ (KBIZ "Memo …") · ไม่เก็บลงฐาน (ใช้ในหน่วยความจำเท่านั้น)</param>
+    /// <param name="Bill">รอบ 272 P1: ช่องของสลิปจ่ายบิล (Comp Code · Ref1 · Control Code · Transaction No. · Fee) จากป้ายเท่านั้น · null = ไม่มีป้ายใดเลย</param>
+    /// <param name="Text">รอบ 272 P1: ข้อความ OCR ดิบ — <b>ในหน่วยความจำเท่านั้น</b> (มีชื่อคน · ไม่ลงฐาน · <see cref="ToStoredJson"/> ไม่รวม) ให้ <c>GovPaymentSlip.Identify</c> หาคำชื่อผู้รับ</param>
     /// <param name="TextRef">ฝ่ายค้าน 264-P2 L5: เลขอ้างอิงจากข้อความ (ตัวอ่านเดิม) แม้มี QR — ผู้กันซ้ำเทียบทั้งสองค่า (สำเนาที่ครอป QR ออก/แถวก่อนรอบนี้เก็บค่าจากข้อความ)</param>
     public sealed record Reading(IReadOnlyList<decimal> Amounts, decimal? Amount, DateTime? Date, string? Ref, bool LooksLikeSlip = false,
         SlipParty? Payer = null, SlipParty? Payee = null, RoleSource Roles = RoleSource.None, ThaiSlipQr.Payload? Qr = null, string? Memo = null,
-        string? TextRef = null)
+        string? TextRef = null, BillFields? Bill = null, string? Text = null)
     {
         public static readonly Reading Empty = new(Array.Empty<decimal>(), null, null, null);
         public bool HasAnyAmount => Amounts.Count > 0;
@@ -322,7 +324,55 @@ public static class OcrSlipText
         var (payer, payee, roles) = Parties(text, qr);
         return new Reading(all, ConfidentAmount(text, all), ExtractDate(text, nowYear), reference,
             LooksLikeSlip: reference != null || SlipKeyword.IsMatch(text),
-            Payer: payer, Payee: payee, Roles: roles, Qr: qr, Memo: ExtractMemo(text), TextRef: textRef);
+            Payer: payer, Payee: payee, Roles: roles, Qr: qr, Memo: ExtractMemo(text), TextRef: textRef, Bill: BillFieldsOf(text), Text: text);
+    }
+
+    // ═══════════════ รอบ 272 แพ็ก P1 — ช่องของสลิปจ่ายบิล (หน่วยงานรัฐ) ═══════════════
+
+    /// <summary>รอบ 272 P1 (ดีไซน์ <c>erp-review/2026-11-16/team-272-tax-slip-autoremit.md</c> §2.2 ข้อ 4) — ช่องของสลิป "จ่ายบิล" ที่อ่าน<b>จากป้ายเท่านั้น</b>
+    /// (ไม่หยิบ "ชุดยาวสุด" แบบ <see cref="Reading.Ref"/> · ไม่เปลี่ยนช่องเดิม) · ทุกค่าเป็นตัวเลข/ตัวอักษรพิมพ์ใหญ่ที่ตามหลังป้าย · ไม่พบป้าย = null (ไม่เดา)</summary>
+    /// <param name="CompCode">ป้าย "Comp Code"/"รหัสบริษัท" — รหัสผู้รับชำระภายในของธนาคาร (5 หลักแบบ K BIZ)</param>
+    /// <param name="Ref1">ป้าย "Personal ID/Tax ID No."/"Ref.1"/"Reference 1"/"เลขประจำตัวผู้เสียภาษี" — ตัวเลขล้วน (ตัดขีด/ช่องว่าง)</param>
+    /// <param name="Ref2">ป้าย "Control Code" (ก่อน) หรือ "Ref.2"/"Reference 2"/"Reference No.2" — ตัวเลข/ตัวอักษรพิมพ์ใหญ่</param>
+    /// <param name="ControlCodeLabeled">ค่า <paramref name="Ref2"/> มาจากป้าย "Control Code" โดยตรง</param>
+    /// <param name="TxnNo">ป้าย "Transaction No."/"เลขที่รายการ" — ใช้กันซ้ำ (เก็บเป็นแฮช)</param>
+    /// <param name="Fee">ป้าย "Fee"/"ค่าธรรมเนียม" (บรรทัดเดียวกันหรือบรรทัดถัดไป) · null = ไม่พบ</param>
+    public sealed record BillFields(string? CompCode, string? Ref1, string? Ref2, bool ControlCodeLabeled, string? TxnNo, decimal? Fee)
+    {
+        public bool IsEmpty => CompCode == null && Ref1 == null && Ref2 == null && TxnNo == null;
+    }
+
+    private static readonly Regex CompCodeRx = new(@"(?:Comp\.?\s*Code|รหัสบริษัท)\s*[:：]?\s*(\d{3,8})(?!\d)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex Ref1Rx = new(@"(?:Personal\s*ID\s*/\s*Tax\s*ID\s*No\.?|Tax\s*ID\s*No\.?|Ref(?:erence)?\.?\s*(?:No\.?)?\s*1(?!\d)|เลขประจำตัวผู้เสียภาษี(?:อากร)?)\s*[:：]?\s*([0-9][0-9\- ]{8,24}[0-9])", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex ControlCodeRx = new(@"Control\s*Code\s*[:：]?\s*([0-9][0-9\- ]{3,30}[0-9])", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex Ref2Rx = new(@"Ref(?:erence)?\.?\s*(?:No\.?)?\s*2(?!\d)\s*[:：]?\s*([0-9A-Z]{4,30})", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex TxnNoRx = new(@"(?:Transaction\s*No\.?|เลขที่รายการ)\s*[:：]?\s*([A-Z0-9]{8,30})", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex FeeRx = new(@"(?:^|\s)(?:Fee(?![A-Za-z])|ค่าธรรมเนียม)\s*[:：]?\s*(\d{1,3}(?:,\d{3})*\.\d{2}|\d{4,9}\.\d{2})?", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    /// <summary>ช่องของสลิปจ่ายบิล (pure · ไม่เรียก AI) — ไม่มีป้ายใดเลย ⇒ null · ผู้เรียก: <see cref="Parse"/> · ตัวตัดสินหน่วยงาน <c>GovPaymentSlip.Identify</c></summary>
+    private static BillFields? BillFieldsOf(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return null;
+        var t = NormalizeThai(text);
+        static string Digits(string s) => new(s.Where(char.IsAsciiDigit).ToArray());
+        var comp = CompCodeRx.Match(t) is { Success: true } cm ? cm.Groups[1].Value : null;
+        var r1 = Ref1Rx.Match(t) is { Success: true } m1 ? Digits(m1.Groups[1].Value) : null;
+        string? r2 = null; var labeled = false;
+        if (ControlCodeRx.Match(t) is { Success: true } cc) { r2 = Digits(cc.Groups[1].Value); labeled = true; }
+        else if (Ref2Rx.Match(t) is { Success: true } m2) r2 = m2.Groups[1].Value.ToUpperInvariant();
+        var txn = TxnNoRx.Match(t) is { Success: true } tm ? tm.Groups[1].Value.ToUpperInvariant() : null;
+        decimal? fee = null;
+        var lines = t.Split('\n');
+        for (var i = 0; i < lines.Length && fee == null; i++)
+        {
+            var fm = FeeRx.Match(lines[i]);
+            if (!fm.Success) continue;
+            var v = fm.Groups[1].Success ? fm.Groups[1].Value : (i + 1 < lines.Length ? AmountRx.Match(lines[i + 1]).Value : "");
+            if (decimal.TryParse(v.Replace(",", ""), NumberStyles.Number, CultureInfo.InvariantCulture, out var f))
+                fee = Math.Round(f, 2, MidpointRounding.AwayFromZero);
+        }
+        var b = new BillFields(comp, string.IsNullOrEmpty(r1) ? null : r1, string.IsNullOrEmpty(r2) ? null : r2, labeled && !string.IsNullOrEmpty(r2), txn, fee);
+        return b.IsEmpty ? null : b;
     }
 
     /// <summary>รอบ 260 (ฝ่ายค้าน L7): badge "ยอดตรงกับที่แจ้ง" ของสลิปค่าบริการ (<c>SlipOcrAssistService</c>) — ยอดที่แจ้งอยู่บนสลิป (± 0.01) ⇒ (ยอดที่แจ้ง, true) ·

@@ -30,7 +30,6 @@ OcrPredecessorMatcher.cs LineOverlap
 OcrPredecessorMatcher.cs NormalizeForReference
 OcrPredecessorMatcher.cs ReferenceAppears
 OcrScanPii.cs UndecidedTextFields
-PayrollRunFilingScope.cs CanRemit
 ReceiptIssuePolicy.cs AllowsCashReceiptPapers
 SsoIdentityPolicy.cs ProvidesEmailVerification
 SsoRateSchedule.cs GetMaxContribution

@@ -81,7 +81,27 @@ public record WithholdingTaxCertResponse(
     // หน้าพิมพ์ wht.html แสดงอย่างเดียว (เดิมมีสำเนาสูตร JS ที่ใช้ units[pos % 7] ⇒ ยอด ≥ 10 ล้านพิมพ์ผิด)
     string? TotalTaxAmountInWords = null,
     // รอบ 257 ชุด 2 (B-L4): สถานะส่งใบนี้เข้ากล่องรับของผู้ขายที่เป็นคู่ค้า NextAcc (PartnerExchangeRules.WhtDeliveryLabel — ตีกลับ = เหตุ ไม่ใช่ "ส่งแล้ว") · null = ไม่ใช่งานของเส้นนี้
-    string? PartnerDeliveryLabel = null);
+    string? PartnerDeliveryLabel = null,
+    // ── รอบ 271: การผูก (server computes · page displays — Helpers/WhtCertLinkPlan) · null = ไม่ได้คำนวณ (ทางที่ไม่ใช่รายการ/รายละเอียด) ──
+    /// <summary>ชื่อสถานะการผูก (<c>WhtCertLinkState</c>): Linked · Payroll · Unlinked · NoSourceConfirmed · Voided</summary>
+    string? LinkState = null,
+    /// <summary>ข้อความคอลัมน์ "ผูกกับ" (<c>WhtCertLinkPlan.LinkLabel</c>)</summary>
+    string? LinkLabel = null,
+    string? LinkedDocumentTypeLabel = null,
+    /// <summary>ใบนี้ถูกยกเลิกเพราะแทนด้วยใบนี้ (เปลี่ยนการผูก)</summary>
+    string? SupersededByCertNumber = null,
+    /// <summary>ปุ่ม "ลบถาวร" แสดงได้ไหม (271-1-1: ใบที่มีเลขแล้ว = false เสมอ)</summary>
+    bool? DeleteAllowed = null,
+    bool? VoidAllowed = null,
+    /// <summary>ปุ่ม "ผูกกับใบสำคัญจ่าย…" แสดงได้ไหม</summary>
+    bool? CanLinkToPv = null,
+    /// <summary>ใบนี้ถูกผูกด้วยมือ (เลือกใบที่ออกไว้แล้ว) — ไม่ใช่ระบบออกจากเอกสาร</summary>
+    bool? LinkedManually = null,
+    /// <summary>D5: เหตุผลที่ผู้ใช้ยืนยันว่าไม่มีใบสำคัญจ่าย — เก็บแล้วต้อง echo กลับ</summary>
+    string? NoSourceDocumentReason = null,
+    /// <summary>ป้ายแดง "อาจนับซ้ำกับ …" (อ่านอย่างเดียว — ไม่ประทับสถานะใด) · null = ไม่พบคู่</summary>
+    string? DuplicateSuspectLabel = null,
+    Guid? DuplicateSuspectDocumentId = null);
 
 public record WithholdingTaxCertLineResponse(
     Guid Id,
@@ -159,7 +179,10 @@ public record PendingWhtDocumentResponse(
     /// <summary>รอบ 204 (ข้อ 143): ใบหลายผู้ถูกหัก — แถวต่อผู้ถูกหัก (ยอด · มีใบแล้วไหม) · ใบรายเดียว = null</summary>
     List<PendingWhtPayeeInfo>? Payees = null,
     /// <summary>รอบ 204 (ข้อ 142/145): 50 ทวิ ที่ออกแล้วต้องตรวจ/ออกใหม่ (<c>WhtCertReviewNote</c>) — ใบโผล่ในลิสต์แม้มีใบแล้ว</summary>
-    string? ReviewReason = null);
+    string? ReviewReason = null,
+    /// <summary>รอบ 271 ฝ่ายค้าน M1: ใบนี้ตั้งใจผูก 50 ทวิ ที่ออกไว้แล้ว (เลข/id ของใบนั้น) — ลิสต์ไม่เสนอ "สร้างใบ" (สร้าง = นับซ้ำ) แต่เสนอ "ผูก" แทน · null = ไม่มีความตั้งใจ</summary>
+    Guid? LinkIntentCertId = null,
+    string? LinkIntentCertNumber = null);
 
 /// <summary>ผู้ถูกหักหนึ่งรายของใบหลายผู้ถูกหัก (รอบ 204 ข้อ 143) — ยอด/แบบมาจากเซิร์ฟเวอร์ (<c>WhtPayeeSplit</c>)</summary>
 public record PendingWhtPayeeInfo(

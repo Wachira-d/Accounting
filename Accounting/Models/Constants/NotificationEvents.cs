@@ -115,6 +115,13 @@ public static class NotificationEvents
     /// <summary>รอบ 264 ฝ่ายค้าน L4 (คำตัดสิน 264-1-11): ปลายทางตอบรับคำขอเชื่อมที่เราส่ง — ผู้ส่งเดียว <c>NotifyRequesterAcceptedAsync</c> ·
     /// เดิมยืม <see cref="AutopilotPartnerExchange"/> (ความหมาย "ยกเลิก 50 ทวิ") ⇒ ปิดคีย์นั้นแล้วไม่รู้ว่าใครรับคำขอ · ค่าตั้งต้นเหมือน <see cref="PartnerLinkRequested"/> (ไม่เข้ากลุ่ม LINE)</summary>
     public const string PartnerLinkAccepted = "partner.link_accepted";
+    /// <summary>รอบ 272 (ทาง B · 272-0-2): สำนักงานบัญชี NextAcc ขออนุญาตบันทึกการนำส่งภาษีจากสลิปแทนบริษัทนี้ — ผู้ส่งเดียว <c>ProviderConsentService.EnsureRequestAsync</c> ·
+    /// ค่าตั้งต้น กระดิ่ง + อีเมลถึงเจ้าของ · ลิงก์ = การ์ดความยินยอมในศูนย์บิล (<c>billing.html#provider-consent</c>)</summary>
+    public const string ProviderConsentRequested = "provider.consent_requested";
+    /// <summary>รอบ 272: ระบบบันทึกการนำส่งภาษีจากสลิปแทนบริษัทนี้แล้ว (ทุกครั้ง · ดีไซน์ §5.5 "แจ้งผลในกลุ่มและกระดิ่ง") — ผู้ส่งเดียว <c>TaxSlipRemitService</c></summary>
+    public const string TaxSlipRemitted = "tax_slip.remitted";
+    /// <summary>รอบ 272: สลิปภาษีของลูกค้าเข้าคิว "สลิปภาษีรอตรวจ" ของบริษัทผู้ให้บริการ (ตัดสินเองไม่ได้ · ระบบล้ม · ตรวจทานหลังนำส่งไม่พบรายการเดินบัญชี)</summary>
+    public const string TaxSlipNeedsStaff = "tax_slip.needs_staff";
     /// <summary>F14 audit hash chain ตรวจรายสัปดาห์เจอ tamper (มี
     /// row ที่ RowHash/PrevHash ไม่ตรง). ส่งหา Owner + Accounting role
     /// เพื่อสอบ DBA / raw SQL.</summary>
@@ -214,6 +221,9 @@ public static class NotificationEvents
         ("Accounting", AutopilotBankSettleFailed, "Autopilot: เงินโอนเข้าตรงใบค้างแต่บันทึกรับชำระอัตโนมัติไม่สำเร็จ"),
         ("Accounting", AutopilotDailyDigest, "Autopilot: สรุปประจำวัน (สำเร็จ · รอยืนยัน · เรื่องที่ระบบทำต่อไม่ได้)"),
         ("Accounting", AutopilotPartnerExchange, "Autopilot: คู่ค้า NextAcc ยกเลิกหนังสือรับรอง 50 ทวิ ที่ส่งเข้ามาแล้ว (ตรวจก่อนใช้เครดิต)"),
+        ("Accounting", ProviderConsentRequested, "สำนักงานบัญชี NextAcc ขออนุญาตบันทึกการนำส่งภาษีจากสลิปแทนบริษัทนี้ (อนุญาตที่ศูนย์บิล)"),
+        ("Accounting", TaxSlipRemitted, "บันทึกการนำส่งภาษีจากสลิปที่ส่งในกลุ่ม LINE/อีเมล โดย NextAcc แล้ว"),
+        ("Accounting", TaxSlipNeedsStaff, "สลิปภาษีของลูกค้ารอพนักงานตรวจ (ระบบตัดสินเองไม่ได้/ตรวจทานไม่พบรายการเดินบัญชี)"),
         ("Accounting", PartnerLinkAccepted, "คู่ค้าตอบรับคำขอเชื่อมระบบที่เราส่ง (ตรวจชื่อ/เลขภาษี/สาขาของผู้ตอบรับ)"),
         ("Accounting", PartnerLinkRequested, "คู่ค้าที่ใช้ NextAcc ส่งคำขอเชื่อมระบบถึงเรา (กดลิงก์เพื่อยอมรับ/ปฏิเสธ)"),
         ("Accounting", AuditChainTampered, "🚨 Audit log ถูกแก้ไข (hash chain ไม่ตรง)"),

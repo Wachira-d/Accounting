@@ -100,6 +100,44 @@ public static class WhtCertVoidGuard
         return await CheckAsync(db, companyId, ids, ct);
     }
 
+    /// <summary>รอบ 271 (271-0-4): เหตุผลระดับ "งวด" (แบบ+ปี+เดือน — ไม่ต้องมีใบ) · null = เดือนนั้นยังไม่ยื่น ·
+    /// "ยื่นแล้ว" = รายงานภาษีของแบบ+เดือนอยู่ใน <see cref="TaxFilingLockPolicy.DeclaredOrFiledStatuses"/> <b>หรือ</b> มีบันทึกนำส่งของงวด —
+    /// หลักฐานชุดเดียวกับ <see cref="CheckAsync"/> (ไม่ใช่เงื่อนไขชุดที่สอง) แต่ไม่ขึ้นกับสถานะ/เวลาออกของใบ (การผูก/เปลี่ยนการผูกแตะงวด ไม่ใช่ใบเดียว)</summary>
+    internal static string? PeriodReason(TaxType formType, int year, int month, bool periodDeclaredOrFiled, DateTime? remittedAtUtc)
+    {
+        var form = FormLabel(formType);
+        if (periodDeclaredOrFiled)
+            return $"{form} เดือน {month:00}/{year + 543} ยื่นแล้ว (รายงานภาษีของเดือนนี้อยู่ในสถานะยื่นแล้ว)";
+        if (remittedAtUtc is DateTime at)
+            return $"{form} เดือน {month:00}/{year + 543} นำส่งแล้ว ณ วันที่ {RemittanceInclusion.ThaiStamp(at)} (บันทึกการนำส่งของงวดนี้มีอยู่ — ถือว่ายื่นพร้อมชำระ) · "
+                + "ถ้าบันทึกนำส่งไว้ล่วงหน้าแต่ยังไม่ได้ยื่นจริง ให้ผู้มีสิทธิ์ยื่นภาษียกเลิกรายการนำส่งนั้นก่อน (หน้า \"นำส่งภาษี/ประกันสังคม\" → ประวัติ) แล้วทำรายการนี้ใหม่";
+        return null;
+    }
+
+    /// <summary>รอบ 271 (271-0-2 · 271-0-4): ตรวจงวดหนึ่ง (แบบ+ปี+เดือน) — ใช้กับเดือนของใบเดิม · ใบใหม่ · เดือนจ่ายของใบสำคัญจ่าย ตอนผูก/เปลี่ยนการผูก 50 ทวิ</summary>
+    public static async Task<string?> CheckPeriodAsync(AccountingDbContext db, Guid companyId, TaxType formType, int year, int month,
+        CancellationToken ct = default)
+    {
+        var declared = await db.TaxReports.AsNoTracking()
+            .AnyAsync(t => t.CompanyId == companyId && !t.IsDeleted && t.TaxType == formType && t.Year == year && t.Month == month
+                && TaxFilingLockPolicy.DeclaredOrFiledStatuses.Contains(t.Status), ct);
+        var types = RemittanceTypesOf(formType);
+        DateTime? remittedAt = null;
+        if (!declared && types.Length > 0)
+        {
+            var stamps = await db.StatutoryRemittances.AsNoTracking()
+                .Where(r => r.CompanyId == companyId && !r.IsDeleted && r.PeriodYear == year && r.PeriodMonth == month
+                    && types.Contains(r.RemittanceType))
+                .Select(r => r.CreatedAt).ToListAsync(ct);
+            if (stamps.Count > 0) remittedAt = stamps.Max();
+        }
+        return PeriodReason(formType, year, month, declared, remittedAt);
+    }
+
+    /// <summary>แบบ ภ.ง.ด. → ชนิดการนำส่ง (กลับทิศของ <see cref="RemittanceForm"/> · ตัวเดียวกัน)</summary>
+    internal static string[] RemittanceTypesOf(TaxType formType)
+        => new[] { "WhtPnd1", "WhtPnd2", "WhtPnd3", "WhtPnd53", "WhtPnd54" }.Where(t => RemittanceForm(t) == formType).ToArray();
+
     /// <summary>ชนิดการนำส่ง → แบบ ภ.ง.ด. ของ 50 ทวิ (null = ไม่ใช่การนำส่งภาษีหัก ณ ที่จ่ายที่มีหนังสือรับรอง)</summary>
     internal static TaxType? RemittanceForm(string? remittanceType) => remittanceType switch
     {

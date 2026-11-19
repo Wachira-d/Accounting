@@ -170,6 +170,10 @@ public record CreateDocumentRequest(
     // ผู้ถูกหักภาษีที่ไม่ใช่ผู้ติดต่อของเอกสาร (ประกันผ่านโบรกเกอร์ — 50 ทวิ ในนามบริษัทประกัน) null = ผู้ติดต่อ · เฉพาะ PV/ค่าใช้จ่าย/PI/CIL
     bool? WhtCertAutoIssue = null,
     Guid? WhtPayeeContactId = null,
+    // รอบ 271 — "ออกใบไว้แล้ว — ผูกกับ 50 ทวิ ที่มีอยู่": ใบ 50 ทวิ ที่จะผูกตอนอนุมัติ/จ่าย (null = ระบบออกใบตามติ๊กเดิม) +
+    // รหัสคำเตือนที่ผู้ใช้รับทราบแล้ว (WhtCertLinkPlan) · เฉพาะใบฝั่งผู้จ่าย · ตรวจเต็มตอนผูกจริง
+    Guid? WhtLinkCertId = null,
+    List<string>? WhtLinkAckCodes = null,
     // รอบ 204 (คำตัดสินข้อ 148 (4)) — ผู้จ่ายออกภาษีแทน: null = หัก ณ ที่จ่าย (พฤติกรรมเดิม) · PayAlways ออกให้ตลอดไป · PayOnce ออกให้ครั้งเดียว ·
     // เฉพาะใบฝั่งผู้จ่าย (WhtCertIssuePlan.AppliesTo) — ใบชนิดอื่นส่งค่าที่ไม่ใช่หัก ณ ที่จ่าย = 400 ข้อความไทย
     WithholdingTaxCertType? WhtCertType = null,
@@ -381,6 +385,9 @@ public record UpdateDocumentRequest(
     // คำขอเจ้าของ 2026-10-12 — 50 ทวิ อัตโนมัติ: null = คงค่าเดิม · ผู้ถูกหัก: null = คงค่าเดิม · Guid.Empty = กลับไปใช้ผู้ติดต่อของเอกสาร
     bool? WhtCertAutoIssue = null,
     Guid? WhtPayeeContactId = null,
+    // รอบ 271 — ใบ 50 ทวิ ที่จะผูก: null = คงค่าเดิม · Guid.Empty = ล้าง (กลับไปให้ระบบออกใบ) · แก้ได้เฉพาะใบร่าง/ถูกตีกลับ (หลังอนุมัติ = 400 พร้อมทางไปต่อ)
+    Guid? WhtLinkCertId = null,
+    List<string>? WhtLinkAckCodes = null,
     // รอบ 204 — ผู้จ่ายออกภาษีแทน: null = คงค่าเดิม · ค่าใหม่ ⇒ คิดภาษี/ยอดสุทธิใหม่จากบรรทัด (ส่งบรรทัดมาด้วยหรือไม่ก็ได้)
     WithholdingTaxCertType? WhtCertType = null,
     // รอบ 204 (ทีม B) — ผู้จ่ายรับภาระตามสัญญา: null = คงค่าเดิม (หลังอนุมัติแก้ผ่าน POST document/{id}/wht-borne-contract)
@@ -1082,6 +1089,9 @@ public record DocumentResponse(
     bool WhtCertAutoIssue = true,
     /// <summary>ผู้ถูกหักภาษีที่ตั้งแยกจากผู้ติดต่อ (null = ผู้ติดต่อของเอกสาร) — หน้าเว็บดึงชื่อ/เลขผู้เสียภาษีจากผู้ติดต่อนี้</summary>
     Guid? WhtPayeeContactId = null,
+    /// <summary>รอบ 271 — เก็บแล้วต้อง echo กลับ (กฎ #4 A): ใบ 50 ทวิ ที่เลือกผูก + คำเตือนที่รับทราบ (ฟอร์มแก้ร่าง hydrate จากค่านี้)</summary>
+    Guid? WhtLinkCertId = null,
+    IReadOnlyList<string>? WhtLinkAckCodes = null,
     /// <summary>รอบ 204 — เงื่อนไขการหักภาษี (หัก ณ ที่จ่าย/ออกให้ตลอดไป/ออกให้ครั้งเดียว) · echo กลับให้ฟอร์มแก้ไข (กฎ #4 A)</summary>
     WithholdingTaxCertType WhtCertType = WithholdingTaxCertType.Withhold,
     /// <summary>รอบ 204 — ส่วนของภาษีหัก ณ ที่จ่ายที่ผู้จ่ายออกแทน (รวมอยู่ใน WithholdingTaxAmount · ไม่หักจากยอดจ่ายผู้รับ)</summary>
@@ -1152,7 +1162,17 @@ public record DocumentResponse(
     bool PostPaySettingApplies = false,
     /// <summary>รอบ 267 P3: แสดงปุ่ม "📤 ส่งให้ลูกค้า" ไหม (เซิร์ฟเวอร์ตัดสิน — <c>CustomerShareRule.ButtonOffered</c> · ด่านชนิด/สถานะเดียวกับตัวออกลิงก์หน้าเอกสาร) ·
     /// เหตุละเอียด (ฝั่งใบลดหนี้ · ใบค่าบริการผู้เช่า) อยู่ในหน้าต่าง <c>share-options</c></summary>
-    bool CanShareToCustomer = false);
+    bool CanShareToCustomer = false,
+    /// <summary>รอบ 273: ใบเสร็จรับชำระที่ไม่ถือ VAT ของใบต้นทางที่มี VAT — หน้ารายละเอียดแสดง "ยอดรับชำระ" + บรรทัดอ้างอิงตามค่านี้แทน "ยอดรวมก่อน VAT / VAT 0.00"
+    /// (เซิร์ฟเวอร์ตัดสิน — <c>Helpers/SettlementReceiptTotals</c> · ข้อความจาก <c>DocumentLabels</c> ชุดเดียวกับกระดาษ) · null = แถวยอดปกติ</summary>
+    SettlementTotalsDto? SettlementTotals = null);
+
+/// <summary>รอบ 273 — แถวยอดของใบเสร็จรับชำระที่ไม่ถือ VAT (เซิร์ฟเวอร์คำนวณ · หน้าเว็บแสดงอย่างเดียว)</summary>
+/// <param name="AmountLabel">ป้ายแถวสุดท้าย ("ยอดรับชำระ")</param>
+/// <param name="AmountReceived">ยอดแถวสุดท้าย</param>
+/// <param name="SettledGrossLabel">ป้ายแถวยอดตัดชำระก่อนหักภาษี ณ ที่จ่าย · null = ไม่มีแถวนี้ (ใบไม่มีภาษีหัก)</param>
+/// <param name="Lines">บรรทัดอ้างอิงใบต้นทาง + หมายเหตุ (ยังไม่ escape — หน้าเว็บ escape เอง)</param>
+public record SettlementTotalsDto(string AmountLabel, decimal AmountReceived, string? SettledGrossLabel, IReadOnlyList<string> Lines);
 
 /// <summary>ทีม F — แถวสรุปหัก ณ ที่จ่ายต่อ (ประเภทเงินได้, อัตรา) เป็นบาท (จาก <c>Helpers/PerLineWht.GroupsOf</c>)</summary>
 public record WhtIncomeGroupDto(string IncomeTypeCode, decimal RatePercent, decimal IncomeThb, decimal WhtThb, int LineCount);

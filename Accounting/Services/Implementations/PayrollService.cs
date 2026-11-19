@@ -1190,7 +1190,8 @@ public class PayrollService : IPayrollService
         var byExtId = employees.Where(e => !string.IsNullOrEmpty(e.ExternalId))
             .GroupBy(e => e.ExternalId!).ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
         string DigitsOnly(string? s) => Accounting.Helpers.ThaiTaxId.Normalize(s);   // เลขบัตรประชาชน (= เลขผู้เสียภาษีบุคคล) — ตัวตั้งเดียว (W1d P2-6)
-        var byCitizen = employees.Where(e => !string.IsNullOrEmpty(e.CitizenId))
+        // รอบ 274 (LOW-3): เลขบัตรที่ถอดรหัสไม่ได้ไม่ใช่กุญแจจับคู่ (ห้ามตัดตัวเลขจาก ciphertext)
+        var byCitizen = employees.Where(e => !string.IsNullOrEmpty(e.CitizenId) && !Accounting.Helpers.EncryptedColumnConverter.IsUnreadable(e.CitizenId))
             .GroupBy(e => DigitsOnly(e.CitizenId)).ToDictionary(g => g.Key, g => g.First());
 
         // P6 (N+1): เดิมเช็คผังบัญชีด้วย AnyAsync **ในลูปรายบรรทัด** (2 query/
@@ -3444,11 +3445,22 @@ public class PayrollService : IPayrollService
 
         // Single employee → return the PDF directly. Multiple → zip them.
         using var zip = new MemoryStream();
+        var annualBlocked = new List<string>();
         using (var archive = new System.IO.Compression.ZipArchive(zip, System.IO.Compression.ZipArchiveMode.Create, leaveOpen: true))
         {
             foreach (var g in grouped)
             {
                 var emp = g.First().Employee;
+                // รอบ 274: 50 ทวิ ภ.ง.ด.1ก ห้ามพิมพ์เลขที่ผิด — เลขถอดรหัสไม่ได้/ไม่ถูกต้อง ⇒ ใบเดียว: ปฏิเสธพร้อมเหตุ · หลายใบ: ข้ามคนนั้นและใส่เหตุใน zip
+                var identity = Accounting.Helpers.EmployeeTaxIdentity.Inspect(emp.TaxId, emp.CitizenId);
+                if (identity.Problem is Accounting.Helpers.TaxIdProblem.Undecryptable or Accounting.Helpers.TaxIdProblem.Invalid)
+                {
+                    var why = $"{emp.EmployeeCode} {emp.FirstNameTh} {emp.LastNameTh}".Trim() + " — " + identity.Reason;
+                    if (grouped.Count == 1)
+                        throw new BusinessRuleException("ออกหนังสือรับรอง 50 ทวิ ไม่ได้: " + why, "RD-50TWI-PAYEE-TAXID", 422);
+                    annualBlocked.Add(why);
+                    continue;
+                }
                 var totalIncome = g.Sum(d => d.GrossIncome);
                 var totalTax = g.Sum(d => d.WithholdingTax);
                 // Effective rate (display): tax / income × 100. แสดงเป็น
@@ -3527,6 +3539,17 @@ public class PayrollService : IPayrollService
                 await using var entryStream = entry.Open();
                 await entryStream.WriteAsync(pdfBytes);
             }
+            if (annualBlocked.Count > 0)
+            {
+                if (annualBlocked.Count == grouped.Count)
+                    throw new BusinessRuleException("ออกหนังสือรับรอง 50 ทวิ ไม่ได้ทุกคน: " + string.Join(" · ", annualBlocked), "RD-50TWI-PAYEE-TAXID", 422);
+                // ล้มดังในไฟล์ที่ผู้ใช้เปิด (ชื่อขึ้นต้นด้วย 0 ให้อยู่บนสุดของรายการ) — ไม่มีเลขเต็มในไฟล์นี้ (PDPA)
+                var note = archive.CreateEntry("0_ไม่ได้ออก_เลขประจำตัวใช้ไม่ได้.txt", System.IO.Compression.CompressionLevel.Fastest);
+                await using var ns = note.Open();
+                await ns.WriteAsync(System.Text.Encoding.UTF8.GetBytes(
+                    $"ระบบไม่ออก 50 ทวิ ภ.ง.ด.1ก ปี {year} ให้ {annualBlocked.Count} คนต่อไปนี้ เพราะเลขประจำตัวใช้ไม่ได้ (ห้ามพิมพ์เลขที่ผิดลงหนังสือรับรอง):\r\n"
+                    + string.Join("\r\n", annualBlocked.Select(b => "- " + b)) + "\r\n"));
+            }
         }
         await _db.SaveChangesAsync();   // persist the per-employee audit rows
         return ($"WHT50tawi_{year}_employees.zip", zip.ToArray());
@@ -3539,7 +3562,7 @@ public class PayrollService : IPayrollService
     {
         // D-01: เลขผู้เสียภาษีผ่าน resolver กลางตัวเดียวกับ 50 ทวิรายเดือน/ไฟล์ยื่น
         // (เดิมใช้ CitizenId ตรง ๆ ⇒ พนักงานต่างด้าวที่มีแต่ TaxId ได้ใบรายปีเลขว่าง)
-        var taxId = Accounting.Helpers.EmployeeTaxIdentity.Resolve(e.TaxId, e.CitizenId);
+        var taxId = Accounting.Helpers.EmployeeTaxIdentity.Resolve(e.TaxId, e.CitizenId);   // ใช้ไม่ได้ = null (ผู้เรียกกันไว้ก่อนแล้ว)
         return new()
         {
             Name = $"{e.TitleTh}{e.FirstNameTh} {e.LastNameTh}".Trim(),
@@ -4001,13 +4024,16 @@ public class PayrollService : IPayrollService
                 // บล็อกตลอดกาล · บุคคลไทย เลขผู้เสียภาษี = เลขบัตรประชาชน ⇒ resolver
                 // กลางตัวเดียว (TaxId ที่กรอก → เลขบัตร → ไม่รู้) ใช้ทั้งด่าน ค้น cert
                 // ที่ออกมือ ค้น/สร้าง Contact — ค่าเดียวกันทั้งสี่จุด
-                var payeeTaxId = Accounting.Helpers.EmployeeTaxIdentity.Resolve(emp.TaxId, emp.CitizenId);
+                // รอบ 274: ตรวจก่อนใช้ — ค่า enc1:… ที่ถอดไม่ออก (คีย์ถูกเปลี่ยน) / ไม่ใช่ 13 หลัก / checksum ไม่ผ่าน ⇒ ไม่ออกใบ + บอกเหตุ ·
+                // เดิมตัดเอาตัวเลขจาก ciphertext ⇒ สร้าง Contact ด้วยเลข 5–14 หลักแล้วพิมพ์ลง 50 ทวิ
+                var payeeIdentity = Accounting.Helpers.EmployeeTaxIdentity.Inspect(emp.TaxId, emp.CitizenId);
+                var payeeTaxId = payeeIdentity.Value;
                 if (payeeTaxId == null)
                 {
                     // ⚠️ ห้าม log เลขบัตร/เลขผู้เสียภาษีเต็ม (PDPA ม.26) — ใช้
-                    // รหัสพนักงาน + ชื่อ ซึ่งเป็นสิ่งที่ HR ใช้ค้นในระบบอยู่แล้ว
+                    // รหัสพนักงาน + ชื่อ ซึ่งเป็นสิ่งที่ HR ใช้ค้นในระบบอยู่แล้ว (Reason ใช้เลขปิดบัง/จำนวนหลักเท่านั้น)
                     skipped.Add($"{emp.EmployeeCode} {emp.FirstNameTh} {emp.LastNameTh}".Trim()
-                        + " (ยังไม่ได้กรอกเลขบัตรประชาชนหรือเลขประจำตัวผู้เสียภาษี)");
+                        + $" ({payeeIdentity.Reason})");
                     continue;
                 }
 
@@ -4835,10 +4861,13 @@ public class PayrollService : IPayrollService
         // GrossIncome (รวมสวัสดิการยกเว้น) ⇒ "รายได้รวม" บนจอ ≠ เงินได้ในไฟล์ · ยอดที่ไฟล์จะประกาศ + ยอดต่อประเภท 5 ข้อ
         // มาจากตัวโหลดเดียวกับไฟล์ (Pnd1FilingData.LoadMonthAsync) ⇒ รวม 50 ทวิ ภ.ง.ด.1 ที่ออกด้วยมือนอกรอบเงินเดือน
         var filing = await Accounting.Helpers.Pnd1FilingData.LoadMonthAsync(_db, companyId, year, month);
+        // รอบ 274: เลขบนจอผ่านตัวตรวจเดียวกับไฟล์ — ค่า enc1:… (ถอดรหัสไม่ได้) / ผิดรูป แสดงเป็นป้ายเหตุ และแถวนั้นไม่อยู่ในไฟล์ (filing.BlockedRows)
+        var blockedCodes = filing.BlockedRows.Select(b => b.SourceRef).ToHashSet(StringComparer.Ordinal);
         var lines = details.Select(d => new
         {
             EmployeeCode = d.Employee.EmployeeCode,
-            CitizenId = includePii ? d.Employee.CitizenId : Accounting.Helpers.PiiMask.CitizenId(d.Employee.CitizenId),
+            CitizenId = Accounting.Helpers.EmployeeTaxIdentity.Display(
+                Accounting.Helpers.EmployeeTaxIdentity.Inspect(d.Employee.TaxId, d.Employee.CitizenId), includePii),
             FullName = $"{d.Employee.TitleTh}{d.Employee.FirstNameTh} {d.Employee.LastNameTh}",
             IncomeType = Accounting.Helpers.Pnd1FileFormat.CategoryLabel(Accounting.Helpers.Pnd1FileFormat.GeneralSalary),
             TaxableIncome = Accounting.Helpers.Pnd1FilingData.IncomeOf(d.TaxableGross, d.GrossIncome),
@@ -4847,6 +4876,7 @@ public class PayrollService : IPayrollService
             InFilingFile = Accounting.Helpers.PayrollRunFilingScope.FilingStatuses
                                .Contains(d.PayrollRun.Status)
                            && Accounting.Helpers.Pnd1FilingData.IncomeOf(d.TaxableGross, d.GrossIncome) > 0
+                           && !blockedCodes.Contains(d.Employee.EmployeeCode)
         }).ToList();
         // แถวจาก 50 ทวิ ภ.ง.ด.1 ที่ออกด้วยมือ (ผู้รับนอกรอบเงินเดือน) — อยู่ในไฟล์เสมอ ⇒ ต้องเห็นบนจอด้วย
         lines.AddRange(filing.CertRows.Select(r => new
@@ -4881,7 +4911,8 @@ public class PayrollService : IPayrollService
             ExcludedNote = excluded.Count == 0 ? null
                 : $"{excluded.Count} แถวจะไม่อยู่ในไฟล์ ภ.ง.ด.1 — "
                   + $"รอบที่ยังไม่อนุมัติ ({string.Join("/", excluded.Select(l => l.RunStatus).Distinct())}) "
-                  + "หรือไม่มีเงินได้ · กดอนุมัติรอบเงินเดือนก่อนดาวน์โหลด",
+                  + "หรือไม่มีเงินได้ หรือเลขประจำตัวใช้ไม่ได้ (ดู FilingNotes) · กดอนุมัติรอบเงินเดือนก่อนดาวน์โหลด",
+            BlockedRows = filing.BlockedRows,
             Lines = lines
         };
     }

@@ -9,7 +9,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Accounting.Services.Implementations;
 
-public class WithholdingTaxCertService : IWithholdingTaxCertService
+public partial class WithholdingTaxCertService : IWithholdingTaxCertService
 {
     private readonly AccountingDbContext _db;
     private readonly IPdfGenerationService _pdf;
@@ -319,34 +319,13 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
         var company = await _db.Companies.FirstOrDefaultAsync(c => c.Id == companyId)
             ?? throw new KeyNotFoundException("ไม่พบบริษัท");
 
-        return MapToResponse(cert, company);
+        // รอบ 271: ช่องการผูก (ผูกกับ · ลบ/ยกเลิกได้ไหม · อาจนับซ้ำ) — ตัวเดียวกับรายการ
+        return (await DecorateLinkAsync(companyId, new List<WithholdingTaxCert> { cert }, new List<WithholdingTaxCertResponse> { MapToResponse(cert, company) }))[0];
     }
 
-    public async Task<PagedResponse<WithholdingTaxCertResponse>> GetAllAsync(Guid companyId, TaxType? taxFormType, int? year, int? month, PagedRequest request)
-    {
-        var query = _db.WithholdingTaxCerts
-            .Include(w => w.Lines)
-            // ไม่ Include PayeeContact — hydrate แยก (กัน INNER JOIN ตัด 50 ทวิ ที่ payee ถูกลบ)
-            .Include(w => w.Document)
-            .Where(w => w.CompanyId == companyId);
-
-        if (taxFormType.HasValue) query = query.Where(w => w.TaxFormType == taxFormType.Value);
-        if (year.HasValue) query = query.Where(w => w.TaxYear == year.Value);
-        if (month.HasValue) query = query.Where(w => w.TaxMonth == month.Value);
-
-        var total = await query.CountAsync();
-        var items = await query.OrderByDescending(w => w.CreatedAt)
-            .Skip((request.Page - 1) * request.PageSize)
-            .Take(request.PageSize)
-            .ToListAsync();
-        await _db.HydratePayeeContactsAsync(companyId, items);
-
-        var company = await _db.Companies.FirstAsync(c => c.Id == companyId);
-
-        return new PagedResponse<WithholdingTaxCertResponse>(
-            items.Select(w => MapToResponse(w, company)).ToList(), total, request.Page, request.PageSize,
-            (int)Math.Ceiling(total / (double)request.PageSize));
-    }
+    /// <summary>ทางเดิม (แบบ/ปี/เดือน) — รอบ 271 เดินทางเดียวกับ <see cref="GetListAsync"/> (ตัวกรองฝั่งเซิร์ฟเวอร์ + ช่องการผูก)</summary>
+    public Task<PagedResponse<WithholdingTaxCertResponse>> GetAllAsync(Guid companyId, TaxType? taxFormType, int? year, int? month, PagedRequest request)
+        => GetListAsync(companyId, new WhtCertListFilter(taxFormType, year, month, null, null, null), request);
 
     public Task<WithholdingTaxCertResponse> IssueAsync(Guid companyId, Guid certId)
         => IssueAsync(companyId, certId, null);
@@ -358,6 +337,14 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
 
         if (cert.Status != WithholdingTaxCertStatus.Draft)
             throw new InvalidOperationException("สามารถออกหนังสือรับรองได้เฉพาะที่เป็น Draft เท่านั้น");
+
+        // รอบ 271 ฝ่ายค้าน M3: ใบร่างที่ "ผูกด้วยมือ" (เช่น ผูกครั้งแรกในเดือนที่ยื่นแล้ว · 271-1-2) — ออกใบ = ใบเข้าแบบของเดือนนั้น ⇒ ถ้าเดือนยื่นแล้ว
+        // ตัวเลขที่ยื่นแล้วจะเปลี่ยน ⇒ บล็อก (ตัวกลางเดียว WhtCertVoidGuard.CheckPeriodAsync · ไม่มีทางรับทราบ ตาม 271-0-2)
+        if (cert.LinkedAt != null
+            && await WhtCertVoidGuard.CheckPeriodAsync(_db, companyId, cert.TaxFormType, cert.TaxYear, cert.TaxMonth) is string issueFiled)
+            throw new BusinessRuleException(
+                $"ออก {cert.CertificateNumber} ไม่ได้ — {issueFiled}: ใบนี้ผูกกับใบสำคัญจ่ายแบบ \"ผูกอย่างเดียว\" การออกใบจะเปลี่ยนตัวเลขในแบบที่ยื่นแล้ว"
+                + WhtCertLinkPlan.FiledWayForward, WhtCertLinkPlan.FiledRuleCode, 409);
 
         // ฝ่ายค้านรอบ 204 L5: ร่างที่สร้างโดยผู้ถูกหักยังไม่มีเลขผู้เสียภาษี (#20 · สร้างเอง) ⇒ ตรวจซ้ำตอน "ออก" (ใบที่ออกแล้วเข้าแบบ ภ.ง.ด.) ·
         // ตัวตรวจเดียวกับตอนสร้างจากเอกสาร (WhtCertIssuePlan.PayeeTaxIdProblem · ผู้รับต่างประเทศ ภ.ง.ด.54 ยกเว้น) · ไม่ล็อกตาย: รับทราบแล้วออกได้ + audit
@@ -426,6 +413,9 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
 
         var oldStatus = cert.Status;
         cert.Status = WithholdingTaxCertStatus.Voided;
+        // รอบ 271 ฝ่ายค้าน L4: ความตั้งใจ "ผูกใบนี้" บนเอกสารใดก็ตามหมดความหมายเมื่อใบถูกยกเลิก — ล้าง (ไม่งั้นทางอัตโนมัติล้มซ้ำทุกครั้ง · ไม่ออกใบอีกเลย)
+        await _db.Documents.Where(d => d.CompanyId == companyId && d.WhtLinkCertId == certId)
+            .ExecuteUpdateAsync(u => u.SetProperty(d => d.WhtLinkCertId, (Guid?)null).SetProperty(d => d.WhtLinkAckCodes, (string?)null));
         string? label = null;
         if (filed != null)
         {
@@ -468,6 +458,11 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
             .IgnoreQueryFilters()
             .FirstOrDefaultAsync(w => w.Id == certId && w.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบหนังสือรับรองหัก ณ ที่จ่าย");
+
+        // รอบ 271 (271-1-1 = D1b · ปิด F1 HIGH): ใบที่มีเลขแล้วลบถาวรไม่ได้ทุกสถานะ — เลขอาจอยู่ในมือผู้ถูกหัก/ในแบบที่ยื่น และตัวออกเลข MAX+1
+        // จะนำเลขสูงสุดที่ถูกลบกลับมาใช้กับใบอื่น · ทางไปต่อ = "ยกเลิก" (เลขคงอยู่ ประทับยกเลิก) · ตัวตัดสินเดียวกับปุ่มบนจอ (deleteAllowed)
+        if (!WhtCertLinkPlan.DeleteAllowed(cert.CertificateNumber))
+            throw new BusinessRuleException(WhtCertLinkPlan.DeleteRefusal(cert.CertificateNumber, cert.Status), WhtCertLinkPlan.DeleteRuleCode, 409);
 
         if (userId.HasValue)
         {
@@ -527,6 +522,32 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
         Guid? sourcePaymentId = null, decimal? paymentWhtAmount = null, Guid? payeeContactId = null,
         bool manualRequest = false, Guid? userId = null)
     {
+        // รอบ 271 ฝ่ายค้าน M4: ออกใบต้องถือล็อกแถวใบสำคัญจ่ายเดียวกับทางผูก — ไม่มีธุรกรรมของผู้เรียก (ปุ่ม "สร้างใบ") ⇒ เปิดเอง (ทั้งก้อน atomic)
+        if (_db.Database.CurrentTransaction != null)
+            return (await GenerateFromDocumentCoreAsync(companyId, documentId, autoIssue, createdBy, paymentDate, sourcePaymentId,
+                paymentWhtAmount, payeeContactId, manualRequest, userId, preview: false)).Response!;
+        await using var tx = await _db.Database.BeginTransactionAsync();
+        var result = (await GenerateFromDocumentCoreAsync(companyId, documentId, autoIssue, createdBy, paymentDate, sourcePaymentId,
+            paymentWhtAmount, payeeContactId, manualRequest, userId, preview: false)).Response!;
+        await tx.CommitAsync();
+        return result;
+    }
+
+    /// <summary>รอบ 271: "ใบที่ระบบจะออกให้การจ่ายนี้" (ไม่บันทึก · ไม่ออกเลข · ไม่ยกเลิกร่าง · ไม่ตรวจใบที่มีอยู่) — ค่าฝั่งใบสำคัญจ่ายของ
+    /// <see cref="WhtCertLinkPlan"/> มาจากตัวออกใบตัวเดียว (ผู้ถูกหัก · แบบ · เดือน · เงินได้รวมภาษีออกแทน · บาท) ไม่ใช่สูตรสำเนา</summary>
+    private async Task<WithholdingTaxCert> PreviewCertFromDocumentAsync(Guid companyId, Guid documentId, DateTime? paymentDate,
+        Guid? sourcePaymentId, decimal? paymentWhtAmount)
+        => (await GenerateFromDocumentCoreAsync(companyId, documentId, autoIssue: false, "preview", paymentDate, sourcePaymentId,
+            paymentWhtAmount, payeeContactId: null, manualRequest: false, userId: null, preview: true)).Preview!;
+
+    private async Task<(WithholdingTaxCertResponse? Response, WithholdingTaxCert? Preview)> GenerateFromDocumentCoreAsync(
+        Guid companyId, Guid documentId, bool autoIssue, string createdBy, DateTime? paymentDate,
+        Guid? sourcePaymentId, decimal? paymentWhtAmount, Guid? payeeContactId,
+        bool manualRequest, Guid? userId, bool preview)
+    {
+        // รอบ 271 ฝ่ายค้าน M4: ล็อกแถวใบสำคัญจ่ายก่อนตรวจ "มีใบแล้ว" (ทางผูกถือล็อกเดียวกัน) — พรีวิวไม่ล็อก (อ่านอย่างเดียว)
+        if (!preview && _db.Database.CurrentTransaction != null)
+            await LockDocumentRowAsync(companyId, documentId);
         var doc = await _db.Documents
             .Include(d => d.Lines)   // ไม่ Include Contact — hydrate แยก (กัน INNER JOIN ทำ doc = null → 50 ทวิ ออกไม่ได้)
             .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId)
@@ -535,6 +556,15 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
 
         if (doc.WithholdingTaxAmount <= 0)
             throw new InvalidOperationException("เอกสารนี้ไม่มีภาษีหัก ณ ที่จ่าย");
+
+        // รอบ 271 ฝ่ายค้าน M1: ใบที่ตั้งใจผูก 50 ทวิ ที่ออกไว้แล้ว (และใบนั้นยังใช้ได้) — "สร้างใบ" เอง = ใบที่สองของการจ่ายเดียว (นับซ้ำ) ⇒ ปฏิเสธพร้อมทางไปต่อ
+        if (!preview && manualRequest && doc.WhtLinkCertId is Guid intentId
+            && await _db.WithholdingTaxCerts.AsNoTracking().Where(w => w.Id == intentId && w.CompanyId == companyId
+                    && w.Status != WithholdingTaxCertStatus.Voided && (w.DocumentId == null || w.DocumentId == doc.Id))
+                .Select(w => w.CertificateNumber).FirstOrDefaultAsync() is string intentNo)
+            throw new BusinessRuleException(
+                $"{doc.DocumentNumber} ตั้งใจผูก 50 ทวิ {intentNo} ที่ออกไว้แล้ว — สร้างใบใหม่จะนับซ้ำ · กด \"ผูก\" ที่ลิสต์/หน้ารายละเอียดใบสำคัญจ่าย "
+                + "หรือเปิดแก้ใบ (ร่าง) แล้วเลือก \"ให้ระบบออกใบใหม่\"", WhtCertLinkPlan.IntentRuleCode, 409);
 
         // ฝ่ายค้าน L1 (2026-10-12): ตรวจผู้ถูกหัก/เลขผู้เสียภาษี **ก่อน** ขั้นยกเลิกใบร่างระดับเอกสารข้างล่าง — เดิมตรวจหลัง ⇒ ด่านนี้ล้ม
         // (ออกใบไม่ได้) แต่ใบร่างเดิมถูกยกเลิกไปแล้ว (ทางกดเองไม่มี savepoint ย้อน) = เสียใบร่างโดยไม่ได้ใบใหม่
@@ -577,14 +607,16 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
         // ทางอัตโนมัติ/ขอออกทันที ⇒ ปฏิเสธเหมือนเดิม (ป้ายบนเอกสาร + ลิสต์รอออกใบ) — ตัวตัดสินเดียว WhtCertPayeeTaxIdDraft.DraftInstead
         var payeeProblem = WhtCertIssuePlan.PayeeTaxIdProblem(payee?.Name, payee?.TaxId, payeeForeign);
         var draftForMissingTaxId = WhtCertPayeeTaxIdDraft.DraftInstead(payeeProblem, manualRequest, autoIssue);
-        if (payeeProblem != null && !draftForMissingTaxId)
+        if (!preview && payeeProblem != null && !draftForMissingTaxId)
             throw new BusinessRuleException(payeeProblem, WhtCertIssuePlan.PayeeRuleCode);
 
         // Idempotency — ภ.ง.ด.3/53 เป็น cash basis: จ่ายเป็นงวดต้องออกใบ "งวดละใบ"
         // ตามยอดที่หักจริงของงวดนั้น จึงเช็คซ้ำที่ระดับ "งวดการจ่าย" เมื่อระบุ
         // sourcePaymentId มา (เดิมเช็คระดับเอกสาร → งวดที่ 2 เป็นต้นไปออกใบไม่ได้
         // และใบแรกก็ระบุยอดเต็มทั้งเอกสารทั้งที่จ่ายไปแค่บางส่วน)
-        if (sourcePaymentId.HasValue)
+        // รอบ 271: พรีวิว (ตัวตัดสินผูก) ไม่ตรวจ/ไม่แตะใบที่มีอยู่ — แค่คิดว่า "ใบของการจ่ายนี้" มีค่าอะไร
+        if (preview) { }
+        else if (sourcePaymentId.HasValue)
         {
             // ซ้ำ = "งวดจ่ายเดียวกัน + เอกสารเดียวกัน" — การโอนก้อนเดียวปิดหลายใบ
             // ใช้ payment id ร่วมกันทุกใบ ถ้าเช็คแค่ payment id ใบที่ 2 เป็นต้นไป
@@ -668,7 +700,7 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
         // → ตรงกับ TaxMonth ที่ลงในใบ + สอดคล้องกับ CreateAsync (WHT-YYYYMM-####)
         var autoDate = paymentDate ?? doc.PaymentDate ?? doc.DocumentDate;
         // ฝ่ายค้าน P3-2: เลขที่ผ่านตัวออกเลขตัวเดียว (เดิมสำเนา MAX+1 สามที่)
-        var certNumber = await NextCertificateNumberAsync(companyId, autoDate.Year, autoDate.Month);
+        var certNumber = preview ? "(พรีวิว)" : await NextCertificateNumberAsync(companyId, autoDate.Year, autoDate.Month);
 
         var cert = new WithholdingTaxCert
         {
@@ -789,6 +821,7 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
 
         cert.TotalIncomeAmount = cert.Lines.Sum(l => l.IncomeAmount);
         cert.TotalTaxAmount = cert.Lines.Sum(l => l.TaxAmount);
+        if (preview) return (null, cert);
 
         if (autoIssue)
         {
@@ -833,9 +866,9 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
         }
 
         var generated = await GetByIdAsync(companyId, cert.Id);
-        return draftForMissingTaxId
+        return (draftForMissingTaxId
             ? generated with { Warnings = new[] { WhtCertPayeeTaxIdDraft.WarningFor(payeeProblem!) } }
-            : generated;
+            : generated, null);
     }
 
     /// <summary>
@@ -932,8 +965,13 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
             .Where(w => w.CompanyId == companyId && w.DocumentId == documentId
                 && (payeeOnly == null || w.PayeeContactId == payeeOnly)
                 && w.Status != WithholdingTaxCertStatus.Voided)
-            .Select(w => new { w.SourcePaymentId, w.Status })
+            .Select(w => new { w.Id, w.SourcePaymentId, w.Status, w.LinkedAt })
             .ToListAsync();
+        // รอบ 271: ตั้งใจผูกใบที่ออกไว้แล้ว และใบนั้นยังไม่ผูกกับเอกสารนี้ (ผูกแล้ว = ความตั้งใจถูกใช้แล้ว ⇒ งวดถัดไปเดินทางเดิม)
+        var linkCertId = doc.WhtLinkCertId is Guid wanted && wanted != Guid.Empty && active.All(a => a.Id != wanted) ? doc.WhtLinkCertId : null;
+        // ใบที่ผูกด้วยมือครอบ "ทั้งเอกสาร" (ไม่ผูกงวด) หรือ "งวดนี้" — ใบที่ผูกกับงวดอื่นไม่ครอบงวดถัดไป (ใบละงวด · cash basis)
+        var linkedCover = active.FirstOrDefault(a => (a.LinkedAt != null || a.Id == doc.WhtLinkCertId)
+            && (a.SourcePaymentId == null || a.SourcePaymentId == sourcePaymentId));
         var decision = WhtCertIssuePlan.Decide(new WhtCertIssueFacts(
             trigger, doc.DocumentType, doc.Status, paymentWhtAmount ?? doc.WithholdingTaxAmount,
             AutoIssueEnabled: doc.WhtCertAutoIssue,
@@ -946,7 +984,15 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
             // ฝ่ายค้านรอบ 204 (หลัง 0f428969): ป้ายผู้ถูกหักที่สืบทอดถูกตัดทิ้ง (ยังไม่รับทราบ) ⇒ ไม่ออกอัตโนมัติ (รอในลิสต์ "ต้องตรวจ")
             PayeeReviewPending: WhtPayeeSplit.PendingDroppedPayeeReview(doc.InternalNotes) != null,
             // รอบ 204 (c3): หักผ่าน e-Withholding ⇒ ธนาคารนำส่ง/กรมสรรพากรออกหลักฐาน — ทางอัตโนมัติไม่ออกใบ (กดทีละใบยังออกได้ + คำเตือน)
-            ViaEWithholding: await EWithholdingScope.IsViaAsync(_db, companyId, doc)));
+            ViaEWithholding: await EWithholdingScope.IsViaAsync(_db, companyId, doc),
+            LinkCertRequested: linkCertId != null,
+            // รอบ 271 ฝ่ายค้าน H2: ใบที่ผูกด้วยมือ (รวมร่าง) ครอบการจ่ายนี้แล้ว — ห้ามออกใบที่สอง
+            LinkedCertCovers: linkedCover != null));
+        if (decision.Action == WhtCertIssueAction.LinkExisting && linkCertId == null && linkedCover != null)
+            return new WhtAutoIssueOutcome(WhtCertIssueAction.LinkExisting, linkedCover.Id, null, null, decision.Reason);
+        if (decision.Action == WhtCertIssueAction.LinkExisting)
+            return await LinkRequestedCertAsync(companyId, doc, linkCertId!.Value, trigger, createdBy, paymentDate, sourcePaymentId,
+                paymentWhtAmount, writeFailureNote);
         if (decision.Action != WhtCertIssueAction.IssueNow)
             return new WhtAutoIssueOutcome(decision.Action, null, null, null, decision.Reason);
 
@@ -1071,6 +1117,13 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
         // ผู้ถูกหักที่ไม่ใช่ผู้ติดต่อของเอกสาร (ประกันผ่านโบรกเกอร์) — ลิสต์ต้องบอกว่า 50 ทวิ จะออกในนามใคร
         // (รวมผู้ถูกหักรายบรรทัด — LoadWhtPayeeContactsAsync อ่านบรรทัดที่โหลดมาด้วย)
         var payees = await _db.LoadWhtPayeeContactsAsync(companyId, docs);
+        // รอบ 271 ฝ่ายค้าน M1: ความตั้งใจผูก (WhtLinkCertId) ที่ยังใช้ได้ (ใบไม่ยกเลิก · ไม่ผูกเอกสารอื่น) — ลิสต์ต้องเคารพ (ไม่เสนอสร้างใบใหม่)
+        var intentIds = docs.Where(d => d.WhtLinkCertId != null).Select(d => d.WhtLinkCertId!.Value).Distinct().ToList();
+        var intents = intentIds.Count == 0 ? new Dictionary<Guid, (string No, Guid? Doc)>()
+            : (await _db.WithholdingTaxCerts.AsNoTracking()
+                .Where(w => w.CompanyId == companyId && intentIds.Contains(w.Id) && w.Status != WithholdingTaxCertStatus.Voided)
+                .Select(w => new { w.Id, w.CertificateNumber, w.DocumentId }).ToListAsync())
+              .ToDictionary(w => w.Id, w => (w.CertificateNumber, w.DocumentId));
 
         return docs.Select(d =>
         {
@@ -1091,7 +1144,10 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
                         cert != null, cert?.CertificateNumber);
                 }).ToList();
             }
+            (string No, Guid? Doc) intent = default;
+            var hasIntent = d.WhtLinkCertId is Guid iid && intents.TryGetValue(iid, out intent) && (intent.Doc == null || intent.Doc == d.Id);
             var label = review != null ? "50 ทวิ ต้องตรวจ: " + review
+                : hasIntent ? $"ตั้งใจผูก 50 ทวิ {intent.No} ที่ออกไว้แล้ว — ระบบผูกให้ตอนอนุมัติ/บันทึกจ่าย (ไม่สร้างใบใหม่ · กด \"ผูก\" เพื่อผูกเดี๋ยวนี้)"
                 : WhtCertIssuePlan.PendingLabel(d.WhtCertAutoIssue, failed, paid, viaEWithholding: eWhtDocIds.Contains(d.Id))
                   + (payeeRows != null ? $" · ผู้ถูกหัก {payeeRows.Count} ราย ออกใบแล้ว {payeeRows.Count(r => r.HasCertificate)} ราย" : "");
             return new PendingWhtDocumentResponse(
@@ -1110,7 +1166,9 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
                 AutoIssueFailedReason: failed,
                 PendingLabel: label,
                 Payees: payeeRows,
-                ReviewReason: review);
+                ReviewReason: review,
+                LinkIntentCertId: hasIntent ? d.WhtLinkCertId : null,
+                LinkIntentCertNumber: hasIntent ? intent.No : null);
         }).ToList();
     }
 
@@ -1321,6 +1379,8 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
             oldCert.Status = WithholdingTaxCertStatus.Voided;
             oldCert.UpdatedAt = DateTime.UtcNow;
             oldCert.UpdatedBy = actor;
+            // รอบ 271 ฝ่ายค้าน M4: ยกเลิกใบเดิมลงฐานก่อนเพิ่มใบแทน — ดัชนี "ใบที่ไม่ยกเลิก 1 ใบต่อ (เอกสาร, ผู้ถูกหัก, งวดจ่าย)" ตรวจทีละคำสั่ง
+            await _db.SaveChangesAsync();
             WithholdingTaxCert? neo = null;
             if (decision.Action == WhtCertReissueAction.Reissue)
             {

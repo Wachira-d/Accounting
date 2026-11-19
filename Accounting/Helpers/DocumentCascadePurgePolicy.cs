@@ -33,6 +33,9 @@ public sealed record PurgeNodeFacts(
     public bool WhtCreditUsed { get; init; }
     /// <summary>ใบนี้เป็นต้นทุนของสินทรัพย์ที่ "โอนเป็นสินทรัพย์พร้อมใช้" แล้ว (รอบ 249 สินทรัพย์หลายใบ · ฝ่ายค้าน H1) — JE โอนเครดิตผังของใบนี้</summary>
     public bool AssetCostCapitalized { get; init; }
+    /// <summary>รอบ 271 ฝ่ายค้าน H1: เลขที่ 50 ทวิ ของใบนี้ที่ "มีเลขแล้ว" (<c>WhtCertLinkPlan.DeleteAllowed</c> = false · ทุกสถานะ รวมใบที่ผูกเข้ามาและใบที่ยกเลิกแล้ว) —
+    /// ไม่ว่าง ⇒ ลบถาวรไม่ได้ (เลขต้องคงอยู่ · 271-0-1 · 271-1-1) · ทางไปต่อ = ยกเลิก (Void) ใบสำคัญจ่าย ระบบยกเลิก 50 ทวิ ให้และเลขคงอยู่</summary>
+    public IReadOnlyList<string> NumberedWhtCerts { get; init; } = Array.Empty<string>();
     /// <summary>ใบนี้เป็น "ใบแทน" ของใบที่ยังมีผล (<c>ReplacesDocumentId</c> · S3) — id ใบเดิม</summary>
     public Guid? ReplacesLiveDocumentId { get; init; }
     /// <summary>ใบอื่นที่ชี้มาที่ใบนี้ด้วย <c>ReplacedByDocumentId</c> (S3)</summary>
@@ -94,6 +97,7 @@ public static class DocumentCascadePurgePolicy
     public const string RuleReasonRequired = "ACC-M10-PURGE-REASON";
     public const string RulePlanChanged = "PURGE-PLAN-CHANGED";
     public const string RuleAssetCostCapitalized = "TFRS-NPAE-10-COST-SOURCES-PURGE";
+    public const string RuleWhtCertNumbered = "RD-50BIS-PURGE-NUMBERED";
 
     /// <summary>ข้อความเมื่อแผนเปลี่ยนระหว่างผู้ใช้ยืนยัน (S1)</summary>
     public const string PlanChangedMessage = "เอกสารเปลี่ยนระหว่างยืนยัน — เปิดแผนการลบใหม่แล้วตรวจอีกครั้ง · ระบบยังไม่ได้ลบอะไร";
@@ -214,6 +218,10 @@ public static class DocumentCascadePurgePolicy
         if (n.WhtCreditUsed)
             return Block(n, inRetention, RuleWhtCreditUsed,
                 "เครดิตภาษีถูกหัก ณ ที่จ่ายของใบนี้ได้รับหนังสือรับรองแล้ว (ทั้งหมดหรือบางส่วน) หรือใช้เครดิตแล้ว — ลบไม่ได้ (หลักฐานเครดิต ภ.ง.ด.50 ต้องคงอยู่) · ยกเลิก (Void) ใบนี้แทน");
+        if (n.NumberedWhtCerts.Count > 0)
+            return Block(n, inRetention, RuleWhtCertNumbered,
+                $"มีหนังสือรับรองหัก ณ ที่จ่าย (50 ทวิ) ที่มีเลขแล้ว ({string.Join(", ", n.NumberedWhtCerts)}) — ลบถาวรไม่ได้ (เลขอาจอยู่ในมือผู้ถูกหัก/ในแบบที่ยื่น และห้ามถูกนำกลับมาใช้) · "
+                + "ยกเลิก (Void) ใบนี้แทน — ระบบยกเลิก 50 ทวิ ให้ และเลขคงอยู่");
         if (n.AssetCostCapitalized)
             return Block(n, inRetention, RuleAssetCostCapitalized,
                 "เป็นต้นทุนของสินทรัพย์ที่โอนเป็นสินทรัพย์พร้อมใช้แล้ว — ลบแล้วรายการบัญชีของใบหายแต่รายการโอนยังเครดิตผังของใบนี้ (ผังมัดจำ/งานระหว่างก่อสร้างติดลบ) · ปรับด้วยใบลดหนี้/ใบเพิ่มหนี้แทน");

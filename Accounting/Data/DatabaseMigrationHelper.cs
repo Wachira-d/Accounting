@@ -44,6 +44,25 @@ public static class DatabaseMigrationHelper
         }
         if (!paymentOwnerColumnExisted) ReportPaymentOwnerBackfill(db, logger);
         ReportForeignServiceOverpaid(db, logger);
+        ReportWhtCertDuplicates(db, logger);
+    }
+
+    /// <summary>รอบ 271 ฝ่ายค้าน M4: ข้อมูลเดิมที่มี 50 ทวิ ไม่ยกเลิกเกินหนึ่งใบต่อ (เอกสาร, ผู้ถูกหัก, งวดจ่าย) ⇒ ดัชนี unique สร้างไม่ได้ —
+    /// ไม่บล็อกบูต แต่เตือนดังทุกบูตจนกว่าจะเคลียร์ (เงียบเมื่อหมด) · SQL อยู่กับเจ้าของ (<see cref="Accounting.Helpers.Round271Migration"/>)</summary>
+    private static void ReportWhtCertDuplicates(AccountingDbContext db, ILogger? logger)
+    {
+        try
+        {
+            var groups = db.Database.SqlQueryRaw<int>(Accounting.Helpers.Round271Migration.DuplicateGroupsCountSql).AsEnumerable().First();
+            if (groups > 0)
+                logger?.LogWarning("[DbMigration] 50 ทวิ: {Count} กลุ่ม (เอกสาร, ผู้ถูกหัก, งวดจ่าย) มีใบที่ไม่ยกเลิกมากกว่าหนึ่งใบ — นับซ้ำในแบบ ภ.ง.ด. · "
+                    + "ดัชนี {Index} จึงยังสร้างไม่ได้ · ใช้ scripts/wht_duplicate_cert_scan.sql หาแล้วเปลี่ยนการผูก/ยกเลิกใบซ้ำ",
+                    groups, Accounting.Helpers.Round271Migration.UniqueActiveCertIndexName);
+        }
+        catch (Exception ex)
+        {
+            logger?.LogWarning(ex, "[DbMigration] ตรวจ 50 ทวิ ซ้ำต่อการจ่ายไม่สำเร็จ");
+        }
     }
 
     /// <summary>
@@ -287,6 +306,8 @@ public static class DatabaseMigrationHelper
         list.AddRange(Accounting.Helpers.PartnerConsentMigration.Statements());   // รอบ 264 P1 — ความยินยอม "งานอัตโนมัติกับคู่ค้า" (ต่อคู่ × ขอบเขต · append-only)
         list.AddRange(Accounting.Helpers.Round264SlipReadMigration.Statements());   // รอบ 264 P2 — ผลอ่านสลิป (QR + คู่กรณี) บน intent/สลิป LINE · ธนาคาร/เลขปิดบางผู้โอนบนแถวแจ้งคู่ค้า
         list.AddRange(Accounting.Helpers.Round268Migration.Statements());   // รอบ 268 — ช่องทางของเงินมัดจำการจองต่องวด (268-1-3)
+        list.AddRange(Accounting.Helpers.Round271Migration.Statements());   // รอบ 271 — ผูกใบสำคัญจ่ายกับ 50 ทวิ ที่ออกไว้แล้ว (SupersededByCertId ฯลฯ)
+        list.AddRange(Accounting.Helpers.Round272Migration.Statements());   // รอบ 272 — สลิปชำระภาษีจากกลุ่ม LINE/อีเมล: ความยินยอมผู้ให้บริการ (append-only) · ใบขอชำระ · แถวสลิป · ที่มาของการนำส่ง
         return list;
     }
 
