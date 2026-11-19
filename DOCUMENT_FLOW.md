@@ -9772,4 +9772,4 @@ _Last verified against codebase: 2026-11-19 (รอบ 273 — §3.4b-273: ใ�
 
 _Last verified against codebase: 2026-11-19 (รอบ 274 — เลขผู้เสียภาษีพนักงานผิดจำนวนหลักในไฟล์ ภ.ง.ด.1/1ก และ 50 ทวิ หลังเปลี่ยน ENCRYPTION_KEY: converter ลองคีย์เดิม ·
 `EmployeeTaxIdentity.Inspect` (13 หลัก + mod-11 · enc1 ที่ถอดไม่ออก) หน้าทุกทางออก · ไฟล์กันแถวพร้อมเหตุ · กล่อง 50 ทวิ ตัวเดียว · `PiiReprotectJob` · รายงาน `tax-identity-health` ·
-เทสต์ `PiiKeyRotationRound274Tests` + Db `PiiKeyRotationDbTests` · กติกา R274 ×8 — commit <เติมในคอมมิตตามหลัง>)_
+เทสต์ `PiiKeyRotationRound274Tests` + Db `PiiKeyRotationDbTests` · กติกา R274 ×8 — commit 150a9f17 + 11b8d39d (เปลี่ยนชื่อเป็นรอบ 274))_

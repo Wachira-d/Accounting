@@ -7304,5 +7304,5 @@ _รอบ 274 (2026-11-19 · บั๊กเร่งด่วน): ไฟล�
 แก้: (1) converter ลอง `ENCRYPTION_KEY_PREVIOUS` → config เดิม → dev key (ถอดอย่างเดียว) + `PiiReprotectJob` ย้ายแถวไปคีย์ปัจจุบัน (JobLock · audit) ·
 (2) `EmployeeTaxIdentity.Inspect` คืนเฉพาะ 13 หลัก + mod-11 — ไฟล์ ภ.ง.ด.1/1ก/91 กันแถวพร้อมเหตุ · 50 ทวิ ไม่ออก/ไม่พิมพ์เลขผิด (HTML + QuestPDF ตัวเดียว) ·
 (2b) ทางออกอื่นของคอลัมน์ชุดเดียวกัน — ไฟล์ สปส. ไม่ลง ciphertext · ไฟล์โอนเงินเดือนไม่ตัดตัวเลขจาก ciphertext เป็นเลขบัญชี (ไม่พร้อมโอนพร้อมเหตุ) · (3) รายงานอ่านอย่างเดียว `GET payroll/tax-identity-health` · (4) production ปฏิเสธคีย์ placeholder · คำตัดสิน 274-1…7 · เทสต์ `PiiKeyRotationRound274Tests` · Db `PiiKeyRotationDbTests` ·
-กติกา `required_call_site_check` R274 — commit <เติมในคอมมิตตามหลัง>_
+กติกา `required_call_site_check` R274 — commit 150a9f17 + 11b8d39d (เปลี่ยนชื่อเป็นรอบ 274)_
 
