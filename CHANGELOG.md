@@ -7306,3 +7306,6 @@ _รอบ 274 (2026-11-19 · บั๊กเร่งด่วน): ไฟล�
 (2b) ทางออกอื่นของคอลัมน์ชุดเดียวกัน — ไฟล์ สปส. ไม่ลง ciphertext · ไฟล์โอนเงินเดือนไม่ตัดตัวเลขจาก ciphertext เป็นเลขบัญชี (ไม่พร้อมโอนพร้อมเหตุ) · (3) รายงานอ่านอย่างเดียว `GET payroll/tax-identity-health` · (4) production ปฏิเสธคีย์ placeholder · คำตัดสิน 274-1…7 · เทสต์ `PiiKeyRotationRound274Tests` · Db `PiiKeyRotationDbTests` ·
 กติกา `required_call_site_check` R274 — commit 150a9f17 + 11b8d39d (เปลี่ยนชื่อเป็นรอบ 274)_
 
+_รอบ 273 ชุดแก้ฝ่ายค้าน (ตรวจ c488a356 · 1 MED + 3 LOW): MED-1 ท้ายตาราง "รายการ" ของ tax.html ยังบวกแถว [สรุป] (357.30 vs การ์ด 178.65) ⇒ `TaxReportResponse.LinesTaxTotal`
+จาก `WhtReportTotals.Of` หน้าเว็บแสดงอย่างเดียว · LOW-2 RD-WHT-002 ตัดเงื่อนไข `sumWht > 0` · LOW-3 `WhtReportTotals.Apply` คำนวณแถว [สรุป] ใหม่ (`PayeeSummaryOf` — ตัวตั้งเดียวกับตอนสร้าง) ·
+LOW-4 ภ.ง.ด.91 แถว `TAX_ADDITIONAL`/`TAX_REFUND` ไม่นับเข้ายอดหัก (ตอนสร้างไม่นับ แต่ทางบันทึกบรรทัดนับ — ผิดความหมาย ⇒ แยกออก) · เทสต์ Db +2 · pure +5 · กติกา `_R273W_*` +2 · commit (เติมในคอมมิตตามหลัง)_

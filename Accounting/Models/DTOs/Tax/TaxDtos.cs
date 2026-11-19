@@ -50,7 +50,10 @@ public record TaxReportResponse(
     /// และเมื่อตรวจไม่สำเร็จ (หน้าเว็บต้องแสดง "ยังไม่ได้ตรวจ" ไม่ใช่ "ตรงแล้ว")</summary>
     TaxReportFreshnessResponse? Freshness = null,
     /// <summary>รอบ 269 ชุดสอง M3 — ยอดตามช่องของแบบ ภ.พ.30 ทางการ (1–12 · เลข/ชื่อ/ยอดจาก Helpers/Pp30FormBoxes) · null = ไม่ใช่ ภ.พ.30</summary>
-    List<Pp30FormBoxValue>? Pp30Boxes = null);
+    List<Pp30FormBoxValue>? Pp30Boxes = null,
+    /// <summary>รอบ 273 ฝ่ายค้านข้อ 1 — ยอดภาษีท้ายตาราง "รายการ" (เฉพาะแถวที่นับเข้ายอด · ไม่รวมแถว [สรุป]/ติ๊กออก/ผลต่าง ภ.ง.ด.91)
+    /// จากตัวตั้งเดียว <c>Helpers/WhtReportTotals</c> — หน้าเว็บแสดงอย่างเดียว · null = รายงานที่ตารางไม่ใช่รายการบวกรวม (ภ.พ.30 · ภ.ง.ด.50)</summary>
+    decimal? LinesTaxTotal = null);
 
 /// <summary>ยอดหนึ่งช่องของแบบ ภ.พ.30 (เซิร์ฟเวอร์ตัดสินเลข/ชื่อ/ยอด หน้าแสดงอย่างเดียว)</summary>
 public record Pp30FormBoxValue(string No, string Name, decimal Amount);
