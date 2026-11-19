@@ -83,9 +83,24 @@ public partial class WithholdingTaxCertService
             cache[(form, y, m)] = r;
             return r;
         }
+        // รอบ 271 ฝ่ายค้าน M2: "ผูกครั้งแรก" นับว่าไม่ยกเลิกใบใด (271-1-2) ได้ก็ต่อเมื่อใบสำคัญจ่ายนี้ไม่เคยมีใบถูกยกเลิกในเดือนที่ยื่นแล้ว —
+        // ไม่งั้น "ยกเลิก A (รับทราบงวดยื่นแล้ว) แล้วผูก B" = เปลี่ยนการผูกของเดือนที่ยื่นแล้วสองขั้น (ห้ามตาม 271-0-2)
+        string? voidedFiled = null;
+        if (existing == null && pv.DocumentId != Guid.Empty)
+        {
+            var voided = await _db.WithholdingTaxCerts.AsNoTracking()
+                .Where(w => w.CompanyId == companyId && w.DocumentId == pv.DocumentId && w.Status == WithholdingTaxCertStatus.Voided)
+                .Select(w => new { w.CertificateNumber, w.TaxFormType, w.TaxYear, w.TaxMonth }).ToListAsync();
+            foreach (var v in voided)
+                if (await P(v.TaxFormType, v.TaxYear, v.TaxMonth) is string vr)
+                {
+                    voidedFiled = $"{vr} — ใบเดิม {v.CertificateNumber} ของใบสำคัญจ่ายนี้ถูกยกเลิกในเดือนที่ยื่นแล้ว ⇒ การผูกใบใหม่คือการเปลี่ยนการผูกของเดือนที่ยื่นแล้ว";
+                    break;
+                }
+        }
         return new WhtCertLinkPeriodFacts(
-            existing != null,
-            existing != null ? await P(existing.TaxFormType, existing.TaxYear, existing.TaxMonth) : null,
+            existing != null || voidedFiled != null,
+            existing != null ? await P(existing.TaxFormType, existing.TaxYear, existing.TaxMonth) : voidedFiled,
             await P(candidate.TaxFormType, candidate.TaxYear, candidate.TaxMonth),
             await P(pv.FormType, pv.PaymentYear, pv.PaymentMonth));
     }
@@ -131,6 +146,14 @@ public partial class WithholdingTaxCertService
            + (a.PartnerDeliveredAt != null ? " · แจ้งผู้ขายในกล่องรับ 50 ทวิ อัตโนมัติ" : "")
            + " · ไม่มีทางเลือกลบ (271-0-1)";
 
+    /// <summary>ฝ่ายค้าน M4: ล็อกแถวใบสำคัญจ่าย (ต้องอยู่ในธุรกรรม) — ทุกทางที่ตั้ง <c>DocumentId</c> ของ 50 ทวิ (ผูก · เปลี่ยนการผูก · ออกใบจากเอกสาร)
+    /// ถือล็อกเดียวกัน ⇒ "ผูก B" กับ "สร้างใบ" พร้อมกันไม่ได้สองใบต่อการจ่าย (ดัชนี unique กันชั้นฐานข้อมูลอีกชั้น — Round271Migration)</summary>
+    private async Task LockDocumentRowAsync(Guid companyId, Guid documentId)
+    {
+        await _db.Database.ExecuteSqlRawAsync(
+            @"SELECT 1 FROM ""Documents"" WHERE ""Id"" = {0} AND ""CompanyId"" = {1} FOR UPDATE", documentId, companyId);
+    }
+
     // ───────────────────────────── ทางอัตโนมัติ (อนุมัติ/จ่าย) ─────────────────────────────
 
     /// <summary>ผูกใบที่ผู้ใช้เลือกไว้บนร่าง (<c>Document.WhtLinkCertId</c>) — เรียกจาก <see cref="TryAutoIssueCoreAsync"/> เมื่อ
@@ -164,7 +187,8 @@ public partial class WithholdingTaxCertService
             var now = DateTime.UtcNow;
             var rows = await _db.WithholdingTaxCerts
                 .Where(w => w.Id == certId && w.CompanyId == companyId && (w.DocumentId == null || w.DocumentId == doc.Id)
-                    && w.SourcePayrollRunId == null && w.Status != WithholdingTaxCertStatus.Voided)
+                    && w.SourcePayrollRunId == null && w.Status != WithholdingTaxCertStatus.Voided
+                    && w.UpdatedAt == cert!.UpdatedAt)   // ฝ่ายค้าน L1: ใบไม่ถูกแก้ระหว่างตรวจกับผูก
                 .ExecuteUpdateAsync(s => s
                     .SetProperty(w => w.DocumentId, doc.Id)
                     .SetProperty(w => w.SourcePaymentId, sourcePaymentId)
@@ -360,8 +384,7 @@ public partial class WithholdingTaxCertService
         try
         {
             // ล็อกแถวใบสำคัญจ่าย (สองคำขอเปลี่ยนการผูกใบเดียวกันพร้อมกัน ⇒ ทีละคำขอ) — แบบเดียวกับเปลี่ยนผู้ถูกหัก
-            await _db.Database.ExecuteSqlRawAsync(
-                @"SELECT 1 FROM ""Documents"" WHERE ""Id"" = {0} AND ""CompanyId"" = {1} FOR UPDATE", documentId, companyId);
+            await LockDocumentRowAsync(companyId, documentId);
             var doc = await _db.Documents.Include(d => d.Lines)
                 .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId)
                 ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
@@ -379,6 +402,11 @@ public partial class WithholdingTaxCertService
             if (current.Count > 1)
                 throw new BusinessRuleException("ใบนี้มี 50 ทวิ หลายใบ (รายงวด) — เลือกงวดที่จะเปลี่ยนการผูก", WhtCertLinkPlan.RuleCode);
             var a = current.FirstOrDefault();
+            // ฝ่ายค้าน M6: ใบปัจจุบันต้องเป็นใบที่ผู้ใช้เห็นตอนเปิดโมดัล (optimistic) — มีคนเปลี่ยนก่อน ⇒ 409 (ไม่ยกเลิกใบที่ผู้ใช้ไม่เคยเห็น)
+            if (request.ExpectedCurrentCertId != a?.Id)
+                throw new BusinessRuleException(
+                    $"50 ทวิ ที่ผูกกับใบนี้เปลี่ยนไปแล้ว (ตอนนี้: {a?.CertificateNumber ?? "ไม่มีใบ"}) — มีคนเปลี่ยนการผูกก่อน · เปิดโมดัลใหม่แล้วตรวจอีกครั้ง",
+                    WhtCertLinkPlan.StaleRuleCode, 409);
 
             var ctx = await BuildPvLinkFactsAsync(companyId, doc, payDate, request.PaymentId, payWht);
             var row = (await CandidateFactsAsync(companyId, new[] { cert }))[0];
@@ -397,10 +425,32 @@ public partial class WithholdingTaxCertService
             if (a != null && WhtCertLinkPlan.UnlinkedOutcome(a.CertificateNumber, period.ExistingCertFiled != null) == WhtCertUnlinkedOutcome.Blocked)
                 throw new BusinessRuleException(period.ExistingCertFiled + WhtCertLinkPlan.FiledWayForward, WhtCertLinkPlan.FiledRuleCode, 409);
 
+            // ฝ่ายค้าน M4: ยกเลิกใบเดิมก่อนผูกใบใหม่ — ดัชนี unique "ใบที่ไม่ยกเลิก 1 ใบต่อ (เอกสาร, ผู้ถูกหัก, งวดจ่าย)" (ล้ม = ย้อนทั้งธุรกรรม)
+            if (a != null)
+            {
+                // ทางยกเลิกปกติ (ด่าน WhtCertVoidGuard ซ้ำในตัว — ไม่ส่งการรับทราบ ⇒ งวดที่ยื่นแล้ว = 409 เหมือนเดิม)
+                await VoidAsync(companyId, a.Id, null, userId);
+                var tracked = await _db.WithholdingTaxCerts.FirstAsync(w => w.Id == a.Id && w.CompanyId == companyId);
+                tracked.SupersededByCertId = cert.Id;
+                tracked.UpdatedAt = DateTime.UtcNow;
+                _db.AddChainedAuditLog(new AuditLog
+                {
+                    CompanyId = companyId, UserId = userId, Action = AuditAction.Update,
+                    EntityType = "WithholdingTaxCert", EntityId = a.Id.ToString(),
+                    OldValues = System.Text.Json.JsonSerializer.Serialize(new { a.CertificateNumber, Status = a.Status.ToString(), a.DocumentId }),
+                    NewValues = System.Text.Json.JsonSerializer.Serialize(new
+                    {
+                        Status = "Voided", SupersededByCertId = cert.Id, SupersededBy = cert.CertificateNumber, Reason = reason,
+                        RuleCode = WhtCertLinkPlan.RelinkRuleCode, LegalReference = WhtCertLinkPlan.LegalReference,
+                    }),
+                    Timestamp = DateTime.UtcNow,
+                });
+            }
             var now = DateTime.UtcNow;
             var rows = await _db.WithholdingTaxCerts
                 .Where(w => w.Id == cert.Id && w.CompanyId == companyId && w.DocumentId == null
-                    && w.SourcePayrollRunId == null && w.Status != WithholdingTaxCertStatus.Voided)
+                    && w.SourcePayrollRunId == null && w.Status != WithholdingTaxCertStatus.Voided
+                    && w.UpdatedAt == cert.UpdatedAt)   // ฝ่ายค้าน L1: ใบไม่ถูกแก้ (ยอด/สถานะ) ระหว่างตรวจกับผูก
                 .ExecuteUpdateAsync(s => s
                     .SetProperty(w => w.DocumentId, doc.Id)
                     .SetProperty(w => w.SourcePaymentId, request.PaymentId)
@@ -423,26 +473,6 @@ public partial class WithholdingTaxCertService
                 Timestamp = now,
             });
 
-            if (a != null)
-            {
-                // ทางยกเลิกปกติ (ด่าน WhtCertVoidGuard ซ้ำในตัว — ไม่ส่งการรับทราบ ⇒ งวดที่ยื่นแล้ว = 409 เหมือนเดิม)
-                await VoidAsync(companyId, a.Id, null, userId);
-                var tracked = await _db.WithholdingTaxCerts.FirstAsync(w => w.Id == a.Id && w.CompanyId == companyId);
-                tracked.SupersededByCertId = cert.Id;
-                tracked.UpdatedAt = now;
-                _db.AddChainedAuditLog(new AuditLog
-                {
-                    CompanyId = companyId, UserId = userId, Action = AuditAction.Update,
-                    EntityType = "WithholdingTaxCert", EntityId = a.Id.ToString(),
-                    OldValues = System.Text.Json.JsonSerializer.Serialize(new { a.CertificateNumber, Status = a.Status.ToString(), a.DocumentId }),
-                    NewValues = System.Text.Json.JsonSerializer.Serialize(new
-                    {
-                        Status = "Voided", SupersededByCertId = cert.Id, SupersededBy = cert.CertificateNumber, Reason = reason,
-                        RuleCode = WhtCertLinkPlan.RelinkRuleCode, LegalReference = WhtCertLinkPlan.LegalReference,
-                    }),
-                    Timestamp = now,
-                });
-            }
             doc.WhtLinkCertId = cert.Id;
             doc.WhtLinkAckCodes = WhtCertLinkPlan.JoinAckCodes(decision.Warnings.Select(w => w.Code));
             doc.InternalNotes = WhtCertAutoFailedNote.Clear(doc.InternalNotes);
@@ -453,6 +483,42 @@ public partial class WithholdingTaxCertService
             return new WhtLinkResult(cert.Id, cert.CertificateNumber, a?.Id, a?.CertificateNumber,
                 a == null ? $"ผูก {cert.CertificateNumber} กับ {doc.DocumentNumber} แล้ว"
                           : $"ผูก {cert.CertificateNumber} แล้ว · ยกเลิก {a.CertificateNumber}");
+        }
+        catch
+        {
+            if (ownTx != null) await ownTx.RollbackAsync();
+            _db.ChangeTracker.Clear();
+            throw;
+        }
+        finally
+        {
+            if (ownTx != null) await ownTx.DisposeAsync();
+        }
+    }
+
+    // ───────────────────────────── ฝ่ายค้าน H3: สร้างใบพร้อมระบุเอกสาร (POST withholding-tax-certs + DocumentId) ─────────────────────────────
+
+    /// <summary>ทางสร้างใบจากภายนอกที่ระบุ <c>DocumentId</c> — สร้างใบเดี่ยว (ไม่ผูก) แล้ว <b>ผูกผ่านทางเข้าเดียว</b> <see cref="LinkCertToDocumentAsync"/>
+    /// (R1–R11 + เดือนที่ยื่นแล้ว + ล็อกใบสำคัญจ่าย) ในธุรกรรมเดียว · ผูกไม่ผ่าน ⇒ ย้อนทั้งหมด (ไม่มีใบค้าง) · เอกสารมีใบอยู่แล้ว ⇒ 409 (ใช้ "เปลี่ยน 50 ทวิ ที่ผูก") ·
+    /// ใบใหม่เป็นร่างเสมอ ⇒ รับทราบ R10 ให้ (คำเตือนอื่นต้องผูกที่หน้ารายละเอียดใบสำคัญจ่าย) · ผู้เรียกภายใน (settlement) ใช้ <see cref="CreateAsync"/> ตรงตามเดิม</summary>
+    public async Task<WithholdingTaxCertResponse> CreateLinkedAsync(Guid companyId, CreateWithholdingTaxCertRequest request, string createdBy, Guid? userId)
+    {
+        if (request.DocumentId is not Guid docId) return await CreateAsync(companyId, request, createdBy);
+        var ownTx = _db.Database.CurrentTransaction == null ? await _db.Database.BeginTransactionAsync() : null;
+        try
+        {
+            if (await _db.WithholdingTaxCerts.AsNoTracking().AnyAsync(w => w.CompanyId == companyId && w.DocumentId == docId
+                    && w.Status != WithholdingTaxCertStatus.Voided))
+                throw new BusinessRuleException("เอกสารนี้มี 50 ทวิ อยู่แล้ว — เปลี่ยนใบที่ผูกที่หน้ารายละเอียดใบสำคัญจ่าย (\"เปลี่ยน 50 ทวิ ที่ผูก\")",
+                    WhtCertLinkPlan.RuleCode, 409);
+            var created = await CreateAsync(companyId, request with { DocumentId = null }, createdBy);
+            await LinkCertToDocumentAsync(companyId, docId,
+                new WhtLinkRequest(created.Id, null, "สร้างหนังสือรับรองพร้อมระบุเอกสาร", new List<string> { WhtCertLinkPlan.CodeDraft }), userId);
+            if (ownTx != null) await ownTx.CommitAsync();
+            // ผูกด้วย UPDATE ตรง (ไม่ผ่าน ChangeTracker) — ใบที่ CreateAsync ถือไว้ยังเป็นค่าเก่า ⇒ อ่านใหม่จากฐาน
+            foreach (var e in _db.ChangeTracker.Entries<WithholdingTaxCert>().Where(e => e.Entity.Id == created.Id).ToList())
+                await e.ReloadAsync();
+            return await GetByIdAsync(companyId, created.Id);
         }
         catch
         {
@@ -596,13 +662,12 @@ public partial class WithholdingTaxCertService
 
     // ───────────────────────────── หน้า 50 ทวิ: ตัวกรองฝั่งเซิร์ฟเวอร์ (F2) ─────────────────────────────
 
-    /// <summary>ใบไม่ผูกที่มีใบผูกเอกสารของผู้ถูกหัก+แบบ+เดือน+ภาษีเดียวกัน (น่าจะนับซ้ำ · อ่านอย่างเดียว ไม่ประทับสถานะใด)</summary>
-    private Expression<Func<WithholdingTaxCert, bool>> DuplicateSuspect(Guid companyId) => w =>
-        w.Status != WithholdingTaxCertStatus.Voided && w.DocumentId == null && w.SourcePayrollRunId == null
-        && _db.WithholdingTaxCerts.Any(y => y.CompanyId == companyId && y.Id != w.Id && y.DocumentId != null
-            && y.Status != WithholdingTaxCertStatus.Voided && y.PayeeContactId == w.PayeeContactId
-            && y.TaxFormType == w.TaxFormType && y.TaxYear == w.TaxYear && y.TaxMonth == w.TaxMonth
-            && y.TotalTaxAmount == w.TotalTaxAmount);
+    /// <summary>"อาจนับซ้ำ" — เจ้าของเงื่อนไขตัวเดียว <see cref="WhtCertDuplicateSuspect"/> (ฝ่ายค้าน M5 · ขอบเขตบริษัทนี้)</summary>
+    private Expression<Func<WithholdingTaxCert, bool>> DuplicateSuspect(Guid companyId)
+    {
+        return WhtCertDuplicateSuspect.Predicate(_db.WithholdingTaxCerts.Where(y => y.CompanyId == companyId),
+            _db.Contacts.IgnoreQueryFilters().Where(c => c.CompanyId == companyId));
+    }
 
     private IQueryable<WithholdingTaxCert> FilteredCerts(Guid companyId, WhtCertListFilter f, bool applyStatusAndLink)
     {
@@ -672,18 +737,21 @@ public partial class WithholdingTaxCertService
         var payDates = payIds.Count == 0 ? new Dictionary<Guid, DateTime>()
             : await _db.Payments.AsNoTracking().Where(p => p.CompanyId == companyId && payIds.Contains(p.Id))
                 .ToDictionaryAsync(p => p.Id, p => p.PaymentDate);
-        // อาจนับซ้ำ: ใบไม่ผูกของหน้านี้ เทียบใบที่ผูกเอกสาร (ผู้ถูกหัก+แบบ+เดือน+ภาษีเดียวกัน)
-        var unl = certs.Where(c => WhtCertLinkPlan.StateOf(c.Status, c.DocumentId, c.SourcePayrollRunId, null) == WhtCertLinkState.Unlinked).ToList();
-        var dupPayees = unl.Select(c => c.PayeeContactId).Distinct().ToList();
-        var linkedPeers = dupPayees.Count == 0 ? new List<(Guid Payee, TaxType Form, int Y, int M, decimal Tax, string No, Guid DocId, string? DocNo)>()
-            : (await _db.WithholdingTaxCerts.AsNoTracking()
-                .Where(y => y.CompanyId == companyId && y.DocumentId != null && y.Status != WithholdingTaxCertStatus.Voided
-                    && dupPayees.Contains(y.PayeeContactId))
-                .Select(y => new { y.PayeeContactId, y.TaxFormType, y.TaxYear, y.TaxMonth, y.TotalTaxAmount, y.CertificateNumber,
-                    DocId = y.DocumentId!.Value, DocNo = y.Document != null ? y.Document.DocumentNumber : null })
-                .ToListAsync())
-                .Select(y => (Payee: y.PayeeContactId, Form: y.TaxFormType, Y: y.TaxYear, M: y.TaxMonth, Tax: y.TotalTaxAmount,
-                    No: y.CertificateNumber, DocId: y.DocId, DocNo: y.DocNo)).ToList();
+        // อาจนับซ้ำ (ฝ่ายค้าน M5): ใบของหน้านี้ที่ผ่านเงื่อนไขเดียวกับตัวกรอง/การ์ด แล้วหาคู่ด้วย PeersOf (เจ้าของตัวเดียว WhtCertDuplicateSuspect)
+        var pageIds = certs.Select(c => c.Id).ToList();
+        var flagged = (await _db.WithholdingTaxCerts.AsNoTracking().Where(w => w.CompanyId == companyId && pageIds.Contains(w.Id))
+            .Where(DuplicateSuspect(companyId)).Select(w => w.Id).ToListAsync()).ToHashSet();
+        var peerOf = new Dictionary<Guid, (string No, Guid DocId, string? DocNo, bool SamePayment)>();
+        foreach (var c in certs.Where(c => flagged.Contains(c.Id)))
+        {
+            var p = await WhtCertDuplicateSuspect.PeersOf(_db.WithholdingTaxCerts.AsNoTracking().Where(y => y.CompanyId == companyId),
+                    _db.Contacts.IgnoreQueryFilters().Where(x => x.CompanyId == companyId), c)
+                .Where(y => y.DocumentId != null)
+                .OrderByDescending(y => y.CreatedAt)
+                .Select(y => new { y.CertificateNumber, DocId = y.DocumentId!.Value, DocNo = y.Document != null ? y.Document.DocumentNumber : null })
+                .FirstOrDefaultAsync();
+            if (p != null) peerOf[c.Id] = (p.CertificateNumber, p.DocId, p.DocNo, c.DocumentId != null && c.DocumentId == p.DocId);
+        }
         var result = new List<WithholdingTaxCertResponse>(mapped.Count);
         for (var i = 0; i < certs.Count; i++)
         {
@@ -693,15 +761,10 @@ public partial class WithholdingTaxCertService
             string? supersededBy = c.SupersededByCertId is Guid s && supNo.TryGetValue(s, out var n) ? n : null;
             string? dupLabel = null;
             Guid? dupDocId = null;
-            if (state is WhtCertLinkState.Unlinked or WhtCertLinkState.NoSourceConfirmed)
+            if (peerOf.TryGetValue(c.Id, out var peer))
             {
-                var peer = linkedPeers.FirstOrDefault(p => p.Payee == c.PayeeContactId && p.Form == c.TaxFormType && p.Y == c.TaxYear
-                    && p.M == c.TaxMonth && p.Tax == c.TotalTaxAmount);
-                if (peer.No != null)
-                {
-                    dupLabel = $"⚠️ อาจนับซ้ำกับ {peer.No} ({peer.DocNo ?? "-"}) — ผู้ถูกหัก แบบ เดือน และภาษีเดียวกัน";
-                    dupDocId = peer.DocId;
-                }
+                dupLabel = WhtCertDuplicateSuspect.Label(peer.No, peer.DocNo, peer.SamePayment);
+                dupDocId = peer.DocId;
             }
             result.Add(mapped[i] with
             {

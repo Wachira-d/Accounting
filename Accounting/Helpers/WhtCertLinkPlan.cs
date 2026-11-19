@@ -142,6 +142,7 @@ public static class WhtCertLinkPlan
     public const string IntentRuleCode = "RD-50BIS-LINK-INTENT";
     public const string DeleteRuleCode = "RD-50BIS-DELETE-NUMBERED";
     public const string NoSourceRuleCode = "RD-50BIS-NO-SOURCE";
+    public const string StaleRuleCode = "RD-50BIS-LINK-STALE";
     public const string LegalReference = "ป.รัษฎากร ม.50 ทวิ · ท.ป.4/2528 (หนังสือรับรอง 1 ฉบับต่อการจ่าย — ห้ามนับซ้ำในแบบ ภ.ง.ด.)";
 
     // ── รหัสข้อ (คงที่ · หน้าเว็บส่งรหัสคำเตือนกลับเป็นการรับทราบ) ──
@@ -251,7 +252,8 @@ public static class WhtCertLinkPlan
 
         // R10 — ใบร่าง (D9 · ไม่ออกให้เอง)
         if (c.Status == WithholdingTaxCertStatus.Draft && !c.IsDeleted)
-            W(CodeDraft, $"{no} ยังเป็นฉบับร่าง — ยังไม่เข้าแบบยื่น · ระบบไม่ออกใบให้เอง (กด \"ออกใบ\" ที่หน้า 50 ทวิ หลังผูก)");
+            W(CodeDraft, $"{no} ยังเป็นฉบับร่าง — ยังไม่เข้าแบบยื่น · ระบบจะไม่ออกใบใหม่ให้การจ่ายนี้ (ห้ามสร้างใบใหม่ — นับซ้ำ) · "
+                + $"เมื่อพร้อมให้ออกใบ {no} ใบนี้เองที่หน้า 50 ทวิ (ถ้าเดือนของใบยื่นแล้ว ระบบไม่ให้ออก — ตัวเลขที่ยื่นแล้วต้องไม่เปลี่ยน)");
 
         // R9 — เดือนที่ยื่นแล้ว (ตัวกลาง WhtCertVoidGuard/TaxFilingLockPolicy ส่งเหตุผลมา)
         if (period.VoidsExisting)
