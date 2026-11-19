@@ -6373,7 +6373,7 @@ _Last verified against codebase: 2026-11-13 · commit 76130af2 (รอบแร�
 
 ตัวตั้งตัวเดียว `Helpers/WhtReportTotals` (`IsSummary` · (ภายใน) นับ = ไม่ติ๊กออก และไม่ใช่ `[สรุป]` · `CountedLines` · `Of` · `Apply`):
 ยอดหัวตอน generate (`GenerateWhtReport`) · ตอนติ๊ก/บันทึก (else-branch ของการคำนวณยอด + ภ.พ.36) · `RecalcWhtTotals` · ตัวตรวจ RD-WHT-002/005 + RD-PND1-002 ·
-แถวไฟล์ e-Filing/ใบแนบ (`PndDetailLines`) — ล็อกจุดเรียกด้วย `required_call_site_check` กติกา `_R273_*` · RD-WHT-005 (ไม่มีเลขผู้เสียภาษี) นับเฉพาะแถวที่ยื่นจริง
+แถวไฟล์ e-Filing/ใบแนบ (`PndDetailLines`) — ล็อกจุดเรียกด้วย `required_call_site_check` กติกา `_R273W_*` · RD-WHT-005 (ไม่มีเลขผู้เสียภาษี) นับเฉพาะแถวที่ยื่นจริง
 
 #### 5.3a-1 ฐานยอด ภ.ง.ด.3/53/54 ของหน้า "นำส่งภาษี" + ปฏิทิน (แก้ 2026-09-16)
 
@@ -9765,7 +9765,7 @@ _Last verified against codebase: 2026-11-16 (รอบ 271 ชุดแก้ฝ
 ยังรอเจ้าของ: สลิปจริงธนาคารอื่น/สปส./ใบแจ้งชำระของกรม (เพิ่มแถวตาราง) · ผู้ให้บริการอีเมลขาเข้า (adapter) · backlog: สลิปเดียวหลายแบบ · ยื่นเพิ่มเติม · ค่าธรรมเนียมธนาคาร · อ่านใบแจ้งชำระ PDF อัตโนมัติ
 
 _Last verified against codebase: 2026-11-16 (รอบ 272 แพ็ก P1–P6 — §TAX272: GovPaymentSlip (98037@KBank) · TaxSlipMatch (D-2/D-3) · ProviderConsent (ทาง B) · ใบขอชำระ · RemitAsync ตัวเดียว · ตรวจทานหลังนำส่ง · อีเมลขาเข้าหลัง interface — build + test + Db test ผ่านในเครื่องนี้ (PostgreSQL) — commit cd71dee0)_
-_Last verified against codebase: 2026-11-19 (รอบ 273 — §5.3a-0 ตัวตรวจก่อนยื่น ภ.ง.ด. RD-WHT-002 นับแถว [สรุป]/ติ๊กออกซ้ำ ⇒ ×2: ตัวตั้งเดียว `Helpers/WhtReportTotals` ใช้ร่วมยอดหัว/ตัวตรวจ/ไฟล์ยื่น · ข้อมูลเดิมถูกอยู่แล้ว ไม่ต้อง migration · Db `WhtPreCheckDoubleCountDbTests` + pure `WhtReportTotalsTests` · กติกา `_R273_*` — commit c488a356)_
+_Last verified against codebase: 2026-11-19 (รอบ 273 — §5.3a-0 ตัวตรวจก่อนยื่น ภ.ง.ด. RD-WHT-002 นับแถว [สรุป]/ติ๊กออกซ้ำ ⇒ ×2: ตัวตั้งเดียว `Helpers/WhtReportTotals` ใช้ร่วมยอดหัว/ตัวตรวจ/ไฟล์ยื่น · ข้อมูลเดิมถูกอยู่แล้ว ไม่ต้อง migration · Db `WhtPreCheckDoubleCountDbTests` + pure `WhtReportTotalsTests` · กติกา `_R273W_*` — commit c488a356)_
 _Last verified against codebase: 2026-11-19 (รอบ 272 ชุดแก้ฝ่ายค้าน — §TAX272: H1 ExpectedAmount · H2 OCR ไม่พร้อม ⇒ คิว · H3 alignment อีเมล · M1–M7 · L1–L8 — build + test + Db test ผ่านในเครื่องนี้ (PostgreSQL) — commit 7c5a3cb4)_
 
 _Last verified against codebase: 2026-11-19 (รอบ 273 — §3.4b-273: ใบเสร็จรับชำระที่ไม่ถือ VAT ของใบต้นทางพิมพ์ "ยอดรับชำระ" + บรรทัดอ้างอิงใบกำกับ (มูลค่า · VAT · รวม) แทน "ยอดรวมก่อน VAT / VAT 0.00" — ตัวตัดสิน `Helpers/SettlementReceiptTotals` · HTML + QuestPDF + หน้ารายละเอียด · แสดงผลอย่างเดียว ไม่มี migration · กติการอบ 269 คงเดิม — build + test + Db test ผ่านในเครื่องนี้ (PostgreSQL) — commit f929120b)_
