@@ -1162,7 +1162,17 @@ public record DocumentResponse(
     bool PostPaySettingApplies = false,
     /// <summary>รอบ 267 P3: แสดงปุ่ม "📤 ส่งให้ลูกค้า" ไหม (เซิร์ฟเวอร์ตัดสิน — <c>CustomerShareRule.ButtonOffered</c> · ด่านชนิด/สถานะเดียวกับตัวออกลิงก์หน้าเอกสาร) ·
     /// เหตุละเอียด (ฝั่งใบลดหนี้ · ใบค่าบริการผู้เช่า) อยู่ในหน้าต่าง <c>share-options</c></summary>
-    bool CanShareToCustomer = false);
+    bool CanShareToCustomer = false,
+    /// <summary>รอบ 273: ใบเสร็จรับชำระที่ไม่ถือ VAT ของใบต้นทางที่มี VAT — หน้ารายละเอียดแสดง "ยอดรับชำระ" + บรรทัดอ้างอิงตามค่านี้แทน "ยอดรวมก่อน VAT / VAT 0.00"
+    /// (เซิร์ฟเวอร์ตัดสิน — <c>Helpers/SettlementReceiptTotals</c> · ข้อความจาก <c>DocumentLabels</c> ชุดเดียวกับกระดาษ) · null = แถวยอดปกติ</summary>
+    SettlementTotalsDto? SettlementTotals = null);
+
+/// <summary>รอบ 273 — แถวยอดของใบเสร็จรับชำระที่ไม่ถือ VAT (เซิร์ฟเวอร์คำนวณ · หน้าเว็บแสดงอย่างเดียว)</summary>
+/// <param name="AmountLabel">ป้ายแถวสุดท้าย ("ยอดรับชำระ")</param>
+/// <param name="AmountReceived">ยอดแถวสุดท้าย</param>
+/// <param name="SettledGrossLabel">ป้ายแถวยอดตัดชำระก่อนหักภาษี ณ ที่จ่าย · null = ไม่มีแถวนี้ (ใบไม่มีภาษีหัก)</param>
+/// <param name="Lines">บรรทัดอ้างอิงใบต้นทาง + หมายเหตุ (ยังไม่ escape — หน้าเว็บ escape เอง)</param>
+public record SettlementTotalsDto(string AmountLabel, decimal AmountReceived, string? SettledGrossLabel, IReadOnlyList<string> Lines);
 
 /// <summary>ทีม F — แถวสรุปหัก ณ ที่จ่ายต่อ (ประเภทเงินได้, อัตรา) เป็นบาท (จาก <c>Helpers/PerLineWht.GroupsOf</c>)</summary>
 public record WhtIncomeGroupDto(string IncomeTypeCode, decimal RatePercent, decimal IncomeThb, decimal WhtThb, int LineCount);

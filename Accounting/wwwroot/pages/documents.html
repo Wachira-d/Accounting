@@ -11525,8 +11525,10 @@
               <div class="text-sm" title="ฐาน (ก่อน VAT) ของมัดจำที่ออกใบกำกับภาษีไปแล้ว — ระบบรับรู้มัดจำเป็นรายได้ให้เองตอนอนุมัติ">หักมูลค่ามัดจำตามใบกำกับภาษี ${this.escapeHtml(d.depositAppliedRef || '')}: <strong>-${Layout.money(d.depositBaseDeducted)}</strong></div>` : ''}
               ${Number(d.roundingAdjustment || 0) !== 0 ? `
               <div class="text-sm" title="เศษสตางค์ระหว่าง จำนวน × ราคาต่อหน่วย กับยอดบนกระดาษ — ลงบัญชี 54960">ผลต่างจากการปัดเศษ: <strong>${Number(d.roundingAdjustment) > 0 ? '+' : '-'}${Layout.money(Math.abs(Number(d.roundingAdjustment)))}</strong></div>` : ''}
+              ${d.settlementTotals ? (d.settlementTotals.settledGrossLabel ? `
+              <div class="text-sm">${Layout.esc(d.settlementTotals.settledGrossLabel)}: <strong>${Layout.money(d.subTotal)}</strong></div>` : '') : `
               <div class="text-sm">ยอดรวมก่อน VAT${(Number(d.billDiscountAmount || 0) > 0 || Number(d.depositBaseDeducted || 0) > 0) ? ' (หลังส่วนลด)' : ''}: <strong>${Layout.money(d.subTotal)}</strong></div>
-              <div class="text-sm">ภาษีมูลค่าเพิ่ม (VAT): <strong>${Layout.money(d.vatAmount)}</strong></div>
+              <div class="text-sm">ภาษีมูลค่าเพิ่ม (VAT): <strong>${Layout.money(d.vatAmount)}</strong></div>`}
               ${Number(d.withholdingTaxAmount || 0) > 0 ? `
               <div class="text-sm">ภาษีหัก ณ ที่จ่าย: <strong>-${Layout.money(d.withholdingTaxAmount)}</strong> <a href="/pages/wht.html?documentId=${encodeURIComponent(d.id)}" style="font-size:11px;margin-left:8px">ดูใบหัก ณ ที่จ่าย →</a></div>
               ${this.WHT_PAYER_TYPES.includes(d.documentType) ? `<div id="whtLinkStatus_${Layout.esc(d.id)}" style="margin-top:4px"></div>` : ''}
@@ -11536,7 +11538,9 @@
               ${Number(d.whtPayeeCount || 0) > 1 ? `<div class="text-xs" style="margin-top:2px;color:#3730a3">ผู้ถูกหักภาษี ${Number(d.whtPayeeCount)} ราย (ตั้งรายบรรทัด) — 50 ทวิ แยกใบต่อผู้ถูกหัก</div>` : ''}
               ${d.whtCertReviewReason ? `<div class="text-sm" style="margin-top:4px;padding:6px 10px;background:#FFFBEB;border:1px solid #FCD34D;border-radius:6px;color:#92400E">⚠️ 50 ทวิ ต้องตรวจ: ${Layout.esc(d.whtCertReviewReason)} — จัดการแล้วกด "รับทราบ" (ที่นี่ หรือ <a href="/pages/wht.html">หน้าหนังสือรับรองหัก ณ ที่จ่าย → เอกสารรอออกใบ</a>) <button type="button" class="btn btn-sm btn-secondary" style="margin-left:6px;padding:2px 10px;font-size:11.5px" onclick="Page.ackWhtCertReview('${Layout.jsArg(d.id)}')" title="บันทึกว่าจัดการ 50 ทวิ แล้ว (เหตุผลบังคับ · ลงประวัติ) — ต้องมีสิทธิ์ยื่นภาษี (Tax.File)">✔ รับทราบ</button></div>` : ''}
               ${(this.WHT_PAYER_TYPES.includes(d.documentType) && ['Approved', 'Sent', 'PartiallyPaid', 'Paid', 'Overdue'].includes(d.status)) ? `<div style="margin-top:4px"><button type="button" class="btn btn-sm btn-secondary" onclick="Page.openWhtPayeeChange('${d.id}')" title="ยกเลิก 50 ทวิ เดิม · ย้ายผังหนี้ภาษีหัก ณ ที่จ่ายเมื่อแบบเปลี่ยน · ออกใบใหม่ในนามผู้ถูกหักที่ถูก">เปลี่ยนผู้ถูกหักภาษี</button></div>` : ''}` : ''}
-              <div class="text-xl font-bold" style="margin-top:8px;padding-top:8px;border-top:2px solid var(--gray-200)">ยอดสุทธิ: ${Layout.money(d.totalAmount)}</div>
+              <div class="text-xl font-bold" style="margin-top:8px;padding-top:8px;border-top:2px solid var(--gray-200)">${d.settlementTotals ? `${Layout.esc(d.settlementTotals.amountLabel)}: ${Layout.money(d.settlementTotals.amountReceived)}` : `ยอดสุทธิ: ${Layout.money(d.totalAmount)}`}</div>
+              ${d.settlementTotals && Array.isArray(d.settlementTotals.lines) ? `
+              <div class="text-xs" style="margin-top:6px;color:#374151">${d.settlementTotals.lines.map(x => `<div>${Layout.esc(x)}</div>`).join('')}</div>` : ''}
               ${d.actualPaidAmount != null ? `
               <div class="text-sm" style="color:#92400e" title="ใบกำกับคงยอดเต็มตามใบ — ส่วนต่างลงที่ปรับปรุงรายการบัญชี (ใบสำคัญจ่าย) หรือบรรทัดปรับตอนบันทึกการชำระ">ยอดชำระจริง: <strong>${Layout.money(d.actualPaidAmount)}</strong> (ต่างจากยอดเอกสาร ${Layout.money(Number(d.actualPaidAmount) - Number(d.totalAmount))})</div>` : ''}
               ${Number(d.postVatDeductionAmount || 0) > 0 ? `

@@ -21177,6 +21177,43 @@ REVIEWER_CASES += [
     ("R272-12", "ApplyAsync", "if (a.StaffUserId == null && !verdict.Ok)", "if (a.StaffUserId == null\n                && !verdict.Ok)", False),
 ]
 
+# ── รอบ 273: ใบเสร็จรับชำระที่ไม่ถือ VAT — "ยอดรับชำระ" + บรรทัดอ้างอิงใบต้นทาง แทน "ยอดรวมก่อน VAT 749,000 · VAT 0.00" (ผู้ใช้รายงาน 2026-11-19) ──
+_R273_WHY = "รอบ 273 (ใบเสร็จรับชำระ REC ของ TIV 700k+VAT 49k พิมพ์ยอดก่อน VAT 749k): "
+_R273_RENDER = "Services/Implementations/PdfGenerationService.SettlementTotals.cs"
+_R273_LOADER = "Services/Implementations/SettlementReceiptTotalsLoader.cs"
+RULES += [
+    dict(file=_R273_LOADER, method="ResolveAsync",
+         must=["SettlementReceiptTotals.Decide(", "d.CompanyId == companyId", "doc.SettlementTotals = null"],
+         forbid=["doc.VatAmount != 0m", "doc.IsDeposit ||"],
+         why=_R273_WHY + "ตัวโหลดเดียว · tenant · ตัดสินผ่าน Helpers/SettlementReceiptTotals ตัวเดียว (ห้ามกรองซ้ำเอง = สำเนากติกา)"),
+    dict(file=PDFSVC, method="ResolveServedAsReceiptAsync", must=["SettlementReceiptTotalsLoader.ResolveAsync(db, companyId, doc)"],
+         why=_R273_WHY + "ตัวโหลด transient กลางของทั้งสอง renderer + หัวเอกสารช่องทางอีเมล/LINE"),
+    dict(file=PDFSVC, method="ResolvePrintTotals", must=["doc.SettlementTotals is", "L.TotalAmountReceived"],
+         why=_R273_WHY + "แถวสุดท้าย \"ยอดรับชำระ\" ผ่านตัวตัดสินแถวยอดตัวเดียวของสอง renderer"),
+    dict(file=PDFSVC, method="BuildDocumentHtml",
+         must=["SettlementSubtotalLabel(doc, L)", "AppendSettlementTotalsHtml(sb, doc, L)", "doc.SettlementTotals == null"],
+         why=_R273_WHY + "HTML: ป้ายแถวยอดก่อน VAT/ซ่อน VAT/บรรทัดอ้างอิง จากตัวกลาง"),
+    dict(file="Services/Implementations/PdfGenerationService.DocumentRenderer.cs", method="ComposeSummary",
+         must=["SettlementSubtotalLabel(doc, L)", "ComposeSettlementTotals(col, doc, L)", "doc.SettlementTotals == null"],
+         forbid=["Row(L.TotalSubtotal"],
+         why=_R273_WHY + "QuestPDF: ตัวตัดสินเดียวกับ HTML (สอง renderer ห้าม drift)"),
+    dict(file=_R273_RENDER, method="AppendSettlementTotalsHtml", must=["labels.SettlementTotalsLines(st)", "WebUtility.HtmlEncode(line)"],
+         why=_R273_WHY + "HTML ใช้ข้อความ DocumentLabels ตัวเดียว + หนี HTML (เลขที่เอกสารมาจากผู้ใช้)"),
+    dict(file=_R273_RENDER, method="ComposeSettlementTotals", must=["labels.SettlementTotalsLines(st)"],
+         why=_R273_WHY + "QuestPDF ใช้ข้อความ DocumentLabels ตัวเดียวกับ HTML"),
+    dict(file=DOC, method="GetDocumentAsync",
+         must=["SettlementReceiptTotalsLoader.ResolveAsync(_db, companyId, doc)", "SettlementTotalsLines(settleView)"],
+         why=_R273_WHY + "หน้ารายละเอียดแสดงผลที่เซิร์ฟเวอร์คำนวณ (ตัวโหลด/ข้อความเดียวกับกระดาษ — หน้าเว็บไม่มีสำเนากติกา)"),
+]
+REVIEWER_CASES += [
+    # HTML กลับไปพิมพ์ "ยอดรวมก่อน VAT" ตรง ๆ ⇒ ต้องฟ้อง
+    ("R273-1", "BuildDocumentHtml", "var subtotalLabel = SettlementSubtotalLabel(doc, L);", "var subtotalLabel = L.TotalSubtotal;", True),
+    # QuestPDF ไม่วาดบรรทัดอ้างอิง ⇒ ต้องฟ้อง
+    ("R273-2", "ComposeSummary", "ComposeSettlementTotals(col, doc, L);", "", True),
+    # ตัวโหลดไม่กรองบริษัท ⇒ ต้องฟ้อง
+    ("R273-3", "ResolveAsync", "d.Id == srcId && d.CompanyId == companyId", "d.Id == srcId", True),
+]
+
 
 def main() -> int:
     errs = []

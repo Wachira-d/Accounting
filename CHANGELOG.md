@@ -7277,3 +7277,10 @@ P3 `TaxPaymentRequests` + หน้า `tax-slip-desk.html` · P4 `TaxSlipEviden
 ที่มาบน `StatutoryRemittances` (Source/SlipEvidenceId/ActedByProviderCompanyId/ProviderConsentId/ControlCodeLast4) · ป้ายหน้านำส่ง "ชำระแล้ว · ยังไม่ได้บันทึกเลขรับ" ·
 P5 `TaxSlipReviewService` (ธงเตือนเท่านั้น) · `TaxSlipJob` (JobLock) · P6 `/api/inbound-email` หลัง `IInboundEmailAdapter` (production fail-fast) ·
 เทสต์ pure +44 · Db +6 · กติกา R272 +18 + ฝ่ายค้าน R272-1…12 · `ocr_helper_test_check` ครอบ 3 ตัวตัดสินใหม่ · build + test + Db test ผ่านในเครื่องนี้ · commit cd71dee0_
+
+_รอบ 273 (2026-11-19 · ผู้ใช้รายงาน: REC-20261029-0001 ของ TIV-20261026-0001 มูลค่า 700,000 + VAT 49,000 พิมพ์ "ยอดรวมก่อน VAT 749,000.00 · VAT 0.00"):
+ต้นเหตุ = ป้ายแถวยอดของใบที่ถือ VAT เองถูกใช้กับใบเสร็จรับชำระ (ข้อมูลที่ persist ถูก: VAT 0 · ไม่ถือบทบาทใบกำกับ · นอก ภ.พ.30/§87 ตามรอบ 269 — ไม่มี migration) ·
+ตัวตัดสินเดียว `Helpers/SettlementReceiptTotals` + ตัวโหลด `SettlementReceiptTotalsLoader` (PDF/HTML/QuestPDF/หัวอีเมล-LINE + `GetDocumentAsync`) ·
+แถวสุดท้าย "ยอดรับชำระ" · ซ่อน "ยอดรวมก่อน VAT"/VAT · บรรทัดอ้างอิง "(ตามใบกำกับภาษีเลขที่ … ลงวันที่ …: มูลค่า · VAT · รวม)" + หมายเหตุว่ารวม VAT แล้ว · รับบางส่วนบอกยอดเต็ม · มีภาษีหักคงแถว "ยอดตัดชำระ" ·
+ป้ายผ่าน `DocumentLabels` ไทย/อังกฤษ · `documents.html` แสดง `DocumentResponse.SettlementTotals` อย่างเดียว ·
+เทสต์ pure `SettlementReceiptTotalsTests` (12) + Db `SettlementReceiptTotalsDbTests` (3) · กติกา `_R273_*` (8) + ฝ่ายค้าน R273-1…3 · build + test + Db test ผ่านในเครื่องนี้ — commit <pending>_

@@ -275,6 +275,35 @@ public sealed class DocumentLabels
     /// <summary>รอบ PP36 ทีม F2: แถวยอดสุดท้ายของใบซื้อบริการต่างประเทศ = ยอดที่จ่ายผู้รับเงินจริง (<c>ForeignServiceVat.PayeeAmount</c>)</summary>
     public string TotalPayeeAmount => this["total_payee_amount"];
 
+    // ── รอบ 273: ใบเสร็จรับชำระที่ไม่ถือ VAT ของใบต้นทาง (Helpers/SettlementReceiptTotals · ทั้งสอง renderer + หน้ารายละเอียดใช้ชุดนี้ชุดเดียว) ──
+    /// <summary>แถวสุดท้ายของใบเสร็จรับชำระ — แทน "ยอดรวมสุทธิ" (ยอดนี้รวม VAT ตามใบต้นทางแล้ว ไม่ใช่ยอดก่อน VAT)</summary>
+    public string TotalAmountReceived => this["total_amount_received"];
+    /// <summary>แถวยอดตัดชำระก่อนหักภาษี ณ ที่จ่าย (เฉพาะใบเสร็จรับชำระที่มีภาษีถูกหัก) — แทน "ยอดรวมก่อน VAT"</summary>
+    public string TotalSettledGross => this["total_settled_gross"];
+
+    /// <summary>บรรทัดใต้ยอดของใบเสร็จรับชำระ (ยังไม่ escape): อ้างอิงต่อใบต้นทาง + รับบางส่วน + หมายเหตุว่ารวม VAT แล้ว — ตัวเดียวของทั้งสอง renderer และหน้ารายละเอียด</summary>
+    public IReadOnlyList<string> SettlementTotalsLines(Accounting.Helpers.SettlementReceiptTotals.View v)
+    {
+        var inv = System.Globalization.CultureInfo.InvariantCulture;
+        string M(decimal x) => x.ToString("N2", inv);
+        var lines = new List<string>();
+        foreach (var s in v.References)
+        {
+            var srcLabel = s.Type switch
+            {
+                Accounting.Models.Enums.DocumentType.TaxInvoice => this["settlement_src_tax_invoice"],
+                Accounting.Models.Enums.DocumentType.DebitNote => this["settlement_src_debit_note"],
+                _ => this["settlement_src_invoice"],
+            };
+            var wht = s.WithholdingTaxAmount > 0m ? string.Format(this["settlement_ref_wht"], M(s.WithholdingTaxAmount)) : "";
+            lines.Add(string.Format(this["settlement_ref_line"], srcLabel, s.Number, Date(s.Date),
+                M(s.SubTotal), M(s.VatAmount), M(Accounting.Helpers.SettlementReceiptTotals.GrossOf(s)), wht));
+        }
+        if (v.IsPartial) lines.Add(string.Format(this["settlement_partial_note"], M(v.SourcesTotal)));
+        lines.Add(this["settlement_vat_included_note"]);
+        return lines;
+    }
+
     private static readonly Dictionary<string, string> _th = new()
     {
         // ── ป้ายสำเนา/สถานะ ──
@@ -341,6 +370,15 @@ public sealed class DocumentLabels
         ["total_wht_payer_borne"] = "บวก ภาษีหัก ณ ที่จ่ายที่ผู้จ่ายออกแทน",
         ["total_vat_self_assessed_pp36"] = "VAT ที่ผู้จ่ายประเมินและนำส่งเอง (ภ.พ.36 §83/6) — ไม่จ่ายให้ผู้รับเงิน",
         ["total_payee_amount"] = "ยอดจ่ายผู้รับเงิน",
+        ["total_amount_received"] = "ยอดรับชำระ",
+        ["total_settled_gross"] = "ยอดตัดชำระ (ก่อนหักภาษี ณ ที่จ่าย)",
+        ["settlement_ref_line"] = "(ตาม{0}เลขที่ {1} ลงวันที่ {2}: มูลค่า {3} · VAT {4} · รวม {5}{6})",
+        ["settlement_ref_wht"] = " · ภาษีหัก ณ ที่จ่าย {0}",
+        ["settlement_src_tax_invoice"] = "ใบกำกับภาษี",
+        ["settlement_src_invoice"] = "ใบแจ้งหนี้",
+        ["settlement_src_debit_note"] = "ใบเพิ่มหนี้",
+        ["settlement_partial_note"] = "รับชำระบางส่วนของยอด {0} ตามเอกสารอ้างอิง",
+        ["settlement_vat_included_note"] = "ยอดรับชำระรวมภาษีมูลค่าเพิ่มที่เรียกเก็บตามเอกสารอ้างอิงแล้ว — ใบเสร็จนี้ไม่เรียกเก็บภาษีมูลค่าเพิ่มซ้ำ",
         ["total_deposit_applied"] = "หักเงินมัดจำ",
         ["total_deposit_tax_invoiced"] = "หักมูลค่ามัดจำ (ก่อน VAT) ตามใบกำกับภาษี",
         ["total_rounding"] = "ผลต่างจากการปัดเศษ",
@@ -503,6 +541,15 @@ public sealed class DocumentLabels
         ["total_wht_payer_borne"] = "Add: withholding tax borne by payer",
         ["total_vat_self_assessed_pp36"] = "VAT self-assessed and remitted by the payer (Form P.P.36, Revenue Code s.83/6) — not paid to the payee",
         ["total_payee_amount"] = "Amount paid to payee",
+        ["total_amount_received"] = "Amount received",
+        ["total_settled_gross"] = "Amount settled (before withholding tax)",
+        ["settlement_ref_line"] = "(Per {0} No. {1} dated {2}: value {3} · VAT {4} · total {5}{6})",
+        ["settlement_ref_wht"] = " · withholding tax {0}",
+        ["settlement_src_tax_invoice"] = "Tax Invoice",
+        ["settlement_src_invoice"] = "Invoice",
+        ["settlement_src_debit_note"] = "Debit Note",
+        ["settlement_partial_note"] = "Partial payment of the {0} due per the reference document",
+        ["settlement_vat_included_note"] = "The amount received includes the VAT charged on the reference document — no VAT is charged again on this receipt",
         ["total_deposit_applied"] = "Less deposit",
         ["total_deposit_tax_invoiced"] = "Less deposit already tax-invoiced (excl. VAT)",
         ["total_rounding"] = "Rounding adjustment",
