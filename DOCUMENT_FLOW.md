@@ -9788,4 +9788,4 @@ _Last verified against codebase: 2026-11-19 (รอบ 274 — เลขผู�
 _Last verified against codebase: 2026-11-19 (รอบ 273 ชุดแก้ฝ่ายค้าน — §5.3a-0: ท้ายตาราง LinesTaxTotal จากเซิร์ฟเวอร์ · RD-WHT-002 ไม่มีเงื่อนไข Σ>0 · แถว [สรุป] คำนวณใหม่ใน Apply · ภ.ง.ด.91 แถวผลต่างไม่นับ — commit 111d67a6)_
 
 _Last verified against codebase: 2026-11-19 (รอบ 274 ผลตรวจฝ่ายค้าน HIGH-1/MED-1/MED-2/LOW-1…5 — ไฟล์ ภ.ง.ด.1/1ก ที่มีแถวถูกกันไม่ออก · ciphertext รุ่นก่อน · งานย้ายคีย์เป็นระยะ+ผลจริง ·
-ไฟล์ สปส. · export — build + test 23,540 ผ่านในเครื่องนี้ (รวม Db) — commit <เติมในคอมมิตตามหลัง>)_
+ไฟล์ สปส. · export — build + test 23,540 ผ่านในเครื่องนี้ (รวม Db) — commit aa7fb732)_
