@@ -107,6 +107,7 @@ public class WhtReportTotalsTests
         Assert.Contains("r.side !== 'summary'", page);   // ทางสำรอง (ตาราง ภ.พ.30) ไม่บวกแถวสรุป
         Assert.DoesNotContain("const sub = rows.filter(r => !r.isExcluded).reduce", page);
         Assert.Contains("set('linesTaxTotal', d?.linesTaxTotal)", page);   // หลังบันทึกอัตโนมัติ ท้ายตารางตามเซิร์ฟเวอร์
+        Assert.Contains("const derived = ln.side === 'summary' && d.linesTaxTotal != null;", page);   // แถวสรุปล็อกช่องยอด (ไม่ silent no-op)
     }
 
     [Fact]
