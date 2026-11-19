@@ -44,14 +44,24 @@ public class TaxSlipIntakeService
     private readonly Accounting.Services.Storage.IFileStorage _storage;
     private readonly ILogger<TaxSlipIntakeService> _logger;
     private readonly INotificationEngine? _notify;
+    private readonly IPermissionService? _perms;
 
     public TaxSlipIntakeService(AccountingDbContext db, ProviderConsentService consent, TaxSlipChannelService channel, TaxSlipRemitService remitter,
         IStatutoryRemittanceService remit, ISlipImageReader reader, ICustomerLineLinkService links, Accounting.Services.Storage.IFileStorage storage,
-        ILogger<TaxSlipIntakeService> logger, INotificationEngine? notify = null)
+        ILogger<TaxSlipIntakeService> logger, INotificationEngine? notify = null, IPermissionService? perms = null)
     {
         _db = db; _consent = consent; _channel = channel; _remitter = remitter; _remit = remit; _reader = reader; _links = links; _storage = storage;
-        _logger = logger; _notify = notify;
+        _logger = logger; _notify = notify; _perms = perms;
     }
+
+    /// <summary>ฝ่ายค้าน 272 H2: อ่านสลิปไม่ได้ (เครื่องไม่มี OCR / ข้อความว่าง) — แถวเข้าคิวพนักงานเสมอ (ห้ามตอบว่า "ไม่ใช่สลิปภาษี" เมื่อยังไม่ได้อ่าน)</summary>
+    public const string OcrOffRuleCode = "TAX-SLIP-OCR-OFF";
+    public const string OcrOffReason = "อ่านสลิปไม่ได้ (OCR ไม่พร้อม)";
+    /// <summary>ฝ่ายค้าน 272 M6: แถวที่ปิดโดยไม่บันทึก ลบไฟล์เมื่อพ้นระยะนี้ (วัน) · แถวที่ยังรอตัดสินไม่ถูกลบ (ยังเป็นหลักฐานที่อาจลงบัญชี — MAX retention)</summary>
+    public const int ClosedFileRetentionDays = 90;
+    public const string RopaPurpose = "รับสลิปชำระภาษี/ประกันสังคมของบริษัทลูกค้าจากกลุ่ม LINE/อีเมลของสำนักงานบัญชี เพื่อบันทึกการนำส่งในบัญชีของลูกค้า";
+    public const string RopaDataCategories = "รูป/PDF สลิป (ชื่อผู้โอน · เลขบัญชีบางส่วน · เลขผู้เสียภาษี/บัตรประชาชน · Control Code · ยอด · วันที่) · เก็บในฐาน: เลขภาษีปิดบัง + แฮชและ 4 ตัวท้ายของ Control Code/เลขที่รายการ · hash ของกลุ่ม LINE/อีเมลผู้ส่ง";
+    public const string RopaRetention = "บันทึกแล้ว ⇒ ย้ายเป็นไฟล์แนบรายการนำส่งของลูกค้า (อายุเอกสารบัญชี ≥ 5 ปี · legal hold) และลบสำเนาทันที · ไม่บันทึก/ปิดแล้ว ⇒ ลบไฟล์เมื่อครบ 90 วัน · รอตัดสิน ⇒ เก็บจนพนักงานตัดสิน";
 
     /// <summary>บริษัทผู้ให้บริการ + สวิตช์ของเส้นนี้ (<c>CompanySettings.TaxSlipIntakeEnabled</c>) · ไม่ได้ตั้งผู้ให้บริการ ⇒ (null, false)</summary>
     private async Task<(Guid? ProviderId, bool Enabled)> ProviderAsync(CancellationToken ct)
@@ -79,15 +89,10 @@ public class TaxSlipIntakeService
         if (!binding.AnyEndpoint || binding.ContactIds.Count == 0) return false;   // ด่านผูก: กลุ่มที่ไม่ได้ผูก ⇒ ไม่แตะอะไรต่อ
         if (!enabled)
         {
-            // สวิตช์ปิด: เฉพาะกลุ่มของลูกค้าที่เคยอนุญาตได้คำตอบ (ไม่ให้คิดว่าส่งแล้วจบ) · กลุ่มอื่นพฤติกรรมเดิม (ไม่อ่าน)
-            foreach (var cid in binding.ClientCompanyIds)
-                if ((await _consent.CheckAsync(cid, providerId, null, null, ct)).Ok)
-                {
-                    if (!string.IsNullOrEmpty(replyToken))
-                        await _links.ReplyAsync(CustomerNotifyChannel.ScopeNextAcc, null, replyToken, TaxSlipReplyCard.Text(Card.IntakeOff, new(), false), ct);
-                    return true;
-                }
-            return false;
+            // สวิตช์ปิด (ฝ่ายค้าน 272 L2): ทุกกลุ่มที่ผูกแล้วได้คำตอบ "ปิดรับชั่วคราว" (ไม่ให้คิดว่าส่งแล้วจบ) · ไม่อ่าน ไม่เก็บ
+            if (!string.IsNullOrEmpty(replyToken))
+                await _links.ReplyAsync(CustomerNotifyChannel.ScopeNextAcc, null, replyToken, TaxSlipReplyCard.Text(Card.IntakeOff, new(), false), ct);
+            return true;
         }
         var msgId = messageId.Length > 64 ? messageId[..64] : messageId;
         if (await _db.TaxSlipEvidences.AsNoTracking().AnyAsync(s => s.CompanyId == providerId && s.Source == SourceLine && s.ExternalMessageId == msgId, ct))
@@ -99,7 +104,7 @@ public class TaxSlipIntakeService
                 await _links.ReplyAsync(CustomerNotifyChannel.ScopeNextAcc, null, replyToken, "ได้รับรูปแล้วแต่ดาวน์โหลดจาก LINE ไม่สำเร็จ — กรุณาส่งรูปอีกครั้ง", ct);
             return true;
         }
-        await IntakeAsync(providerId, SourceLine, msgId, idHash, binding, bytes, replyToken, null, ct);
+        await IntakeAsync(providerId, SourceLine, msgId, idHash, binding, bytes, replyToken, null, false, ct);
         return true;
     }
 
@@ -109,7 +114,8 @@ public class TaxSlipIntakeService
 
     /// <summary>อีเมลขาเข้าที่ผู้ให้บริการตรวจ SPF/DKIM แล้ว (ผู้เรียก = webhook ของ P6) · ผู้ส่งต้องเป็นอีเมลที่ผูกกับผู้ติดต่อของบริษัทผู้ให้บริการ ·
     /// คืนข้อความผล (ผู้เรียกบันทึก/ตอบ 200) · ไม่รู้จักผู้ส่ง ⇒ ไม่อ่านไฟล์ ไม่เก็บ</summary>
-    public async Task<string> HandleEmailAsync(string fromAddress, string messageId, IReadOnlyList<InboundFile> files, CancellationToken ct = default)
+    /// <param name="senderVerified">ฝ่ายค้าน 272 H3: ผู้ส่งยืนยันโดเมนของ From ได้ (<see cref="InboundEmailRule.SenderVerified"/>) · false ⇒ รับเข้าคิวได้แต่ไม่บันทึกเอง</param>
+    public async Task<string> HandleEmailAsync(string fromAddress, string messageId, IReadOnlyList<InboundFile> files, bool senderVerified, CancellationToken ct = default)
     {
         var from = (fromAddress ?? "").Trim().ToLowerInvariant();
         if (from.Length == 0 || from.Length > 254) return "ไม่มีผู้ส่ง";
@@ -127,7 +133,7 @@ public class TaxSlipIntakeService
             var ext = (messageId ?? "").Trim();
             var extId = (ext.Length > 180 ? ext[..180] : ext) + "#" + i;
             if (await _db.TaxSlipEvidences.AsNoTracking().AnyAsync(s => s.CompanyId == providerId && s.Source == SourceEmail && s.ExternalMessageId == extId, ct)) continue;
-            await IntakeAsync(providerId, SourceEmail, extId, key, binding, f.Bytes, null, from, ct);
+            await IntakeAsync(providerId, SourceEmail, extId, key, binding, f.Bytes, null, from, !senderVerified, ct);
             n++;
         }
         return n == 0 ? "ไม่มีไฟล์แนบที่เป็นรูป/PDF สลิป" : $"รับไฟล์ {n} ไฟล์";
@@ -136,7 +142,7 @@ public class TaxSlipIntakeService
     // ═══════════════ แกนกลาง ═══════════════
 
     private async Task IntakeAsync(Guid providerId, string source, string extId, string sourceKey, TaxSlipChannelService.Binding binding, byte[] bytes,
-        string? replyToken, string? emailTo, CancellationToken ct)
+        string? replyToken, string? emailTo, bool senderUnverified, CancellationToken ct)
     {
         var sniffed = SlipEvidenceRule.DetectPublicType(bytes);
         var ext = SlipEvidenceRule.ExtensionFor(sniffed);
@@ -155,9 +161,11 @@ public class TaxSlipIntakeService
                 new(RecordedAt: dupFile.Status == Statuses.Remitted ? dupFile.ResolvedAt : null, Reason: "ไฟล์เดียวกับที่ส่งมาแล้ว"), false), ct);
             return;
         }
-        var reading = await _reader.ReadAsync(bytes, sniffed, ct);
+        var reading = _reader.IsAvailable ? await _reader.ReadAsync(bytes, sniffed, ct) : OcrSlipText.Reading.Empty;
+        // ฝ่ายค้าน 272 H2: ไม่มีข้อความให้ตัดสิน ⇒ ไม่รู้ว่าเป็นสลิปอะไร — เก็บแถวเข้าคิวพนักงาน (ไม่ใช่ "ไม่ใช่สลิปภาษี" · ไม่ทิ้งเงียบ)
+        var unreadable = !_reader.IsAvailable || string.IsNullOrWhiteSpace(reading.Text);
         var agency = GovPaymentSlip.Identify(reading);
-        if (agency.Kind == GovPaymentSlip.Kind.NotGovernment)
+        if (!unreadable && agency.Kind == GovPaymentSlip.Kind.NotGovernment)
         {
             // ไม่ใช่สลิปรัฐ: รูปที่ดูเป็นสลิป ⇒ บอกว่าไม่ได้บันทึก · รูปทั่วไป ⇒ ไม่ตอบ ไม่เก็บ (PDPA ม.22)
             if (reading.LooksLikeSlip) await ReplyOnlyAsync(source, replyToken, emailTo, TaxSlipReplyCard.Text(Card.NotATaxSlip, new(), false), ct);
@@ -188,10 +196,13 @@ public class TaxSlipIntakeService
             TaxIdMasked = agency.TaxId != null ? TaxSlipReplyCard.MaskTaxId(agency.TaxId) : null,
             Amount = reading.Amount, Fee = bill?.Fee, SlipDate = reading.Date, Status = Statuses.Received, ShowAmounts = binding.ShowAmounts,
             ClientCompanyId = binding.ClientCompanyIds.Count == 1 ? binding.ClientCompanyIds[0] : null, CreatedBy = source + "-intake",
+            SenderUnverified = senderUnverified,
         };
+        if (unreadable) { row.Status = Statuses.ToStaff; row.RuleCode = OcrOffRuleCode; row.Reason = OcrOffReason; }
         await _storage.WriteAsync(path, bytes, sniffed, ct);
         try
         {
+            await EnsureRopaAsync(providerId, ct);
             _db.TaxSlipEvidences.Add(row);
             await _db.SaveChangesAsync(ct);
         }
@@ -202,7 +213,47 @@ public class TaxSlipIntakeService
             await _storage.DeleteAsync(path, CancellationToken.None);
             return;
         }
+        if (unreadable)
+        {
+            await FinishAsync(row, Card.ToStaff, new(Reason: OcrOffReason), replyToken, emailTo, staff: true, ct);
+            return;
+        }
         await ProcessAsync(row, reading, agency, binding, replyToken, emailTo, ct);
+    }
+
+    /// <summary>ฝ่ายค้าน 272 M6: RoPA (PDPA ม.39) ของเส้นนี้ในบริษัทผู้ให้บริการ — สร้างครั้งแรกที่รับสลิป · ผู้ดูแลข้อมูลทบทวนได้ที่หน้า PDPA</summary>
+    private async Task EnsureRopaAsync(Guid providerId, CancellationToken ct)
+    {
+        if (await _db.PdpaProcessingActivities.AsNoTracking().AnyAsync(r => r.CompanyId == providerId && r.Purpose == RopaPurpose, ct)) return;
+        if (_db.ChangeTracker.Entries<PdpaProcessingActivity>().Any(e => e.Entity.CompanyId == providerId && e.Entity.Purpose == RopaPurpose)) return;
+        _db.PdpaProcessingActivities.Add(new PdpaProcessingActivity
+        {
+            CompanyId = providerId, Purpose = RopaPurpose, LegalBasis = "Contract", DataCategories = RopaDataCategories, RetentionPeriod = RopaRetention,
+            Recipients = "พนักงานสำนักงานบัญชีที่มีสิทธิ์ยื่นภาษี · บริษัทลูกค้า (ไฟล์แนบรายการนำส่ง) · LY Corporation (LINE) / ผู้ให้บริการอีเมลขาเข้า",
+            TransfersOutsideThailand = false, Notes = "ระบบสร้างอัตโนมัติเมื่อรับสลิปภาษีครั้งแรก (รอบ 272)", CreatedBy = "system", LastReviewedBy = "system",
+        });
+    }
+
+    /// <summary>ฝ่ายค้าน 272 M6 — ลบไฟล์สลิปของแถวที่<b>ปิดโดยไม่บันทึก</b>เมื่อพ้น <see cref="ClosedFileRetentionDays"/> วัน (ผู้เรียก: <c>LineChatSlipRetentionJob</c> · JobLock) ·
+    /// แถวที่บันทึกแล้ว: ไฟล์ย้ายเป็นหลักฐานของลูกค้าแล้ว (legal hold ตามอายุเอกสารบัญชี — ไม่แตะไฟล์แนบนั้น) · แถวที่รอตัดสิน: ไม่ลบ (MAX retention) · คืนจำนวนไฟล์ที่ลบ</summary>
+    public static async Task<int> PurgeClosedFilesAsync(AccountingDbContext db, Accounting.Services.Storage.IFileStorage storage, ILogger logger, DateTime nowUtc, CancellationToken ct)
+    {
+        var cutoff = nowUtc.AddDays(-ClosedFileRetentionDays);
+        var rows = await db.TaxSlipEvidences.Where(s => s.FilePurgedAt == null && s.StatutoryRemittanceId == null && s.Status == Statuses.Rejected
+                && (s.UpdatedAt ?? s.CreatedAt) < cutoff)
+            .OrderBy(s => s.CreatedAt).Take(500).ToListAsync(ct);
+        var n = 0;
+        foreach (var r in rows)
+        {
+            try { await storage.DeleteAsync(r.StoragePath, ct); }
+            catch (Exception ex) when (ex is not OperationCanceledException) { logger.LogError(ex, "ลบไฟล์สลิปภาษี {Slip} ที่พ้นระยะเก็บไม่สำเร็จ — รอบหน้าลองใหม่", r.Id); continue; }
+            r.FilePurgedAt = nowUtc; r.UpdatedAt = nowUtc;
+            r.FileSha256 = "purged:" + r.Id.ToString("N");
+            r.BankTxnHash = null;
+            n++;
+        }
+        if (n > 0) await db.SaveChangesAsync(ct);
+        return n;
     }
 
     private async Task ReplyOnlyAsync(string source, string? replyToken, string? emailTo, string text, CancellationToken ct)
@@ -302,6 +353,13 @@ public class TaxSlipIntakeService
 
         switch (d.Outcome)
         {
+            case Outcome.One when d.Auto && d.Chosen != null && row.SenderUnverified:
+                row.Status = Statuses.ToStaff;
+                row.RuleCode = "TAX-SLIP-SENDER";
+                row.Reason = InboundEmailRule.UnverifiedReason;
+                row.PreselectAccounts = null;
+                await FinishAsync(row, Card.ToStaff, facts with { Reason = InboundEmailRule.UnverifiedReason }, replyToken, emailTo, staff: true, ct);
+                return;
             case Outcome.One when d.Auto && d.Chosen != null:
                 await AutoApplyAsync(row, reading, d.Chosen, facts, replyToken, emailTo, ct);
                 return;
@@ -309,8 +367,9 @@ public class TaxSlipIntakeService
                 await AskChoiceAsync(row, d, facts, replyToken, emailTo, ct);
                 return;
             case Outcome.Duplicate:
-                row.Status = Statuses.Rejected;
-                await FinishAsync(row, Card.Duplicate, facts, replyToken, emailTo, staff: false, ct);
+                // ฝ่ายค้าน 272 L5: Control Code ซ้ำ = อาจจ่ายซ้ำจริง (ต้องขอคืนจากกรม) ⇒ คิวพนักงาน + กระดิ่ง (ไม่ปิดเงียบ)
+                row.Status = Statuses.ToStaff;
+                await FinishAsync(row, Card.Duplicate, facts, replyToken, emailTo, staff: true, ct);
                 return;
             default:
                 row.Status = Statuses.ToStaff;
@@ -382,7 +441,8 @@ public class TaxSlipIntakeService
             .Select(b => new SlipAccountMatch.AccountKey(b.Id, b.BankName, b.AccountNumber)).ToListAsync(ct);
         var match = SlipAccountMatch.Match(reading.Payer, accounts);
         var (defId, defBank) = await _consent.DefaultPayAccountAsync(client, providerId, ct);
-        return TaxSlipBankAccount.Decide(match, reading.Payer, defId, defBank);
+        var sameBank = defBank == null ? 0 : accounts.Count(a => ThaiBankCodes.FromText(a.BankName) == defBank);
+        return TaxSlipBankAccount.Decide(match, reading.Payer, defId, defBank, sameBank);
     }
 
     /// <summary>บันทึกผ่านผู้เขียนตัวเดียว แล้วตอบการ์ด · ด่าน/RemitAsync ปฏิเสธ ⇒ คิวพนักงานพร้อมเหตุจริง (ไม่กลืน)</summary>
@@ -398,6 +458,12 @@ public class TaxSlipIntakeService
         catch (BusinessRuleException bx) { failure = bx.Message; failureCode = bx.RuleCode ?? "REMIT-REFUSED"; }
         catch (InvalidOperationException ix) { failure = ix.Message; failureCode = "REMIT-REFUSED"; }
         catch (KeyNotFoundException kx) { failure = kx.Message; failureCode = "REMIT-REFUSED"; }
+        catch (DbUpdateException dx) when (dx.InnerException is Npgsql.PostgresException { SqlState: "23505" })
+        {
+            // ฝ่ายค้าน 272 L4: ชนกับเส้นมือ/อีกช่องทาง (unique งวด/Control Code) — บอกเหตุจริง ไม่ใช่ 500
+            _db.ChangeTracker.Clear();
+            failure = "งวดนี้/Control Code นี้ถูกบันทึกจากทางอื่นระหว่างนี้แล้ว — ตรวจประวัตินำส่งของลูกค้า"; failureCode = TaxSlipMatch.Codes.Remitted;
+        }
         var row = await _db.TaxSlipEvidences.FirstAsync(s => s.Id == slipId && s.CompanyId == providerId, ct);
         var f = facts with { FormLabel = FormLabel(cand.Type, cand.Year, cand.Month), Tax = cand.Amount, Surcharge = cand.Surcharge, Penalty = cand.Penalty,
             AccountLabel = accountLabel, PayDate = payDate, Amount = cand.Amount + cand.Surcharge + cand.Penalty };
@@ -447,6 +513,8 @@ public class TaxSlipIntakeService
         if (pid is not Guid providerId || !enabled) return TaxSlipReplyCard.Text(Card.IntakeOff, new(), false);
         var idHash = NotifyEndpointKind.LineIdHash(string.IsNullOrWhiteSpace(destination) ? null : destination.Trim(), groupId.Trim());
         if (!TaxSlipRefHash.Verify(pb, idHash)) return "ปุ่มนี้ใช้ไม่ได้ — กรุณาส่งสลิปใหม่";
+        // ฝ่ายค้าน 272 L1: กลุ่มต้องยังผูกอยู่ (ปลดกลุ่มแล้ว ⇒ ปุ่มเดิมใช้ไม่ได้)
+        if (!(await _channel.GroupBindingAsync(providerId, idHash, ct)).AnyEndpoint) return "กลุ่มนี้ไม่ได้ผูกกับสำนักงานบัญชีแล้ว — ปุ่มนี้ใช้ไม่ได้";
         var row = await _db.TaxSlipEvidences.FirstOrDefaultAsync(s => s.Id == pb.SlipId && s.CompanyId == providerId && s.SourceKey == idHash, ct);
         if (row == null || row.Status != Statuses.AwaitingChoice || row.ChoiceExpiresAt is DateTime exp && exp < DateTime.UtcNow)
             return "ตัวเลือกนี้หมดอายุหรือถูกเลือกไปแล้ว — พนักงาน NextAcc จะตรวจให้";
@@ -463,14 +531,32 @@ public class TaxSlipIntakeService
         row.Status = Statuses.Received;
         row.RuleCode = TaxSlipMatch.Codes.Many + "-CHOSEN";
         await _db.SaveChangesAsync(ct);
-        var bytes = await _storage.ReadAllBytesAsync(row.StoragePath, ct);
-        if (bytes == null) { await MarkStaffAsync(row, "อ่านไฟล์สลิปจากที่เก็บไม่ได้", ct); return TaxSlipReplyCard.Text(Card.Failed, new(), false); }
-        var reading = await _reader.ReadAsync(bytes, row.ContentType, ct);
-        var co = await _db.Companies.AsNoTracking().Where(c => c.Id == cand.CompanyId).Select(c => c.Name).FirstOrDefaultAsync(ct);
-        var facts = new TaxSlipReplyCard.Facts(CompanyName: co, Amount: reading.Amount, ControlLast4: row.ControlCodeLast4, FormLabel: FormLabel(cand.Type, cand.Year, cand.Month));
-        // เลือกได้เฉพาะในชุดผู้สมัคร แล้วเดินด่านที่เหลือครบเหมือนบันทึกเอง (ความยินยอม · บัญชี · RemitAsync)
-        await AutoApplyAsync(row, reading, cand, facts, replyToken, null, ct);
-        return null;   // การ์ดผลส่งแล้วด้วย reply token
+        var slipId = row.Id;
+        try
+        {
+            var bytes = await _storage.ReadAllBytesAsync(row.StoragePath, ct);
+            if (bytes == null) { await MarkStaffAsync(row, "อ่านไฟล์สลิปจากที่เก็บไม่ได้", ct); return TaxSlipReplyCard.Text(Card.Failed, new(), false); }
+            var reading = await _reader.ReadAsync(bytes, row.ContentType, ct);
+            var co = await _db.Companies.AsNoTracking().Where(c => c.Id == cand.CompanyId).Select(c => c.Name).FirstOrDefaultAsync(ct);
+            var facts = new TaxSlipReplyCard.Facts(CompanyName: co, Amount: reading.Amount, ControlLast4: row.ControlCodeLast4, FormLabel: FormLabel(cand.Type, cand.Year, cand.Month));
+            // เลือกได้เฉพาะในชุดผู้สมัคร แล้วเดินด่านที่เหลือครบเหมือนบันทึกเอง (ความยินยอม · บัญชี · ยอดสลิป=ผู้สมัคร · ยอดสมุดสด · RemitAsync)
+            await AutoApplyAsync(row, reading, cand, facts, replyToken, null, ct);
+            return null;   // การ์ดผลส่งแล้วด้วย reply token
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // ฝ่ายค้าน 272 M5: ล้มทุกชนิด ⇒ แถวเข้าคิวพนักงานจริง + กระดิ่ง (ไม่ค้าง Received)
+            _logger.LogError(ex, "บันทึกสลิปภาษี {Slip} หลังลูกค้าเลือกในกลุ่มล้ม — เข้าคิวพนักงาน", slipId);
+            _db.ChangeTracker.Clear();
+            var fresh = await _db.TaxSlipEvidences.FirstOrDefaultAsync(s => s.Id == slipId && s.CompanyId == providerId, CancellationToken.None);
+            if (fresh != null && fresh.Status != Statuses.Remitted)
+            {
+                fresh.Status = Statuses.ToStaff; fresh.RuleCode = "TAX-SLIP-FAILED"; fresh.Reason = Clip("ระบบล้มหลังลูกค้าเลือกรายการ: " + ex.Message, 500); fresh.UpdatedAt = DateTime.UtcNow;
+                await _db.SaveChangesAsync(CancellationToken.None);
+                await NotifyStaffAsync(fresh, CancellationToken.None);
+            }
+            return TaxSlipReplyCard.Text(Card.Failed, new(), false);
+        }
     }
 
     // ═══════════════ งานเบื้องหลัง (JobLock · TaxSlipJob) ═══════════════
@@ -482,11 +568,23 @@ public class TaxSlipIntakeService
         var (pid, enabled) = await ProviderAsync(ct);
         if (pid is not Guid providerId) return 0;
         var n = 0;
-        var held = await _db.TaxSlipEvidences.Where(s => s.CompanyId == providerId && s.Status == Statuses.AwaitingConsent).OrderBy(s => s.CreatedAt).Take(50).ToListAsync(ct);
+        // ฝ่ายค้าน 272 L1: เลือกต่อบริษัทลูกค้า (สลิปค้างของลูกค้ารายหนึ่งไม่บังรายอื่น) — ลูกค้าที่อนุญาตแล้วก่อน แล้วแถวที่ถึงกำหนดหมดอายุ
+        var heldClients = await _db.TaxSlipEvidences.AsNoTracking().Where(s => s.CompanyId == providerId && s.Status == Statuses.AwaitingConsent)
+            .Select(s => s.ClientCompanyId).Distinct().ToListAsync(ct);
+        var ready = new List<Guid?>();
+        foreach (var c in heldClients)
+            if (c is Guid g && (await _consent.CheckAsync(g, providerId, null, null, ct)).Ok) ready.Add(c);
+        var expiryCutoff = nowUtc.AddDays(-ProviderConsent.RequestLifetimeDays);
+        var held = await _db.TaxSlipEvidences.Where(s => s.CompanyId == providerId && s.Status == Statuses.AwaitingConsent
+                && (ready.Contains(s.ClientCompanyId) || s.CreatedAt < expiryCutoff || s.ClientCompanyId == null))
+            .OrderBy(s => s.CreatedAt).Take(100).ToListAsync(ct);
         foreach (var row in held)
         {
             if (row.ClientCompanyId is not Guid client) { await MarkStaffAsync(row, "ไม่รู้บริษัทลูกค้าของสลิปที่พักไว้", ct); n++; continue; }
             var v = await _consent.CheckAsync(client, providerId, null, null, ct);
+            // ฝ่ายค้าน 272 L1: อีเมล — ผู้ติดต่อของแถวต้องยังเป็นบริษัทลูกค้านี้ (ปลด/ลบผู้ติดต่อแล้ว ⇒ คิว)
+            if (v.Ok && enabled && row.Source == SourceEmail && !await EmailStillBoundAsync(row, client, ct))
+            { await MarkStaffAsync(row, "ผู้ส่งอีเมลไม่ได้ผูกกับบริษัทลูกค้านี้แล้ว", ct); n++; continue; }
             if (v.Ok && enabled)
             {
                 var bytes = await _storage.ReadAllBytesAsync(row.StoragePath, ct);
@@ -514,6 +612,14 @@ public class TaxSlipIntakeService
         await _db.ProviderConsentRequests.Where(r => r.ProviderCompanyId == providerId && r.Status == "Open" && r.ExpiresAt < nowUtc)
             .ExecuteUpdateAsync(s => s.SetProperty(r => r.Status, "Expired").SetProperty(r => r.ResolvedAt, (DateTime?)nowUtc), ct);
         return n;
+    }
+
+    private async Task<bool> EmailStillBoundAsync(TaxSlipEvidence row, Guid client, CancellationToken ct)
+    {
+        if (row.ContactId is not Guid contact) return false;
+        var key = client.ToString();
+        return await _db.Contacts.AsNoTracking().AnyAsync(c => c.Id == contact && c.CompanyId == row.CompanyId
+            && c.ExternalSystem == PlatformInvoiceRules.TenantContactSystem && c.ExternalId == key, ct);
     }
 
     private async Task MarkStaffAsync(TaxSlipEvidence row, string reason, CancellationToken ct)
@@ -568,14 +674,15 @@ public class TaxSlipIntakeService
             }
             list.Add(new StaffRow(r.Id, r.CreatedAt, r.Source, names.FirstOrDefault(n => n.Id == r.ClientCompanyId)?.Name, r.ClientCompanyId, r.Agency, r.Amount, r.SlipDate,
                 r.ControlCodeLast4, r.TaxIdMasked, r.Status, StatusLabel(r.Status), r.RuleCode, r.Reason, cands, accounts, r.LastCardOutcome, consent,
-                r.Status is Statuses.ToStaff or Statuses.AwaitingChoice or Statuses.AwaitingConsent && cands.Count > 0));
+                (r.Status is Statuses.ToStaff or Statuses.AwaitingChoice or Statuses.AwaitingConsent
+                    || (r.Status == Statuses.Received && (r.UpdatedAt ?? r.CreatedAt) < DateTime.UtcNow.AddMinutes(-10))) && cands.Count > 0));
         }
         return list;
     }
 
     /// <summary>พนักงานกด "บันทึกนำส่ง" 1 คลิก (272-1-5/6) — เลือกจากชุดผู้สมัครที่ตัวตัดสินคืนเท่านั้น (ห้ามพิมพ์ยอดเอง · ช่องที่ server ไม่รับ = ไม่มีในคำขอ) ·
     /// ด่านความยินยอม/หนังสือมอบอำนาจ/สมาชิกผู้ยื่นภาษี ตรวจใต้ล็อกใน <see cref="TaxSlipRemitService.ApplyAsync"/> · ผลส่งการ์ดตามหลังในกลุ่ม/อีเมลเดิมเสมอ</summary>
-    public async Task StaffRemitAsync(Guid providerId, Guid staffUserId, Guid slipId, int candidateIndex, Guid bankAccountId, bool staffIsClientTaxFiler, CancellationToken ct = default)
+    public async Task StaffRemitAsync(Guid providerId, Guid staffUserId, Guid slipId, int candidateIndex, Guid bankAccountId, CancellationToken ct = default)
     {
         var row = await _db.TaxSlipEvidences.FirstOrDefaultAsync(s => s.Id == slipId && s.CompanyId == providerId, ct)
             ?? throw new KeyNotFoundException("ไม่พบสลิป");
@@ -584,6 +691,10 @@ public class TaxSlipIntakeService
         if (candidateIndex < 0 || candidateIndex >= cands.Count)
             throw new BusinessRuleException("เลือกรายการจากที่ระบบเสนอ (สลิปนี้ไม่มีรายการที่ยอดตรง — ตรวจสมุดของลูกค้าก่อน)", "TAX-SLIP-NO-CANDIDATE", 400);
         var cand = cands[candidateIndex];
+        // ฝ่ายค้าน 272 M4: "ผู้กดเป็นผู้ยื่นภาษีของลูกค้าเอง" ตรวจกับบริษัทที่จะบันทึกลงจริง (cand.CompanyId) ไม่ใช่บริษัทที่แถวเดาไว้
+        var staffIsClientTaxFiler = _perms != null
+            && await _db.CompanyUsers.AsNoTracking().AnyAsync(cu => cu.CompanyId == cand.CompanyId && cu.UserId == staffUserId, ct)
+            && await _perms.HasPermissionAsync(cand.CompanyId, staffUserId, PermissionKeys.TaxFile);
         var acc = await _db.BankAccounts.AsNoTracking().Where(b => b.Id == bankAccountId && b.CompanyId == cand.CompanyId && b.IsActive && !b.IsDeleted)
             .Select(b => new { b.BankName, b.AccountNumber }).FirstOrDefaultAsync(ct)
             ?? throw new BusinessRuleException("บัญชีที่เลือกไม่ใช่บัญชีที่ใช้งานของบริษัทลูกค้า", TaxSlipBankAccount.RuleCode, 400);
@@ -605,6 +716,8 @@ public class TaxSlipIntakeService
         if (!Statuses.Open.Contains(row.Status)) throw new BusinessRuleException("สลิปนี้ปิดแล้ว", "TAX-SLIP-CLOSED", 409);
         var why = Clip(string.IsNullOrWhiteSpace(reason) ? "พนักงานตรวจแล้วไม่ใช่รายการที่ต้องบันทึก" : reason, 300)!;
         row.Status = Statuses.Rejected; row.Reason = why; row.RuleCode = "TAX-SLIP-STAFF-REJECT"; row.ResolvedByUserId = staffUserId; row.ResolvedAt = DateTime.UtcNow; row.UpdatedAt = DateTime.UtcNow;
+        // ฝ่ายค้าน 272 M6: พนักงานปฏิเสธ ⇒ ส่งไฟล์เดิม/รายการเดิมใหม่ได้ (ด่านซ้ำไม่นับแถวที่ปฏิเสธแล้ว) · ไฟล์ถูกลบด้านล่าง
+        row.FileSha256 = "rejected:" + row.Id.ToString("N"); row.BankTxnHash = null; row.FilePurgedAt = DateTime.UtcNow;
         _db.AddChainedAuditLog(new AuditLog
         {
             CompanyId = providerId, UserId = staffUserId, Action = Accounting.Models.Enums.AuditAction.Update, EntityType = nameof(TaxSlipEvidence), EntityId = row.Id.ToString(),

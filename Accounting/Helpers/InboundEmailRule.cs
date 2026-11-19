@@ -22,7 +22,41 @@ public static class InboundEmailRule
 
     /// <param name="SpfPass">ผู้ให้บริการขาเข้ายืนยัน SPF ผ่าน</param>
     /// <param name="DkimPass">ผู้ให้บริการขาเข้ายืนยัน DKIM ผ่าน</param>
-    public sealed record Message(string From, string MessageId, bool SpfPass, bool DkimPass, IReadOnlyList<(string FileName, byte[] Bytes)> Attachments);
+    /// <param name="DmarcPass">ผู้ให้บริการขาเข้ายืนยัน DMARC ผ่าน (alignment กับโดเมนของ From แล้ว)</param>
+    /// <param name="SpfDomain">โดเมนที่ SPF ผ่าน (envelope MAIL FROM) · null = ไม่รู้</param>
+    /// <param name="DkimDomain">โดเมน <c>d=</c> ของลายเซ็น DKIM ที่ผ่าน · null = ไม่รู้</param>
+    public sealed record Message(string From, string MessageId, bool SpfPass, bool DkimPass, IReadOnlyList<(string FileName, byte[] Bytes)> Attachments,
+        bool DmarcPass = false, string? SpfDomain = null, string? DkimDomain = null);
+
+    private static string? DomainOf(string? address)
+    {
+        var a = (address ?? "").Trim().TrimEnd('>').ToLowerInvariant();
+        var at = a.LastIndexOf('@');
+        var d = at >= 0 ? a[(at + 1)..] : a;
+        d = d.Trim().TrimEnd('.');
+        return d.Length == 0 || !d.Contains('.') ? null : d;
+    }
+
+    /// <summary>relaxed alignment แบบ DMARC: โดเมนที่ผ่านต้องเท่ากับโดเมนของ From หรือเป็นโดเมนแม่/ลูกกันใน organizational domain (ตัดสินแบบ suffix ที่ขอบจุด)</summary>
+    private static bool Aligned(string? authDomain, string? fromDomain)
+    {
+        var a = DomainOf(authDomain); var f = DomainOf(fromDomain);
+        if (a == null || f == null) return false;
+        return a == f || f.EndsWith("." + a, StringComparison.Ordinal) || a.EndsWith("." + f, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// ฝ่ายค้าน 272 H3: ผู้ส่ง<b>ยืนยันโดเมนของ From ได้</b>ไหม — DMARC ผ่าน · หรือ DKIM ผ่านด้วย <c>d=</c> ที่ align กับ From · หรือ SPF ผ่านด้วยโดเมน envelope ที่ align กับ From ·
+    /// "SPF/DKIM ผ่าน" เฉย ๆ ไม่พอ (โดเมนของผู้โจมตีผ่านได้ทั้งคู่) · ไม่ align ⇒ รับเข้าคิวพนักงานได้ แต่<b>ไม่บันทึกเอง</b>
+    /// </summary>
+    public static bool SenderVerified(Message m)
+    {
+        var from = DomainOf(m.From);
+        if (from == null) return false;
+        return m.DmarcPass || (m.DkimPass && Aligned(m.DkimDomain, from)) || (m.SpfPass && Aligned(m.SpfDomain, from));
+    }
+
+    public const string UnverifiedReason = "อีเมลผู้ส่งยืนยันโดเมนไม่ได้ (DKIM/SPF ไม่ตรงโดเมนของผู้ส่ง) — ระบบไม่บันทึกเอง ให้พนักงานตรวจ";
 
     /// <summary>ตรวจรหัสลับตอนบูต: เปิดใช้ + production + ไม่มีค่า/เป็นค่าตัวอย่าง ⇒ throw · คืนค่าที่ใช้ได้ หรือ null (ไม่เปิดใช้)</summary>
     public static string? RequireSecret(bool enabled, bool isProduction, string? secret)
@@ -53,7 +87,7 @@ public interface IInboundEmailAdapter
     InboundEmailRule.Message? Parse(string body);
 }
 
-/// <summary>รอบ 272 P6: รูป JSON กลาง <c>{"from","messageId","spf":"pass","dkim":"pass","attachments":[{"fileName","contentBase64"}]}</c> —
+/// <summary>รอบ 272 P6: รูป JSON กลาง <c>{"from","messageId","spf":"pass","spfDomain","dkim":"pass","dkimDomain","dmarc":"pass","attachments":[{"fileName","contentBase64"}]}</c> —
 /// relay ใดก็แปลงมาเป็นรูปนี้ได้ (ผู้ให้บริการที่เลือกภายหลังเขียน adapter ของตัวเองเพิ่ม)</summary>
 public sealed class JsonInboundEmailAdapter : IInboundEmailAdapter
 {
@@ -74,8 +108,10 @@ public sealed class JsonInboundEmailAdapter : IInboundEmailAdapter
                     var b64 = a.TryGetProperty("contentBase64", out var c) ? c.GetString() ?? "" : "";
                     try { files.Add((name, Convert.FromBase64String(b64))); } catch (FormatException) { }
                 }
+            string? N(string k) => S(k) is { Length: > 0 } v ? v : null;
             return new InboundEmailRule.Message(S("from"), S("messageId"), S("spf").Equals("pass", StringComparison.OrdinalIgnoreCase),
-                S("dkim").Equals("pass", StringComparison.OrdinalIgnoreCase), files);
+                S("dkim").Equals("pass", StringComparison.OrdinalIgnoreCase), files, S("dmarc").Equals("pass", StringComparison.OrdinalIgnoreCase),
+                N("spfDomain"), N("dkimDomain"));
         }
         catch (JsonException) { return null; }
     }

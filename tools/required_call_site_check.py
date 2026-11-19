@@ -21178,6 +21178,41 @@ REVIEWER_CASES += [
 ]
 
 
+# ═══ รอบ 272 ชุดแก้ฝ่ายค้าน (erp-review/2026-11-16/review-272.md · H1–H3 · M1–M7 · L1–L8) ═══
+_R272F_WHY = "รอบ 272 ฝ่ายค้าน (review-272): "
+RULES += [
+    dict(file=_R272_REMIT, method="ApplyAsync", must=["ExpectedAmount: c.Amount"],
+         must_re=[r"if\s*\(\s*slip\.Amount\s+is\s+decimal\s+paid\s*&&", r"if\s*\(\s*slip\.SenderUnverified\s*&&\s*a\.StaffUserId\s*==\s*null\s*\)\s*throw\b"],
+         why=_R272F_WHY + "H1 ยอดสลิป = ผู้สมัคร + ยอดสมุดสดต้องเท่ายอดที่คาด (RemitAsync ปฏิเสธ) · H3 อีเมลยืนยันผู้ส่งไม่ได้ ⇒ ไม่บันทึกเอง"),
+    dict(file="Services/Implementations/StatutoryRemittanceService.cs", method="RemitAsync",
+         must_re=[r"if\s*\(\s*req\.ExpectedAmount\s+is\s+decimal\s+expected", r"isPp36\s*&&\s*ownTx"],
+         why=_R272F_WHY + "H1 ยอดค้างตอนบันทึกต้องเท่ายอดที่เส้นสลิปคาด · M7 ร่วมธุรกรรมแล้วไม่สร้างรายงาน ภ.พ.36"),
+    dict(file=_R272_INTAKE, method="IntakeAsync", must=["OcrOffRuleCode", "EnsureRopaAsync("],
+         must_re=[r"var\s+unreadable\s*=\s*!\s*_reader\.IsAvailable\s*\|\|", r"if\s*\(\s*!\s*unreadable\s*&&\s*agency\.Kind\s*==\s*GovPaymentSlip\.Kind\.NotGovernment\s*\)"],
+         why=_R272F_WHY + "H2 อ่านไม่ได้ ⇒ แถวเข้าคิว + การ์ด + กระดิ่ง (ไม่ตอบว่าไม่ใช่สลิปภาษี) · M6 RoPA"),
+    dict(file="Controllers/InboundEmailController.cs", method="Receive", must=["InboundEmailRule.SenderVerified(", "WebhookSignature.Verify("],
+         why=_R272F_WHY + "H3 alignment กับโดเมนของ From จากผลผู้ให้บริการ"),
+    dict(file=_R272_CONSENT, method="ApprovePowerOfAttorneyAsync", must=["AddChainedAuditLog(", "NotifyClientPoaAsync("],
+         must_re=[r"if\s*\(\s*row\.GrantedByUserId\s*==\s*approverUserId\s*\)\s*throw\b"],
+         why=_R272F_WHY + "M4 ผู้อนุมัติหนังสือมอบอำนาจต้องไม่ใช่ผู้แนบ + แจ้งเจ้าของลูกค้า"),
+    dict(file=_R272_INTAKE, method="StaffRemitAsync", must=["cu.CompanyId == cand.CompanyId", "PermissionKeys.TaxFile"],
+         why=_R272F_WHY + "M4 สิทธิ์ผู้ยื่นภาษีของลูกค้าตรวจกับบริษัทที่บันทึกลงจริง"),
+    dict(file=_R272_INTAKE, method="HandleChoicePostbackAsync", must=["NotifyStaffAsync(", "_channel.GroupBindingAsync("],
+         why=_R272F_WHY + "M5 ปุ่มล้ม ⇒ คิวพนักงานจริง + กระดิ่ง · L1 กลุ่มต้องยังผูก"),
+    dict(file=_R272_INTAKE, method="PurgeClosedFilesAsync", must=["s.StatutoryRemittanceId == null", "s.Status == Statuses.Rejected"],
+         why=_R272F_WHY + "M6 ลบเฉพาะไฟล์ของแถวที่ปิดโดยไม่บันทึก (legal hold/รอตัดสิน ไม่แตะ)"),
+    dict(file="Services/Background/LineChatSlipRetentionJob.cs", method="ExecuteAsync", must=["TaxSlipIntakeService.PurgeClosedFilesAsync(", "JobLock.RunExclusiveAsync("],
+         why=_R272F_WHY + "M6 ลบไฟล์สลิปภาษีในงาน retention เดิม (JobLock)"),
+]
+REVIEWER_CASES += [
+    ("R272F-1", "ApplyAsync", "ExpectedAmount: c.Amount", "ExpectedAmount: null", True),
+    ("R272F-2", "IntakeAsync", "if (!unreadable && agency.Kind == GovPaymentSlip.Kind.NotGovernment)", "if (agency.Kind == GovPaymentSlip.Kind.NotGovernment)", True),
+    ("R272F-3", "Receive", "InboundEmailRule.SenderVerified(msg)", "true", True),
+    ("R272F-4", "ApprovePowerOfAttorneyAsync", "if (row.GrantedByUserId == approverUserId) throw", "if (false) throw", True),
+    ("R272F-5", "PurgeClosedFilesAsync", "s.StatutoryRemittanceId == null && ", "", True),
+]
+
+
 def main() -> int:
     errs = []
     # 2026-10-08: กติกาที่สะกดคีย์ผิด (เช่น forbid_re) เคยถูกข้ามเงียบ = ด่านที่ไม่มีอยู่จริง — คีย์ที่ไม่รู้จักต้องฟ้อง

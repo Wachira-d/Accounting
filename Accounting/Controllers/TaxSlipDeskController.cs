@@ -44,7 +44,7 @@ public class TaxSlipDeskController : ControllerBase
         if (await NotProviderAsync(companyId, ct) is { } np) return np;
         var enabled = await _db.CompanySettings.AsNoTracking().Where(s => s.CompanyId == companyId).Select(s => (bool?)s.TaxSlipIntakeEnabled).FirstOrDefaultAsync(ct) ?? true;
         return Ok(new ApiResponse<Overview>(true, new Overview(enabled, reader.IsAvailable,
-            reader.IsAvailable ? null : "เครื่องนี้อ่านข้อความจากรูปไม่ได้ (ไม่มี tessdata) — ทุกสลิปจะเข้าคิวพนักงาน",
+            reader.IsAvailable ? null : "เครื่องนี้อ่านข้อความจากรูปไม่ได้ (ไม่มี tessdata) — ทุกสลิปจากกลุ่มที่ผูกแล้วเข้าคิวพนักงานพร้อมเหตุ \"" + TaxSlipIntakeService.OcrOffReason + "\"",
             await _requests.ClientsAsync(companyId, ct), await _requests.ListAsync(companyId, ct), await _intake.StaffQueueAsync(companyId, !all, ct),
             ProviderConsent.TaxTypes.Where(t => t.ReaderWired).ToList())));
     }
@@ -97,12 +97,10 @@ public class TaxSlipDeskController : ControllerBase
         if (await NotProviderAsync(companyId, ct) is { } np) return np;
         var userId = JwtHelper.GetUserIdFromClaims(User);
         if (userId == Guid.Empty) return Unauthorized();
-        var client = await _db.TaxSlipEvidences.AsNoTracking().Where(s => s.Id == slipId && s.CompanyId == companyId).Select(s => s.ClientCompanyId).FirstOrDefaultAsync(ct);
-        var clientFiler = client is Guid cid && await _db.CompanyUsers.AsNoTracking().AnyAsync(cu => cu.CompanyId == cid && cu.UserId == userId, ct)
-            && await _perms.HasPermissionAsync(cid, userId, PermissionKeys.TaxFile);
         try
         {
-            await _intake.StaffRemitAsync(companyId, userId, slipId, req.CandidateIndex, req.BankAccountId, clientFiler, ct);
+            // ฝ่ายค้าน 272 M4: สิทธิ์ผู้ยื่นภาษีของลูกค้าตรวจใน service กับบริษัทของผู้สมัครที่เลือก
+            await _intake.StaffRemitAsync(companyId, userId, slipId, req.CandidateIndex, req.BankAccountId, ct);
             return Ok(new ApiResponse<object>(true, null, "บันทึกนำส่งในบัญชีลูกค้าแล้ว · แจ้งผลในกลุ่ม/อีเมลแล้ว"));
         }
         catch (KeyNotFoundException ex) { return NotFound(new ApiResponse<object>(false, null, ex.Message)); }
@@ -159,8 +157,26 @@ public class TaxSlipDeskController : ControllerBase
         try
         {
             var row = await _consent.RecordPowerOfAttorneyAsync(companyId, client.ClientCompanyId, userId, att.Id, ct);
-            return Ok(new ApiResponse<object>(true, new { id = row.Id }, "บันทึกหนังสือมอบอำนาจแล้ว — ไม่เปิดการบันทึกเอง · พนักงานกดบันทึกทีละสลิป"));
+            return Ok(new ApiResponse<object>(true, new { id = row.Id }, "บันทึกหนังสือมอบอำนาจแล้ว — รอพนักงานอีกคนอนุมัติ · ไม่เปิดการบันทึกเอง (กดบันทึกทีละสลิป)"));
         }
+        catch (BusinessRuleException ex) { return Fail(ex); }
+    }
+
+    /// <summary>ฝ่ายค้าน 272 M4: ผู้อนุมัติคนที่สองของหนังสือมอบอำนาจ (ไม่ใช่ผู้แนบ) — กระดิ่งเจ้าของลูกค้า</summary>
+    [HttpPost("clients/{contactId:guid}/power-of-attorney/{consentId:guid}/approve")]
+    [Accounting.Filters.RequirePermission(PermissionKeys.TaxFile)]
+    [Accounting.Filters.RejectApiKey("อนุมัติหนังสือมอบอำนาจของลูกค้า")]
+    public async Task<ActionResult<ApiResponse<object>>> ApprovePowerOfAttorney(Guid companyId, Guid contactId, Guid consentId, CancellationToken ct)
+    {
+        if (await NotProviderAsync(companyId, ct) is { } np) return np;
+        var client = (await _requests.ClientsAsync(companyId, ct)).FirstOrDefault(c => c.ContactId == contactId);
+        if (client == null) return NotFound(new ApiResponse<object>(false, null, "ผู้ติดต่อนี้ไม่ใช่บริษัทลูกค้า"));
+        try
+        {
+            await _consent.ApprovePowerOfAttorneyAsync(companyId, client.ClientCompanyId, JwtHelper.GetUserIdFromClaims(User), consentId, ct);
+            return Ok(new ApiResponse<object>(true, null, "อนุมัติหนังสือมอบอำนาจแล้ว — พนักงานกดบันทึกทีละสลิปได้ · แจ้งเจ้าของลูกค้าแล้ว"));
+        }
+        catch (KeyNotFoundException ex) { return NotFound(new ApiResponse<object>(false, null, ex.Message)); }
         catch (BusinessRuleException ex) { return Fail(ex); }
     }
 
