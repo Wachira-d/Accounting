@@ -2306,6 +2306,17 @@ public partial class DocumentService : IDocumentService
             if (whtNet.CreditNoteCount > 0)
                 resp = resp with { WhtNetOfAdjustments = whtNet.Remaining };
         }
+        // รอบ 273: ใบเสร็จรับชำระที่ไม่ถือ VAT ของใบต้นทาง — "ยอดรับชำระ" + บรรทัดอ้างอิง (ตัวโหลด/ตัวตัดสิน/ข้อความเดียวกับกระดาษ — หน้าเว็บแสดงอย่างเดียว)
+        await SettlementReceiptTotalsLoader.ResolveAsync(_db, companyId, doc);
+        if (doc.SettlementTotals is { } settleView)
+        {
+            var thLabels = Accounting.Services.Implementations.Pdf.DocumentLabels.For("th");
+            resp = resp with
+            {
+                SettlementTotals = new SettlementTotalsDto(thLabels.TotalAmountReceived, settleView.AmountReceived,
+                    settleView.ShowSettledGrossRow ? thLabels.TotalSettledGross : null, thLabels.SettlementTotalsLines(settleView)),
+            };
+        }
         // รอบ 263: หมายเหตุ "✅ แก้แล้ว … โดย <id ผู้ใช้>" ของแถวก่อนรอบ 263 ⇒ แสดงชื่อ (ค้นเฉพาะ id ที่อยู่ในหมายเหตุ · ผู้ใช้ไม่ผูกบริษัท ค้นด้วย id ตรง)
         var approverIds = AutoApproveFailure.ApproverIds(resp.InternalNotes);
         if (approverIds.Count > 0)

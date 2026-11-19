@@ -908,7 +908,9 @@ public partial class PdfGenerationService
             // รอบ 193 (เจ้าของข้อ 8): ผลต่างจากการปัดเศษ ก่อน "รวมเงิน" (คู่กับ HTML renderer ใน PdfGenerationService)
             if (doc.RoundingAdjustment != 0m && !hideVatBreakdown)
                 Row(L.TotalRounding, doc.RoundingAdjustment.ToString("+#,##0.00;-#,##0.00"));
-            if (t.ShowSubTotal && !hideVatBreakdown) Row(L.TotalSubtotal, preBillSubTotal.ToString("N2"));
+            // รอบ 273: ใบเสร็จรับชำระที่ไม่ถือ VAT ⇒ ไม่มีแถว "ยอดรวมก่อน VAT" (มีภาษีหัก ⇒ "ยอดตัดชำระ") — ตัวตัดสินเดียวกับ HTML renderer (SettlementSubtotalLabel)
+            var subtotalLabel = SettlementSubtotalLabel(doc, L);
+            if (t.ShowSubTotal && !hideVatBreakdown && subtotalLabel != null) Row(subtotalLabel, preBillSubTotal.ToString("N2"));
             if (t.ShowDiscountTotal && doc.DiscountAmount > 0)
                 Row(L.TotalDiscount, doc.DiscountAmount.ToString("N2"));
             if (billDeductTotal > 0)
@@ -930,7 +932,7 @@ public partial class PdfGenerationService
             // ป้าย/ยอดแถว VAT + แถวสุดท้าย — ตัวตัดสินเดียวกับ HTML renderer (ResolvePrintTotals · รอบ PP36 ทีม F2)
             // เดิมฝังข้อความไทย "ภาษีมูลค่าเพิ่ม 7%" ตรง ๆ ⇒ โหมดอังกฤษพิมพ์ไทย (drift กับ L.TotalVat ของ HTML) — ไทยยังเหมือนเดิมทุกตัวอักษร
             var printTotals = ResolvePrintTotals(doc, L);
-            if (t.ShowVatSummary && doc.VatAmount > 0 && !hideVatBreakdown)
+            if (t.ShowVatSummary && doc.VatAmount > 0 && !hideVatBreakdown && doc.SettlementTotals == null)
                 Row(printTotals.VatLabel, doc.VatAmount.ToString("N2"));
             if (t.ShowWithholdingTaxSummary && doc.WithholdingTaxAmount > 0)
                 Row(L.TotalWht, $"({doc.WithholdingTaxAmount:N2})");
@@ -961,6 +963,8 @@ public partial class PdfGenerationService
                     Accounting.Helpers.PostVatDeduction.AmountDue(printTotals.Grand - doc.DepositAppliedAmount, doc.PostVatDeductionAmount).ToString("N2"), total: true);
             }
         });
+
+        ComposeSettlementTotals(col, doc, L);   // รอบ 273: บรรทัดอ้างอิงใบต้นทางของใบเสร็จรับชำระ (คู่กับ AppendSettlementTotalsHtml ฝั่ง HTML)
 
         // มัดจำ VAT พักรอ — แจ้งชัดว่าไม่ใช่ใบกำกับภาษี (ใบกำกับออกตอนใช้บริการ)
         if (IsDeferredVatDeposit(doc))

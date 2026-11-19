@@ -7291,3 +7291,10 @@ H3 `InboundEmailRule.SenderVerified` (DMARC/DKIM/SPF align) · ไม่ align �
 M4 hash PRC2 (ไฟล์หลักฐาน) + `ApprovePowerOfAttorneyAsync` (คนที่สอง) + trigger ครอบคอลัมน์เพิ่ม + clientFiler ของบริษัทจริง · M5 ปุ่มล้ม ⇒ คิว · M6 `PurgeClosedFilesAsync` + RoPA ·
 M7 ไม่สร้าง TaxReport จากเส้นสลิป · L1 เลือกสลิปพักต่อบริษัท + ผูกซ้ำ · L2 ปิดรับ = ตอบทุกกลุ่มที่ผูก · L3 ผู้แนบอัตโนมัติ = ไม่มีคน · L4 23505 ⇒ เหตุ · L5 CC ซ้ำ ⇒ คิว+กระดิ่ง · L6 trigger · L7 หลายบัญชีธนาคารเดียว · L8 เลขสังเคราะห์ ·
 เทสต์ pure +8 · Db +2 · กติกา R272F +9 + ฝ่ายค้าน R272F-1…5 · build + test + Db test ผ่านในเครื่องนี้ · commit 7c5a3cb4_
+
+_รอบ 273 (2026-11-19 · ผู้ใช้รายงาน: REC-20261029-0001 ของ TIV-20261026-0001 มูลค่า 700,000 + VAT 49,000 พิมพ์ "ยอดรวมก่อน VAT 749,000.00 · VAT 0.00"):
+ต้นเหตุ = ป้ายแถวยอดของใบที่ถือ VAT เองถูกใช้กับใบเสร็จรับชำระ (ข้อมูลที่ persist ถูก: VAT 0 · ไม่ถือบทบาทใบกำกับ · นอก ภ.พ.30/§87 ตามรอบ 269 — ไม่มี migration) ·
+ตัวตัดสินเดียว `Helpers/SettlementReceiptTotals` + ตัวโหลด `SettlementReceiptTotalsLoader` (PDF/HTML/QuestPDF/หัวอีเมล-LINE + `GetDocumentAsync`) ·
+แถวสุดท้าย "ยอดรับชำระ" · ซ่อน "ยอดรวมก่อน VAT"/VAT · บรรทัดอ้างอิง "(ตามใบกำกับภาษีเลขที่ … ลงวันที่ …: มูลค่า · VAT · รวม)" + หมายเหตุว่ารวม VAT แล้ว · รับบางส่วนบอกยอดเต็ม · มีภาษีหักคงแถว "ยอดตัดชำระ" ·
+ป้ายผ่าน `DocumentLabels` ไทย/อังกฤษ · `documents.html` แสดง `DocumentResponse.SettlementTotals` อย่างเดียว ·
+เทสต์ pure `SettlementReceiptTotalsTests` (12) + Db `SettlementReceiptTotalsDbTests` (3) · กติกา `_R273_*` (8) + ฝ่ายค้าน R273-1…3 · build + test + Db test ผ่านในเครื่องนี้ — commit f929120b_

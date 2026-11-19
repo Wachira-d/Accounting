@@ -121,6 +121,12 @@ public class Document : TenantEntity
     [System.ComponentModel.DataAnnotations.Schema.NotMapped]
     public DateTime? ReplacementOfDate { get; set; }
 
+    /// <summary>รอบ 273 (transient · renderer ×2 + หน้ารายละเอียด): ใบเสร็จรับชำระที่ไม่ถือ VAT ของใบต้นทางที่มี VAT ⇒ แถว "ยอดรับชำระ" + บรรทัดอ้างอิง
+    /// "(ตามใบกำกับภาษีเลขที่ … : มูลค่า · VAT · รวม)" แทน "ยอดรวมก่อน VAT / VAT 0.00" — เติมโดย <c>SettlementReceiptTotalsLoader.ResolveAsync</c> ·
+    /// ตัวตัดสิน <c>Helpers/SettlementReceiptTotals</c> · null = แถวยอดปกติ</summary>
+    [System.ComponentModel.DataAnnotations.Schema.NotMapped]
+    public Accounting.Helpers.SettlementReceiptTotals.View? SettlementTotals { get; set; }
+
     /// <summary>Transient (ไม่เก็บ DB) — ข้อมูลใบต้นฉบับสำหรับกล่อง §86/9-10 บน
     /// ใบลดหนี้/ใบเพิ่มหนี้ (เลขที่+วันที่+มูลค่าใบเดิม → มูลค่าที่ถูกต้อง+ผลต่าง)
     /// โหลดตอน render ใน ResolveServedAsReceiptAsync ทั้ง HTML และ QuestPDF.</summary>
