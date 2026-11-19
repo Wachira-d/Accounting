@@ -9737,7 +9737,14 @@ _Last verified against codebase: 2026-11-16 (รอบ 271 ชุดแก้ฝ
 6. **งานเบื้องหลัง** `TaxSlipJob` (10 นาที · JobLock): ประมวลสลิปพักหลังอนุญาตใหม่ทั้งชุดด่าน · หมดอายุ ⇒ คิว · ปุ่มเลือกเกิน 24 ชม. ⇒ คิว · **P5 ตรวจทาน** `TaxSlipReviewService` — เทียบรายการเดินบัญชี ±3 วัน (ธง StatementFound/OtherAccount/NotFound หลัง 10 วัน · ไม่ผูก/ไม่กลับรายการเอง)
 7. **อีเมลขาเข้า (P6 · 272-1-8)** — `POST /api/inbound-email` (ลายเซ็น `WebhookSignature` · SPF/DKIM) → `TaxSlipIntakeService.HandleEmailAsync` เส้นเดียวกัน · ปิดไว้จนตั้ง `InboundEmail:Enabled` + `INBOUND_EMAIL_SECRET` (production fail-fast)
 
+**ชุดแก้ฝ่ายค้าน (review-272):** ยอดที่ลงบัญชี = ยอดสลิป และยอดค้างสด ณ ตอนบันทึกต้องเท่ายอดที่คาด (`RemitRequest.ExpectedAmount` · H1) · อ่านสลิปไม่ได้ ⇒ แถว `TAX-SLIP-OCR-OFF`
+เข้าคิว + การ์ด + กระดิ่ง (H2) · อีเมลต้อง align โดเมนของ From (DMARC/DKIM d=/SPF) มิฉะนั้นคิวเท่านั้น (`SenderUnverified` · H3) · D-3 กรองช่วงยื่น/ค่าธรรมเนียมก่อนนับ "หลายแบบ" (M1) ·
+งวดที่มีใบขอชำระ Open แต่ CC ไม่ตรง ⇒ คิว (M2) · เหตุในการ์ดปิดตัวเลขเมื่อปิด ShowAmounts (M3) · หนังสือมอบอำนาจ: ไฟล์อยู่ใน hash (PRC2) + ผู้อนุมัติคนที่สอง + แจ้งเจ้าของลูกค้า ·
+สิทธิ์ผู้ยื่นภาษีตรวจกับบริษัทที่บันทึกจริง (M4) · ปุ่มล้ม ⇒ คิวจริง (M5) · ลบไฟล์แถวที่ปิดโดยไม่บันทึกหลัง 90 วันใน `LineChatSlipRetentionJob` + RoPA (M6) · เส้นสลิปไม่สร้าง TaxReport (M7) · L1–L8 ดู review-272
+
 ยังรอเจ้าของ: สลิปจริงธนาคารอื่น/สปส./ใบแจ้งชำระของกรม (เพิ่มแถวตาราง) · ผู้ให้บริการอีเมลขาเข้า (adapter) · backlog: สลิปเดียวหลายแบบ · ยื่นเพิ่มเติม · ค่าธรรมเนียมธนาคาร · อ่านใบแจ้งชำระ PDF อัตโนมัติ
 
 _Last verified against codebase: 2026-11-16 (รอบ 272 แพ็ก P1–P6 — §TAX272: GovPaymentSlip (98037@KBank) · TaxSlipMatch (D-2/D-3) · ProviderConsent (ทาง B) · ใบขอชำระ · RemitAsync ตัวเดียว · ตรวจทานหลังนำส่ง · อีเมลขาเข้าหลัง interface — build + test + Db test ผ่านในเครื่องนี้ (PostgreSQL) — commit cd71dee0)_
+_Last verified against codebase: 2026-11-19 (รอบ 272 ชุดแก้ฝ่ายค้าน — §TAX272: H1 ExpectedAmount · H2 OCR ไม่พร้อม ⇒ คิว · H3 alignment อีเมล · M1–M7 · L1–L8 — build + test + Db test ผ่านในเครื่องนี้ (PostgreSQL) — commit 7c5a3cb4)_
+
 _Last verified against codebase: 2026-11-19 (รอบ 273 — §3.4b-273: ใบเสร็จรับชำระที่ไม่ถือ VAT ของใบต้นทางพิมพ์ "ยอดรับชำระ" + บรรทัดอ้างอิงใบกำกับ (มูลค่า · VAT · รวม) แทน "ยอดรวมก่อน VAT / VAT 0.00" — ตัวตัดสิน `Helpers/SettlementReceiptTotals` · HTML + QuestPDF + หน้ารายละเอียด · แสดงผลอย่างเดียว ไม่มี migration · กติการอบ 269 คงเดิม — build + test + Db test ผ่านในเครื่องนี้ (PostgreSQL) — commit <pending>)_

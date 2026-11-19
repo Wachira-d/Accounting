@@ -14,7 +14,7 @@ public static class TaxSlipReplyCard
     {
         Remitted = 1, NeedsChoice, NeedsAccount, NoMatch, TaxIdMismatch, AmountMismatch, Duplicate, UnknownAgency, NotATaxSlip, AwaitingConsent,
         AwaitingConsentMore, Failed, ToStaff, NoTenant, IntakeOff, ConsentGranted, ConsentWithdrawn, ConsentExpired, BoundAskConsent, PaymentRequest,
-        StaffRemitted, StaffRejected, ChoiceAccepted,
+        StaffRemitted, StaffRejected, ChoiceAccepted, FailedResend,
     }
 
     /// <param name="CompanyName">ชื่อบริษัทลูกค้า (ถูกปิดบางในข้อความ)</param>
@@ -58,7 +58,9 @@ public static class TaxSlipReplyCard
     {
         var co = MaskCompany(f.CompanyName);
         var form = string.IsNullOrWhiteSpace(f.FormLabel) ? "รายการภาษี" : f.FormLabel;
-        var why = string.IsNullOrWhiteSpace(f.Reason) ? "" : " (" + f.Reason!.Trim() + ")";
+        // ฝ่ายค้าน 272 M3: เหตุ (จากตัวตัดสิน/RemitAsync) มีตัวเลขเงินได้ — ปิด ShowAmounts ⇒ ปิดตัวเลขในเหตุด้วยตัวเดียวกัน
+        var reason = string.IsNullOrWhiteSpace(f.Reason) ? null : showAmounts ? f.Reason!.Trim() : MaskNumbers(f.Reason!.Trim());
+        var why = reason == null ? "" : " (" + reason + ")";
         var link = string.IsNullOrWhiteSpace(f.Link) ? "" : "\n" + f.Link;
         switch (kind)
         {
@@ -107,6 +109,8 @@ public static class TaxSlipReplyCard
                     + "เมื่อเจ้าของบริษัทอนุญาตบนเว็บแล้วระบบบันทึกให้เอง" + link;
             case Kind.AwaitingConsentMore:
                 return "พักสลิปไว้เป็นใบที่ " + f.HeldCount.ToString(Inv) + " — รอเจ้าของบริษัทอนุญาต (ยังไม่ได้บันทึก)";
+            case Kind.FailedResend:
+                return "ได้รับรูปแล้ว แต่ระบบรับสลิปไม่สำเร็จ (ยังไม่ได้บันทึก) — กรุณาส่งรูปอีกครั้ง";
             case Kind.Failed:
                 return "ได้รับสลิปแล้ว แต่ระบบบันทึกไม่สำเร็จ — ส่งให้พนักงานตรวจแล้ว (ไม่ต้องส่งซ้ำ)";
             case Kind.ToStaff:
@@ -139,6 +143,11 @@ public static class TaxSlipReplyCard
         var t = new string((text ?? "").Select(ch => ch == '\n' ? ch : char.IsControl(ch) ? ' ' : ch).ToArray()).Trim();
         return t.Length == 0 ? "-" : LineMessageLimits.Truncate(t, 4900);
     }
+
+    private static readonly System.Text.RegularExpressions.Regex NumberRx = new(@"\d[\d,]*(?:\.\d+)?", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    /// <summary>ฝ่ายค้าน 272 M3: ปิดตัวเลขทุกชุดในข้อความ (ยอด · จำนวนใบ · เพดาน) — ใช้กับเหตุในการ์ดเมื่อปลายทางปิด ShowAmounts</summary>
+    private static string MaskNumbers(string text) => NumberRx.Replace(text, "•••");
 
     /// <summary>บรรทัดต่อท้ายใบแจ้งชำระเมื่อบริษัทยังไม่อนุญาต (T2)</summary>
     public const string ConsentHint = "\nส่งสลิปกลับมาในกลุ่มนี้ได้ — ระบบจะบันทึกให้เมื่อเจ้าของบริษัทอนุญาตบนเว็บ";

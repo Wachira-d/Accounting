@@ -7279,6 +7279,12 @@ P3 `TaxPaymentRequests` + หน้า `tax-slip-desk.html` · P4 `TaxSlipEviden
 P5 `TaxSlipReviewService` (ธงเตือนเท่านั้น) · `TaxSlipJob` (JobLock) · P6 `/api/inbound-email` หลัง `IInboundEmailAdapter` (production fail-fast) ·
 เทสต์ pure +44 · Db +6 · กติกา R272 +18 + ฝ่ายค้าน R272-1…12 · `ocr_helper_test_check` ครอบ 3 ตัวตัดสินใหม่ · build + test + Db test ผ่านในเครื่องนี้ · commit cd71dee0_
 
+_รอบ 272 ชุดแก้ฝ่ายค้าน (2026-11-19 · `erp-review/2026-11-16/review-272.md`): H1 `RemitRequest.ExpectedAmount` + ยอดสลิป=ผู้สมัครใต้ล็อก · H2 อ่านสลิปไม่ได้ ⇒ แถว `TAX-SLIP-OCR-OFF` คิว+การ์ด+กระดิ่ง ·
+H3 `InboundEmailRule.SenderVerified` (DMARC/DKIM/SPF align) · ไม่ align ⇒ `SenderUnverified` คิวเท่านั้น · M1 ช่วงยื่น/ค่าธรรมเนียมก่อน Many · M2 `RequestCcMismatch` · M3 `TaxSlipReplyCard.MaskNumbers` ·
+M4 hash PRC2 (ไฟล์หลักฐาน) + `ApprovePowerOfAttorneyAsync` (คนที่สอง) + trigger ครอบคอลัมน์เพิ่ม + clientFiler ของบริษัทจริง · M5 ปุ่มล้ม ⇒ คิว · M6 `PurgeClosedFilesAsync` + RoPA ·
+M7 ไม่สร้าง TaxReport จากเส้นสลิป · L1 เลือกสลิปพักต่อบริษัท + ผูกซ้ำ · L2 ปิดรับ = ตอบทุกกลุ่มที่ผูก · L3 ผู้แนบอัตโนมัติ = ไม่มีคน · L4 23505 ⇒ เหตุ · L5 CC ซ้ำ ⇒ คิว+กระดิ่ง · L6 trigger · L7 หลายบัญชีธนาคารเดียว · L8 เลขสังเคราะห์ ·
+เทสต์ pure +8 · Db +2 · กติกา R272F +9 + ฝ่ายค้าน R272F-1…5 · build + test + Db test ผ่านในเครื่องนี้ · commit 7c5a3cb4_
+
 _รอบ 273 (2026-11-19 · ผู้ใช้รายงาน: REC-20261029-0001 ของ TIV-20261026-0001 มูลค่า 700,000 + VAT 49,000 พิมพ์ "ยอดรวมก่อน VAT 749,000.00 · VAT 0.00"):
 ต้นเหตุ = ป้ายแถวยอดของใบที่ถือ VAT เองถูกใช้กับใบเสร็จรับชำระ (ข้อมูลที่ persist ถูก: VAT 0 · ไม่ถือบทบาทใบกำกับ · นอก ภ.พ.30/§87 ตามรอบ 269 — ไม่มี migration) ·
 ตัวตัดสินเดียว `Helpers/SettlementReceiptTotals` + ตัวโหลด `SettlementReceiptTotalsLoader` (PDF/HTML/QuestPDF/หัวอีเมล-LINE + `GetDocumentAsync`) ·
