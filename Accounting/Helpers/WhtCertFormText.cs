@@ -54,6 +54,25 @@ public static class WhtCertFormText
     /// <summary>กลุ่มช่องเลขเดิม 10 หลักตามแบบทางการ: 1-4-4-1 (เดิม renderer วาด 3-4-3)</summary>
     public static readonly int[] TaxId10Groups = { 1, 4, 4, 1 };
 
+    /// <summary>รอบ 273: ตัวเลข 13 ตัวที่ลงกล่อง "เลขประจำตัวผู้เสียภาษีอากร (13 หลัก)" — <b>ตัวเดียวของ HTML + QuestPDF</b> ·
+    /// เลขที่ไม่ผ่าน <see cref="EmployeeTaxIdentity.InspectValue"/> (ciphertext ที่ถอดไม่ออก · ผิดจำนวนหลัก · checksum ไม่ผ่าน) ⇒ กล่องว่างทั้ง 13 ช่อง
+    /// (เดิมพิมพ์ตัวเลขที่ตัดจาก ciphertext เช่น 7 ตัวแรกแล้วเว้นที่เหลือ) · ทางเข้าออกไฟล์กันใบนั้นไว้ก่อนแล้ว (<see cref="PayeeTaxIdProblem"/>) —
+    /// ตัวนี้คือชั้นสุดท้ายกันเลขผิดหลุดลงกระดาษ</summary>
+    /// <param name="payee">true = ผู้ถูกหักภาษี (ตรวจ) · false = ผู้จ่าย/บริษัทเอง — คงพฤติกรรมเดิม (ตัวเลขเท่าที่มี · ตรวจที่หน้าตั้งค่าบริษัท/ด่านไฟล์ยื่น)</param>
+    public static string TaxIdBoxDigits(string? taxId, bool payee = true)
+        => !payee ? ThaiTaxId.Normalize(taxId).PadRight(13)
+            : EmployeeTaxIdentity.InspectValue(taxId) is { Ok: true, Value: { } v } ? v : new string(' ', 13);
+
+    /// <summary>รอบ 273: เหตุที่ห้ามออกไฟล์ 50 ทวิ ใบนี้ (null = ออกได้) — เลขผู้ถูกหักภาษีถอดรหัสไม่ได้/ไม่ถูกต้อง · ว่าง = ออกได้ตามเดิม (ด่านอื่นตัดสิน) ·
+    /// ข้อความบอกทางไปต่อ (แก้ที่ทะเบียนแล้ว "สร้างเอกสารใหม่" ที่รอบเงินเดือน ระบบยกเลิกใบเดิมและออกใหม่ด้วยเลขที่ถูก)</summary>
+    public static string? PayeeTaxIdProblem(string certificateNumber, string? payeeTaxId)
+    {
+        var r = EmployeeTaxIdentity.InspectValue(payeeTaxId);
+        if (r.Problem is not (TaxIdProblem.Undecryptable or TaxIdProblem.Invalid)) return null;
+        return $"หนังสือรับรอง {certificateNumber}: {r.Reason} — ระบบไม่พิมพ์เลขที่ผิดลง 50 ทวิ · ใบที่ออกจากรอบเงินเดือน: แก้เลขที่ทะเบียนพนักงานแล้วกด "
+            + "“สร้างเอกสารใหม่” ที่รอบเงินเดือน (ยกเลิกใบเดิมและออกใหม่) · ใบที่ออกด้วยมือ: แก้เลขที่ผู้ติดต่อ";
+    }
+
     public const string SeqLabel = "ลำดับที่";
     public const string SeqInForm = "ในแบบ";
     public const string SeqHint = "(ให้สามารถอ้างอิงหรือสอบยันกันได้ระหว่างลำดับที่ตามหนังสือรับรองฯ กับแบบยื่นรายการภาษีหักที่จ่าย)";

@@ -97,10 +97,13 @@ RULES = [
          forbid_lit=['"SsoSps110"'],
          why="หลักฐาน 'ยื่นแล้ว' ต้องอ่านปฏิทินภาษี (ทางเดียวบนจอ · C1) · 'นำส่งแล้ว' ผูกกับรอบ ไม่ใช่แถวนำส่งรายเดือน (C2)"),
     dict(file=PAYROLL, method="IssueMonthlyPnd1CertsAsync",
-         must=["EmployeeTaxIdentity.Resolve(emp.TaxId, emp.CitizenId)", "payeeTaxId == null"],
-         before=[("EmployeeTaxIdentity.Resolve(", "payeeTaxId == null")],
-         forbid=["string.IsNullOrWhiteSpace(emp.TaxId)", "string.IsNullOrEmpty(emp.TaxId)", "emp.TaxId == null"],
-         why="D-01 ด่าน 50 ทวิรายเดือนต้องใช้ resolver กลาง (TaxId → เลขบัตร) ไม่ใช่ emp.TaxId เดี่ยว ๆ"),
+         must=["EmployeeTaxIdentity.Inspect(emp.TaxId, emp.CitizenId)", "payeeIdentity.Value", "payeeTaxId == null"],
+         must_lit=["{payeeIdentity.Reason}"],
+         before=[("EmployeeTaxIdentity.Inspect(", "payeeTaxId == null")],
+         forbid=["string.IsNullOrWhiteSpace(emp.TaxId)", "string.IsNullOrEmpty(emp.TaxId)", "emp.TaxId == null",
+                 "ThaiTaxId.Normalize(emp.", "EmployeeTaxIdentity.Resolve("],
+         why="D-01 + รอบ 273: ด่าน 50 ทวิรายเดือนต้องใช้ตัวตรวจกลาง (TaxId → เลขบัตร · 13 หลัก + mod-11 · enc1 ที่ถอดไม่ออก = ข้ามพร้อมเหตุ) "
+             "— เดิมตัดตัวเลขจาก ciphertext แล้วสร้าง Contact ด้วยเลข 5–14 หลัก"),
     dict(file=POS, method="CompleteOrderAsync",
          call_args=[("CreateSalesJournalEntryAsync(", "saleCogs")],
          before=[("DeductSaleStockAsync(", "CreateSalesJournalEntryAsync(")],
@@ -12219,8 +12222,11 @@ RULES += [
          must=["PassThrough.ContainsKey(", "EncryptionHelper.Encrypt("],
          forbid=["LooksLikeLegacyCiphertext(", "FromBase64String(", "if (EncryptionHelper.IsEncrypted(value)) return value;"],
          why="รอบ 231: คอลัมน์ PII เข้ารหัสเสมอ — ปล่อยผ่านเฉพาะค่า enc1 ที่ DecryptOnRead อ่านมาแล้วถอดไม่ออก (S2: 'มีคำนำหน้าแล้วข้าม' = oracle)"),
+    dict(file="Helpers/EncryptedColumnConverter.cs", method="Inspect",   # รอบ 273: ตัวตัดสินย้ายจาก DecryptOnRead ไป Inspect (pure · คีย์เดิมด้วย)
+         must=["EncryptionHelper.IsEncrypted(", "EncryptionHelper.LooksLikeLegacyCiphertext(", "PiiCipherState.Undecryptable"],
+         why="รอบ 231/273: อ่านแถว PII รุ่นก่อน (ไม่มีคำนำหน้า) ต้องลองถอดก่อนปล่อยผ่าน · มีคำนำหน้าถอดไม่ออกทุกคีย์ = Undecryptable (ไม่ใช่ plaintext)"),
     dict(file="Helpers/EncryptedColumnConverter.cs", method="DecryptOnRead",
-         must=["EncryptionHelper.IsEncrypted(", "EncryptionHelper.LooksLikeLegacyCiphertext(", "PassThrough.TryAdd("],
+         must=["PassThrough.TryAdd("],
          why="รอบ 231: อ่านแถว PII รุ่นก่อน (ไม่มีคำนำหน้า) ต้องลองถอดก่อนปล่อยผ่าน · ค่า enc1 ที่ถอดไม่ออกต้องถูกจำไว้ให้ EncryptOnSave ปล่อยผ่าน (ไม่ห่อซ้อนแถวเดิม)"),
     dict(file="Helpers/EmployeeRecordEdit.cs", method="ThaiIdNumber",
          must=["SecretInputRule.CipherPrefixProblem("],
@@ -21222,5 +21228,51 @@ def main() -> int:
     return 0
 
 
+# รอบ 273 — เลขผู้เสียภาษีพนักงานผิดจำนวนหลักในไฟล์ ภ.ง.ด.1/1ก/91 และ 50 ทวิ หลังเปลี่ยน ENCRYPTION_KEY:
+# ตัวตรวจกลาง EmployeeTaxIdentity.Inspect (13 หลัก + mod-11 · enc1 ที่ถอดไม่ออก) ต้องอยู่หน้าทุกทางออกที่เขียนเลขลงแบบ/กระดาษ ·
+# converter ต้องลองคีย์เดิม · ไฟล์ยื่นชั้นสุดท้ายห้ามเขียนเลขผิดรูป · กล่อง 13 หลักของ 50 ทวิ (HTML + QuestPDF) จากตัวเดียว
+_R273_WHY = "รอบ 273 (ห้ามเขียนเลขที่ตัดจาก ciphertext ลงแบบ ภ.ง.ด./50 ทวิ): "
+RULES += [
+    dict(file="Helpers/EncryptedColumnConverter.cs", method="DecryptOnRead",
+         must=["Inspect(value, _key, _previousKeys)"],
+         forbid=["EncryptionHelper.Decrypt(value, _key)"],
+         why=_R273_WHY + "ฝั่งอ่านของ EF ลองคีย์ปัจจุบันแล้วคีย์เดิม ผ่านตัวตัดสินเดียว (Inspect) — เดิมคีย์เดียว ⇒ แถวคีย์เดิมคืน ciphertext"),
+    dict(file="Helpers/Pnd1FilingData.cs", method="Build",
+         must=["EmployeeTaxIdentity.Inspect(e.TaxId, e.CitizenId)", "EmployeeTaxIdentity.InspectValue(contact?.TaxId)", "blocked.Add("],
+         before=[("BlockEmployee(d.Employee", "PayrollRow(d.Employee"), ("BlockEmployee(g.Emp", "PayrollRow(g.Emp")],
+         forbid=["ThaiTaxId.Normalize(contact?.TaxId)"],
+         why=_R273_WHY + "ตัวโหลดเดียวของไฟล์ ภ.ง.ด.1/1ก กันแถวที่เลขใช้ไม่ได้พร้อมเหตุก่อนประกอบแถว"),
+    dict(file="Helpers/Pnd1FileFormat.cs", method="FieldsCore",
+         must=["ThaiTaxId.IsValid(payeeDigits)"],
+         must_re=[r"!\s*ThaiTaxId\.IsValid\(payeeDigits\)\s*\)\s*throw\b"],
+         why=_R273_WHY + "ชั้นสุดท้ายของไฟล์ยื่น: เลขผู้มีเงินได้ผิดรูปที่ข้ามตัวโหลดมา = ล้มดัง ไม่เขียน"),
+    dict(file="Services/Implementations/TaxFilingExportService.cs", method="ExportPnd91Async",
+         must=["EmployeeTaxIdentity.Inspect(x.Employee.TaxId, x.Employee.CitizenId)", "pnd91Blocked.Add("],
+         forbid=["EmployeeTaxIdentity.Resolve("],
+         why=_R273_WHY + "ภ.ง.ด.91 กันแถวที่เลขใช้ไม่ได้ + บอกในสรุป"),
+    dict(file="Services/Implementations/TaxService.cs", method="GeneratePnd91Report",
+         must=["EmployeeTaxIdentity.Inspect(emp.TaxId, emp.CitizenId)", "TaxPayerId = empIdentity.Value", "badIdentity.Add("],
+         forbid=["EmployeeTaxIdentity.Resolve("],
+         why=_R273_WHY + "รายงาน ภ.ง.ด.91 ไม่เก็บเลขที่ใช้ไม่ได้ + Notes บอกรายคน"),
+    dict(file=PAYROLL, method="GenerateAnnualEmployeeWhtCertsAsync",
+         must=["EmployeeTaxIdentity.Inspect(emp.TaxId, emp.CitizenId)", "annualBlocked.Add("],
+         before=[("EmployeeTaxIdentity.Inspect(", "BuildEmployeeAnnualCertPdfAsync(")],
+         why=_R273_WHY + "50 ทวิ ภ.ง.ด.1ก ตรวจเลขก่อนพิมพ์ — ใบเดียว: ปฏิเสธพร้อมเหตุ · หลายใบ: ข้าม + ไฟล์เหตุใน zip"),
+    dict(file="Services/Implementations/PdfGenerationService.cs", method="GenerateWithholdingTaxCertPdfAsync",
+         must=["WhtCertFormText.PayeeTaxIdProblem("],
+         before=[("WhtCertFormText.PayeeTaxIdProblem(", "BuildWhtCertPdf(")],
+         why=_R273_WHY + "50 ทวิ ที่บันทึกแล้ว: ผู้รับที่เลขใช้ไม่ได้ = ไม่ออกไฟล์ + ทางแก้ (สร้างเอกสารใหม่)"),
+    dict(file="Services/Implementations/PdfGenerationService.cs", method="BuildWithholdingTaxCertHtml",
+         must=["WhtCertFormText.TaxIdBoxDigits("],
+         forbid=["ThaiTaxId.Normalize(taxId).PadRight("],
+         why=_R273_WHY + "กล่อง 13 หลัก HTML จากตัวเดียวกับ QuestPDF — เลขใช้ไม่ได้ = กล่องว่าง"),
+    dict(file="Services/Implementations/PdfGenerationService.WhtCert.cs", method="DrawTinBoxes",
+         must=["WhtCertFormText.TaxIdBoxDigits("],
+         forbid=["ThaiTaxId.Normalize(taxId).PadRight("],
+         why=_R273_WHY + "กล่อง 13 หลัก QuestPDF จากตัวเดียวกับ HTML"),
+]
+
+
 if __name__ == "__main__":
     sys.exit(main())
+

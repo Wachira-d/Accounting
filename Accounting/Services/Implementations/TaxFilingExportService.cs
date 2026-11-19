@@ -107,6 +107,10 @@ public class TaxFilingExportService : ITaxFilingExportService
         var formName = annual ? "ภ.ง.ด.1ก" : "ภ.ง.ด.1";
         var period = annual ? $"{year}" : $"{year}{month!.Value:D2}";
         var periodText = annual ? $"ปี {year}" : $"เดือน {month!.Value}/{year}";
+        if (data.Rows.Count == 0 && data.BlockedRows.Count > 0)
+            // รอบ 273: ทุกแถวถูกกันเพราะเลขประจำตัวใช้ไม่ได้ — บอกเหตุรายแถว (ไม่ใช่ "ไม่มีรายการ")
+            throw new BusinessRuleException(
+                $"{formName} {periodText}: สร้างไฟล์ไม่ได้ — " + string.Join("\n", data.Notes), "RD-PND1-PAYEE-TAXID", 422);
         if (data.Rows.Count == 0)
             // ไฟล์ว่าง = ไม่มีอะไรให้นำเข้า — ห้ามตอบ 200 กับไฟล์เปล่า (ผู้ใช้จะอัปโหลดไฟล์ว่างเข้าเว็บสรรพากร)
             throw new BusinessRuleException(
@@ -502,7 +506,7 @@ public class TaxFilingExportService : ITaxFilingExportService
             // รอบ 200 (D-06): หน้าเว็บไม่มีช่องเลขประกันสังคม ⇒ ช่องว่างทุกคน — ใช้เลขบัตรที่ถูกต้อง (ผู้ประกันตนไทย) · ไม่มีทั้งคู่ = นับเตือน
             var (ssn, _) = Accounting.Helpers.SsoInsuredNumber.Resolve(emp.SocialSecurityNumber, emp.CitizenId);
             if (ssn.Length == 0) missingSsn++;
-            sb.AppendLine($"D|{seq++}|{emp.CitizenId}|{ssn}|{TitleCode(emp.TitleTh)}|{emp.FirstNameTh}|{emp.LastNameTh}|{wageBase:F2}|{detail.SocialSecurityEmployee:F2}|{detail.SocialSecurityEmployer:F2}");
+            sb.AppendLine($"D|{seq++}|{Accounting.Helpers.SsoInsuredNumber.CitizenIdForFile(emp.CitizenId)}|{ssn}|{TitleCode(emp.TitleTh)}|{emp.FirstNameTh}|{emp.LastNameTh}|{wageBase:F2}|{detail.SocialSecurityEmployee:F2}|{detail.SocialSecurityEmployer:F2}");
         }
 
         // Trailer with rate echo + total contribution (เดิมขาด rate echo)
@@ -591,7 +595,7 @@ public class TaxFilingExportService : ITaxFilingExportService
             rowNo++;
             var emp = d.Employee;
             var title = Accounting.Helpers.ThaiTitleHelper.NormalizeForSso(emp.TitleTh, emp.Gender);
-            var citizenId = Accounting.Helpers.ThaiTaxId.Normalize(emp.CitizenId);
+            var citizenId = Accounting.Helpers.ThaiTaxId.Normalize(Accounting.Helpers.SsoInsuredNumber.CitizenIdForFile(emp.CitizenId));   // รอบ 273: enc1 ⇒ ว่าง
             var firstName = (emp.FirstNameTh ?? "").Trim();
             var lastName = (emp.LastNameTh ?? "").Trim();
 
@@ -674,7 +678,7 @@ public class TaxFilingExportService : ITaxFilingExportService
         int seq = 1;
         foreach (var emp in newEmployees)
         {
-            sb.AppendLine($"D|{seq++}|{emp.CitizenId}|{TitleCode(emp.TitleTh)}|{emp.FirstNameTh}|{emp.LastNameTh}" +
+            sb.AppendLine($"D|{seq++}|{Accounting.Helpers.SsoInsuredNumber.CitizenIdForFile(emp.CitizenId)}|{TitleCode(emp.TitleTh)}|{emp.FirstNameTh}|{emp.LastNameTh}" +
                 $"|{emp.StartDate:yyyyMMdd}|{emp.BaseSalary:F2}|{emp.SocialSecurityHospital}");
         }
         sb.AppendLine($"T|{newEmployees.Count}");
@@ -720,7 +724,7 @@ public class TaxFilingExportService : ITaxFilingExportService
         {
             var (ssn, _) = Accounting.Helpers.SsoInsuredNumber.Resolve(emp.SocialSecurityNumber, emp.CitizenId);
             if (ssn.Length == 0) missingSsn++;
-            sb.AppendLine($"D|{seq++}|{emp.CitizenId}|{ssn}|{TitleCode(emp.TitleTh)}" +
+            sb.AppendLine($"D|{seq++}|{Accounting.Helpers.SsoInsuredNumber.CitizenIdForFile(emp.CitizenId)}|{ssn}|{TitleCode(emp.TitleTh)}" +
                 $"|{emp.FirstNameTh}|{emp.LastNameTh}|{emp.EndDate:yyyyMMdd}|1");
         }
         sb.AppendLine($"T|{leavers.Count}");
@@ -909,6 +913,16 @@ public class TaxFilingExportService : ITaxFilingExportService
             .Where(x => x.YtdGross > 0)
             .OrderBy(x => x.Employee.EmployeeCode)
             .ToList();
+        // รอบ 273: เลขประจำตัวถอดรหัสไม่ได้/ไม่ถูกต้อง ⇒ กันแถวออก (ห้ามเขียนตัวเลขที่ตัดจาก ciphertext ลงแบบ) + บอกรายแถวในสรุป ·
+        // ไม่มีเลขเลย ⇒ คงพฤติกรรมเดิม (ช่องว่าง)
+        var pnd91Blocked = new List<string>();
+        byEmployee = byEmployee.Where(x =>
+        {
+            var id = EmployeeTaxIdentity.Inspect(x.Employee.TaxId, x.Employee.CitizenId);
+            if (id.Problem is not (TaxIdProblem.Undecryptable or TaxIdProblem.Invalid)) return true;
+            pnd91Blocked.Add($"{x.Employee.EmployeeCode} {x.Employee.FirstNameTh} {x.Employee.LastNameTh} — {id.Reason}");
+            return false;
+        }).ToList();
 
         var totalIncome = byEmployee.Sum(x => x.YtdGross);
         var totalWht = byEmployee.Sum(x => x.YtdWht);
@@ -926,7 +940,8 @@ public class TaxFilingExportService : ITaxFilingExportService
         return new TaxFilingExportResult(
             "PND91", "ภ.ง.ด.91", $"PND91_{year}.txt", "text/plain", AsBytes(sb.ToString()),
             byEmployee.Count, totalIncome, totalWht,
-            $"ภ.ง.ด.91 ประจำปี {year} จำนวน {byEmployee.Count} คน รายได้รวม {totalIncome:N2} บาท ภาษีรวม {totalWht:N2} บาท");
+            $"ภ.ง.ด.91 ประจำปี {year} จำนวน {byEmployee.Count} คน รายได้รวม {totalIncome:N2} บาท ภาษีรวม {totalWht:N2} บาท"
+            + (pnd91Blocked.Count == 0 ? "" : $"\n⛔ {pnd91Blocked.Count} คนไม่ได้ลงไฟล์ — " + string.Join(" · ", pnd91Blocked.Take(20))));
     }
 
     /// <summary>

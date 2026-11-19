@@ -7277,3 +7277,11 @@ P3 `TaxPaymentRequests` + หน้า `tax-slip-desk.html` · P4 `TaxSlipEviden
 ที่มาบน `StatutoryRemittances` (Source/SlipEvidenceId/ActedByProviderCompanyId/ProviderConsentId/ControlCodeLast4) · ป้ายหน้านำส่ง "ชำระแล้ว · ยังไม่ได้บันทึกเลขรับ" ·
 P5 `TaxSlipReviewService` (ธงเตือนเท่านั้น) · `TaxSlipJob` (JobLock) · P6 `/api/inbound-email` หลัง `IInboundEmailAdapter` (production fail-fast) ·
 เทสต์ pure +44 · Db +6 · กติกา R272 +18 + ฝ่ายค้าน R272-1…12 · `ocr_helper_test_check` ครอบ 3 ตัวตัดสินใหม่ · build + test + Db test ผ่านในเครื่องนี้ · commit cd71dee0_
+
+_รอบ 273 (2026-11-19 · บั๊กเร่งด่วน): ไฟล์ ภ.ง.ด.1/1ก ช่อง "เลขประจำตัวผู้เสียภาษี" ของพนักงานยาว 5/7/8/10/14 หลัก และ 50 ทวิ ภ.ง.ด.1ก พิมพ์ 7 หลัก หลังผู้ใช้ตั้ง `ENCRYPTION_KEY`.
+สาเหตุ: `EncryptedColumnConverter` ถอดด้วยคีย์ปัจจุบันตัวเดียว ⇒ แถวที่เข้ารหัสด้วย dev key/config เดิมคืน ciphertext ⇒ `EmployeeTaxIdentity.Resolve` ตัดตัวเลขจาก base64 ลงแบบ.
+แก้: (1) converter ลอง `ENCRYPTION_KEY_PREVIOUS` → config เดิม → dev key (ถอดอย่างเดียว) + `PiiReprotectJob` ย้ายแถวไปคีย์ปัจจุบัน (JobLock · audit) ·
+(2) `EmployeeTaxIdentity.Inspect` คืนเฉพาะ 13 หลัก + mod-11 — ไฟล์ ภ.ง.ด.1/1ก/91 กันแถวพร้อมเหตุ · 50 ทวิ ไม่ออก/ไม่พิมพ์เลขผิด (HTML + QuestPDF ตัวเดียว) ·
+(2b) ทางออกอื่นของคอลัมน์ชุดเดียวกัน — ไฟล์ สปส. ไม่ลง ciphertext · ไฟล์โอนเงินเดือนไม่ตัดตัวเลขจาก ciphertext เป็นเลขบัญชี (ไม่พร้อมโอนพร้อมเหตุ) · (3) รายงานอ่านอย่างเดียว `GET payroll/tax-identity-health` · (4) production ปฏิเสธคีย์ placeholder · คำตัดสิน 273-1…7 · เทสต์ `PiiKeyRotationRound273Tests` · Db `PiiKeyRotationDbTests` ·
+กติกา `required_call_site_check` R273 — commit <เติมในคอมมิตตามหลัง>_
+

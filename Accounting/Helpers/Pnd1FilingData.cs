@@ -52,12 +52,19 @@ public static class Pnd1FilingData
         int PayrollRowCount,
         IReadOnlyList<Pnd1FileFormat.Row> CertRows,
         IReadOnlyList<string> Notes,
-        bool HasPayrollRuns)
+        bool HasPayrollRuns,
+        IReadOnlyList<BlockedRow>? Blocked = null)
     {
+        /// <summary>รอบ 273: แถวที่<b>ไม่ลงไฟล์</b>เพราะเลขประจำตัวถอดรหัสไม่ได้/ไม่ถูกต้อง (ห้ามเขียนเลขผิดลงแบบ) — ยอดภาษีของแถวเหล่านี้ไม่อยู่ในไฟล์</summary>
+        public IReadOnlyList<BlockedRow> BlockedRows => Blocked ?? Array.Empty<BlockedRow>();
         public int CertRowCount => CertRows.Count;
         public decimal TotalIncome => Rows.Sum(r => Pnd1FileFormat.Money(r.IncomeAmount));
         public decimal TotalTax => Rows.Sum(r => Pnd1FileFormat.Money(r.TaxAmount));
     }
+
+    /// <summary>รอบ 273: แถวที่ถูกกันออกจากไฟล์ — <paramref name="SourceRef"/> = รหัสพนักงาน/เลขที่ใบ · <paramref name="MaskedTaxId"/> ปิดบังเสมอ ·
+    /// <paramref name="Reason"/> = เหตุ + ทางไปต่อ (<see cref="EmployeeTaxIdentity.Result.Reason"/>)</summary>
+    public sealed record BlockedRow(string SourceRef, string? Name, string? MaskedTaxId, TaxIdProblem Problem, string Reason, decimal TaxAmount);
 
     /// <summary>ประเภทเงินได้ของบรรทัด 50 ทวิ แบบ ภ.ง.ด.1 — 40(1) ⇒ (1) · 40(2) ⇒ (4) ผู้รับอยู่ในไทย / (5) ไม่อยู่ในไทย
     /// (ตัดสินจากประเทศของผู้ติดต่อ — <c>TH</c>/ว่าง = อยู่ในไทย) · อื่น/ไม่รู้ ⇒ 0 (ผู้เรียกต้องเตือน ห้ามเดา) ·
@@ -177,13 +184,26 @@ public static class Pnd1FilingData
             if (cond != 1) conditionByTaxId[tid] = cond;
         }
         var payrollRows = new List<Pnd1FileFormat.Row>();
+        // รอบ 273: เลขประจำตัวถอดรหัสไม่ได้/ผิดรูป/checksum ไม่ผ่าน ⇒ กันแถวออกจากไฟล์พร้อมเหตุ (เดิมเขียนตัวเลขที่ตัดจาก ciphertext ลงช่อง 5)
+        var blocked = new List<BlockedRow>();
+        bool Blocks(EmployeeTaxIdentity.Result id) => id.Problem is TaxIdProblem.Undecryptable or TaxIdProblem.Invalid;
+        bool BlockEmployee(Employee e, decimal tax)
+        {
+            var id = EmployeeTaxIdentity.Inspect(e.TaxId, e.CitizenId);
+            if (!Blocks(id)) return false;
+            blocked.Add(new BlockedRow(e.EmployeeCode, $"{e.FirstNameTh} {e.LastNameTh}".Trim(), id.Masked, id.Problem, id.Reason!, tax));
+            return true;
+        }
         if (!annual)
         {
             foreach (var d in filedDetails
                 .OrderBy(d => d.Employee.EmployeeCode, StringComparer.Ordinal)
                 .ThenBy(d => d.PayrollRun.PayDate))
+            {
+                if (BlockEmployee(d.Employee, d.WithholdingTax)) continue;
                 payrollRows.Add(PayrollRow(d.Employee, d.PayrollRun.PayDate,
                     IncomeOf(d.TaxableGross, d.GrossIncome), d.WithholdingTax, conditionByTaxId));
+            }
         }
         else
         {
@@ -194,7 +214,10 @@ public static class Pnd1FilingData
                     Tax: g.Sum(d => d.WithholdingTax),
                     LastPay: g.Max(d => d.PayrollRun.PayDate)))
                 .OrderBy(x => x.Emp.EmployeeCode, StringComparer.Ordinal))
+            {
+                if (BlockEmployee(g.Emp, g.Tax)) continue;
                 payrollRows.Add(PayrollRow(g.Emp, g.LastPay, g.Income, g.Tax, conditionByTaxId));
+            }
         }
 
         // ── 2. 50 ทวิ ที่ออกด้วยมือของผู้รับนอกรอบเงินเดือน ──
@@ -206,7 +229,13 @@ public static class Pnd1FilingData
             .OrderBy(c => c.CertificateNumber, StringComparer.Ordinal))
         {
             var contact = c.PayeeContact;
-            var tid = ThaiTaxId.Normalize(contact?.TaxId);
+            var payeeId = EmployeeTaxIdentity.InspectValue(contact?.TaxId);
+            if (Blocks(payeeId))
+            {
+                blocked.Add(new BlockedRow(c.CertificateNumber, contact?.Name, payeeId.Masked, payeeId.Problem, payeeId.Reason!, c.TotalTaxAmount));
+                continue;
+            }
+            var tid = payeeId.Value ?? "";
 
             var cond = WhtGrossUp.FilingCondition(c.CertificateType);
             // รอบ 2026-10-16 (สเปก WHTSVS): นิติบุคคล = ชื่อเต็มในช่องชื่อ · นามสกุล/คำนำหน้าว่าง (ไม่ผ่า "บริษัท ก จำกัด" เป็นชื่อ/สกุล) ·
@@ -276,9 +305,15 @@ public static class Pnd1FilingData
         if (noTaxId > 0)
             notes.Add($"⚠️ {noTaxId} รายการไม่มีเลขประจำตัวผู้เสียภาษี (ไฟล์ลงเลข 0 13 หลักตามสเปกช่องที่ 5 — สรรพากรจะไม่รับเป็นเลขของผู้มีเงินได้) — "
                 + "กรอกเลขบัตรประชาชนที่ทะเบียนพนักงาน/ผู้ติดต่อ แล้วสร้างไฟล์ใหม่");
-        var badChecksum = rows.Count(r => ThaiTaxId.Normalize(r.PayeeTaxId).Length > 0 && !ThaiTaxId.IsValid(r.PayeeTaxId));
-        if (badChecksum > 0)
-            notes.Add($"⚠️ {badChecksum} รายการเลขประจำตัวผู้เสียภาษีไม่ผ่านการตรวจหลักสุดท้าย (13 หลัก + checksum) — ตรวจเลขบัตรประชาชน");
+        // รอบ 273: แถวที่ถูกกัน (เลขถอดรหัสไม่ได้/ไม่ถูกต้อง) — ล้มดังทีละแถว (รหัส/เลขที่ใบ + เลขปิดบัง + เหตุ) · ไม่อยู่ในไฟล์และไม่อยู่ในยอดรวมของไฟล์
+        if (blocked.Count > 0)
+        {
+            notes.Add($"⛔ {blocked.Count} รายการไม่ได้ลงไฟล์ (ภาษี {blocked.Sum(b => b.TaxAmount):N2} บาท) เพราะ{EmployeeTaxIdentity.InvalidText}/ถอดรหัสไม่ได้ — "
+                + "ระบบไม่เขียนเลขที่ผิดลงแบบ · แก้แล้วสร้างไฟล์ใหม่ก่อนยื่น:");
+            foreach (var b in blocked.Take(20))
+                notes.Add($"   • {b.SourceRef} {b.Name} — {b.Reason}");
+            if (blocked.Count > 20) notes.Add($"   • … และอีก {blocked.Count - 20} รายการ (ดูรายงานเลขประจำตัวที่ต้องแก้ในหน้าพนักงาน)");
+        }
         // สเปก WHTSVS (2026-10-16): ช่อง 12 รหัสไปรษณีย์ *** (ต้องถูกต้อง) ทั้ง ภ.ง.ด.1 และ 1ก · ช่อง 8 ชื่อ ** (ต้องมีค่า) ·
         // ข้อความยาวเกินสเปกถูกตัด — ล้มดังที่สรุปผลส่งออก/หน้ารายงาน ไม่แต่งค่าแทน
         var noPostal = rows.Count(r => Pnd1FileFormat.AddressParts(r).PostalCode.Length != 5);
@@ -299,7 +334,7 @@ public static class Pnd1FilingData
                 notes.Add($"⚠️ {noAddress} รายไม่มีที่อยู่ (ใบแนบ ภ.ง.ด.1ก ต้องระบุที่อยู่ผู้มีเงินได้) — กรอกที่อยู่ที่ทะเบียนพนักงาน/ผู้ติดต่อ");
         }
 
-        return new Result(rows, payrollRows.Count, certRows, notes, hasRuns);
+        return new Result(rows, payrollRows.Count, certRows, notes, hasRuns, blocked);
     }
 
     private static Pnd1FileFormat.Row PayrollRow(Employee e, DateTime payDate, decimal income, decimal tax,

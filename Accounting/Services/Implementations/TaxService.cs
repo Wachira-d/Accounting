@@ -2619,9 +2619,13 @@ public partial class TaxService : ITaxService
 
         // Group by employee to summarize annual income
         var employeeGroups = payrollDetails.GroupBy(d => d.EmployeeId);
+        var badIdentity = new List<string>();   // รอบ 273: เลขประจำตัวถอดรหัสไม่ได้/ไม่ถูกต้อง ⇒ ช่องเลขว่าง + แจ้งใน Notes (ไม่ลงตัวเลขที่ตัดจาก ciphertext)
         foreach (var group in employeeGroups)
         {
             var emp = group.First().Employee;
+            var empIdentity = Accounting.Helpers.EmployeeTaxIdentity.Inspect(emp.TaxId, emp.CitizenId);
+            if (empIdentity.Problem is Accounting.Helpers.TaxIdProblem.Undecryptable or Accounting.Helpers.TaxIdProblem.Invalid)
+                badIdentity.Add($"{emp.EmployeeCode} — {empIdentity.Reason}");
             var annualGross = group.Sum(d => d.GrossIncome);
             var annualTax = group.Sum(d => d.WithholdingTax);
             var annualSso = group.Sum(d => d.SocialSecurityEmployee);
@@ -2640,7 +2644,7 @@ public partial class TaxService : ITaxService
             {
                 TaxReportId = report.Id,
                 LineOrder = lineOrder++,
-                TaxPayerId = Accounting.Helpers.EmployeeTaxIdentity.Resolve(emp.TaxId, emp.CitizenId),
+                TaxPayerId = empIdentity.Value,
                 TaxPayerName = $"{emp.TitleTh}{emp.FirstNameTh} {emp.LastNameTh}",
                 TransactionDate = new DateTime(year, 12, 31),
                 Description = $"รหัส {emp.EmployeeCode} | เงินได้รวม {annualGross:N2} | หักค่าลดหย่อน {totalDeductions:N2}",
@@ -2658,7 +2662,7 @@ public partial class TaxService : ITaxService
                 {
                     TaxReportId = report.Id,
                     LineOrder = lineOrder++,
-                    TaxPayerId = Accounting.Helpers.EmployeeTaxIdentity.Resolve(emp.TaxId, emp.CitizenId),
+                    TaxPayerId = empIdentity.Value,
                     TaxPayerName = $"{emp.FirstNameTh} {emp.LastNameTh}",
                     TransactionDate = new DateTime(year, 12, 31),
                     Description = taxDiff > 0
@@ -2676,6 +2680,9 @@ public partial class TaxService : ITaxService
             totalSso += annualSso;
         }
 
+        if (badIdentity.Count > 0)
+            report.Notes = ((report.Notes ?? "") + $"\n⛔ {badIdentity.Count} คนเลขประจำตัวใช้ไม่ได้ (ช่องเลขว่าง — ห้ามยื่นจนกว่าจะแก้): "
+                + string.Join(" · ", badIdentity.Take(20))).Trim();
         report.TotalIncome = totalIncome;
         report.TotalTaxWithheld = totalTax;
         report.OutputVat = totalSso; // Reuse field for SSO total

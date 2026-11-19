@@ -5922,6 +5922,15 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
 - **50 ทวิ ภ.ง.ด.1** (D-01): เลขผู้เสียภาษีพนักงาน = `Helpers/EmployeeTaxIdentity.Resolve(taxId, citizenId)` (TaxId ที่กรอก → เลขบัตร → null) ใช้ใน 50 ทวิ
   รายเดือน (ด่าน + ค้นใบมือ + ค้น/สร้าง Contact) · รายปี · ไฟล์ ภ.ง.ด.1/1ก/91 · รายงาน ภ.ง.ด.1ก · Contact จากใบเบิก/เงินทดรอง — _เดิม `Employee.TaxId` ไม่มี
   ผู้เขียนแต่เป็นด่านเดียว ⇒ "ออก 50 ทวิไม่ครบ" ทุกงวด + นำส่ง ภ.ง.ด.1 ติด `WHT-CERT-UNISSUED` ตลอดกาล_ · ไฟล์ สปส.1-10 ใช้ `CitizenId` ตรง (ถูกต้อง)
+- **รอบ 273 — เลขประจำตัวผ่านตัวตรวจก่อนลงแบบ/กระดาษ** (บั๊ก production: ไฟล์ ภ.ง.ด.1/1ก ช่อง 5 ยาว 5–14 หลัก · 50 ทวิ ภ.ง.ด.1ก ได้ 7 หลัก หลังตั้ง `ENCRYPTION_KEY`):
+  `EmployeeTaxIdentity.Inspect(taxId, citizenId)` คืนค่าเฉพาะเลข 13 หลัก + mod-11 · ค่า `enc1:…` ที่ converter ถอดไม่ออก ⇒ `Undecryptable` · ผิดรูป/checksum ⇒ `Invalid`
+  (เดิม `Resolve` ตัดตัวเลขจาก ciphertext) · **ไฟล์ ภ.ง.ด.1/1ก** (`Pnd1FilingData.Build`) กันแถวนั้นออกพร้อมเหตุรายแถวใน Notes (`BlockedRows` · ยอดไฟล์ไม่รวม ·
+  ทุกแถวถูกกัน ⇒ 422 `RD-PND1-PAYEE-TAXID`) · ชั้นสุดท้าย `Pnd1FileFormat.FieldsCore` ล้มเมื่อช่อง 5 ผิดรูป · เลข**ว่าง**คงเดิม (เติม 0 + เตือน) · ภ.ง.ด.91 ไฟล์/รายงานกันเช่นกัน ·
+  **50 ทวิ** รายเดือนข้ามพร้อมเหตุ (ไม่สร้าง Contact เลขขยะ) · รายปีใบเดียวปฏิเสธ/หลายใบข้าม + ไฟล์เหตุใน zip · ใบที่บันทึกแล้ว `GenerateWithholdingTaxCertPdfAsync`
+  ปฏิเสธเมื่อผู้รับเลขใช้ไม่ได้ (ทางแก้ "สร้างเอกสารใหม่" ที่รอบเงินเดือน) · กล่อง 13 หลัก HTML + QuestPDF = `WhtCertFormText.TaxIdBoxDigits` (ใช้ไม่ได้ = ว่างทั้งหมด) ·
+  **คีย์:** `EncryptedColumnConverter` ลองคีย์ปัจจุบัน → `ENCRYPTION_KEY_PREVIOUS` → config เดิม → dev key (ถอดอย่างเดียว · `EncryptionKeyResolver.PiiPreviousKeys`) ·
+  `PiiReprotectJob` (บูตละครั้ง · JobLock · audit `PDPA-26-KEY-ROTATE`) เข้ารหัสแถวคีย์เดิมใหม่ด้วยคีย์ปัจจุบัน · ถอดไม่ออกทุกคีย์ = ไม่แตะ ⇒ รายงาน
+  `GET payroll/tax-identity-health` (อ่านอย่างเดียว · ปิดบัง) · ทางออกอื่นของคอลัมน์ชุดเดียวกัน: ไฟล์ สปส. (`SsoInsuredNumber.CitizenIdForFile` — enc1 ⇒ ว่าง) · ไฟล์โอนเงินเดือน (`PayrollBankTransfer` — enc1 ⇒ ไม่พร้อมโอน "เลขบัญชีถอดรหัสไม่ได้") · production ปฏิเสธคีย์ placeholder · คำตัดสิน 273-1…7 (`erp-review/2026-09-29/DECISIONS.md`)
 - **รอบ 200 ทีม R (กวาดค้างรอบ 189)**: ฐานภาษีสะสม (YTD) ของงวดก่อน = `PayrollIncomeBase.PriorTaxBase(TaxableGross, GrossIncome)` (D-09 — เดิม gross
   รวมสวัสดิการยกเว้น ⇒ หักเกินงวดหลัง · แถวเก่าที่ TaxableGross = 0 ใช้ gross เหมือนเดิม) · PVD = `PayrollIncomeBase.PvdContribution(proratedBaseSalary, %)`
   (D-10 — เดิมเต็มเดือน + ไม่ปัด) · เพดานสมทบปัด AwayFromZero (D-08) · กำหนดนำส่ง สปส. + เงินเพิ่ม §49 = `Helpers/SsoLateFee` ตัวเดียว
@@ -9714,3 +9723,7 @@ _Last verified against codebase: 2026-11-16 (รอบ 271 — §5.4 ผูก�
 ยังรอเจ้าของ: สลิปจริงธนาคารอื่น/สปส./ใบแจ้งชำระของกรม (เพิ่มแถวตาราง) · ผู้ให้บริการอีเมลขาเข้า (adapter) · backlog: สลิปเดียวหลายแบบ · ยื่นเพิ่มเติม · ค่าธรรมเนียมธนาคาร · อ่านใบแจ้งชำระ PDF อัตโนมัติ
 
 _Last verified against codebase: 2026-11-16 (รอบ 272 แพ็ก P1–P6 — §TAX272: GovPaymentSlip (98037@KBank) · TaxSlipMatch (D-2/D-3) · ProviderConsent (ทาง B) · ใบขอชำระ · RemitAsync ตัวเดียว · ตรวจทานหลังนำส่ง · อีเมลขาเข้าหลัง interface — build + test + Db test ผ่านในเครื่องนี้ (PostgreSQL) — commit cd71dee0)_
+
+_Last verified against codebase: 2026-11-19 (รอบ 273 — เลขผู้เสียภาษีพนักงานผิดจำนวนหลักในไฟล์ ภ.ง.ด.1/1ก และ 50 ทวิ หลังเปลี่ยน ENCRYPTION_KEY: converter ลองคีย์เดิม ·
+`EmployeeTaxIdentity.Inspect` (13 หลัก + mod-11 · enc1 ที่ถอดไม่ออก) หน้าทุกทางออก · ไฟล์กันแถวพร้อมเหตุ · กล่อง 50 ทวิ ตัวเดียว · `PiiReprotectJob` · รายงาน `tax-identity-health` ·
+เทสต์ `PiiKeyRotationRound273Tests` + Db `PiiKeyRotationDbTests` · กติกา R273 ×8 — commit <เติมในคอมมิตตามหลัง>)_

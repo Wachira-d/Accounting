@@ -244,6 +244,9 @@ public partial class PdfGenerationService : IPdfGenerationService
             .FirstOrDefaultAsync(w => w.Id == certId && w.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบหนังสือรับรองหัก ณ ที่จ่าย");
         await _db.HydratePayeeContactAsync(companyId, cert);
+        // รอบ 273: ผู้รับที่เลขประจำตัวใช้ไม่ได้ (Contact ที่ระบบเคยสร้างจากเลขที่ตัดจาก ciphertext) ⇒ ไม่ออกไฟล์ + บอกทางแก้
+        if (WhtCertFormText.PayeeTaxIdProblem(cert.CertificateNumber, cert.PayeeContact?.TaxId) is string payeeProblem)
+            throw new BusinessRuleException(payeeProblem, "RD-50TWI-PAYEE-TAXID", 422);
 
         var company = await _db.Companies.FirstAsync(c => c.Id == companyId);
 
@@ -2789,9 +2792,9 @@ public partial class PdfGenerationService : IPdfGenerationService
             cert.PayeeContact.SubDistrict, cert.PayeeContact.District, cert.PayeeContact.Province, cert.PayeeContact.PostalCode);
         var lines = cert.Lines.OrderBy(l => l.LineOrder).ToList();
 
-        string TaxIdBoxes(string? taxId)
+        string TaxIdBoxes(string? taxId, bool payee = true)
         {
-            var dg = Accounting.Helpers.ThaiTaxId.Normalize(taxId).PadRight(13);
+            var dg = WhtCertFormText.TaxIdBoxDigits(taxId, payee);   // รอบ 273: ตัวเดียวกับ QuestPDF — เลขที่ใช้ไม่ได้ ⇒ กล่องว่าง
             int[][] groups = { new[]{0,1}, new[]{1,5}, new[]{5,10}, new[]{10,12}, new[]{12,13} };
             var r = new StringBuilder();
             for (int g = 0; g < groups.Length; g++)
@@ -2886,7 +2889,7 @@ public partial class PdfGenerationService : IPdfGenerationService
 
             // Payer
             sb.AppendLine("<tr><td class='sec-cell'>");
-            sb.AppendLine($"<table class='inner' cellspacing='0'><tr><td class='sec-hdr' style='width:210px;vertical-align:top'>{WhtCertFormText.PayerHeading}</td><td style='white-space:nowrap;text-align:right'>{WhtCertFormText.TaxId13}<span style='color:#900'>*</span> {TaxIdBoxes(company.TaxId)}</td></tr></table>");
+            sb.AppendLine($"<table class='inner' cellspacing='0'><tr><td class='sec-hdr' style='width:210px;vertical-align:top'>{WhtCertFormText.PayerHeading}</td><td style='white-space:nowrap;text-align:right'>{WhtCertFormText.TaxId13}<span style='color:#900'>*</span> {TaxIdBoxes(company.TaxId, payee: false)}</td></tr></table>");
             // ช่องเลขเดิม 10 หลักอยู่บรรทัดเดียวกับ "ชื่อ" (ชิดขวา) ตามแบบทางการ — รอบ 204 (เดิมแยกบรรทัดเหนือชื่อ)
             sb.AppendLine($"<table class='inner' cellspacing='0'><tr><td class='f-lbl'>{WhtCertFormText.Name}</td><td><u class='ul'>&nbsp;{WebUtility.HtmlEncode(WhtCertFormText.PartyName(null, company.Name, company.TaxId, company.BranchCode, company.BranchName))}&nbsp;</u></td><td style='white-space:nowrap;text-align:right;font-size:12px;padding-left:8px'>{WhtCertFormText.TaxId10} {OldTaxIdBoxes()}</td></tr></table>");
             sb.AppendLine($"<div class='hint-text'>{WhtCertFormText.NameHint}</div>");

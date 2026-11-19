@@ -746,6 +746,21 @@ public class PayrollController : ControllerBase
             includePii: await CanViewPiiAsync(companyId))));
     }
 
+    /// <summary>รอบ 273: รายงานอ่านอย่างเดียว "เลขประจำตัวที่ต้องแก้" (ถอดรหัสไม่ได้ · เข้ารหัสซ้อน · ไม่ใช่ 13 หลักที่ถูกต้อง · ผู้รับใน 50 ทวิ ที่เลขใช้ไม่ได้) —
+    /// ด่านเงินเดือนเดียวกับ ภ.ง.ด.1 · เลขปิดบังเสมอ (ไม่ต้องใช้ Pii.View) · ไม่แก้อะไร (<see cref="EmployeeIdentityHealth"/>)</summary>
+    [HttpGet("tax-identity-health")]
+    public async Task<ActionResult<ApiResponse<object>>> GetTaxIdentityHealth(Guid companyId,
+        [FromServices] Accounting.Data.AccountingDbContext db, CancellationToken ct)
+    {
+        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        var report = await EmployeeIdentityHealth.BuildAsync(db, companyId, ct);
+        return Ok(new ApiResponse<object>(true, new
+        {
+            Blocking = report.Blocking,
+            Rows = report.Rows.Select(r => new { r.Source, r.Ref, r.Name, r.Field, Issue = r.Issue.ToString(), r.Masked, r.Action, r.BlocksFiling }),
+        }));
+    }
+
     // `pnd3/{year}/{month}` ถูกลบรอบ 170 — เป็นสูตรที่ 3 ของยอด ภ.ง.ด.3 (นับจาก Documents ไม่กรองฝั่งซื้อ ·
     // ไม่แยก 3/53 · ไม่ตัด PV ซ้ำ) ที่ **ไม่มี UI เรียก** (REGRESSION_ROOT_CAUSE §4 #2) — ตัวตั้งคือ
     // รายงานภาษี (TaxService.GenerateWhtReport จาก 50 ทวิ ที่ออกแล้ว) ที่ /api/tax/reports

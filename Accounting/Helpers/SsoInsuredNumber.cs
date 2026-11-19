@@ -15,9 +15,16 @@ public static class SsoInsuredNumber
     public static (string Number, bool FromCitizenId) Resolve(string? socialSecurityNumber, string? citizenId)
     {
         var ssn = (socialSecurityNumber ?? "").Trim();
-        if (ssn.Length > 0) return (ssn, false);
-        return ThaiTaxId.HasValidChecksum(citizenId) ? (ThaiTaxId.Normalize(citizenId), true) : ("", false);
+        // รอบ 273: ค่า enc1:… = converter ถอดไม่ออก (คีย์ถูกเปลี่ยน) — ห้ามลงไฟล์ สปส. ทั้งก้อน/ตัดตัวเลขจาก ciphertext (ตัวเลขสุ่ม 13 ตัวผ่าน checksum ได้ ~1/10)
+        if (ssn.Length > 0 && !EncryptionHelper.IsEncrypted(ssn)) return (ssn, false);
+        return !EncryptionHelper.IsEncrypted(citizenId?.Trim()) && ThaiTaxId.HasValidChecksum(citizenId)
+            ? (ThaiTaxId.Normalize(citizenId), true) : ("", false);
     }
+
+    /// <summary>รอบ 273: เลขบัตรที่ลงไฟล์ สปส. — ค่า enc1:… (ถอดรหัสไม่ได้) ⇒ ว่าง (ไม่ลง ciphertext ทั้งก้อน · ไม่ตัดตัวเลขจากมัน) · อื่น ๆ คงเดิม ·
+    /// เหตุ/แถวที่ต้องแก้: รายงาน <c>EmployeeIdentityHealth</c></summary>
+    public static string CitizenIdForFile(string? citizenId)
+        => EncryptionHelper.IsEncrypted(citizenId?.Trim()) ? "" : citizenId ?? "";
 
     /// <summary>เลขประกันสังคมที่<b>รายงานบนจอ</b>แสดง — รอบ 200 ทีม RF (R200-X6): ตัวตัดสินเดียวกับไฟล์ สปส.1-10 (<see cref="Resolve"/>)
     /// แล้วค่อยปิดบังด้วย <c>PiiMask.CitizenId</c> เมื่อไม่มีสิทธิ์ Pii.View · เดิมจออ่าน <c>Employee.SocialSecurityNumber</c> ตรง ๆ (ว่างเกือบทุกคน)
