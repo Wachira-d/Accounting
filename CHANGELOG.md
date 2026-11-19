@@ -7290,4 +7290,4 @@ _รอบ 273 (2026-11-19 · ผู้ใช้รายงาน: REC-20261029
 ตัวตัดสินเดียว `Helpers/SettlementReceiptTotals` + ตัวโหลด `SettlementReceiptTotalsLoader` (PDF/HTML/QuestPDF/หัวอีเมล-LINE + `GetDocumentAsync`) ·
 แถวสุดท้าย "ยอดรับชำระ" · ซ่อน "ยอดรวมก่อน VAT"/VAT · บรรทัดอ้างอิง "(ตามใบกำกับภาษีเลขที่ … ลงวันที่ …: มูลค่า · VAT · รวม)" + หมายเหตุว่ารวม VAT แล้ว · รับบางส่วนบอกยอดเต็ม · มีภาษีหักคงแถว "ยอดตัดชำระ" ·
 ป้ายผ่าน `DocumentLabels` ไทย/อังกฤษ · `documents.html` แสดง `DocumentResponse.SettlementTotals` อย่างเดียว ·
-เทสต์ pure `SettlementReceiptTotalsTests` (12) + Db `SettlementReceiptTotalsDbTests` (3) · กติกา `_R273_*` (8) + ฝ่ายค้าน R273-1…3 · build + test + Db test ผ่านในเครื่องนี้ — commit <pending>_
+เทสต์ pure `SettlementReceiptTotalsTests` (12) + Db `SettlementReceiptTotalsDbTests` (3) · กติกา `_R273_*` (8) + ฝ่ายค้าน R273-1…3 · build + test + Db test ผ่านในเครื่องนี้ — commit f929120b_

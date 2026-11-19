@@ -5193,7 +5193,7 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
 - **จุดต่อสาย**: ตัวโหลด `SettlementReceiptTotalsLoader.ResolveAsync` (tenant · ข้าม query filter ให้ใบต้นทางที่ถูกยกเลิกยังพิมพ์เลขได้) ← `PdfGenerationService.ResolveServedAsReceiptAsync` (HTML · QuestPDF · e-Tax PDF · หัวเอกสารอีเมล/LINE)
   และ `DocumentService.GetDocumentAsync` (`DocumentResponse.SettlementTotals` — ป้าย/บรรทัดจาก `DocumentLabels` ชุดเดียวกับกระดาษ · `documents.html` แสดงอย่างเดียว) ·
   ป้ายแถวแรก `SettlementSubtotalLabel` · แถวสุดท้าย `ResolvePrintTotals` · บรรทัดอ้างอิง `DocumentLabels.SettlementTotalsLines` (ไทย/อังกฤษ) · ล็อกจุดเรียก `_R273_*` ใน `tools/required_call_site_check.py`
-- Last verified `commit <pending>`
+- Last verified `commit f929120b`
 
 ### 3.4c ผูกใบเสร็จ/เงินที่รับไว้แล้วกับใบแจ้งหนี้ — เจ้าเดียวกัน (รอบ 266 แพ็ก A · `erp-review/2026-11-12/team-266-manual-doc-link.md` · DECISIONS 266-1-x)
 
@@ -9747,4 +9747,4 @@ _Last verified against codebase: 2026-11-16 (รอบ 271 ชุดแก้ฝ
 _Last verified against codebase: 2026-11-16 (รอบ 272 แพ็ก P1–P6 — §TAX272: GovPaymentSlip (98037@KBank) · TaxSlipMatch (D-2/D-3) · ProviderConsent (ทาง B) · ใบขอชำระ · RemitAsync ตัวเดียว · ตรวจทานหลังนำส่ง · อีเมลขาเข้าหลัง interface — build + test + Db test ผ่านในเครื่องนี้ (PostgreSQL) — commit cd71dee0)_
 _Last verified against codebase: 2026-11-19 (รอบ 272 ชุดแก้ฝ่ายค้าน — §TAX272: H1 ExpectedAmount · H2 OCR ไม่พร้อม ⇒ คิว · H3 alignment อีเมล · M1–M7 · L1–L8 — build + test + Db test ผ่านในเครื่องนี้ (PostgreSQL) — commit 7c5a3cb4)_
 
-_Last verified against codebase: 2026-11-19 (รอบ 273 — §3.4b-273: ใบเสร็จรับชำระที่ไม่ถือ VAT ของใบต้นทางพิมพ์ "ยอดรับชำระ" + บรรทัดอ้างอิงใบกำกับ (มูลค่า · VAT · รวม) แทน "ยอดรวมก่อน VAT / VAT 0.00" — ตัวตัดสิน `Helpers/SettlementReceiptTotals` · HTML + QuestPDF + หน้ารายละเอียด · แสดงผลอย่างเดียว ไม่มี migration · กติการอบ 269 คงเดิม — build + test + Db test ผ่านในเครื่องนี้ (PostgreSQL) — commit <pending>)_
+_Last verified against codebase: 2026-11-19 (รอบ 273 — §3.4b-273: ใบเสร็จรับชำระที่ไม่ถือ VAT ของใบต้นทางพิมพ์ "ยอดรับชำระ" + บรรทัดอ้างอิงใบกำกับ (มูลค่า · VAT · รวม) แทน "ยอดรวมก่อน VAT / VAT 0.00" — ตัวตัดสิน `Helpers/SettlementReceiptTotals` · HTML + QuestPDF + หน้ารายละเอียด · แสดงผลอย่างเดียว ไม่มี migration · กติการอบ 269 คงเดิม — build + test + Db test ผ่านในเครื่องนี้ (PostgreSQL) — commit f929120b)_
