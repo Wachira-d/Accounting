@@ -22,13 +22,26 @@ public static class WhtReportTotals
     public static bool IsSummary(TaxReportLine l)
         => string.Equals((l.IncomeTypeCode ?? "").Trim(), VatReportLineKind.Summary, StringComparison.OrdinalIgnoreCase);
 
-    /// <summary>บรรทัดนี้นับเข้ายอดแบบ/ไฟล์ยื่นไหม — ไม่ใช่แถว [สรุป] และผู้ทำบัญชีไม่ได้ติ๊กออก</summary>
-    private static bool IsCounted(TaxReportLine l) => !l.IsExcluded && !IsSummary(l);
+    /// <summary>รหัสแถว "ผลต่างภาษี" ของ ภ.ง.ด.91 (ภาษีคำนวณ − ภาษีหัก ณ ที่จ่ายทั้งปีของพนักงาน) — แถวแสดงผล ไม่ใช่ภาษีที่หักนำส่ง
+    /// (ยอดหัว ภ.ง.ด.91 "ภาษีหักนำส่งแล้ว (ทั้งปี)" = Σ ภาษีที่หักจริงเท่านั้น · รอบ 273 ฝ่ายค้านข้อ 4: เดิมกดบันทึกบรรทัดแล้วยอดหัวถูกบวกผลต่างเข้าไป
+    /// กลายเป็น "ภาษีคำนวณ" ทั้งที่ตอนสร้างเป็นยอดหักจริง — ความหมายเปลี่ยนตามว่าเคยกดบันทึกหรือไม่)</summary>
+    public const string Pnd91TaxAdditional = "TAX_ADDITIONAL";
+    public const string Pnd91TaxRefund = "TAX_REFUND";
+
+    private static bool IsPnd91Difference(TaxReportLine l)
+    {
+        var c = (l.IncomeTypeCode ?? "").Trim();
+        return string.Equals(c, Pnd91TaxAdditional, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(c, Pnd91TaxRefund, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>บรรทัดนี้นับเข้ายอดแบบ/ไฟล์ยื่นไหม — ไม่ใช่แถว [สรุป] · ไม่ใช่แถวผลต่าง ภ.ง.ด.91 · ผู้ทำบัญชีไม่ได้ติ๊กออก</summary>
+    private static bool IsCounted(TaxReportLine l) => !l.IsExcluded && !IsSummary(l) && !IsPnd91Difference(l);
 
     /// <summary>บรรทัดที่นับเข้ายอด (ลำดับเดิมของ <paramref name="lines"/>)</summary>
     public static IEnumerable<TaxReportLine> CountedLines(IEnumerable<TaxReportLine> lines) => lines.Where(IsCounted);
 
-    /// <summary>ผลรวมเงินได้/ภาษีของบรรทัดที่นับเข้ายอด — สูตรเดียวของยอดหัวและตัวตรวจก่อนยื่น</summary>
+    /// <summary>ผลรวมเงินได้/ภาษีของบรรทัดที่นับเข้ายอด — สูตรเดียวของยอดหัว ตัวตรวจก่อนยื่น ท้ายตารางบนจอ และแถว [สรุป]</summary>
     public static (decimal Income, decimal Tax) Of(IEnumerable<TaxReportLine> lines)
     {
         decimal income = 0m, tax = 0m;
@@ -41,9 +54,24 @@ public static class WhtReportTotals
         return (income, tax);
     }
 
-    /// <summary>เขียนยอดหัว <c>TotalIncome</c>/<c>TotalTaxWithheld</c> จากบรรทัด — ทางเดียวที่ยอดหัวของ ภ.ง.ด. ถูกตั้ง</summary>
+    /// <summary>ยอดของแถว [สรุป] ผู้ถูกหักรายหนึ่ง = Σ แถวที่นับเข้ายอดของเลขผู้เสียภาษีนั้น (ตัวตั้งเดียวทั้งตอนสร้างและตอนติ๊ก/แก้บรรทัด)</summary>
+    private static (decimal Income, decimal Tax) PayeeSummaryOf(IEnumerable<TaxReportLine> lines, string? taxPayerId)
+    {
+        var key = (taxPayerId ?? "").Trim();
+        return Of(lines.Where(l => !IsSummary(l) && (l.TaxPayerId ?? "").Trim() == key));
+    }
+
+    /// <summary>เขียนยอดหัว <c>TotalIncome</c>/<c>TotalTaxWithheld</c> จากบรรทัด + คำนวณแถว [สรุป] ต่อผู้ถูกหักใหม่
+    /// (รอบ 273 ฝ่ายค้านข้อ 3: ติ๊กออก/แก้ยอดบรรทัดแล้วแถวสรุปค้างค่าเดิม) — ทางที่ยอดหัวของรายงานที่คิดจากบรรทัดถูกตั้ง
+    /// (ภ.ง.ด.1/2/3/53/54 · ภ.ง.ด.91 · ภ.พ.36 ใช้ <see cref="CountedLines"/> ลงช่องของตัวเอง · ภ.พ.30/ภ.ง.ด.50 มีสูตรของตัวเอง)</summary>
     public static void Apply(TaxReport report)
     {
+        foreach (var s in report.Lines.Where(IsSummary).ToList())
+        {
+            var (si, st) = PayeeSummaryOf(report.Lines, s.TaxPayerId);
+            s.IncomeAmount = si;
+            s.TaxAmount = st;
+        }
         var (income, tax) = Of(report.Lines);
         report.TotalIncome = income;
         report.TotalTaxWithheld = tax;

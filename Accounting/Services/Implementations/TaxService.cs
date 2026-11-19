@@ -2062,9 +2062,8 @@ public partial class TaxService : ITaxService
                 TaxPayerId = group.Key,
                 TaxPayerName = vendorName,
                 Description = $"[สรุป] {vendorName}",
-                IncomeAmount = group.Sum(l => l.IncomeAmount),
+                // ยอดจาก Apply ท้ายเมธอด (PayeeSummaryOf — ตัวตั้งเดียวกับตอนติ๊ก/แก้บรรทัด)
                 TaxRate = 0,
-                TaxAmount = group.Sum(l => l.TaxAmount),
                 IncomeTypeCode = Accounting.Helpers.VatReportLineKind.Summary
             });
         }
@@ -2669,7 +2668,7 @@ public partial class TaxService : ITaxService
                     IncomeAmount = 0,
                     TaxRate = 0,
                     TaxAmount = taxDiff,
-                    IncomeTypeCode = taxDiff > 0 ? "TAX_ADDITIONAL" : "TAX_REFUND"
+                    IncomeTypeCode = taxDiff > 0 ? Accounting.Helpers.WhtReportTotals.Pnd91TaxAdditional : Accounting.Helpers.WhtReportTotals.Pnd91TaxRefund
                 });
             }
 
@@ -2681,8 +2680,8 @@ public partial class TaxService : ITaxService
         if (badIdentity.Count > 0)
             report.Notes = ((report.Notes ?? "") + $"\n⛔ {badIdentity.Count} คนเลขประจำตัวใช้ไม่ได้ (ช่องเลขว่าง — ห้ามยื่นจนกว่าจะแก้): "
                 + string.Join(" · ", badIdentity.Take(20))).Trim();
-        report.TotalIncome = totalIncome;
-        report.TotalTaxWithheld = totalTax;
+        // รอบ 273 ฝ่ายค้านข้อ 4: ยอดหัวผ่านตัวตั้งเดียวกับตอนกดบันทึกบรรทัด (แถวผลต่างภาษีไม่นับ) — เดิมสองทางให้ความหมายต่างกัน
+        Accounting.Helpers.WhtReportTotals.Apply(report);
         report.OutputVat = totalSso; // Reuse field for SSO total
         report.Notes = $"จำนวนพนักงาน: {employeeGroups.Count()} คน | ปีภาษี: {year}";
     }
@@ -4692,5 +4691,13 @@ public partial class TaxService : ITaxService
         r.Notes,
         // echo CitAmount กลับด้วย (กฎ "เก็บแล้วต้อง echo กลับ") — UI/รายงานจะได้
         // แยกยอด CIT ออกจากยอดหัก ณ ที่จ่ายได้โดยไม่ต้องเดาจากชนิดรายงาน
-        CitAmount: r.CitAmount);
+        CitAmount: r.CitAmount,
+        LinesTaxTotal: LinesTaxTotalOf(r));
+
+    /// <summary>ยอดท้ายตาราง "รายการ" บนจอ — ตัวตั้งเดียวกับยอดหัว/ตัวตรวจก่อนยื่น (รอบ 273 ฝ่ายค้านข้อ 1)</summary>
+    internal static decimal? LinesTaxTotalOf(TaxReport r)
+    {
+        if (r.TaxType is TaxType.VAT or TaxType.CorporateIncomeTax || r.Lines == null) return null;
+        return Accounting.Helpers.WhtReportTotals.Of(r.Lines).Tax;
+    }
 }

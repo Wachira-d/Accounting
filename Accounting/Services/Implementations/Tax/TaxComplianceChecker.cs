@@ -149,7 +149,8 @@ public class TaxComplianceChecker : ITaxComplianceChecker
         // รอบ 273 (ผู้ใช้รายงาน ภ.ง.ด.53 ต.ค. 2569: 357.30 vs 178.65 = ×2): เดิม r.Lines.Sum ทุกแถว ⇒ แถว [สรุป] ต่อผู้ถูกหัก
         // + แถวที่ติ๊กออก ถูกบวกซ้ำ · ตอนนี้ใช้ตัวตั้งเดียวกับยอดหัว (Helpers/WhtReportTotals) — ด่านยังจับยอดหัวที่ค้าง/ถูกแก้มือ
         var (_, sumWht) = Accounting.Helpers.WhtReportTotals.Of(r.Lines);
-        if (sumWht > 0 && Math.Abs(sumWht - r.TotalTaxWithheld) > 0.50m)
+        // รอบ 273 ฝ่ายค้านข้อ 2: ฟ้องไม่ว่า Σ จะเป็นเท่าไร — เดิม `sumWht > 0 &&` ⇒ ติ๊กออกครบทุกแถวแต่ยอดหัวค้างค่าเก่า = ผ่านเงียบ
+        if (Math.Abs(sumWht - r.TotalTaxWithheld) > 0.50m)
             f.Add(new("RD-WHT-002", "Error",
                 $"ผลรวมภาษีหัก ณ ที่จ่ายในรายการย่อย ({sumWht:N2}) ไม่เท่ากับ TotalTaxWithheld ({r.TotalTaxWithheld:N2}).",
                 "กดคำนวณใหม่หรือเพิ่ม/ลบบรรทัดให้ครบ."));

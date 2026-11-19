@@ -171,4 +171,53 @@ public class WhtPreCheckDoubleCountDbTests
         Assert.Equal(6_955m, again.TotalIncome);
         Assert.Equal(198.65m, again.TotalTaxWithheld);
     }
+    [Fact]
+    public async Task R273_ฝ่ายค้าน2_ติ๊กออกครบทุกแถวแต่ยอดหัวค้าง_ตัวตรวจฟ้อง()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน — ข้าม"); return; }
+        var s = await SeedAsync(db);
+        db.WithholdingTaxCerts.Add(Cert(s.CompanyId, s.PayeeId, "WHT-6910-0301", WithholdingTaxCertStatus.Issued,
+            ("ค่าบริการ", 5_955m, 3m, 178.65m)));
+        await db.SaveChangesAsync();
+        var gen = await GenerateAsync(s.CompanyId);
+        // ติ๊กออกทุกแถวตรงในฐาน (ไม่ผ่านทางบันทึก) ⇒ Σ ที่นับ = 0 แต่ยอดหัวยัง 178.65 — เดิม `sumWht > 0 &&` ปล่อยผ่าน
+        using (var w = DbTestDatabase.TryCreateContext()!)
+        {
+            var lines = await w.TaxReportLines.Where(l => l.TaxReportId == gen.Id).ToListAsync();
+            foreach (var l in lines) l.IsExcluded = true;
+            await w.SaveChangesAsync();
+        }
+        var check = await PreCheckAsync(s.CompanyId, gen.Id);
+        var f = Assert.Single(check.Findings, x => x.Code == "RD-WHT-002");
+        Assert.Contains("0.00", f.Message);
+        Assert.False(check.CanSubmit);
+    }
+
+    [Fact]
+    public async Task R273_ฝ่ายค้าน1และ3_ติ๊กออกหนึ่งบรรทัด_แถวสรุปคำนวณใหม่_ท้ายตารางเท่ายอดหัว()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน — ข้าม"); return; }
+        var s = await SeedAsync(db);
+        db.WithholdingTaxCerts.Add(Cert(s.CompanyId, s.PayeeId, "WHT-6910-0401", WithholdingTaxCertStatus.Issued,
+            ("ค่าบริการ", 4_098.55m, 3m, 122.96m), ("ค่าขนส่ง", 5_569.36m, 1m, 55.69m)));
+        await db.SaveChangesAsync();
+        var gen = await GenerateAsync(s.CompanyId);
+        Assert.Equal(178.65m, gen.LinesTaxTotal);   // ท้ายตาราง = ยอดหัว (ไม่ใช่ 357.30)
+        Assert.Equal(gen.TotalTaxWithheld, gen.LinesTaxTotal);
+
+        var transport = gen.Lines.Single(l => l.TaxAmount == 55.69m);
+        TaxReportResponse upd;
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            upd = await new TaxService(req).UpdateTaxReportAsync(s.CompanyId, gen.Id,
+                new UpdateTaxReportRequest(null, new List<UpdateTaxReportLineRequest> { new(transport.Id, null, null, null, null, Excluded: true) }));
+        Assert.Equal(122.96m, upd.TotalTaxWithheld);
+        Assert.Equal(122.96m, upd.LinesTaxTotal);
+        var summary = Assert.Single(upd.Lines, l => l.Side == "summary");
+        Assert.Equal(122.96m, summary.TaxAmount);   // เดิมค้าง 178.65
+        Assert.Equal(4_098.55m, summary.IncomeAmount);
+        var check = await PreCheckAsync(s.CompanyId, gen.Id);
+        Assert.DoesNotContain(check.Findings, f => f.Code == "RD-WHT-002");
+    }
 }

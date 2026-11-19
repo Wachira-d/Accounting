@@ -21283,7 +21283,7 @@ _R273W_WHY = "รอบ 273 · ยอดหัว ภ.ง.ด. = ตัวตร
 _R273W_CHECK = "Services/Implementations/Tax/TaxComplianceChecker.cs"
 RULES += [
     dict(file=_R273W_CHECK, method="CheckPnd3_53", must=["WhtReportTotals.Of(", "WhtReportTotals.CountedLines("],
-         forbid=["r.Lines.Sum(", "r.Lines.Count("],
+         forbid=["r.Lines.Sum(", "r.Lines.Count(", "sumWht > 0 &&"],
          why=_R273W_WHY + "ตัวตรวจห้ามบวกทุกแถวเอง (แถว [สรุป] ⇒ ×2)"),
     dict(file=_R273W_CHECK, method="CheckPnd1", must=["WhtReportTotals.Of("], forbid=["r.Lines.Sum("],
          why=_R273W_WHY + "ภ.ง.ด.1 กติกาเดียวกัน"),
@@ -21292,6 +21292,11 @@ RULES += [
          why=_R273W_WHY + "ยอดหัวตอน generate"),
     dict(file="Services/Implementations/TaxService.cs", method="RecalcWhtTotals", must=["WhtReportTotals.Apply("],
          why=_R273W_WHY + "ยอดหัวตอนคำนวณใหม่"),
+    dict(file="Services/Implementations/TaxService.cs", method="LinesTaxTotalOf", must=["WhtReportTotals.Of("],
+         why=_R273W_WHY + "ฝ่ายค้านข้อ 1: ท้ายตารางบนจอจากตัวตั้งเดียว (หน้าเว็บแสดงอย่างเดียว · tax.html ล็อกใน WhtReportTotalsTests)"),
+    dict(file="Services/Implementations/TaxService.cs", method="GeneratePnd91Report", must=["WhtReportTotals.Apply(", "WhtReportTotals.Pnd91TaxAdditional"],
+         forbid=["report.TotalTaxWithheld = totalTax"], forbid_lit=['"TAX_ADDITIONAL"', '"TAX_REFUND"'],
+         why=_R273W_WHY + "ฝ่ายค้านข้อ 4: ภ.ง.ด.91 ยอดหัวสูตรเดียวกับตอนบันทึกบรรทัด (แถวผลต่างไม่นับ)"),
 ]
 
 # ═══ รอบ 272 ชุดแก้ฝ่ายค้าน (erp-review/2026-11-16/review-272.md · H1–H3 · M1–M7 · L1–L8) ═══
