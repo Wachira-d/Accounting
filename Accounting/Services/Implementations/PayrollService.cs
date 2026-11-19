@@ -3450,7 +3450,7 @@ public class PayrollService : IPayrollService
             foreach (var g in grouped)
             {
                 var emp = g.First().Employee;
-                // รอบ 273: 50 ทวิ ภ.ง.ด.1ก ห้ามพิมพ์เลขที่ผิด — เลขถอดรหัสไม่ได้/ไม่ถูกต้อง ⇒ ใบเดียว: ปฏิเสธพร้อมเหตุ · หลายใบ: ข้ามคนนั้นและใส่เหตุใน zip
+                // รอบ 274: 50 ทวิ ภ.ง.ด.1ก ห้ามพิมพ์เลขที่ผิด — เลขถอดรหัสไม่ได้/ไม่ถูกต้อง ⇒ ใบเดียว: ปฏิเสธพร้อมเหตุ · หลายใบ: ข้ามคนนั้นและใส่เหตุใน zip
                 var identity = Accounting.Helpers.EmployeeTaxIdentity.Inspect(emp.TaxId, emp.CitizenId);
                 if (identity.Problem is Accounting.Helpers.TaxIdProblem.Undecryptable or Accounting.Helpers.TaxIdProblem.Invalid)
                 {
@@ -4023,7 +4023,7 @@ public class PayrollService : IPayrollService
                 // บล็อกตลอดกาล · บุคคลไทย เลขผู้เสียภาษี = เลขบัตรประชาชน ⇒ resolver
                 // กลางตัวเดียว (TaxId ที่กรอก → เลขบัตร → ไม่รู้) ใช้ทั้งด่าน ค้น cert
                 // ที่ออกมือ ค้น/สร้าง Contact — ค่าเดียวกันทั้งสี่จุด
-                // รอบ 273: ตรวจก่อนใช้ — ค่า enc1:… ที่ถอดไม่ออก (คีย์ถูกเปลี่ยน) / ไม่ใช่ 13 หลัก / checksum ไม่ผ่าน ⇒ ไม่ออกใบ + บอกเหตุ ·
+                // รอบ 274: ตรวจก่อนใช้ — ค่า enc1:… ที่ถอดไม่ออก (คีย์ถูกเปลี่ยน) / ไม่ใช่ 13 หลัก / checksum ไม่ผ่าน ⇒ ไม่ออกใบ + บอกเหตุ ·
                 // เดิมตัดเอาตัวเลขจาก ciphertext ⇒ สร้าง Contact ด้วยเลข 5–14 หลักแล้วพิมพ์ลง 50 ทวิ
                 var payeeIdentity = Accounting.Helpers.EmployeeTaxIdentity.Inspect(emp.TaxId, emp.CitizenId);
                 var payeeTaxId = payeeIdentity.Value;
@@ -4860,7 +4860,7 @@ public class PayrollService : IPayrollService
         // GrossIncome (รวมสวัสดิการยกเว้น) ⇒ "รายได้รวม" บนจอ ≠ เงินได้ในไฟล์ · ยอดที่ไฟล์จะประกาศ + ยอดต่อประเภท 5 ข้อ
         // มาจากตัวโหลดเดียวกับไฟล์ (Pnd1FilingData.LoadMonthAsync) ⇒ รวม 50 ทวิ ภ.ง.ด.1 ที่ออกด้วยมือนอกรอบเงินเดือน
         var filing = await Accounting.Helpers.Pnd1FilingData.LoadMonthAsync(_db, companyId, year, month);
-        // รอบ 273: เลขบนจอผ่านตัวตรวจเดียวกับไฟล์ — ค่า enc1:… (ถอดรหัสไม่ได้) / ผิดรูป แสดงเป็นป้ายเหตุ และแถวนั้นไม่อยู่ในไฟล์ (filing.BlockedRows)
+        // รอบ 274: เลขบนจอผ่านตัวตรวจเดียวกับไฟล์ — ค่า enc1:… (ถอดรหัสไม่ได้) / ผิดรูป แสดงเป็นป้ายเหตุ และแถวนั้นไม่อยู่ในไฟล์ (filing.BlockedRows)
         var blockedCodes = filing.BlockedRows.Select(b => b.SourceRef).ToHashSet(StringComparer.Ordinal);
         var lines = details.Select(d => new
         {

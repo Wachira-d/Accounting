@@ -9,7 +9,7 @@ using Xunit.Abstractions;
 namespace Accounting.Tests.Db;
 
 /// <summary>
-/// รอบ 273 — บน PostgreSQL จริง: แถวพนักงานที่เข้ารหัสด้วย<b>คีย์เดิม</b> (ผู้ใช้เปลี่ยน ENCRYPTION_KEY) ⇒
+/// รอบ 274 — บน PostgreSQL จริง: แถวพนักงานที่เข้ารหัสด้วย<b>คีย์เดิม</b> (ผู้ใช้เปลี่ยน ENCRYPTION_KEY) ⇒
 /// (1) ไฟล์ ภ.ง.ด.1 ไม่เขียนตัวเลขที่ตัดจาก ciphertext — กันแถวนั้นพร้อมเหตุ แถวอื่น 13 หลักทุกแถว ·
 /// (2) รายงานอ่านอย่างเดียวชี้แถวที่ต้องแก้ (ปิดบัง) · (3) งานย้ายคีย์ (ได้คีย์เดิม) เข้ารหัสใหม่ด้วยคีย์ปัจจุบัน + audit chain ต่อแถว ·
 /// แล้วไฟล์มีครบทุกคน 13 หลัก · (4) ค่าที่ถอดไม่ออกทุกคีย์ไม่ถูกแตะ (ห้ามแต่งค่า)
@@ -20,7 +20,7 @@ public class PiiKeyRotationDbTests
     private readonly ITestOutputHelper _out;
     public PiiKeyRotationDbTests(ITestOutputHelper output) => _out = output;
 
-    private const string OldKey = "r273-db-old-key-0123456789";
+    private const string OldKey = "r274-db-old-key-0123456789";
     private const string ValidA = "1101700001237";
     private const string ValidB = "3100500123458";
     private static readonly DateTime Period = new DateTime(DateTime.UtcNow.Year, DateTime.UtcNow.Month, 1).AddMonths(-1);
@@ -44,7 +44,7 @@ public class PiiKeyRotationDbTests
             CitizenId = "placeholder", StartDate = Period.AddYears(-1), Address = "3 ถนนนิมมาน ตำบลสุเทพ อำเภอเมือง เชียงใหม่ 50200" };
         db.Set<Employee>().AddRange(a, b, lost);
         var end = Period.AddMonths(1).AddDays(-1);
-        var run = new PayrollRun { CompanyId = cid, PayrollNumber = "PR-R273", Name = "หมุนคีย์", Year = Period.Year, Month = Period.Month,
+        var run = new PayrollRun { CompanyId = cid, PayrollNumber = "PR-R274", Name = "หมุนคีย์", Year = Period.Year, Month = Period.Month,
             PeriodStart = Period, PeriodEnd = end, PayDate = end, Status = PayrollRunFilingScope.Paid };
         foreach (var e in new[] { a, b, lost })
             run.Details.Add(new PayrollDetail { CompanyId = cid, EmployeeId = e.Id, BaseSalary = 30000m, GrossIncome = 30000m, TaxableGross = 30000m,
@@ -55,7 +55,7 @@ public class PiiKeyRotationDbTests
 
         // จำลองข้อมูลที่บันทึกก่อนเปลี่ยนคีย์ — เขียนค่าดิบข้าม converter
         var oldCipher = EncryptionHelper.Encrypt(ValidB, OldKey);
-        var lostCipher = EncryptionHelper.Encrypt("1509900045673", "r273-key-nobody-has");
+        var lostCipher = EncryptionHelper.Encrypt("1509900045673", "r274-key-nobody-has");
         await db.Database.ExecuteSqlRawAsync("UPDATE \"Employees\" SET \"CitizenId\" = {0} WHERE \"Id\" = {1} AND \"CompanyId\" = {2}", oldCipher, b.Id, cid);
         await db.Database.ExecuteSqlRawAsync("UPDATE \"Employees\" SET \"CitizenId\" = {0} WHERE \"Id\" = {1} AND \"CompanyId\" = {2}", lostCipher, lost.Id, cid);
 

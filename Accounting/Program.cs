@@ -153,7 +153,7 @@ else
 {
     Accounting.Helpers.EncryptedColumnConverter.Configure(encryptionKey);
 }
-// รอบ 273 (บั๊ก production — เลขผู้เสียภาษีพนักงานผิดจำนวนหลักหลังตั้ง ENCRYPTION_KEY): คีย์เดิมสำหรับ<b>ถอด</b>คอลัมน์ PII ·
+// รอบ 274 (บั๊ก production — เลขผู้เสียภาษีพนักงานผิดจำนวนหลักหลังตั้ง ENCRYPTION_KEY): คีย์เดิมสำหรับ<b>ถอด</b>คอลัมน์ PII ·
 // ENCRYPTION_KEY_PREVIOUS (หมุนคีย์ env→env) + config เดิมที่ env ชนะ + dev key (แถวที่บันทึกก่อนตั้งคีย์) · เขียนด้วยคีย์ปัจจุบันเสมอ ·
 // PiiReprotectJob ย้ายแถวไปคีย์ปัจจุบัน (JobLock · audit)
 Accounting.Helpers.EncryptedColumnConverter.ConfigurePreviousKeys(Accounting.Helpers.EncryptionKeyResolver.PiiPreviousKeys(
@@ -917,7 +917,7 @@ builder.Services.AddHostedService<Accounting.Services.Background.PlatformTransfe
 builder.Services.AddHostedService<Accounting.Services.Background.TrialDataRetentionJob>();   // รอบ 231 (231-10) — ปิดข้อมูลทดลองใช้ที่หมดอายุพ้นระยะเก็บ (ผู้อ่าน TrialConfig.DeleteDataAfterGracePeriod/DataRetentionDays · legal hold ไม่แตะ · JobLock)
 // ฝ่ายค้านรอบ 219 B2: เข้ารหัสความลับที่ยังอยู่บนคีย์เดิมใหม่ด้วยคีย์ปัจจุบัน (ครั้งเดียวต่อบูต · JobLock)
 builder.Services.AddHostedService<Accounting.Services.Background.SecretReprotectJob>();
-// รอบ 273: ย้ายคอลัมน์ PII (EncryptedColumnConverter) ที่ยังอยู่บนคีย์เดิมไปคีย์ปัจจุบัน — JobLock · audit · ครั้งเดียวต่อการบูต (idempotent)
+// รอบ 274: ย้ายคอลัมน์ PII (EncryptedColumnConverter) ที่ยังอยู่บนคีย์เดิมไปคีย์ปัจจุบัน — JobLock · audit · ครั้งเดียวต่อการบูต (idempotent)
 builder.Services.AddHostedService<Accounting.Services.Background.PiiReprotectJob>();
 // ตาข่ายรับของ webhook — webhook เป็นเส้นเร็ว ไม่ใช่เส้นเดียว (มันหายได้จริง)
 builder.Services.AddHostedService<Accounting.Services.Background.PaymentIntentReconcileJob>();

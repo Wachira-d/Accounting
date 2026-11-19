@@ -5175,6 +5175,26 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
   (คืนเงิน + บล็อกยกเลิกการชำระ + ยกเลิกการคืน · เกินยอดที่ใช้ได้ · ตัดเศษ/กดซ้ำ · อนุมัติแล้วจัดสรรเอง/ล้มดัง · ยกเลิกใบมัดจำ · คิว Autopilot/ใบเก่า) · กติกา R259 ใน
   `tools/required_call_site_check.py` · Last verified commit 5a3b7fa1 — ยังไม่ได้คอมไพล์ในเครื่องนี้
 
+### 3.4b-273 ใบเสร็จรับชำระ — แถวยอดบนกระดาษและหน้ารายละเอียด (รอบ 273 · สถานะปัจจุบัน)
+
+- **ที่มา (ผู้ใช้รายงาน 2026-11-19)**: TIV-20261026-0001 มูลค่า 700,000.00 + VAT 49,000.00 = 749,000.00 → บันทึกรับชำระ → REC-20261029-0001 บรรทัดเดียว "รับชำระเงินตามใบกำกับภาษีเลขที่ …" 749,000.00 ·
+  กระดาษ (HTML + QuestPDF) และหน้ารายละเอียดพิมพ์ "ยอดรวมก่อน VAT 749,000.00 · VAT 0.00 · ยอดสุทธิ 749,000.00" — เงินที่รับรวม VAT แล้ว และ VAT ถูกเรียกเก็บบนใบกำกับไปแล้ว
+- **ต้นเหตุ**: ข้อมูลที่เก็บถูก (`CreateSettlementReceiptAsync`: `SubTotal = TotalAmount = payment.Amount` · `VatAmount = 0` · `IsTaxInvoiceByLaw = false` — ใบเสร็จไม่เป็นเจ้าของภาษีขาย · รอบ 269 `OutputVatOwnership` ให้อยู่นอก ภ.พ.30/§87 **คงเดิม**)
+  แต่ทั้งสอง renderer และหน้ารายละเอียดใช้ป้ายแถวยอดของใบที่ถือ VAT เอง ("ยอดรวมก่อน VAT" = `SubTotal`) กับทุกใบ ⇒ **แก้การแสดงผลอย่างเดียว ไม่มี migration** (ค่าที่ persist ถูก · ไม่มีค่าใดเปลี่ยน)
+- **ตัวตัดสินเดียว** `Helpers/SettlementReceiptTotals.Decide` — ใบเสร็จ/ใบสำคัญรับที่ไม่ถือ VAT (`VatAmount = 0` · ไม่ใช่ใบกำกับตามกฎหมาย · ไม่ใช่มัดจำ) ที่อ้าง (`RelatedDocumentId`) ใบแจ้งหนี้/ใบกำกับภาษี/ใบเพิ่มหนี้ที่**มี VAT** ⇒
+  ไม่มีแถว "ยอดรวมก่อน VAT" และแถว VAT · แถวสุดท้าย "ยอดรับชำระ" (= `TotalAmount` เดิม) · ใต้ยอด "(ตามใบกำกับภาษีเลขที่ … ลงวันที่ …: มูลค่า 700,000.00 · VAT 49,000.00 · รวม 749,000.00)"
+  (+ " · ภาษีหัก ณ ที่จ่าย …" เมื่อใบต้นทางมี) + "ยอดรับชำระรวมภาษีมูลค่าเพิ่มที่เรียกเก็บตามเอกสารอ้างอิงแล้ว — ใบเสร็จนี้ไม่เรียกเก็บภาษีมูลค่าเพิ่มซ้ำ" ·
+  **รับบางส่วน** (ยอดรับ < ยอดตามใบต้นทาง) ⇒ + "รับชำระบางส่วนของยอด 749,000.00 ตามเอกสารอ้างอิง" (อ้างยอดเต็มของใบกำกับ — ไม่แต่งสัดส่วน VAT ขึ้นเอง) ·
+  **ใบเสร็จมีภาษีหัก** (ใบที่สร้างจากฟอร์ม "ผูกกับเอกสารต้นทาง") ⇒ คงแถว "ยอดตัดชำระ (ก่อนหักภาษี ณ ที่จ่าย)" + แถวภาษีหัก ให้บวกลงยอดรับชำระ ·
+  **หลายใบต้นทาง**: ตัวตัดสินรับรายการใบ (หนึ่งบรรทัดอ้างอิงต่อใบ) — วันนี้ทุกทางเข้าออกใบเสร็จต่อใบเดียว (`SettlementReceiptPolicy.WhyCannotIssue` ปฏิเสธการรับหลายใบแบบไม่ระบุใบ · ออก "รายใบ" แทน) ⇒ ตัวโหลดส่งใบเดียว
+- **ทิศตรงข้าม (ไม่ถูกแตะ)**: ใบเสร็จขายสด/ใบกำกับ ณ วันรับเงิน §78/1 (`carryVatFromSource`)/มัดจำ/ใบที่อ้างใบต้นทางไม่มี VAT ⇒ "ยอดรวมก่อน VAT / VAT / ยอดรวมสุทธิ" เดิมทุกตัวอักษร
+- **ทุกทางเข้าได้ผลเดียวกัน** เพราะตัดสินจากข้อเท็จจริงบนใบ ไม่ใช่จากเส้นที่สร้าง: บันทึกรับชำระ · ออกใบย้อนหลัง/รายใบของการรับหลายใบ (`IssueReceiptForPaymentAsync`) · ช่องทางชำระออนไลน์ (`DocumentPaymentHandler`) ·
+  สลิป LINE · คู่ค้า · ย้ายการรับชำระ/ออกใบแทน — ทั้งหมดผ่าน `CreateSettlementReceiptAsync` · ใบเสร็จจากฟอร์มที่ผูกใบต้นทาง ("แปลง" ฝั่งหน้าเว็บ) ก็เข้าเงื่อนไขเดียวกัน
+- **จุดต่อสาย**: ตัวโหลด `SettlementReceiptTotalsLoader.ResolveAsync` (tenant · ข้าม query filter ให้ใบต้นทางที่ถูกยกเลิกยังพิมพ์เลขได้) ← `PdfGenerationService.ResolveServedAsReceiptAsync` (HTML · QuestPDF · e-Tax PDF · หัวเอกสารอีเมล/LINE)
+  และ `DocumentService.GetDocumentAsync` (`DocumentResponse.SettlementTotals` — ป้าย/บรรทัดจาก `DocumentLabels` ชุดเดียวกับกระดาษ · `documents.html` แสดงอย่างเดียว) ·
+  ป้ายแถวแรก `SettlementSubtotalLabel` · แถวสุดท้าย `ResolvePrintTotals` · บรรทัดอ้างอิง `DocumentLabels.SettlementTotalsLines` (ไทย/อังกฤษ) · ล็อกจุดเรียก `_R273_*` ใน `tools/required_call_site_check.py`
+- Last verified `commit f929120b`
+
 ### 3.4c ผูกใบเสร็จ/เงินที่รับไว้แล้วกับใบแจ้งหนี้ — เจ้าเดียวกัน (รอบ 266 แพ็ก A · `erp-review/2026-11-12/team-266-manual-doc-link.md` · DECISIONS 266-1-x)
 
 > สถานะปัจจุบัน — "ผูก" **ไม่ใช่การเขียน FK** แต่เป็นคำสั่งกำหนดเส้นทาง (266-1-1): ตัวตัดสินเดียว `Helpers/ReceiptLinkPolicy` จัดชนิดฝั่งใบเสร็จ/เงิน (R0–R7) แล้วส่งต่อไปเส้นเดิม ·
@@ -5922,7 +5942,7 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
 - **50 ทวิ ภ.ง.ด.1** (D-01): เลขผู้เสียภาษีพนักงาน = `Helpers/EmployeeTaxIdentity.Resolve(taxId, citizenId)` (TaxId ที่กรอก → เลขบัตร → null) ใช้ใน 50 ทวิ
   รายเดือน (ด่าน + ค้นใบมือ + ค้น/สร้าง Contact) · รายปี · ไฟล์ ภ.ง.ด.1/1ก/91 · รายงาน ภ.ง.ด.1ก · Contact จากใบเบิก/เงินทดรอง — _เดิม `Employee.TaxId` ไม่มี
   ผู้เขียนแต่เป็นด่านเดียว ⇒ "ออก 50 ทวิไม่ครบ" ทุกงวด + นำส่ง ภ.ง.ด.1 ติด `WHT-CERT-UNISSUED` ตลอดกาล_ · ไฟล์ สปส.1-10 ใช้ `CitizenId` ตรง (ถูกต้อง)
-- **รอบ 273 — เลขประจำตัวผ่านตัวตรวจก่อนลงแบบ/กระดาษ** (บั๊ก production: ไฟล์ ภ.ง.ด.1/1ก ช่อง 5 ยาว 5–14 หลัก · 50 ทวิ ภ.ง.ด.1ก ได้ 7 หลัก หลังตั้ง `ENCRYPTION_KEY`):
+- **รอบ 274 — เลขประจำตัวผ่านตัวตรวจก่อนลงแบบ/กระดาษ** (บั๊ก production: ไฟล์ ภ.ง.ด.1/1ก ช่อง 5 ยาว 5–14 หลัก · 50 ทวิ ภ.ง.ด.1ก ได้ 7 หลัก หลังตั้ง `ENCRYPTION_KEY`):
   `EmployeeTaxIdentity.Inspect(taxId, citizenId)` คืนค่าเฉพาะเลข 13 หลัก + mod-11 · ค่า `enc1:…` ที่ converter ถอดไม่ออก ⇒ `Undecryptable` · ผิดรูป/checksum ⇒ `Invalid`
   (เดิม `Resolve` ตัดตัวเลขจาก ciphertext) · **ไฟล์ ภ.ง.ด.1/1ก** (`Pnd1FilingData.Build`) กันแถวนั้นออกพร้อมเหตุรายแถวใน Notes (`BlockedRows` · ยอดไฟล์ไม่รวม ·
   ทุกแถวถูกกัน ⇒ 422 `RD-PND1-PAYEE-TAXID`) · ชั้นสุดท้าย `Pnd1FileFormat.FieldsCore` ล้มเมื่อช่อง 5 ผิดรูป · เลข**ว่าง**คงเดิม (เติม 0 + เตือน) · ภ.ง.ด.91 ไฟล์/รายงานกันเช่นกัน ·
@@ -5930,7 +5950,7 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
   ปฏิเสธเมื่อผู้รับเลขใช้ไม่ได้ (ทางแก้ "สร้างเอกสารใหม่" ที่รอบเงินเดือน) · กล่อง 13 หลัก HTML + QuestPDF = `WhtCertFormText.TaxIdBoxDigits` (ใช้ไม่ได้ = ว่างทั้งหมด) ·
   **คีย์:** `EncryptedColumnConverter` ลองคีย์ปัจจุบัน → `ENCRYPTION_KEY_PREVIOUS` → config เดิม → dev key (ถอดอย่างเดียว · `EncryptionKeyResolver.PiiPreviousKeys`) ·
   `PiiReprotectJob` (บูตละครั้ง · JobLock · audit `PDPA-26-KEY-ROTATE`) เข้ารหัสแถวคีย์เดิมใหม่ด้วยคีย์ปัจจุบัน · ถอดไม่ออกทุกคีย์ = ไม่แตะ ⇒ รายงาน
-  `GET payroll/tax-identity-health` (อ่านอย่างเดียว · ปิดบัง) · ทางออกอื่นของคอลัมน์ชุดเดียวกัน: ไฟล์ สปส. (`SsoInsuredNumber.CitizenIdForFile` — enc1 ⇒ ว่าง) · ไฟล์โอนเงินเดือน (`PayrollBankTransfer` — enc1 ⇒ ไม่พร้อมโอน "เลขบัญชีถอดรหัสไม่ได้") · production ปฏิเสธคีย์ placeholder · คำตัดสิน 273-1…7 (`erp-review/2026-09-29/DECISIONS.md`)
+  `GET payroll/tax-identity-health` (อ่านอย่างเดียว · ปิดบัง) · ทางออกอื่นของคอลัมน์ชุดเดียวกัน: ไฟล์ สปส. (`SsoInsuredNumber.CitizenIdForFile` — enc1 ⇒ ว่าง) · ไฟล์โอนเงินเดือน (`PayrollBankTransfer` — enc1 ⇒ ไม่พร้อมโอน "เลขบัญชีถอดรหัสไม่ได้") · production ปฏิเสธคีย์ placeholder · คำตัดสิน 274-1…7 (`erp-review/2026-09-29/DECISIONS.md`)
 - **รอบ 200 ทีม R (กวาดค้างรอบ 189)**: ฐานภาษีสะสม (YTD) ของงวดก่อน = `PayrollIncomeBase.PriorTaxBase(TaxableGross, GrossIncome)` (D-09 — เดิม gross
   รวมสวัสดิการยกเว้น ⇒ หักเกินงวดหลัง · แถวเก่าที่ TaxableGross = 0 ใช้ gross เหมือนเดิม) · PVD = `PayrollIncomeBase.PvdContribution(proratedBaseSalary, %)`
   (D-10 — เดิมเต็มเดือน + ไม่ปัด) · เพดานสมทบปัด AwayFromZero (D-08) · กำหนดนำส่ง สปส. + เงินเพิ่ม §49 = `Helpers/SsoLateFee` ตัวเดียว
@@ -9736,6 +9756,8 @@ _Last verified against codebase: 2026-11-16 (รอบ 271 ชุดแก้ฝ
 _Last verified against codebase: 2026-11-16 (รอบ 272 แพ็ก P1–P6 — §TAX272: GovPaymentSlip (98037@KBank) · TaxSlipMatch (D-2/D-3) · ProviderConsent (ทาง B) · ใบขอชำระ · RemitAsync ตัวเดียว · ตรวจทานหลังนำส่ง · อีเมลขาเข้าหลัง interface — build + test + Db test ผ่านในเครื่องนี้ (PostgreSQL) — commit cd71dee0)_
 _Last verified against codebase: 2026-11-19 (รอบ 272 ชุดแก้ฝ่ายค้าน — §TAX272: H1 ExpectedAmount · H2 OCR ไม่พร้อม ⇒ คิว · H3 alignment อีเมล · M1–M7 · L1–L8 — build + test + Db test ผ่านในเครื่องนี้ (PostgreSQL) — commit 7c5a3cb4)_
 
-_Last verified against codebase: 2026-11-19 (รอบ 273 — เลขผู้เสียภาษีพนักงานผิดจำนวนหลักในไฟล์ ภ.ง.ด.1/1ก และ 50 ทวิ หลังเปลี่ยน ENCRYPTION_KEY: converter ลองคีย์เดิม ·
+_Last verified against codebase: 2026-11-19 (รอบ 273 — §3.4b-273: ใบเสร็จรับชำระที่ไม่ถือ VAT ของใบต้นทางพิมพ์ "ยอดรับชำระ" + บรรทัดอ้างอิงใบกำกับ (มูลค่า · VAT · รวม) แทน "ยอดรวมก่อน VAT / VAT 0.00" — ตัวตัดสิน `Helpers/SettlementReceiptTotals` · HTML + QuestPDF + หน้ารายละเอียด · แสดงผลอย่างเดียว ไม่มี migration · กติการอบ 269 คงเดิม — build + test + Db test ผ่านในเครื่องนี้ (PostgreSQL) — commit f929120b)_
+
+_Last verified against codebase: 2026-11-19 (รอบ 274 — เลขผู้เสียภาษีพนักงานผิดจำนวนหลักในไฟล์ ภ.ง.ด.1/1ก และ 50 ทวิ หลังเปลี่ยน ENCRYPTION_KEY: converter ลองคีย์เดิม ·
 `EmployeeTaxIdentity.Inspect` (13 หลัก + mod-11 · enc1 ที่ถอดไม่ออก) หน้าทุกทางออก · ไฟล์กันแถวพร้อมเหตุ · กล่อง 50 ทวิ ตัวเดียว · `PiiReprotectJob` · รายงาน `tax-identity-health` ·
-เทสต์ `PiiKeyRotationRound273Tests` + Db `PiiKeyRotationDbTests` · กติกา R273 ×8 — commit <เติมในคอมมิตตามหลัง>)_
+เทสต์ `PiiKeyRotationRound274Tests` + Db `PiiKeyRotationDbTests` · กติกา R274 ×8 — commit <เติมในคอมมิตตามหลัง>)_

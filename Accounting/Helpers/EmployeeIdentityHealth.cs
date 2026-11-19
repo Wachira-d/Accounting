@@ -7,7 +7,7 @@ using Microsoft.EntityFrameworkCore;
 namespace Accounting.Helpers;
 
 /// <summary>
-/// รอบ 273 — <b>รายงานอ่านอย่างเดียว</b> "เลขประจำตัวที่ต้องแก้" (หลังเหตุ ENCRYPTION_KEY ถูกเปลี่ยน · F2 ข้อ 9: ของเสียที่ persist แล้วต้องมีทางเห็น)
+/// รอบ 274 — <b>รายงานอ่านอย่างเดียว</b> "เลขประจำตัวที่ต้องแก้" (หลังเหตุ ENCRYPTION_KEY ถูกเปลี่ยน · F2 ข้อ 9: ของเสียที่ persist แล้วต้องมีทางเห็น)
 ///
 /// <para>สองแหล่ง:
 /// <list type="number">

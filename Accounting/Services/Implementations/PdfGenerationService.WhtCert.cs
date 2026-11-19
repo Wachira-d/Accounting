@@ -270,7 +270,7 @@ public partial class PdfGenerationService
     // ── 13 ช่องเลขประจำตัวผู้เสียภาษี กลุ่ม 1-4-5-2-1 ──
     private static void DrawTinBoxes(QuestPDF.Infrastructure.IContainer e, string? taxId, bool payee)
     {
-        var digits = WhtCertFormText.TaxIdBoxDigits(taxId, payee);   // รอบ 273: ตัวเดียวกับ HTML — เลขที่ใช้ไม่ได้ ⇒ กล่องว่าง (ไม่พิมพ์ตัวเลขที่ตัดจาก ciphertext)
+        var digits = WhtCertFormText.TaxIdBoxDigits(taxId, payee);   // รอบ 274: ตัวเดียวกับ HTML — เลขที่ใช้ไม่ได้ ⇒ กล่องว่าง (ไม่พิมพ์ตัวเลขที่ตัดจาก ciphertext)
         e.Row(r =>
         {
             int[][] groups = { new[]{0,1}, new[]{1,5}, new[]{5,10}, new[]{10,12}, new[]{12,13} };

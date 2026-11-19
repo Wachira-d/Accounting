@@ -25,7 +25,7 @@ public static class PayrollBankTransfer
     /// <summary>เลขบัญชีธนาคารไทยสั้นสุดที่พบทั่วไป (ธนาคารพาณิชย์ 10 หลัก · ออมสิน/ธ.ก.ส. 12 หลัก)</summary>
     public const int MinAccountDigits = 10;
 
-    /// <summary>รอบ 273: สถานะแถวที่เลขบัญชีถอดรหัสไม่ได้</summary>
+    /// <summary>รอบ 274: สถานะแถวที่เลขบัญชีถอดรหัสไม่ได้</summary>
     public const string UndecryptableStatus = "เลขบัญชีถอดรหัสไม่ได้";
 
     /// <summary>ป้ายสถานะของแถวที่จ่ายจากแหล่งอื่นที่ไม่ใช่ธนาคาร</summary>
@@ -51,7 +51,7 @@ public static class PayrollBankTransfer
     {
         var isPaid = runStatus == "Paid";
         var amount = CashPaid(runStatus, netPay, advanceRecovered);
-        // รอบ 273: ค่า enc1:… = converter ถอดไม่ออก (คีย์ถูกเปลี่ยน) — ห้ามตัดตัวเลขจาก ciphertext เป็นเลขบัญชี (โอนเงินเข้าบัญชีสุ่ม) ⇒ ไม่พร้อมโอนพร้อมเหตุ
+        // รอบ 274: ค่า enc1:… = converter ถอดไม่ออก (คีย์ถูกเปลี่ยน) — ห้ามตัดตัวเลขจาก ciphertext เป็นเลขบัญชี (โอนเงินเข้าบัญชีสุ่ม) ⇒ ไม่พร้อมโอนพร้อมเหตุ
         var undecryptable = EncryptionHelper.IsEncrypted(bankAccountNumber?.Trim());
         var digits = undecryptable ? "" : new string((bankAccountNumber ?? "").Where(char.IsDigit).ToArray());
         string? note = !isPaid && hasOutstandingAdvance

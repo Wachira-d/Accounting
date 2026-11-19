@@ -746,7 +746,7 @@ public class PayrollController : ControllerBase
             includePii: await CanViewPiiAsync(companyId))));
     }
 
-    /// <summary>รอบ 273: รายงานอ่านอย่างเดียว "เลขประจำตัวที่ต้องแก้" (ถอดรหัสไม่ได้ · เข้ารหัสซ้อน · ไม่ใช่ 13 หลักที่ถูกต้อง · ผู้รับใน 50 ทวิ ที่เลขใช้ไม่ได้) —
+    /// <summary>รอบ 274: รายงานอ่านอย่างเดียว "เลขประจำตัวที่ต้องแก้" (ถอดรหัสไม่ได้ · เข้ารหัสซ้อน · ไม่ใช่ 13 หลักที่ถูกต้อง · ผู้รับใน 50 ทวิ ที่เลขใช้ไม่ได้) —
     /// ด่านเงินเดือนเดียวกับ ภ.ง.ด.1 · เลขปิดบังเสมอ (ไม่ต้องใช้ Pii.View) · ไม่แก้อะไร (<see cref="EmployeeIdentityHealth"/>)</summary>
     [HttpGet("tax-identity-health")]
     public async Task<ActionResult<ApiResponse<object>>> GetTaxIdentityHealth(Guid companyId,

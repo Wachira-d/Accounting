@@ -27,7 +27,7 @@ public static class EncryptionKeyResolver
     public static string CurrentOrDev(string? configKey)
         => Resolve(Environment.GetEnvironmentVariable("ENCRYPTION_KEY"), configKey) ?? DevKey;
 
-    /// <summary>รอบ 273: env ของ<b>คีย์เดิม</b> (ใช้ถอดอย่างเดียว) หลังหมุน <c>ENCRYPTION_KEY</c> — ตั้งเป็นคีย์ก่อนหน้าแล้วรีสตาร์ต ⇒
+    /// <summary>รอบ 274: env ของ<b>คีย์เดิม</b> (ใช้ถอดอย่างเดียว) หลังหมุน <c>ENCRYPTION_KEY</c> — ตั้งเป็นคีย์ก่อนหน้าแล้วรีสตาร์ต ⇒
     /// คอลัมน์ PII ที่เข้ารหัสด้วยคีย์นั้นอ่านได้ทันที และ <c>PiiReprotectJob</c> ย้ายไปคีย์ปัจจุบัน (เสร็จแล้วถอดออกได้)</summary>
     public const string PreviousKeyEnv = "ENCRYPTION_KEY_PREVIOUS";
 
@@ -46,7 +46,7 @@ public static class EncryptionKeyResolver
     public static bool IsPlaceholder(string? key)
         => !string.IsNullOrWhiteSpace(key) && Placeholders.Any(p => string.Equals(p, key.Trim(), StringComparison.OrdinalIgnoreCase));
 
-    /// <summary>รอบ 273: คีย์ที่<b>คอลัมน์ PII</b> (<c>EncryptedColumnConverter</c>) ใช้ลองถอดต่อจากคีย์ปัจจุบัน — <see cref="PreviousKeyEnv"/> (ดิบ + ตัดช่องว่าง) ก่อน
+    /// <summary>รอบ 274: คีย์ที่<b>คอลัมน์ PII</b> (<c>EncryptedColumnConverter</c>) ใช้ลองถอดต่อจากคีย์ปัจจุบัน — <see cref="PreviousKeyEnv"/> (ดิบ + ตัดช่องว่าง) ก่อน
     /// แล้ว <see cref="LegacyCandidates"/> (config เดิมที่ถูก env ชนะ · dev key ก่อนตั้งคีย์) · ไม่มีคีย์ปัจจุบันซ้ำ · ลำดับคงที่ ·
     /// ใช้ถอดอย่างเดียว (เขียนด้วยคีย์ปัจจุบันเสมอ) ⇒ dev key ในรายการไม่ลดความปลอดภัย (ค่าที่เข้ารหัสด้วยมันเปิดได้อยู่แล้ว)</summary>
     public static IReadOnlyList<string> PiiPreviousKeys(string currentKey, string? previousEnv, string? envKey, string? configKey)

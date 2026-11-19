@@ -33,7 +33,7 @@ public class EncryptedColumnConverter : ValueConverter<string?, string?>
         _configured = true;
     }
 
-    /// <summary>รอบ 273 (บั๊ก production: เลขผู้เสียภาษีพนักงานในไฟล์ ภ.ง.ด.1/1ก ยาว 5–14 หลัก · 50 ทวิ ภ.ง.ด.1ก ได้ 7 หลัก หลังผู้ใช้ตั้ง <c>ENCRYPTION_KEY</c>) —
+    /// <summary>รอบ 274 (บั๊ก production: เลขผู้เสียภาษีพนักงานในไฟล์ ภ.ง.ด.1/1ก ยาว 5–14 หลัก · 50 ทวิ ภ.ง.ด.1ก ได้ 7 หลัก หลังผู้ใช้ตั้ง <c>ENCRYPTION_KEY</c>) —
     /// <b>คีย์เดิมที่ใช้ถอดอย่างเดียว</b> (ไม่ใช้เข้ารหัส) จาก <see cref="EncryptionKeyResolver.PiiPreviousKeys"/> ·
     /// เดิมถอดด้วยคีย์ปัจจุบันตัวเดียว ⇒ แถวที่เข้ารหัสด้วย dev key/คีย์ config เดิมก่อนตั้งคีย์ใหม่ถอดไม่ออก ⇒ <see cref="DecryptOnRead"/> คืน ciphertext ทั้งก้อน ⇒
     /// ตัวตัดเลข (<see cref="ThaiTaxId.Normalize"/>) เก็บเฉพาะตัวเลขในข้อความ base64 = เลขสุ่มความยาวสุ่มลงไฟล์ยื่นสรรพากร ·
@@ -92,7 +92,7 @@ public class EncryptedColumnConverter : ValueConverter<string?, string?>
         return EncryptionHelper.Encrypt(value, _key);
     }
 
-    /// <summary>มีคำนำหน้า ⇒ ถอดด้วยคีย์ปัจจุบัน แล้วคีย์เดิม (รอบ 273) · ถอดไม่ออกทุกคีย์ = คืนค่าเดิม (ผู้ดูแลเห็น enc1:… — ไม่ล้มทั้งแถว ·
+    /// <summary>มีคำนำหน้า ⇒ ถอดด้วยคีย์ปัจจุบัน แล้วคีย์เดิม (รอบ 274) · ถอดไม่ออกทุกคีย์ = คืนค่าเดิม (ผู้ดูแลเห็น enc1:… — ไม่ล้มทั้งแถว ·
     /// <b>ผู้อ่านเลขประจำตัวต้องผ่าน <see cref="EmployeeTaxIdentity.Inspect"/> ซึ่งปฏิเสธค่า enc1:… ไม่ตัดเอาแต่ตัวเลข</b>) ·
     /// ไม่มีคำนำหน้าแต่ดูเหมือน ciphertext รุ่นก่อนรอบ 231 ⇒ ลองถอดชุดเดียวกัน (ได้ = ciphertext เก่า · บันทึกครั้งถัดไปจะได้คำนำหน้า) ·
     /// อื่น ๆ = plaintext เก่า pass-through (รูปแบบเดียวกับ <c>SecretProtector.Inspect</c>)</summary>

@@ -158,7 +158,7 @@ public static class Pnd1FileFormat
         var condition = r.Condition is 1 or 2 or 3 ? r.Condition : 1;
         if (r.Category is < 1 or > CategoryCount)
             throw new ArgumentOutOfRangeException(nameof(r), r.Category, "ประเภทเงินได้ ภ.ง.ด.1 มี 1–5");
-        // รอบ 273 (ชั้นสุดท้าย): ไฟล์ยื่นห้ามมีเลขผู้มีเงินได้ที่ไม่ใช่ 13 หลัก + mod-11 — ตัวโหลด (Pnd1FilingData) กันแถวพร้อมเหตุไว้แล้ว ·
+        // รอบ 274 (ชั้นสุดท้าย): ไฟล์ยื่นห้ามมีเลขผู้มีเงินได้ที่ไม่ใช่ 13 หลัก + mod-11 — ตัวโหลด (Pnd1FilingData) กันแถวพร้อมเหตุไว้แล้ว ·
         // ถ้ามาถึงตรงนี้ได้ = ผู้เรียกข้ามตัวโหลด ⇒ ล้มดัง ไม่ใช่เขียนเลขผิด (เดิม "คงค่าเดิม" ⇒ ตัวเลขที่ตัดจาก ciphertext ลงช่อง 5)
         if (!forReview && Digits(r.PayeeTaxId) is { Length: > 0 } payeeDigits && !ThaiTaxId.IsValid(payeeDigits))
             throw new Accounting.Helpers.BusinessRuleException(
@@ -655,7 +655,7 @@ public static class Pnd1FileFormat
     private static string Digits(string? raw) => ThaiTaxId.Normalize(raw);
 
     /// <summary>ช่อง * ที่ว่าง ⇒ เลข 0 เต็มความยาว (ข้อ 5 ของสเปก) · มีค่าแต่ผิดรูป ⇒ คงค่าเดิม (ไม่เติมให้ครบ = ไม่แต่งเลข) —
-    /// รอบ 273: ช่อง 5 ที่ผิดรูปไม่ถึงตรงนี้ในไฟล์ยื่น (<see cref="FieldsCore"/> ล้มก่อน) · เหลือเฉพาะรายงานตรวจทาน</summary>
+    /// รอบ 274: ช่อง 5 ที่ผิดรูปไม่ถึงตรงนี้ในไฟล์ยื่น (<see cref="FieldsCore"/> ล้มก่อน) · เหลือเฉพาะรายงานตรวจทาน</summary>
     private static string ZeroFillIfEmpty(string digits, int length) => digits.Length == 0 ? new string('0', length) : digits;
 
     private static string Fit(string s, int length) => s.Length <= length ? s : s[..length].TrimEnd();

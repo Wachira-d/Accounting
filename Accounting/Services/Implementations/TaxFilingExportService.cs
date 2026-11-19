@@ -108,7 +108,7 @@ public class TaxFilingExportService : ITaxFilingExportService
         var period = annual ? $"{year}" : $"{year}{month!.Value:D2}";
         var periodText = annual ? $"ปี {year}" : $"เดือน {month!.Value}/{year}";
         if (data.Rows.Count == 0 && data.BlockedRows.Count > 0)
-            // รอบ 273: ทุกแถวถูกกันเพราะเลขประจำตัวใช้ไม่ได้ — บอกเหตุรายแถว (ไม่ใช่ "ไม่มีรายการ")
+            // รอบ 274: ทุกแถวถูกกันเพราะเลขประจำตัวใช้ไม่ได้ — บอกเหตุรายแถว (ไม่ใช่ "ไม่มีรายการ")
             throw new BusinessRuleException(
                 $"{formName} {periodText}: สร้างไฟล์ไม่ได้ — " + string.Join("\n", data.Notes), "RD-PND1-PAYEE-TAXID", 422);
         if (data.Rows.Count == 0)
@@ -595,7 +595,7 @@ public class TaxFilingExportService : ITaxFilingExportService
             rowNo++;
             var emp = d.Employee;
             var title = Accounting.Helpers.ThaiTitleHelper.NormalizeForSso(emp.TitleTh, emp.Gender);
-            var citizenId = Accounting.Helpers.ThaiTaxId.Normalize(Accounting.Helpers.SsoInsuredNumber.CitizenIdForFile(emp.CitizenId));   // รอบ 273: enc1 ⇒ ว่าง
+            var citizenId = Accounting.Helpers.ThaiTaxId.Normalize(Accounting.Helpers.SsoInsuredNumber.CitizenIdForFile(emp.CitizenId));   // รอบ 274: enc1 ⇒ ว่าง
             var firstName = (emp.FirstNameTh ?? "").Trim();
             var lastName = (emp.LastNameTh ?? "").Trim();
 
@@ -913,7 +913,7 @@ public class TaxFilingExportService : ITaxFilingExportService
             .Where(x => x.YtdGross > 0)
             .OrderBy(x => x.Employee.EmployeeCode)
             .ToList();
-        // รอบ 273: เลขประจำตัวถอดรหัสไม่ได้/ไม่ถูกต้อง ⇒ กันแถวออก (ห้ามเขียนตัวเลขที่ตัดจาก ciphertext ลงแบบ) + บอกรายแถวในสรุป ·
+        // รอบ 274: เลขประจำตัวถอดรหัสไม่ได้/ไม่ถูกต้อง ⇒ กันแถวออก (ห้ามเขียนตัวเลขที่ตัดจาก ciphertext ลงแบบ) + บอกรายแถวในสรุป ·
         // ไม่มีเลขเลย ⇒ คงพฤติกรรมเดิม (ช่องว่าง)
         var pnd91Blocked = new List<string>();
         byEmployee = byEmployee.Where(x =>

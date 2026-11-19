@@ -227,7 +227,7 @@ public class Pnd1FileFormatTests
     {
         var rows = new[]
         {
-            Salary() with { PayeeTaxId = "0105561012346" },   // เลขขึ้นต้น 0 ต้องไม่หาย (รอบ 273: เลขที่ผ่าน mod-11 — เลข checksum ผิดถูกกันจากไฟล์ยื่นแล้ว)
+            Salary() with { PayeeTaxId = "0105561012346" },   // เลขขึ้นต้น 0 ต้องไม่หาย (รอบ 274: เลขที่ผ่าน mod-11 — เลข checksum ผิดถูกกันจากไฟล์ยื่นแล้ว)
             Salary("WHT-1", 20000m, 600m) with { Category = Pnd1FileFormat.Section40_2Resident, TaxRate = 3m },
         };
         var bytes = Pnd1FileFormat.BuildXlsx(rows, Sep2026);

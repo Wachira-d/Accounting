@@ -102,7 +102,7 @@ RULES = [
          before=[("EmployeeTaxIdentity.Inspect(", "payeeTaxId == null")],
          forbid=["string.IsNullOrWhiteSpace(emp.TaxId)", "string.IsNullOrEmpty(emp.TaxId)", "emp.TaxId == null",
                  "ThaiTaxId.Normalize(emp.", "EmployeeTaxIdentity.Resolve("],
-         why="D-01 + รอบ 273: ด่าน 50 ทวิรายเดือนต้องใช้ตัวตรวจกลาง (TaxId → เลขบัตร · 13 หลัก + mod-11 · enc1 ที่ถอดไม่ออก = ข้ามพร้อมเหตุ) "
+         why="D-01 + รอบ 274: ด่าน 50 ทวิรายเดือนต้องใช้ตัวตรวจกลาง (TaxId → เลขบัตร · 13 หลัก + mod-11 · enc1 ที่ถอดไม่ออก = ข้ามพร้อมเหตุ) "
              "— เดิมตัดตัวเลขจาก ciphertext แล้วสร้าง Contact ด้วยเลข 5–14 หลัก"),
     dict(file=POS, method="CompleteOrderAsync",
          call_args=[("CreateSalesJournalEntryAsync(", "saleCogs")],
@@ -12222,7 +12222,7 @@ RULES += [
          must=["PassThrough.ContainsKey(", "EncryptionHelper.Encrypt("],
          forbid=["LooksLikeLegacyCiphertext(", "FromBase64String(", "if (EncryptionHelper.IsEncrypted(value)) return value;"],
          why="รอบ 231: คอลัมน์ PII เข้ารหัสเสมอ — ปล่อยผ่านเฉพาะค่า enc1 ที่ DecryptOnRead อ่านมาแล้วถอดไม่ออก (S2: 'มีคำนำหน้าแล้วข้าม' = oracle)"),
-    dict(file="Helpers/EncryptedColumnConverter.cs", method="Inspect",   # รอบ 273: ตัวตัดสินย้ายจาก DecryptOnRead ไป Inspect (pure · คีย์เดิมด้วย)
+    dict(file="Helpers/EncryptedColumnConverter.cs", method="Inspect",   # รอบ 274: ตัวตัดสินย้ายจาก DecryptOnRead ไป Inspect (pure · คีย์เดิมด้วย)
          must=["EncryptionHelper.IsEncrypted(", "EncryptionHelper.LooksLikeLegacyCiphertext(", "PiiCipherState.Undecryptable"],
          why="รอบ 231/273: อ่านแถว PII รุ่นก่อน (ไม่มีคำนำหน้า) ต้องลองถอดก่อนปล่อยผ่าน · มีคำนำหน้าถอดไม่ออกทุกคีย์ = Undecryptable (ไม่ใช่ plaintext)"),
     dict(file="Helpers/EncryptedColumnConverter.cs", method="DecryptOnRead",
@@ -21239,6 +21239,43 @@ REVIEWER_CASES += [
     ("R272-12", "ApplyAsync", "if (a.StaffUserId == null && !verdict.Ok)", "if (a.StaffUserId == null\n                && !verdict.Ok)", False),
 ]
 
+# ── รอบ 273: ใบเสร็จรับชำระที่ไม่ถือ VAT — "ยอดรับชำระ" + บรรทัดอ้างอิงใบต้นทาง แทน "ยอดรวมก่อน VAT 749,000 · VAT 0.00" (ผู้ใช้รายงาน 2026-11-19) ──
+_R273_WHY = "รอบ 273 (ใบเสร็จรับชำระ REC ของ TIV 700k+VAT 49k พิมพ์ยอดก่อน VAT 749k): "
+_R273_RENDER = "Services/Implementations/PdfGenerationService.SettlementTotals.cs"
+_R273_LOADER = "Services/Implementations/SettlementReceiptTotalsLoader.cs"
+RULES += [
+    dict(file=_R273_LOADER, method="ResolveAsync",
+         must=["SettlementReceiptTotals.Decide(", "d.CompanyId == companyId", "doc.SettlementTotals = null"],
+         forbid=["doc.VatAmount != 0m", "doc.IsDeposit ||"],
+         why=_R273_WHY + "ตัวโหลดเดียว · tenant · ตัดสินผ่าน Helpers/SettlementReceiptTotals ตัวเดียว (ห้ามกรองซ้ำเอง = สำเนากติกา)"),
+    dict(file=PDFSVC, method="ResolveServedAsReceiptAsync", must=["SettlementReceiptTotalsLoader.ResolveAsync(db, companyId, doc)"],
+         why=_R273_WHY + "ตัวโหลด transient กลางของทั้งสอง renderer + หัวเอกสารช่องทางอีเมล/LINE"),
+    dict(file=PDFSVC, method="ResolvePrintTotals", must=["doc.SettlementTotals is", "L.TotalAmountReceived"],
+         why=_R273_WHY + "แถวสุดท้าย \"ยอดรับชำระ\" ผ่านตัวตัดสินแถวยอดตัวเดียวของสอง renderer"),
+    dict(file=PDFSVC, method="BuildDocumentHtml",
+         must=["SettlementSubtotalLabel(doc, L)", "AppendSettlementTotalsHtml(sb, doc, L)", "doc.SettlementTotals == null"],
+         why=_R273_WHY + "HTML: ป้ายแถวยอดก่อน VAT/ซ่อน VAT/บรรทัดอ้างอิง จากตัวกลาง"),
+    dict(file="Services/Implementations/PdfGenerationService.DocumentRenderer.cs", method="ComposeSummary",
+         must=["SettlementSubtotalLabel(doc, L)", "ComposeSettlementTotals(col, doc, L)", "doc.SettlementTotals == null"],
+         forbid=["Row(L.TotalSubtotal"],
+         why=_R273_WHY + "QuestPDF: ตัวตัดสินเดียวกับ HTML (สอง renderer ห้าม drift)"),
+    dict(file=_R273_RENDER, method="AppendSettlementTotalsHtml", must=["labels.SettlementTotalsLines(st)", "WebUtility.HtmlEncode(line)"],
+         why=_R273_WHY + "HTML ใช้ข้อความ DocumentLabels ตัวเดียว + หนี HTML (เลขที่เอกสารมาจากผู้ใช้)"),
+    dict(file=_R273_RENDER, method="ComposeSettlementTotals", must=["labels.SettlementTotalsLines(st)"],
+         why=_R273_WHY + "QuestPDF ใช้ข้อความ DocumentLabels ตัวเดียวกับ HTML"),
+    dict(file=DOC, method="GetDocumentAsync",
+         must=["SettlementReceiptTotalsLoader.ResolveAsync(_db, companyId, doc)", "SettlementTotalsLines(settleView)"],
+         why=_R273_WHY + "หน้ารายละเอียดแสดงผลที่เซิร์ฟเวอร์คำนวณ (ตัวโหลด/ข้อความเดียวกับกระดาษ — หน้าเว็บไม่มีสำเนากติกา)"),
+]
+REVIEWER_CASES += [
+    # HTML กลับไปพิมพ์ "ยอดรวมก่อน VAT" ตรง ๆ ⇒ ต้องฟ้อง
+    ("R273-1", "BuildDocumentHtml", "var subtotalLabel = SettlementSubtotalLabel(doc, L);", "var subtotalLabel = L.TotalSubtotal;", True),
+    # QuestPDF ไม่วาดบรรทัดอ้างอิง ⇒ ต้องฟ้อง
+    ("R273-2", "ComposeSummary", "ComposeSettlementTotals(col, doc, L);", "", True),
+    # ตัวโหลดไม่กรองบริษัท ⇒ ต้องฟ้อง
+    ("R273-3", "ResolveAsync", "d.Id == srcId && d.CompanyId == companyId", "d.Id == srcId", True),
+]
+
 
 # ═══ รอบ 272 ชุดแก้ฝ่ายค้าน (erp-review/2026-11-16/review-272.md · H1–H3 · M1–M7 · L1–L8) ═══
 _R272F_WHY = "รอบ 272 ฝ่ายค้าน (review-272): "
@@ -21319,48 +21356,48 @@ def main() -> int:
     return 0
 
 
-# รอบ 273 — เลขผู้เสียภาษีพนักงานผิดจำนวนหลักในไฟล์ ภ.ง.ด.1/1ก/91 และ 50 ทวิ หลังเปลี่ยน ENCRYPTION_KEY:
+# รอบ 274 — เลขผู้เสียภาษีพนักงานผิดจำนวนหลักในไฟล์ ภ.ง.ด.1/1ก/91 และ 50 ทวิ หลังเปลี่ยน ENCRYPTION_KEY:
 # ตัวตรวจกลาง EmployeeTaxIdentity.Inspect (13 หลัก + mod-11 · enc1 ที่ถอดไม่ออก) ต้องอยู่หน้าทุกทางออกที่เขียนเลขลงแบบ/กระดาษ ·
 # converter ต้องลองคีย์เดิม · ไฟล์ยื่นชั้นสุดท้ายห้ามเขียนเลขผิดรูป · กล่อง 13 หลักของ 50 ทวิ (HTML + QuestPDF) จากตัวเดียว
-_R273_WHY = "รอบ 273 (ห้ามเขียนเลขที่ตัดจาก ciphertext ลงแบบ ภ.ง.ด./50 ทวิ): "
+_R274_WHY = "รอบ 274 (ห้ามเขียนเลขที่ตัดจาก ciphertext ลงแบบ ภ.ง.ด./50 ทวิ): "
 RULES += [
     dict(file="Helpers/EncryptedColumnConverter.cs", method="DecryptOnRead",
          must=["Inspect(value, _key, _previousKeys)"],
          forbid=["EncryptionHelper.Decrypt(value, _key)"],
-         why=_R273_WHY + "ฝั่งอ่านของ EF ลองคีย์ปัจจุบันแล้วคีย์เดิม ผ่านตัวตัดสินเดียว (Inspect) — เดิมคีย์เดียว ⇒ แถวคีย์เดิมคืน ciphertext"),
+         why=_R274_WHY + "ฝั่งอ่านของ EF ลองคีย์ปัจจุบันแล้วคีย์เดิม ผ่านตัวตัดสินเดียว (Inspect) — เดิมคีย์เดียว ⇒ แถวคีย์เดิมคืน ciphertext"),
     dict(file="Helpers/Pnd1FilingData.cs", method="Build",
          must=["EmployeeTaxIdentity.Inspect(e.TaxId, e.CitizenId)", "EmployeeTaxIdentity.InspectValue(contact?.TaxId)", "blocked.Add("],
          before=[("BlockEmployee(d.Employee", "PayrollRow(d.Employee"), ("BlockEmployee(g.Emp", "PayrollRow(g.Emp")],
          forbid=["ThaiTaxId.Normalize(contact?.TaxId)"],
-         why=_R273_WHY + "ตัวโหลดเดียวของไฟล์ ภ.ง.ด.1/1ก กันแถวที่เลขใช้ไม่ได้พร้อมเหตุก่อนประกอบแถว"),
+         why=_R274_WHY + "ตัวโหลดเดียวของไฟล์ ภ.ง.ด.1/1ก กันแถวที่เลขใช้ไม่ได้พร้อมเหตุก่อนประกอบแถว"),
     dict(file="Helpers/Pnd1FileFormat.cs", method="FieldsCore",
          must=["ThaiTaxId.IsValid(payeeDigits)"],
          must_re=[r"!\s*ThaiTaxId\.IsValid\(payeeDigits\)\s*\)\s*throw\b"],
-         why=_R273_WHY + "ชั้นสุดท้ายของไฟล์ยื่น: เลขผู้มีเงินได้ผิดรูปที่ข้ามตัวโหลดมา = ล้มดัง ไม่เขียน"),
+         why=_R274_WHY + "ชั้นสุดท้ายของไฟล์ยื่น: เลขผู้มีเงินได้ผิดรูปที่ข้ามตัวโหลดมา = ล้มดัง ไม่เขียน"),
     dict(file="Services/Implementations/TaxFilingExportService.cs", method="ExportPnd91Async",
          must=["EmployeeTaxIdentity.Inspect(x.Employee.TaxId, x.Employee.CitizenId)", "pnd91Blocked.Add("],
          forbid=["EmployeeTaxIdentity.Resolve("],
-         why=_R273_WHY + "ภ.ง.ด.91 กันแถวที่เลขใช้ไม่ได้ + บอกในสรุป"),
+         why=_R274_WHY + "ภ.ง.ด.91 กันแถวที่เลขใช้ไม่ได้ + บอกในสรุป"),
     dict(file="Services/Implementations/TaxService.cs", method="GeneratePnd91Report",
          must=["EmployeeTaxIdentity.Inspect(emp.TaxId, emp.CitizenId)", "TaxPayerId = empIdentity.Value", "badIdentity.Add("],
          forbid=["EmployeeTaxIdentity.Resolve("],
-         why=_R273_WHY + "รายงาน ภ.ง.ด.91 ไม่เก็บเลขที่ใช้ไม่ได้ + Notes บอกรายคน"),
+         why=_R274_WHY + "รายงาน ภ.ง.ด.91 ไม่เก็บเลขที่ใช้ไม่ได้ + Notes บอกรายคน"),
     dict(file=PAYROLL, method="GenerateAnnualEmployeeWhtCertsAsync",
          must=["EmployeeTaxIdentity.Inspect(emp.TaxId, emp.CitizenId)", "annualBlocked.Add("],
          before=[("EmployeeTaxIdentity.Inspect(", "BuildEmployeeAnnualCertPdfAsync(")],
-         why=_R273_WHY + "50 ทวิ ภ.ง.ด.1ก ตรวจเลขก่อนพิมพ์ — ใบเดียว: ปฏิเสธพร้อมเหตุ · หลายใบ: ข้าม + ไฟล์เหตุใน zip"),
+         why=_R274_WHY + "50 ทวิ ภ.ง.ด.1ก ตรวจเลขก่อนพิมพ์ — ใบเดียว: ปฏิเสธพร้อมเหตุ · หลายใบ: ข้าม + ไฟล์เหตุใน zip"),
     dict(file="Services/Implementations/PdfGenerationService.cs", method="GenerateWithholdingTaxCertPdfAsync",
          must=["WhtCertFormText.PayeeTaxIdProblem("],
          before=[("WhtCertFormText.PayeeTaxIdProblem(", "BuildWhtCertPdf(")],
-         why=_R273_WHY + "50 ทวิ ที่บันทึกแล้ว: ผู้รับที่เลขใช้ไม่ได้ = ไม่ออกไฟล์ + ทางแก้ (สร้างเอกสารใหม่)"),
+         why=_R274_WHY + "50 ทวิ ที่บันทึกแล้ว: ผู้รับที่เลขใช้ไม่ได้ = ไม่ออกไฟล์ + ทางแก้ (สร้างเอกสารใหม่)"),
     dict(file="Services/Implementations/PdfGenerationService.cs", method="BuildWithholdingTaxCertHtml",
          must=["WhtCertFormText.TaxIdBoxDigits("],
          forbid=["ThaiTaxId.Normalize(taxId).PadRight("],
-         why=_R273_WHY + "กล่อง 13 หลัก HTML จากตัวเดียวกับ QuestPDF — เลขใช้ไม่ได้ = กล่องว่าง"),
+         why=_R274_WHY + "กล่อง 13 หลัก HTML จากตัวเดียวกับ QuestPDF — เลขใช้ไม่ได้ = กล่องว่าง"),
     dict(file="Services/Implementations/PdfGenerationService.WhtCert.cs", method="DrawTinBoxes",
          must=["WhtCertFormText.TaxIdBoxDigits("],
          forbid=["ThaiTaxId.Normalize(taxId).PadRight("],
-         why=_R273_WHY + "กล่อง 13 หลัก QuestPDF จากตัวเดียวกับ HTML"),
+         why=_R274_WHY + "กล่อง 13 หลัก QuestPDF จากตัวเดียวกับ HTML"),
 ]
 
 

@@ -6,18 +6,18 @@ using Xunit;
 namespace Accounting.Tests;
 
 /// <summary>
-/// รอบ 273 — บั๊ก production: ไฟล์ ภ.ง.ด.1/1ก ช่อง "เลขประจำตัวผู้เสียภาษี" ของพนักงานยาว 5/7/8/10/14 หลัก (บางแถว 13 หลักที่ไม่ใช่เลขจริง) และ
+/// รอบ 274 — บั๊ก production: ไฟล์ ภ.ง.ด.1/1ก ช่อง "เลขประจำตัวผู้เสียภาษี" ของพนักงานยาว 5/7/8/10/14 หลัก (บางแถว 13 หลักที่ไม่ใช่เลขจริง) และ
 /// 50 ทวิ ภ.ง.ด.1ก พิมพ์กล่อง 13 หลักได้ 7 ตัว — หลังผู้ใช้ตั้ง <c>ENCRYPTION_KEY</c>
 ///
 /// <para><b>สาเหตุ:</b> (1) <c>EncryptedColumnConverter</c> ถอดด้วยคีย์ปัจจุบันตัวเดียว ⇒ แถวที่เข้ารหัสด้วย dev key (ก่อนตั้งคีย์) ถอดไม่ออก ⇒ คืน ciphertext
 /// <c>enc1:…</c> ทั้งก้อน · (2) <c>EmployeeTaxIdentity.Resolve</c> "เหลือเฉพาะตัวเลข" ⇒ ตัวเลขที่ปนใน base64 กลายเป็นเลขผู้เสียภาษี ·
 /// (3) ไฟล์ยื่น "คงค่าที่ผิดรูปไว้" + 50 ทวิ เติมกล่องเท่าที่มีตัวเลข · เทสต์ชุดนี้ reproduce ก่อน แล้วล็อกการแก้ทั้งสามชั้น + การหมุนคีย์สองทิศ</para>
 /// </summary>
-public class PiiKeyRotationRound273Tests
+public class PiiKeyRotationRound274Tests
 {
     // ค่าทดสอบเท่านั้น
-    private const string OldKey = "r273-old-key-0123456789";
-    private const string NewKey = "r273-new-key-9876543210";
+    private const string OldKey = "r274-old-key-0123456789";
+    private const string NewKey = "r274-new-key-9876543210";
     private const string ValidId = "1101700001237";      // ผ่าน mod-11
     private const string BadChecksum = "1101700001238";  // 13 หลัก หลักสุดท้ายผิด
     private static readonly Regex Thirteen = new("^[0-9]{13}$");

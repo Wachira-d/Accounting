@@ -55,14 +55,14 @@ public static class Pnd1FilingData
         bool HasPayrollRuns,
         IReadOnlyList<BlockedRow>? Blocked = null)
     {
-        /// <summary>รอบ 273: แถวที่<b>ไม่ลงไฟล์</b>เพราะเลขประจำตัวถอดรหัสไม่ได้/ไม่ถูกต้อง (ห้ามเขียนเลขผิดลงแบบ) — ยอดภาษีของแถวเหล่านี้ไม่อยู่ในไฟล์</summary>
+        /// <summary>รอบ 274: แถวที่<b>ไม่ลงไฟล์</b>เพราะเลขประจำตัวถอดรหัสไม่ได้/ไม่ถูกต้อง (ห้ามเขียนเลขผิดลงแบบ) — ยอดภาษีของแถวเหล่านี้ไม่อยู่ในไฟล์</summary>
         public IReadOnlyList<BlockedRow> BlockedRows => Blocked ?? Array.Empty<BlockedRow>();
         public int CertRowCount => CertRows.Count;
         public decimal TotalIncome => Rows.Sum(r => Pnd1FileFormat.Money(r.IncomeAmount));
         public decimal TotalTax => Rows.Sum(r => Pnd1FileFormat.Money(r.TaxAmount));
     }
 
-    /// <summary>รอบ 273: แถวที่ถูกกันออกจากไฟล์ — <paramref name="SourceRef"/> = รหัสพนักงาน/เลขที่ใบ · <paramref name="MaskedTaxId"/> ปิดบังเสมอ ·
+    /// <summary>รอบ 274: แถวที่ถูกกันออกจากไฟล์ — <paramref name="SourceRef"/> = รหัสพนักงาน/เลขที่ใบ · <paramref name="MaskedTaxId"/> ปิดบังเสมอ ·
     /// <paramref name="Reason"/> = เหตุ + ทางไปต่อ (<see cref="EmployeeTaxIdentity.Result.Reason"/>)</summary>
     public sealed record BlockedRow(string SourceRef, string? Name, string? MaskedTaxId, TaxIdProblem Problem, string Reason, decimal TaxAmount);
 
@@ -184,7 +184,7 @@ public static class Pnd1FilingData
             if (cond != 1) conditionByTaxId[tid] = cond;
         }
         var payrollRows = new List<Pnd1FileFormat.Row>();
-        // รอบ 273: เลขประจำตัวถอดรหัสไม่ได้/ผิดรูป/checksum ไม่ผ่าน ⇒ กันแถวออกจากไฟล์พร้อมเหตุ (เดิมเขียนตัวเลขที่ตัดจาก ciphertext ลงช่อง 5)
+        // รอบ 274: เลขประจำตัวถอดรหัสไม่ได้/ผิดรูป/checksum ไม่ผ่าน ⇒ กันแถวออกจากไฟล์พร้อมเหตุ (เดิมเขียนตัวเลขที่ตัดจาก ciphertext ลงช่อง 5)
         var blocked = new List<BlockedRow>();
         bool Blocks(EmployeeTaxIdentity.Result id) => id.Problem is TaxIdProblem.Undecryptable or TaxIdProblem.Invalid;
         bool BlockEmployee(Employee e, decimal tax)
@@ -305,7 +305,7 @@ public static class Pnd1FilingData
         if (noTaxId > 0)
             notes.Add($"⚠️ {noTaxId} รายการไม่มีเลขประจำตัวผู้เสียภาษี (ไฟล์ลงเลข 0 13 หลักตามสเปกช่องที่ 5 — สรรพากรจะไม่รับเป็นเลขของผู้มีเงินได้) — "
                 + "กรอกเลขบัตรประชาชนที่ทะเบียนพนักงาน/ผู้ติดต่อ แล้วสร้างไฟล์ใหม่");
-        // รอบ 273: แถวที่ถูกกัน (เลขถอดรหัสไม่ได้/ไม่ถูกต้อง) — ล้มดังทีละแถว (รหัส/เลขที่ใบ + เลขปิดบัง + เหตุ) · ไม่อยู่ในไฟล์และไม่อยู่ในยอดรวมของไฟล์
+        // รอบ 274: แถวที่ถูกกัน (เลขถอดรหัสไม่ได้/ไม่ถูกต้อง) — ล้มดังทีละแถว (รหัส/เลขที่ใบ + เลขปิดบัง + เหตุ) · ไม่อยู่ในไฟล์และไม่อยู่ในยอดรวมของไฟล์
         if (blocked.Count > 0)
         {
             notes.Add($"⛔ {blocked.Count} รายการไม่ได้ลงไฟล์ (ภาษี {blocked.Sum(b => b.TaxAmount):N2} บาท) เพราะ{EmployeeTaxIdentity.InvalidText}/ถอดรหัสไม่ได้ — "

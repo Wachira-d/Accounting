@@ -9,7 +9,7 @@ using Microsoft.EntityFrameworkCore;
 namespace Accounting.Services.Background;
 
 /// <summary>
-/// รอบ 273 — <b>ย้ายคอลัมน์ PII (EncryptedColumnConverter) ไปคีย์ปัจจุบัน</b> หลังเปลี่ยน <c>ENCRYPTION_KEY</c>
+/// รอบ 274 — <b>ย้ายคอลัมน์ PII (EncryptedColumnConverter) ไปคีย์ปัจจุบัน</b> หลังเปลี่ยน <c>ENCRYPTION_KEY</c>
 ///
 /// <para><b>ที่มา (บั๊ก production):</b> ผู้ใช้ตั้ง <c>ENCRYPTION_KEY</c> หลังมีพนักงานแล้ว ⇒ เลขบัตร/เลขผู้เสียภาษีที่เข้ารหัสด้วย dev key ถอดไม่ออก ⇒
 /// converter คืน ciphertext ⇒ ไฟล์ ภ.ง.ด.1/1ก และ 50 ทวิ ได้ตัวเลขที่ตัดจาก base64 (5–14 หลัก) · ตอนนี้ converter ลองคีย์เดิม

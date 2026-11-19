@@ -2619,7 +2619,7 @@ public partial class TaxService : ITaxService
 
         // Group by employee to summarize annual income
         var employeeGroups = payrollDetails.GroupBy(d => d.EmployeeId);
-        var badIdentity = new List<string>();   // รอบ 273: เลขประจำตัวถอดรหัสไม่ได้/ไม่ถูกต้อง ⇒ ช่องเลขว่าง + แจ้งใน Notes (ไม่ลงตัวเลขที่ตัดจาก ciphertext)
+        var badIdentity = new List<string>();   // รอบ 274: เลขประจำตัวถอดรหัสไม่ได้/ไม่ถูกต้อง ⇒ ช่องเลขว่าง + แจ้งใน Notes (ไม่ลงตัวเลขที่ตัดจาก ciphertext)
         foreach (var group in employeeGroups)
         {
             var emp = group.First().Employee;
