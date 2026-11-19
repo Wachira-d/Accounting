@@ -3280,7 +3280,8 @@ public partial class DocumentService : IDocumentService
             var wantLink = request.WhtLinkCertId.HasValue ? request.WhtLinkCertId : doc.WhtLinkCertId;
             var wantAck = request.WhtLinkAckCodes ?? Accounting.Helpers.WhtCertLinkPlan.ParseAckCodes(doc.WhtLinkAckCodes).ToList();
             var normalized = wantLink is Guid nl && nl != Guid.Empty ? wantLink : null;
-            if (normalized != doc.WhtLinkCertId
+            // ฝ่ายค้าน L4: ล้างความตั้งใจหลังอนุมัติได้ (กลับไปให้ระบบออกใบตอนจ่าย) — ตั้ง/เปลี่ยนเป็นใบอื่นหลังอนุมัติ = ไปทางเปลี่ยนการผูก
+            if (normalized != doc.WhtLinkCertId && normalized != null
                 && doc.Status is not (DocumentStatus.Draft or DocumentStatus.Rejected or DocumentStatus.WaitingApproval))
                 throw new BusinessRuleException(
                     "ใบนี้อนุมัติแล้ว — เปลี่ยน 50 ทวิ ที่ผูกได้ที่หน้ารายละเอียด → \"เปลี่ยน 50 ทวิ ที่ผูก\" (ตรวจเดือนที่ยื่นแล้ว + ยกเลิกใบเดิมให้)",
@@ -11563,6 +11564,12 @@ public partial class DocumentService : IDocumentService
 
         // รอบ 249 สินทรัพย์หลายใบ (ฝ่ายค้าน H1): ใบที่โอนเป็นต้นทุนสินทรัพย์แล้ว — ลบแล้ว JE ต้นทางหาย แต่ JE โอนยังเครดิตผังของใบนี้ ⇒ ผังติดลบ
         var assetCapitalizedDocs = await FixedAssetService.CapitalizedSourceDocumentIdsAsync(_db, companyId, raw.Select(x => x.Id).ToList());
+        // รอบ 271 ฝ่ายค้าน H1: 50 ทวิ ที่มีเลขแล้วของแต่ละใบ (ตัวตัดสินเดียว WhtCertLinkPlan.DeleteAllowed) — ลบถาวรไม่ได้
+        var planIds = raw.Select(x => x.Id).ToList();
+        var numberedCerts = (await _db.WithholdingTaxCerts.IgnoreQueryFilters().AsNoTracking()
+                .Where(w => w.CompanyId == companyId && w.DocumentId != null && planIds.Contains(w.DocumentId!.Value))
+                .Select(w => new { Doc = w.DocumentId!.Value, w.CertificateNumber }).ToListAsync())
+            .Where(w => !Accounting.Helpers.WhtCertLinkPlan.DeleteAllowed(w.CertificateNumber)).ToList();
         var result = new List<Accounting.Helpers.PurgeNodeFacts>(raw.Count);
         foreach (var r in raw)
         {
@@ -11584,6 +11591,7 @@ public partial class DocumentService : IDocumentService
                 PosLinked = posDocs.Contains(r.Id),
                 WhtCreditUsed = whtUsedDocs.Contains(r.Id),
                 AssetCostCapitalized = assetCapitalizedDocs.Contains(r.Id),
+                NumberedWhtCerts = numberedCerts.Where(w => w.Doc == r.Id).Select(w => w.CertificateNumber).OrderBy(x => x).ToList(),
                 ReplacesLiveDocumentId = replaces != null && liveTargets.Contains(replaces.Target) ? replaces.Target : null,
                 ReplacedByPointers = replacedBy.Where(x => x.Target == r.Id).Select(x => x.Id).ToList(),
                 AllocationCounterparts = counterparts,
@@ -11842,11 +11850,18 @@ public partial class DocumentService : IDocumentService
                 documentId, companyId);
 
             // 3. Delete WHT certificates + lines linked to this document
-            var whtIds = await _db.WithholdingTaxCerts
+            // รอบ 271 ฝ่ายค้าน H1: ด่านซ้ำในขั้นลบ (แผนบล็อกไว้แล้ว — กันทางเรียกที่ข้ามแผน) · ใบที่มีเลขแล้วห้ามลบทุกสถานะ (WhtCertLinkPlan.DeleteAllowed)
+            var whtRows = await _db.WithholdingTaxCerts
                 .IgnoreQueryFilters()
                 .Where(w => w.DocumentId == documentId && w.CompanyId == companyId)
-                .Select(w => w.Id)
+                .Select(w => new { w.Id, w.CertificateNumber })
                 .ToListAsync();
+            var numberedWht = whtRows.Where(w => !Accounting.Helpers.WhtCertLinkPlan.DeleteAllowed(w.CertificateNumber)).Select(w => w.CertificateNumber).ToList();
+            if (numberedWht.Count > 0)
+                throw new BusinessRuleException(
+                    $"{doc.DocumentNumber} มี 50 ทวิ ที่มีเลขแล้ว ({string.Join(", ", numberedWht)}) — ลบถาวรไม่ได้ · ยกเลิก (Void) ใบนี้แทน (ระบบยกเลิก 50 ทวิ ให้ เลขคงอยู่)",
+                    Accounting.Helpers.DocumentCascadePurgePolicy.RuleWhtCertNumbered, 409);
+            var whtIds = whtRows.Select(w => w.Id).ToList();
 
             if (whtIds.Any())
             {

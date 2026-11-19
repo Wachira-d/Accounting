@@ -138,6 +138,7 @@ const WhtLink = {
     try {
       const res = await api.linkDocWhtCert(this._ctx.docId, {
         certId: c.candidate.certId, paymentId: this._ctx.paymentId, reason, acknowledgeWarnings: acks,
+        expectedCurrentCertId: c.currentCertId || null,   // ฝ่ายค้าน M6 — ใบที่เห็นบนจอ (เปลี่ยนแล้ว = 409)
       });
       Layout.closeModal('whtLinkModal');
       Layout.toast(res.message || (res.data && res.data.message) || 'ผูกแล้ว', 'success', 7000);

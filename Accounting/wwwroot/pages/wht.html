@@ -1210,13 +1210,19 @@
             <td class="text-right">${Layout.money(d.subTotal)}</td>
             <td class="text-right font-semibold text-danger">${Layout.money(d.withholdingTaxAmount)}</td>
             <td style="white-space:nowrap">
-              ${multi ? '' : `<button class="btn btn-sm btn-primary" onclick="Page.autoGenerate('${d.documentId}')">สร้างใบ</button>`}
+              ${multi ? '' : d.linkIntentCertId
+                ? `<button class="btn btn-sm btn-primary" onclick="Page.linkIntent('${Layout.jsArg(d.documentId)}','${Layout.jsArg(d.linkIntentCertId)}')" title="ผูก ${Layout.esc(d.linkIntentCertNumber || '')} ที่ออกไว้แล้วกับเอกสารนี้ (ไม่สร้างใบใหม่ — กันนับซ้ำ)">ผูก ${Layout.esc(d.linkIntentCertNumber || '')}</button>`
+                : `<button class="btn btn-sm btn-primary" onclick="Page.autoGenerate('${d.documentId}')">สร้างใบ</button>`}
               ${d.reviewReason ? `<button class="btn btn-sm btn-secondary" onclick="Page.openReviewAck('${d.documentId}')" title="จัดการ 50 ทวิ แล้ว (ยกเลิก/ออกใหม่/ยื่นเพิ่มเติม) — บันทึกเหตุผลลงประวัติ">รับทราบ</button>` : ''}
               <button class="btn btn-sm btn-secondary" onclick="Page.dismissPending('${d.documentId}','${Layout.jsArg(d.documentNumber||'')}')" title="ข้ามเอกสารนี้ — จะไม่แสดงในรายการรอออกอีก (ไม่ลบเอกสารต้นทาง)">ข้าม</button>
             </td>
           </tr>`;
           }).join('');
         } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      // รอบ 271 ฝ่ายค้าน M1: ใบที่ตั้งใจผูก — เปิดโมดัลผูก (ทางเข้าเดียว POST document/{id}/wht-link) แทนการสร้างใบใหม่
+      linkIntent(docId, certId) {
+        WhtLink.openForDocument(docId, { presetCertId: certId, onDone: async () => { await this.openPending(); await this.load(); } });
       },
       toggleCheckAll(el) {
         document.querySelectorAll('.pending-check').forEach(cb => cb.checked = el.checked);

@@ -330,4 +330,32 @@ public class WhtCertLinkPlanTests
         Assert.Contains("นำส่งแล้ว", WhtCertVoidGuard.PeriodReason(TaxType.WithholdingTax53, 2026, 11, false, DateTime.UtcNow));
         Assert.Null(WhtCertVoidGuard.PeriodReason(TaxType.WithholdingTax53, 2026, 11, false, null));
     }
+    // ── ฝ่ายค้าน M5: "อาจนับซ้ำ" เจ้าของเดียว WhtCertDuplicateSuspect.IsPeer (ตัวเดียวกับตัวกรอง/การ์ด/ป้าย) ──
+
+    private static WithholdingTaxCert Cert(Guid company, Guid payee, Guid? doc = null, Guid? pay = null, int m = 11, decimal tax = 300m,
+        WithholdingTaxCertStatus st = WithholdingTaxCertStatus.Issued, string? noSource = null)
+        => new() { Id = Guid.NewGuid(), CompanyId = company, PayeeContactId = payee, DocumentId = doc, SourcePaymentId = pay, TaxYear = 2026,
+            TaxMonth = m, TotalTaxAmount = tax, TaxFormType = TaxType.WithholdingTax53, Status = st, NoSourceDocumentReason = noSource };
+
+    [Fact]
+    public void อาจนับซ้ำ_สองทิศ()
+    {
+        var co = Guid.NewGuid();
+        var dupContact = new Contact { Id = PayeeDup, CompanyId = co, TaxId = TaxId, BranchCode = null };
+        var mainContact = new Contact { Id = Payee, CompanyId = co, TaxId = TaxId, BranchCode = "00000" };
+        var otherBranch = new Contact { Id = Guid.NewGuid(), CompanyId = co, TaxId = TaxId, BranchCode = "00001" };
+        var peer = WhtCertDuplicateSuspect.IsPeer(new[] { dupContact, mainContact, otherBranch }.AsQueryable()).Compile();
+        var linked = Cert(co, Payee, doc: Pv);
+        Assert.True(peer(Cert(co, Payee), linked));                          // (ก) ใบมือ ↔ ใบผูก
+        Assert.True(peer(Cert(co, PayeeDup), linked));                       // ผู้ติดต่อซ้ำ เลขภาษี+สาขาเดียวกัน
+        Assert.False(peer(Cert(co, otherBranch.Id), linked));                // คนละสาขา
+        Assert.True(peer(Cert(co, Payee, m: 10), linked));                   // เดือนติดกัน
+        Assert.False(peer(Cert(co, Payee, m: 8), linked));                   // ห่างเกิน 1 เดือน
+        Assert.False(peer(Cert(co, Payee, noSource: "จ่ายนอกระบบ"), linked)); // D5 ปิดป้าย
+        Assert.True(peer(Cert(co, Payee, doc: Pv, tax: 10m), linked));       // (ข) สองใบบนการจ่ายเดียวกัน (ยอดใดก็ได้)
+        Assert.False(peer(Cert(co, Payee, doc: OtherDoc), linked));          // การจ่ายคนละใบสำคัญจ่าย ⇒ ไม่ขึ้น
+        Assert.False(peer(Cert(co, Payee, doc: Pv, pay: Guid.NewGuid()), linked));   // คนละงวดจ่าย
+        Assert.False(peer(Cert(co, Payee), Cert(co, Payee, doc: Pv, st: WithholdingTaxCertStatus.Voided)));   // ใบยกเลิกไม่นับ
+    }
 }
+
