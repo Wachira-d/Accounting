@@ -6364,6 +6364,17 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
 ล็อกจุดเรียก: `tools/required_call_site_check.py` R269 (+ ฝ่ายค้าน R269a–l) · เทสต์: TEST_PLAN P269 · ไม่แก้ (เหตุผลใน review-269 §การตอบ): ใบกำกับ OCR ที่อ่าน VAT ไม่ได้ (บรรทัดสรุป VatRate 0) ยังเป็น "ใบกำกับ 0%"
 _Last verified against codebase: 2026-11-13 · commit 76130af2 (รอบแรก) · รอบแก้ฝ่ายค้าน 0dfaded9_
 
+#### 5.3a-0 ยอดหัว ภ.ง.ด. = ตัวตรวจก่อนยื่น = ไฟล์ยื่น (รอบ 273)
+
+> **ที่มา**: ผู้ใช้กด "ยื่นภาษี" ภ.ง.ด.53 ต.ค. 2569 (ร่าง · ยอด 178.65) แล้วตัวตรวจฟ้อง `RD-WHT-002 … (357.30) ไม่เท่ากับ TotalTaxWithheld (178.65)`.
+> ตัวตรวจ (`TaxComplianceChecker.CheckPnd3_53`/`CheckPnd1`) บวก **ทุกแถว** ขณะที่ยอดหัวนับเฉพาะแถวที่ยื่นจริง ⇒ แถว `[สรุป] <ผู้ถูกหัก>`
+> (เกิดเมื่อผู้ถูกหักรายเดียวมี ≥ 2 แถวรายการ เช่น 50 ทวิ ใบเดียวสองประเภทเงินได้) ถูกนับซ้ำ = ×2 · แถวติ๊กออก (50 ทวิ ร่าง · เอกสารที่ยังไม่ออกใบ) ก็ถูกบวก.
+> ข้อมูลที่เก็บไว้ถูกอยู่แล้ว (ยอดหัว/แถว/50 ทวิ ไม่ซ้ำ) — ไม่ต้อง migration และไม่ต้องกด "สร้างใหม่" · กด "ยื่นภาษี" ซ้ำหลัง deploy ผ่าน
+
+ตัวตั้งตัวเดียว `Helpers/WhtReportTotals` (`IsSummary` · (ภายใน) นับ = ไม่ติ๊กออก และไม่ใช่ `[สรุป]` · `CountedLines` · `Of` · `Apply`):
+ยอดหัวตอน generate (`GenerateWhtReport`) · ตอนติ๊ก/บันทึก (else-branch ของการคำนวณยอด + ภ.พ.36) · `RecalcWhtTotals` · ตัวตรวจ RD-WHT-002/005 + RD-PND1-002 ·
+แถวไฟล์ e-Filing/ใบแนบ (`PndDetailLines`) — ล็อกจุดเรียกด้วย `required_call_site_check` กติกา `_R273_*` · RD-WHT-005 (ไม่มีเลขผู้เสียภาษี) นับเฉพาะแถวที่ยื่นจริง
+
 #### 5.3a-1 ฐานยอด ภ.ง.ด.3/53/54 ของหน้า "นำส่งภาษี" + ปฏิทิน (แก้ 2026-09-16)
 
 > **ที่มา**: ผู้ใช้พบว่า ภ.ง.ด.53 งวด ก.ค. หน้า "รายงานภาษี" ถูกต้อง แต่หน้า
@@ -9754,6 +9765,7 @@ _Last verified against codebase: 2026-11-16 (รอบ 271 ชุดแก้ฝ
 ยังรอเจ้าของ: สลิปจริงธนาคารอื่น/สปส./ใบแจ้งชำระของกรม (เพิ่มแถวตาราง) · ผู้ให้บริการอีเมลขาเข้า (adapter) · backlog: สลิปเดียวหลายแบบ · ยื่นเพิ่มเติม · ค่าธรรมเนียมธนาคาร · อ่านใบแจ้งชำระ PDF อัตโนมัติ
 
 _Last verified against codebase: 2026-11-16 (รอบ 272 แพ็ก P1–P6 — §TAX272: GovPaymentSlip (98037@KBank) · TaxSlipMatch (D-2/D-3) · ProviderConsent (ทาง B) · ใบขอชำระ · RemitAsync ตัวเดียว · ตรวจทานหลังนำส่ง · อีเมลขาเข้าหลัง interface — build + test + Db test ผ่านในเครื่องนี้ (PostgreSQL) — commit cd71dee0)_
+_Last verified against codebase: 2026-11-19 (รอบ 273 — §5.3a-0 ตัวตรวจก่อนยื่น ภ.ง.ด. RD-WHT-002 นับแถว [สรุป]/ติ๊กออกซ้ำ ⇒ ×2: ตัวตั้งเดียว `Helpers/WhtReportTotals` ใช้ร่วมยอดหัว/ตัวตรวจ/ไฟล์ยื่น · ข้อมูลเดิมถูกอยู่แล้ว ไม่ต้อง migration · Db `WhtPreCheckDoubleCountDbTests` + pure `WhtReportTotalsTests` · กติกา `_R273_*` — commit c488a356)_
 _Last verified against codebase: 2026-11-19 (รอบ 272 ชุดแก้ฝ่ายค้าน — §TAX272: H1 ExpectedAmount · H2 OCR ไม่พร้อม ⇒ คิว · H3 alignment อีเมล · M1–M7 · L1–L8 — build + test + Db test ผ่านในเครื่องนี้ (PostgreSQL) — commit 7c5a3cb4)_
 
 _Last verified against codebase: 2026-11-19 (รอบ 273 — §3.4b-273: ใบเสร็จรับชำระที่ไม่ถือ VAT ของใบต้นทางพิมพ์ "ยอดรับชำระ" + บรรทัดอ้างอิงใบกำกับ (มูลค่า · VAT · รวม) แทน "ยอดรวมก่อน VAT / VAT 0.00" — ตัวตัดสิน `Helpers/SettlementReceiptTotals` · HTML + QuestPDF + หน้ารายละเอียด · แสดงผลอย่างเดียว ไม่มี migration · กติการอบ 269 คงเดิม — build + test + Db test ผ่านในเครื่องนี้ (PostgreSQL) — commit f929120b)_
