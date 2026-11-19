@@ -287,6 +287,9 @@ public sealed class DocumentLabels
         var inv = System.Globalization.CultureInfo.InvariantCulture;
         string M(decimal x) => x.ToString("N2", inv);
         var lines = new List<string>();
+        // L4: ใบเสร็จรุ่นเก่าที่แปลงจากใบวางบิลรวมใบแจ้งหนี้ — บอกใบวางบิลก่อน แล้วอ้างใบในบิลทีละใบ
+        if (v.ViaBillingNote is { } bn)
+            lines.Add(string.Format(this["settlement_via_billing_note"], bn.Number, Date(bn.Date)));
         foreach (var s in v.References)
         {
             var srcLabel = s.Type switch
@@ -295,12 +298,35 @@ public sealed class DocumentLabels
                 Accounting.Models.Enums.DocumentType.DebitNote => this["settlement_src_debit_note"],
                 _ => this["settlement_src_invoice"],
             };
-            var wht = s.WithholdingTaxAmount > 0m ? string.Format(this["settlement_ref_wht"], M(s.WithholdingTaxAmount)) : "";
+            // L1: ภาษีหักทั้งใบไม่พิมพ์ที่นี่ (งวดผ่อนจะบวกไม่ลง) — พิมพ์ของการรับครั้งนี้ข้างล่าง
             lines.Add(string.Format(this["settlement_ref_line"], srcLabel, s.Number, Date(s.Date),
-                M(s.SubTotal), M(s.VatAmount), M(Accounting.Helpers.SettlementReceiptTotals.GrossOf(s)), wht));
+                M(s.SubTotal), M(s.VatAmount), M(Accounting.Helpers.SettlementReceiptTotals.GrossOf(s))));
         }
-        if (v.IsPartial) lines.Add(string.Format(this["settlement_partial_note"], M(v.SourcesTotal)));
-        lines.Add(this["settlement_vat_included_note"]);
+        // MED-1: ใบลดหนี้ที่ลดหนี้ก่อนรับครั้งนี้ + การรับก่อนหน้า (ให้ยอดคงค้างก่อนรับบวกลบลงจากยอดตามใบ)
+        foreach (var cn in v.PriorCreditNotes ?? Array.Empty<Accounting.Helpers.SettlementReceiptTotals.LedgerEvent>())
+            lines.Add(string.Format(this["settlement_cn_line"], cn.Number ?? "", Date(cn.Date), M(cn.Amount)));
+        if (v.PriorSettled > 0.005m) lines.Add(string.Format(this["settlement_prior_paid"], M(v.PriorSettled)));
+        if (v.This is { } me)
+        {
+            if (Math.Abs(me.FeeAmount) >= 0.005m || Math.Abs(me.AdjustmentAmount) >= 0.005m)
+            {
+                var extra = (Math.Abs(me.FeeAmount) >= 0.005m ? string.Format(this["settlement_this_fee"], M(me.FeeAmount)) : "")
+                    + (Math.Abs(me.AdjustmentAmount) >= 0.005m ? string.Format(this["settlement_this_adjust"], M(me.AdjustmentAmount)) : "");
+                lines.Add(string.Format(this["settlement_this_breakdown"], M(me.Settled), M(me.CashAmount), extra));
+            }
+            // ใบที่มีแถวภาษีหักบนยอดอยู่แล้ว (ShowSettledGrossRow) ไม่พิมพ์ซ้ำ
+            if (me.WithholdingTaxAmount > 0.005m && !v.ShowSettledGrossRow)
+                lines.Add(string.Format(this["settlement_payment_wht"], M(me.WithholdingTaxAmount)));
+        }
+        if (v.BalanceKnown)
+        {
+            if (v.IsPartial) lines.Add(string.Format(this["settlement_partial_balance"], M(v.BalanceBefore), M(v.BalanceAfter)));
+            else if (v.BalanceBefore < v.SourcesTotal - 0.005m) lines.Add(string.Format(this["settlement_full_balance"], M(v.BalanceBefore)));
+        }
+        else if (v.IsPartial) lines.Add(string.Format(this["settlement_partial_note"], M(v.SourcesTotal)));
+        // L2: ใบแจ้งหนี้ (ไม่ใช่ใบกำกับ) ⇒ ห้ามบอกว่า VAT "เรียกเก็บตามเอกสารอ้างอิงแล้ว"
+        lines.Add(v.Note == Accounting.Helpers.SettlementReceiptTotals.VatNote.InvoiceNotTaxInvoice
+            ? this["settlement_invoice_vat_note"] : this["settlement_vat_included_note"]);
         return lines;
     }
 
@@ -372,8 +398,17 @@ public sealed class DocumentLabels
         ["total_payee_amount"] = "ยอดจ่ายผู้รับเงิน",
         ["total_amount_received"] = "ยอดรับชำระ",
         ["total_settled_gross"] = "ยอดตัดชำระ (ก่อนหักภาษี ณ ที่จ่าย)",
-        ["settlement_ref_line"] = "(ตาม{0}เลขที่ {1} ลงวันที่ {2}: มูลค่า {3} · VAT {4} · รวม {5}{6})",
-        ["settlement_ref_wht"] = " · ภาษีหัก ณ ที่จ่าย {0}",
+        ["settlement_ref_line"] = "(ตาม{0}เลขที่ {1} ลงวันที่ {2}: มูลค่า {3} · VAT {4} · รวม {5})",
+        ["settlement_via_billing_note"] = "(ตามใบวางบิลเลขที่ {0} ลงวันที่ {1})",
+        ["settlement_cn_line"] = "หักใบลดหนี้เลขที่ {0} ลงวันที่ {1}: {2}",
+        ["settlement_prior_paid"] = "รับชำระก่อนหน้า {0}",
+        ["settlement_this_breakdown"] = "ตัดชำระครั้งนี้ {0}: รับเงิน {1}{2}",
+        ["settlement_this_fee"] = " · ค่าธรรมเนียมที่ถูกหัก {0}",
+        ["settlement_this_adjust"] = " · รายการปรับยอด {0}",
+        ["settlement_payment_wht"] = "ภาษีหัก ณ ที่จ่ายของการรับชำระครั้งนี้ {0}",
+        ["settlement_partial_balance"] = "รับชำระบางส่วน — ยอดคงค้างก่อนรับครั้งนี้ {0} · คงค้างหลังรับครั้งนี้ {1}",
+        ["settlement_full_balance"] = "ชำระครบยอดคงค้าง {0}",
+        ["settlement_invoice_vat_note"] = "ยอดรับชำระรวมภาษีมูลค่าเพิ่มตามใบแจ้งหนี้ที่อ้างอิง — ใบเสร็จนี้ไม่ใช่ใบกำกับภาษี",
         ["settlement_src_tax_invoice"] = "ใบกำกับภาษี",
         ["settlement_src_invoice"] = "ใบแจ้งหนี้",
         ["settlement_src_debit_note"] = "ใบเพิ่มหนี้",
@@ -543,8 +578,17 @@ public sealed class DocumentLabels
         ["total_payee_amount"] = "Amount paid to payee",
         ["total_amount_received"] = "Amount received",
         ["total_settled_gross"] = "Amount settled (before withholding tax)",
-        ["settlement_ref_line"] = "(Per {0} No. {1} dated {2}: value {3} · VAT {4} · total {5}{6})",
-        ["settlement_ref_wht"] = " · withholding tax {0}",
+        ["settlement_ref_line"] = "(Per {0} No. {1} dated {2}: value {3} · VAT {4} · total {5})",
+        ["settlement_via_billing_note"] = "(Per Billing Note No. {0} dated {1})",
+        ["settlement_cn_line"] = "Less Credit Note No. {0} dated {1}: {2}",
+        ["settlement_prior_paid"] = "Previously received {0}",
+        ["settlement_this_breakdown"] = "Settled by this payment {0}: cash received {1}{2}",
+        ["settlement_this_fee"] = " · fee deducted {0}",
+        ["settlement_this_adjust"] = " · adjustments {0}",
+        ["settlement_payment_wht"] = "Withholding tax on this payment {0}",
+        ["settlement_partial_balance"] = "Partial payment — balance before this payment {0} · balance after this payment {1}",
+        ["settlement_full_balance"] = "Settles the outstanding balance of {0} in full",
+        ["settlement_invoice_vat_note"] = "The amount received includes the VAT stated on the reference invoice — this receipt is not a tax invoice",
         ["settlement_src_tax_invoice"] = "Tax Invoice",
         ["settlement_src_invoice"] = "Invoice",
         ["settlement_src_debit_note"] = "Debit Note",

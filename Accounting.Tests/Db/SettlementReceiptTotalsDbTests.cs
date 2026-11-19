@@ -42,7 +42,8 @@ public class SettlementReceiptTotalsDbTests
         var vat = Acc(company.Id, "21911", "ภาษีขาย", AccountType.Liability);
         var revenue = Acc(company.Id, "41100", "รายได้จากการให้บริการ", AccountType.Revenue);
         db.ChartOfAccounts.AddRange(Acc(company.Id, "11111", "เงินสด", AccountType.Asset), bankGl, ar, vat,
-            Acc(company.Id, "21913", "ภาษีขายยังไม่ถึงกำหนด", AccountType.Liability), revenue);
+            Acc(company.Id, "21913", "ภาษีขายยังไม่ถึงกำหนด", AccountType.Liability), revenue,
+            Acc(company.Id, "54710", "ค่าธรรมเนียมธนาคาร", AccountType.Expense));   // ชุดแก้ฝ่ายค้าน MED-1: รับเงินแบบหักค่าธรรมเนียม
         var customer = new Contact { CompanyId = company.Id, Name = "บริษัท ลูกค้า ก จำกัด", TaxId = "0107537000017", Address = "กรุงเทพฯ", ContactType = ContactType.JuristicPerson, IsCustomer = true };
         db.Contacts.Add(customer);
         await db.SaveChangesAsync();
@@ -87,13 +88,13 @@ public class SettlementReceiptTotalsDbTests
             null!);
 
     /// <summary>บันทึกรับชำระ (เส้นจริง) + ออกใบเสร็จอัตโนมัติ — คืนใบเสร็จที่ได้</summary>
-    private static async Task<Document> PayWithReceiptAsync(Seed s, Guid invoiceId, decimal amount, DateTime date)
+    private static async Task<Document> PayWithReceiptAsync(Seed s, Guid invoiceId, decimal amount, DateTime date, decimal? fee = null)
     {
         Guid payId;
         using (var req = DbTestDatabase.TryCreateContext()!)
             payId = (await Docs(req).CreatePaymentAsync(s.CompanyId,
                 new CreatePaymentRequest(invoiceId, date, amount, PaymentMethod.BankTransfer, "SLIP-273", null, null,
-                    OverrideBankAccountId: s.BankId, IssueReceiptDocument: true), "recorder", PaymentEntrySource.Manual)).Id;
+                    OverrideBankAccountId: s.BankId, FeeAmount: fee, IssueReceiptDocument: true), "recorder", PaymentEntrySource.Manual)).Id;
         using var check = DbTestDatabase.TryCreateContext()!;
         var pay = await check.Payments.AsNoTracking().SingleAsync(p => p.Id == payId);
         Assert.NotNull(pay.ReceiptDocumentId);
@@ -151,8 +152,106 @@ public class SettlementReceiptTotalsDbTests
         Assert.Equal((0m, 300_000m), (rec.VatAmount, rec.TotalAmount));
         var html = await HtmlAsync(s.CompanyId, rec.Id);
         Assert.Contains("<span>ยอดรับชำระ</span><span>300,000.00</span>", html);
-        Assert.Contains("รับชำระบางส่วนของยอด 749,000.00 ตามเอกสารอ้างอิง", html);
+        Assert.Contains(System.Net.WebUtility.HtmlEncode("รับชำระบางส่วน — ยอดคงค้างก่อนรับครั้งนี้ 749,000.00 · คงค้างหลังรับครั้งนี้ 449,000.00"), html);
         Assert.DoesNotContain("ยอดรวมก่อน VAT", html);
+
+        // งวดสองปิดใบ ⇒ ใบเสร็จงวดสองครบ (อ้างการรับก่อนหน้า) · ใบเสร็จงวดแรกยังเป็นบางส่วน (มีรายการหลังจากนั้น — ไล่ตามลำดับ ไม่ใช้ยอดค้างปัจจุบัน 0)
+        var rec2 = await PayWithReceiptAsync(s, tiv.Id, 449_000m, Today);
+        using var read = DbTestDatabase.TryCreateContext()!;
+        var lines2 = (await Docs(read).GetDocumentAsync(s.CompanyId, rec2.Id)).SettlementTotals!.Lines;
+        Assert.Contains("รับชำระก่อนหน้า 300,000.00", lines2);
+        Assert.Contains("ชำระครบยอดคงค้าง 449,000.00", lines2);
+        Assert.DoesNotContain(lines2, l => l.Contains("บางส่วน"));
+        var lines1 = (await Docs(read).GetDocumentAsync(s.CompanyId, rec.Id)).SettlementTotals!.Lines;
+        Assert.Contains("รับชำระบางส่วน — ยอดคงค้างก่อนรับครั้งนี้ 749,000.00 · คงค้างหลังรับครั้งนี้ 449,000.00", lines1);
+    }
+
+    [Fact]
+    public async Task ฝ่ายค้านMED1_โอน748970หักค่าธรรมเนียม30ปิดใบ_ไม่ใช่บางส่วน_หน้าลูกค้าได้ผลเดียวกัน()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var s = await SeedAsync(db);
+        var tiv = await TaxInvoiceAsync(db, s, Today.AddDays(-3));
+        var rec = await PayWithReceiptAsync(s, tiv.Id, 748_970m, Today, fee: 30m);
+        using var read = DbTestDatabase.TryCreateContext()!;
+        var after = await read.Documents.AsNoTracking().Where(d => d.Id == tiv.Id).Select(d => new { d.Status, d.BalanceDue }).SingleAsync();
+        Assert.Equal((DocumentStatus.Paid, 0m), (after.Status, after.BalanceDue));
+        var html = await HtmlAsync(s.CompanyId, rec.Id);
+        Assert.Contains("<span>ยอดรับชำระ</span><span>748,970.00</span>", html);
+        Assert.Contains(System.Net.WebUtility.HtmlEncode("ตัดชำระครั้งนี้ 749,000.00: รับเงิน 748,970.00 · ค่าธรรมเนียมที่ถูกหัก 30.00"), html);
+        Assert.DoesNotContain("รับชำระบางส่วน", html);
+        // L3: หน้าเอกสารของลูกค้า — ตัวโหลด/ข้อความเดียวกับกระดาษ
+        var dto = await SettlementReceiptTotalsLoader.DtoForAsync(read, s.CompanyId, rec.Id, english: false);
+        Assert.NotNull(dto);
+        Assert.Equal(("ยอดรับชำระ", 748_970m), (dto!.AmountLabel, dto.AmountReceived));
+        Assert.Equal((await Docs(read).GetDocumentAsync(s.CompanyId, rec.Id)).SettlementTotals!.Lines, dto.Lines);
+        // tenant: บริษัทอื่นอ่านไม่ได้
+        Assert.Null(await SettlementReceiptTotalsLoader.DtoForAsync(read, Guid.NewGuid(), rec.Id, english: false));
+    }
+
+    [Fact]
+    public async Task ฝ่ายค้านL4_ใบเสร็จรุ่นเก่าจากใบวางบิลรวมใบกำกับ_อ้างใบวางบิลและใบในบิล_ไม่พิมพ์ยอดก่อนVAT()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var s = await SeedAsync(db);
+        var tiv = await TaxInvoiceAsync(db, s, Today.AddDays(-10));
+        var bn = new Document
+        {
+            CompanyId = s.CompanyId, ContactId = s.CustomerId, DocumentType = DocumentType.BillingNote, DocumentNumber = "BN-273-" + Guid.NewGuid().ToString("N")[..8],
+            Status = DocumentStatus.Approved, DocumentDate = Today.AddDays(-5), SubTotal = 749_000m, TotalAmount = 749_000m, Currency = "THB", ExchangeRate = 1m, WhtCertAutoIssue = false,
+        };
+        bn.Lines.Add(new DocumentLine { LineOrder = 1, Description = tiv.DocumentNumber, Quantity = 1, UnitPrice = 749_000m, Amount = 749_000m, SourceDocumentId = tiv.Id });
+        db.Documents.Add(bn);
+        await db.SaveChangesAsync();
+        // ใบเสร็จที่แปลงจากใบวางบิลก่อนด่าน BillingNoteKind (ข้อมูลรุ่นเก่า: VAT 0 · ไม่ใช่ใบรับชำระอัตโนมัติ)
+        var legacy = new Document
+        {
+            CompanyId = s.CompanyId, ContactId = s.CustomerId, DocumentType = DocumentType.Receipt, DocumentNumber = "REC-273L-" + Guid.NewGuid().ToString("N")[..8],
+            Status = DocumentStatus.Paid, DocumentDate = Today, RelatedDocumentId = bn.Id, SubTotal = 749_000m, VatAmount = 0m, TotalAmount = 749_000m, PaidAmount = 749_000m,
+            Currency = "THB", ExchangeRate = 1m, WhtCertAutoIssue = false, IsTaxInvoiceByLaw = false,
+        };
+        legacy.Lines.Add(new DocumentLine { LineOrder = 1, Description = tiv.DocumentNumber, Quantity = 1, UnitPrice = 749_000m, Amount = 749_000m });
+        db.Documents.Add(legacy);
+        await db.SaveChangesAsync();
+
+        var html = await HtmlAsync(s.CompanyId, legacy.Id);
+        Assert.DoesNotContain("ยอดรวมก่อน VAT", html);
+        Assert.Contains("<span>ยอดรับชำระ</span><span>749,000.00</span>", html);
+        Assert.Contains($"(ตามใบวางบิลเลขที่ {bn.DocumentNumber} ลงวันที่ ", html);
+        Assert.Contains($"(ตามใบกำกับภาษีเลขที่ {tiv.DocumentNumber}", html);
+        // ค่าที่เก็บไม่ถูกแตะ (แสดงผลอย่างเดียว)
+        using var read = DbTestDatabase.TryCreateContext()!;
+        var stored = await read.Documents.AsNoTracking().SingleAsync(d => d.Id == legacy.Id);
+        Assert.Equal((749_000m, 0m, 749_000m), (stored.SubTotal, stored.VatAmount, stored.TotalAmount));
+    }
+
+    [Fact]
+    public async Task ฝ่ายค้านMED1_ใบลดหนี้107000แล้วรับ642000ครบ_ไม่ใช่บางส่วน_อ้างใบลดหนี้()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var s = await SeedAsync(db);
+        var tiv = await TaxInvoiceAsync(db, s, Today.AddDays(-3));
+        // ใบลดหนี้ที่อนุมัติแล้วลดหนี้ใบกำกับ (ผลเดียวกับ UpdateSourceDocumentSettlementAsync: PaidAmount += ยอดใบลดหนี้)
+        var cnNo = "CN-273-" + Guid.NewGuid().ToString("N")[..8];
+        db.Documents.Add(new Document
+        {
+            CompanyId = s.CompanyId, ContactId = s.CustomerId, DocumentType = DocumentType.CreditNote, DocumentNumber = cnNo,
+            Status = DocumentStatus.Approved, DocumentDate = Today.AddDays(-2), RelatedDocumentId = tiv.Id,
+            SubTotal = 100_000m, VatAmount = 7_000m, TotalAmount = 107_000m, Currency = "THB", ExchangeRate = 1m, WhtCertAutoIssue = false,
+        });
+        var t = await db.Documents.SingleAsync(d => d.Id == tiv.Id);
+        t.PaidAmount = 107_000m; t.BalanceDue = 642_000m; t.Status = DocumentStatus.PartiallyPaid;
+        await db.SaveChangesAsync();
+
+        var rec = await PayWithReceiptAsync(s, tiv.Id, 642_000m, Today);
+        using var read = DbTestDatabase.TryCreateContext()!;
+        var lines = (await Docs(read).GetDocumentAsync(s.CompanyId, rec.Id)).SettlementTotals!.Lines;
+        Assert.Contains(lines, l => l.StartsWith($"หักใบลดหนี้เลขที่ {cnNo} ลงวันที่ ") && l.EndsWith(": 107,000.00"));
+        Assert.Contains("ชำระครบยอดคงค้าง 642,000.00", lines);
+        Assert.DoesNotContain(lines, l => l.Contains("บางส่วน"));
     }
 
     [Fact]

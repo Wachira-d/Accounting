@@ -21245,7 +21245,7 @@ _R273_RENDER = "Services/Implementations/PdfGenerationService.SettlementTotals.c
 _R273_LOADER = "Services/Implementations/SettlementReceiptTotalsLoader.cs"
 RULES += [
     dict(file=_R273_LOADER, method="ResolveAsync",
-         must=["SettlementReceiptTotals.Decide(", "d.CompanyId == companyId", "doc.SettlementTotals = null"],
+         must=["SettlementReceiptTotals.Decide(", "d.Id == srcId && d.CompanyId == companyId", "doc.SettlementTotals = null"],
          forbid=["doc.VatAmount != 0m", "doc.IsDeposit ||"],
          why=_R273_WHY + "ตัวโหลดเดียว · tenant · ตัดสินผ่าน Helpers/SettlementReceiptTotals ตัวเดียว (ห้ามกรองซ้ำเอง = สำเนากติกา)"),
     dict(file=PDFSVC, method="ResolveServedAsReceiptAsync", must=["SettlementReceiptTotalsLoader.ResolveAsync(db, companyId, doc)"],
@@ -21264,8 +21264,30 @@ RULES += [
     dict(file=_R273_RENDER, method="ComposeSettlementTotals", must=["labels.SettlementTotalsLines(st)"],
          why=_R273_WHY + "QuestPDF ใช้ข้อความ DocumentLabels ตัวเดียวกับ HTML"),
     dict(file=DOC, method="GetDocumentAsync",
-         must=["SettlementReceiptTotalsLoader.ResolveAsync(_db, companyId, doc)", "SettlementTotalsLines(settleView)"],
+         must=["SettlementReceiptTotalsLoader.ResolveAsync(_db, companyId, doc)", "SettlementReceiptTotalsLoader.ToDto(settleView"],
+         forbid=["new SettlementTotalsDto("],
          why=_R273_WHY + "หน้ารายละเอียดแสดงผลที่เซิร์ฟเวอร์คำนวณ (ตัวโหลด/ข้อความเดียวกับกระดาษ — หน้าเว็บไม่มีสำเนากติกา)"),
+    # ── ชุดแก้ฝ่ายค้าน (MED-1 · L1 · L2 · L3 · L4) ──
+    dict(file=_R273_LOADER, method="ResolveAsync",
+         must=["ThisSettlementAsync(db, companyId, doc, srcId)", "LedgerEventsAsync(", "SourcesOutstandingNow = parent.BalanceDue",
+               "BillingNoteChildren.MapAsync(", "ViaBillingNote ="],
+         why=_R273_WHY + "MED-1 ยอดคงค้างก่อนรับ (การรับครั้งนี้ + รายการตัดยอดอื่น + ยอดค้างปัจจุบัน) · L4 ใบรุ่นเก่าจากใบวางบิล"),
+    dict(file=_R273_LOADER, method="ThisSettlementAsync",
+         must=["p.FeeAmount", "p.SettlementAdjustmentAmount", "p.WithholdingTaxAmount", "a.WithholdingTaxAmount", "x.CompanyId == companyId"],
+         why=_R273_WHY + "MED-1 ยอดที่ครั้งนี้ตัด = เงิน + ค่าธรรมเนียม + บรรทัดปรับ · L1 ภาษีหักของงวดนี้ (ไม่ใช่ทั้งใบ)"),
+    dict(file=_R273_LOADER, method="LedgerEventsAsync",
+         must=["DocumentType.CreditNote", "db.PaymentAllocations", "!d.IsSettlementReceipt", "x.Amount + x.FeeAmount + x.SettlementAdjustmentAmount"],
+         why=_R273_WHY + "MED-1 รายการตัดยอดอื่นของใบต้นทาง (ใบลดหนี้ · การจัดสรร · การรับ — สามตัวเดียวกับ PaidAmount) · ใบรับชำระอัตโนมัติไม่นับซ้ำ"),
+    dict(file="Helpers/SettlementReceiptTotals.cs", method="Decide",
+         must=["me.Settled", "SourcesOutstandingNow is decimal now", "VatNote.InvoiceNotTaxInvoice", "var partial = after > Eps;"],
+         why=_R273_WHY + "MED-1 บางส่วน/ครบจากยอดคงค้างก่อนรับ ไม่ใช่ยอดรับเทียบยอดใบ · L2 ใบแจ้งหนี้ไม่ใช่ใบกำกับ"),
+    dict(file="Services/Implementations/Pdf/DocumentLabels.cs", method="SettlementTotalsLines",
+         must=["M(me.WithholdingTaxAmount)", "VatNote.InvoiceNotTaxInvoice", "v.PriorCreditNotes", "v.ViaBillingNote", "v.BalanceBefore"],
+         forbid=["s.WithholdingTaxAmount"],
+         why=_R273_WHY + "L1 ภาษีหักของการรับครั้งนี้ (ไม่ใช่ทั้งใบ) · L2 ข้อความใบแจ้งหนี้ · MED-1 อ้างใบลดหนี้ · L4 อ้างใบวางบิล"),
+    dict(file="Services/Implementations/DocumentPayLinkService.CustomerPage.cs", method="BuildPageAsync",
+         must=["SettlementReceiptTotalsLoader.DtoForAsync(_db, companyId, d.Id, isEnglish)", "SettlementTotals = settlementTotals"],
+         why=_R273_WHY + "L3 หน้าเอกสารของลูกค้าใช้ตัวโหลด/ข้อความเดียวกับกระดาษ (server computes · page displays)"),
 ]
 REVIEWER_CASES += [
     # HTML กลับไปพิมพ์ "ยอดรวมก่อน VAT" ตรง ๆ ⇒ ต้องฟ้อง
@@ -21274,6 +21296,14 @@ REVIEWER_CASES += [
     ("R273-2", "ComposeSummary", "ComposeSettlementTotals(col, doc, L);", "", True),
     # ตัวโหลดไม่กรองบริษัท ⇒ ต้องฟ้อง
     ("R273-3", "ResolveAsync", "d.Id == srcId && d.CompanyId == companyId", "d.Id == srcId", True),
+    # ชุดแก้ฝ่ายค้าน MED-1: กลับไปเทียบยอดรับกับยอดใบ (ไม่ดูค่าธรรมเนียม/ใบลดหนี้) ⇒ ต้องฟ้อง
+    ("R273-4", "Decide", "var partial = after > Eps;", "var partial = f.ReceiptTotalAmount < sourcesTotal - Eps;", True),
+    # MED-1: ยอดที่ครั้งนี้ตัดไม่รวมค่าธรรมเนียม ⇒ ต้องฟ้อง
+    ("R273-5", "ThisSettlementAsync", "p.FeeAmount", "0m", True),
+    # L1: กลับไปพิมพ์ภาษีหักทั้งใบ ⇒ ต้องฟ้อง
+    ("R273-6", "SettlementTotalsLines", "M(me.WithholdingTaxAmount)", "M(s.WithholdingTaxAmount)", True),
+    # L3: หน้าลูกค้าไม่ส่งผลตัวตัดสิน ⇒ ต้องฟ้อง
+    ("R273-7", "BuildPageAsync", "SettlementTotals = settlementTotals", "SettlementTotals = null", True),
 ]
 
 

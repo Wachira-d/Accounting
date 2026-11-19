@@ -178,6 +178,16 @@
       if (!p.showAmounts) return '';
       const cur = esc(L.currency);
       const row = (label, n, cls) => `<tr${cls ? ` class="${cls}"` : ''}><td>${esc(label)}</td><td class="num">${money(n)} ${cur}</td></tr>`;
+      // รอบ 273 ชุดแก้ฝ่ายค้าน L3: ใบเสร็จรับชำระที่ไม่ถือ VAT — ป้าย/ยอด/บรรทัดอ้างอิงจากเซิร์ฟเวอร์ (ตัวตัดสินเดียวกับกระดาษ · หน้าไม่มีสำเนากติกา)
+      const st = p.settlementTotals;
+      if (st) {
+        const sRows = [];
+        if (st.settledGrossLabel) sRows.push(row(st.settledGrossLabel, p.subTotal));
+        if (Number(p.withholdingTaxAmount) > 0.005) sRows.push(row(L.wht, -p.withholdingTaxAmount));
+        sRows.push(row(st.amountLabel, st.amountReceived, 'total'));
+        const notes = Array.isArray(st.lines) ? st.lines.map(x => `<tr><td colspan="2" style="font-size:12px;color:#374151">${esc(x)}</td></tr>`).join('') : '';
+        return `<table>${sRows.join('')}${notes}</table>`;
+      }
       const rows = [row(L.subTotal, p.subTotal)];
       if (Number(p.discountAmount) > 0.005) rows.push(row(L.discount, -p.discountAmount));
       if (Number(p.vatAmount) > 0.005) rows.push(row(L.vat, p.vatAmount));

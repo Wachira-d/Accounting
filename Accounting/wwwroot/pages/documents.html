@@ -1021,7 +1021,7 @@
           <div style="margin-top:16px;display:flex;justify-content:flex-end">
             <div style="width:320px;max-width:100%;background:var(--gray-50);border:1px solid var(--gray-200);border-radius:10px;padding:14px 18px">
               <div style="display:grid;grid-template-columns:1fr auto;gap:8px 16px;font-size:14px;align-items:center">
-                <span style="color:var(--gray-500)">ยอดรวมก่อน VAT</span><strong id="sumSubTotal" style="text-align:right">0.00</strong>
+                <span id="sumSubTotalLabel" style="color:var(--gray-500)">ยอดรวมก่อน VAT</span><strong id="sumSubTotal" style="text-align:right">0.00</strong>
                 <span style="color:var(--gray-500)" title="ส่วนลดจากยอดรวม — ระบบเฉลี่ยลงแต่ละรายการให้ VAT ถูกต้อง">ส่วนลดท้ายบิล</span>
                 <span style="display:flex;gap:4px;justify-content:flex-end;align-items:center">
                   <input type="number" id="fBillDiscount" inputmode="decimal" value="0" min="0" step="0.01" oninput="Page.calcSum()" style="width:84px;text-align:right;padding:4px 6px;border:1px solid var(--gray-300);border-radius:6px;font-size:13px">
@@ -1034,7 +1034,7 @@
                      เพื่อให้เห็นชัดว่า VAT/WHT คิดจากฐานนี้ (ถูกหลักบัญชี) -->
                 <span id="sumAfterDiscLabel" style="color:var(--gray-600);font-weight:600;display:none">ยอดหลังหักส่วนลด (ฐานภาษี)</span>
                 <strong id="sumAfterDisc" style="text-align:right;display:none">0.00</strong>
-                <span style="color:var(--gray-500)">VAT</span><strong id="sumVat" style="text-align:right">0.00</strong>
+                <span id="sumVatLabel" style="color:var(--gray-500)">VAT</span><strong id="sumVat" style="text-align:right">0.00</strong>
                 <span style="color:var(--gray-500)">หัก ณ ที่จ่าย</span><strong id="sumWht" style="text-align:right">0.00</strong>
                 <!-- รอบ 193 (คำตัดสินเจ้าของข้อ 8): ผลต่างจากการปัดเศษ — SubTotal = Σ รายการ + ค่านี้ (|x| < 1 บาท) ·
                      ใบจากสแกนที่ราคาต่อหน่วย × จำนวน ต่างจากยอดที่พิมพ์ (Lazada −0.01) ระบบเติมให้ · ลงบัญชี 54960 -->
@@ -1075,9 +1075,11 @@
                    แต่ต้องบอกผู้ใช้ว่าต่างเท่าไรและกดอะไรถึงจะคิดใหม่ -->
               <div id="sumVatKeptNote" style="display:none;font-size:11px;color:#92400e;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;padding:6px 8px;margin-top:6px;line-height:1.6"></div>
               <div style="display:grid;grid-template-columns:1fr auto;gap:16px;margin-top:10px;padding-top:10px;border-top:1px solid var(--gray-200);font-size:18px;font-weight:700;color:var(--primary)">
-                <span>ยอดสุทธิ</span><span id="sumTotal" style="text-align:right">0.00</span>
+                <span id="sumTotalLabel">ยอดสุทธิ</span><span id="sumTotal" style="text-align:right">0.00</span>
               </div>
               <div id="sumTotalWords" style="font-size:11px;color:var(--gray-500);margin-top:4px;font-style:italic;text-align:right"></div>
+              <!-- รอบ 273 ชุดแก้ฝ่ายค้าน L3: ร่างใบเสร็จรับชำระที่ไม่ถือ VAT — บรรทัดอ้างอิงจากเซิร์ฟเวอร์ (settlementTotals.lines) · แสดงอย่างเดียว -->
+              <div id="sumSettlementNote" style="display:none;font-size:11px;color:#374151;margin-top:6px;line-height:1.6"></div>
               <!-- หักมัดจำที่เลือกไว้ (จะ apply ตอนบันทึกและอนุมัติ) — แสดงให้เห็นก่อน
                    บันทึกว่าใบนี้จะเหลือเก็บจริงเท่าไร. ยอดสุทธิของใบ (ตาม §86/4)
                    ยังเป็นยอดเต็ม — มัดจำไปลด "ยอดค้างชำระ" หลังอนุมัติ ไม่ใช่ลดยอดใบ -->
@@ -5349,6 +5351,26 @@
         if (!doc) { try { this.onCurrencyOrDateChange?.(); } catch (e) {} }
       },
 
+      /** รอบ 273 ชุดแก้ฝ่ายค้าน L3: ฟอร์มแก้ไขร่างใบเสร็จรับชำระที่ไม่ถือ VAT — ป้ายแถวยอด + บรรทัดอ้างอิงจากเซิร์ฟเวอร์ (DocumentResponse.settlementTotals ·
+       *  ตัวตัดสินเดียวกับกระดาษ) · ใบใหม่/ใบอื่น (null) = ป้ายเดิมทุกตัวอักษร (ห้ามค้างค่าใบก่อน) · หน้าไม่มีสำเนากติกา */
+      _hydrateSettlementTotals(doc) {
+        const st = doc && doc.settlementTotals ? doc.settlementTotals : null;
+        const el = id => document.getElementById(id);
+        const subL = el('sumSubTotalLabel'), sub = el('sumSubTotal'), vatL = el('sumVatLabel'), vat = el('sumVat'), totL = el('sumTotalLabel'), note = el('sumSettlementNote');
+        if (subL && subL.dataset.defaultLabel === undefined) subL.dataset.defaultLabel = subL.textContent;
+        if (totL && totL.dataset.defaultLabel === undefined) totL.dataset.defaultLabel = totL.textContent;
+        const showSub = !st || !!st.settledGrossLabel;
+        if (subL) { subL.textContent = st && st.settledGrossLabel ? st.settledGrossLabel : subL.dataset.defaultLabel; subL.style.display = showSub ? '' : 'none'; }
+        if (sub) sub.style.display = showSub ? '' : 'none';
+        if (vatL) vatL.style.display = st ? 'none' : '';
+        if (vat) vat.style.display = st ? 'none' : '';
+        if (totL) totL.textContent = st ? st.amountLabel : totL.dataset.defaultLabel;
+        if (note) {
+          note.innerHTML = st && Array.isArray(st.lines) ? st.lines.map(x => `<div>${Layout.esc(x)}</div>`).join('') : '';
+          note.style.display = st ? '' : 'none';
+        }
+      },
+
       async _hydrateBrand(doc) {
         // รอ options มาก่อนเสมอ — set value ตอนยังไม่มี <option> ค่าจะตกเป็น ""
         // เงียบ แล้วกลายเป็นคำสั่ง "ล้างแบรนด์" ตอนกดบันทึก (ผลตรวจ ข้อ 5.2)
@@ -9399,6 +9421,7 @@
         this.editingId = null;
         this._hydrateWhtCertPanel(null);   // 50 ทวิ: ใบใหม่ = สร้างอัตโนมัติ + ผู้ถูกหัก = ผู้รับเงิน (ห้ามค้างจากใบก่อน)
         this._hydrateBrand(null);   // ใบใหม่ = ชื่อบริษัท ไม่ใช่ค่าค้างจากใบก่อน
+        this._hydrateSettlementTotals(null);   // รอบ 273 L3: ป้ายแถวยอดเดิม (ห้ามค้างจากร่างใบเสร็จรับชำระใบก่อน)
         this._hydrateBranch(null);  // และสาขา = ตามค่าบริษัท (ห้ามค้างจากใบก่อน)
         this._hydrateTemplate(null);
         this._hydrateCurrencyReadonly(null);  // ปลดล็อก + คืนค่า THB ให้ใบใหม่
@@ -9686,6 +9709,7 @@
           const d = res.data;
           this.editingId = id;
           this._hydrateBrand(d);   // echo กลับค่าที่บันทึกไว้ (ไม่งั้นบันทึกแล้วค่าหาย)
+          this._hydrateSettlementTotals(d);   // รอบ 273 L3: ร่างใบเสร็จรับชำระ — ป้ายแถวยอดจากเซิร์ฟเวอร์
           this._hydrateBranch(d);
           this._hydrateTemplate(d);
           // เก็บสถานะใบที่กำลังแก้ — chain "จ่ายแล้ว" (อนุมัติ+ชำระ) เปิดให้เฉพาะ
@@ -15781,10 +15805,11 @@
           <!-- Totals -->
           <div style="display:flex;justify-content:flex-end">
             <div style="width:100%;max-width:300px">
-              <div style="display:flex;justify-content:space-between;padding:6px 0;font-size:13px"><span>ยอดรวมก่อนภาษี</span><span>${Layout.money(d.subTotal)}</span></div>
-              ${hasVat ? `<div style="display:flex;justify-content:space-between;padding:6px 0;font-size:13px"><span>ภาษีมูลค่าเพิ่ม 7%</span><span>${Layout.money(d.vatAmount)}</span></div>` : ''}
+              ${d.settlementTotals ? (d.settlementTotals.settledGrossLabel ? `<div style="display:flex;justify-content:space-between;padding:6px 0;font-size:13px"><span>${Layout.esc(d.settlementTotals.settledGrossLabel)}</span><span>${Layout.money(d.subTotal)}</span></div>` : '') : `<div style="display:flex;justify-content:space-between;padding:6px 0;font-size:13px"><span>ยอดรวมก่อนภาษี</span><span>${Layout.money(d.subTotal)}</span></div>`}
+              ${hasVat && !d.settlementTotals ? `<div style="display:flex;justify-content:space-between;padding:6px 0;font-size:13px"><span>ภาษีมูลค่าเพิ่ม 7%</span><span>${Layout.money(d.vatAmount)}</span></div>` : ''}
               ${Number(d.withholdingTaxAmount || 0) > 0 ? `<div style="display:flex;justify-content:space-between;padding:6px 0;font-size:13px"><span>หัก ณ ที่จ่าย</span><span>-${Layout.money(d.withholdingTaxAmount)}</span></div>` : ''}
-              <div style="display:flex;justify-content:space-between;padding:10px 0;font-size:18px;font-weight:700;border-top:2px solid #4F46E5;margin-top:4px"><span>ยอดสุทธิ</span><span style="color:#4F46E5">${Layout.money(d.totalAmount)}</span></div>
+              <div style="display:flex;justify-content:space-between;padding:10px 0;font-size:18px;font-weight:700;border-top:2px solid #4F46E5;margin-top:4px"><span>${d.settlementTotals ? Layout.esc(d.settlementTotals.amountLabel) : 'ยอดสุทธิ'}</span><span style="color:#4F46E5">${Layout.money(d.settlementTotals ? d.settlementTotals.amountReceived : d.totalAmount)}</span></div>
+              ${d.settlementTotals && Array.isArray(d.settlementTotals.lines) ? `<div style="font-size:11px;color:#374151;margin-top:6px">${d.settlementTotals.lines.map(x => `<div>${Layout.esc(x)}</div>`).join('')}</div>` : ''}
             </div>
           </div>
 

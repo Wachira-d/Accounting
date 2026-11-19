@@ -64,12 +64,153 @@ public class SettlementReceiptTotalsTests
     }
 
     [Fact]
-    public void ใบต้นทางมีภาษีหัก_รับสุทธิครบ_ไม่ใช่บางส่วน_บรรทัดอ้างอิงมีภาษีหัก()
+    public void ใบต้นทางมีภาษีหัก_รับสุทธิครบ_ไม่ใช่บางส่วน_ภาษีหักของการรับครั้งนี้()
     {
         var src = Tiv with { WithholdingTaxAmount = 21_000m, TotalAmount = 728_000m };
-        var v = SettlementReceiptTotals.Decide(SettlementFacts(728_000m, src))!;
+        var v = SettlementReceiptTotals.Decide(SettlementFacts(728_000m, src) with
+        {
+            This = Pay(728_000m, wht: 21_000m), SourcesOutstandingNow = 0m,
+        })!;
         Assert.False(v.IsPartial);
-        Assert.EndsWith("รวม 749,000.00 · ภาษีหัก ณ ที่จ่าย 21,000.00)", DocumentLabels.For("th").SettlementTotalsLines(v)[0]);
+        var th = DocumentLabels.For("th").SettlementTotalsLines(v);
+        Assert.EndsWith("รวม 749,000.00)", th[0]);   // ภาษีหักทั้งใบไม่อยู่ในบรรทัดอ้างอิงแล้ว (L1)
+        Assert.Contains("ภาษีหัก ณ ที่จ่ายของการรับชำระครั้งนี้ 21,000.00", th);
+    }
+
+    // ─────────────── ชุดแก้ฝ่ายค้าน (MED-1 · L1 · L2 · L4) ───────────────
+
+    private static readonly DateTime PayDay = new(2026, 10, 29);
+
+    private static SettlementReceiptTotals.ThisSettlement Pay(decimal cash, decimal fee = 0m, decimal adj = 0m, decimal wht = 0m, DateTime? on = null)
+        => new(on ?? PayDay, (on ?? PayDay).AddHours(10), cash, fee, adj, wht);
+
+    private static SettlementReceiptTotals.LedgerEvent Ev(SettlementReceiptTotals.EventKind k, DateTime on, decimal amount, string? no = null)
+        => new(k, on, on.AddHours(9), amount, no);
+
+    [Fact]
+    public void MED1_โอน748970บวกค่าธรรมเนียม30ปิดใบ_ไม่ใช่บางส่วน_บอกยอดตัดชำระ()
+    {
+        // ยอดค้างปัจจุบัน 0 (ใบปิดแล้ว) — และกรณีไม่รู้ยอดค้างปัจจุบัน (ไล่จากรายการอย่างเดียว) ก็ต้องไม่ใช่บางส่วน
+        foreach (decimal? now in new decimal?[] { 0m, null })
+        {
+            var v = SettlementReceiptTotals.Decide(SettlementFacts(748_970m, Tiv) with { This = Pay(748_970m, fee: 30m), SourcesOutstandingNow = now })!;
+            Assert.False(v.IsPartial);
+            Assert.Equal((748_970m, 749_000m, 0m), (v.AmountReceived, v.BalanceBefore, v.BalanceAfter));
+            var th = DocumentLabels.For("th").SettlementTotalsLines(v);
+            Assert.Contains("ตัดชำระครั้งนี้ 749,000.00: รับเงิน 748,970.00 · ค่าธรรมเนียมที่ถูกหัก 30.00", th);
+            Assert.DoesNotContain(th, l => l.Contains("บางส่วน"));
+        }
+    }
+
+    [Fact]
+    public void MED1_ทิศตรงข้าม_มีค่าธรรมเนียมแต่ยังไม่ครบ_ยังเป็นบางส่วน()
+    {
+        var v = SettlementReceiptTotals.Decide(SettlementFacts(699_970m, Tiv) with { This = Pay(699_970m, fee: 30m), SourcesOutstandingNow = 49_000m })!;
+        Assert.True(v.IsPartial);
+        Assert.Contains("รับชำระบางส่วน — ยอดคงค้างก่อนรับครั้งนี้ 749,000.00 · คงค้างหลังรับครั้งนี้ 49,000.00",
+            DocumentLabels.For("th").SettlementTotalsLines(v));
+    }
+
+    [Fact]
+    public void MED1_ใบลดหนี้107000ก่อน_แล้วรับ642000ครบ_ไม่ใช่บางส่วน_อ้างใบลดหนี้()
+    {
+        var cn = Ev(SettlementReceiptTotals.EventKind.CreditNote, new DateTime(2026, 10, 27), 107_000m, "CN-20261027-0001");
+        foreach (decimal? now in new decimal?[] { 0m, null })
+        {
+            var v = SettlementReceiptTotals.Decide(SettlementFacts(642_000m, Tiv) with
+            {
+                This = Pay(642_000m), Events = new[] { cn }, SourcesOutstandingNow = now,
+            })!;
+            Assert.False(v.IsPartial);
+            Assert.Equal(642_000m, v.BalanceBefore);
+            var th = DocumentLabels.For("th").SettlementTotalsLines(v);
+            Assert.Contains("หักใบลดหนี้เลขที่ CN-20261027-0001 ลงวันที่ 27/10/2026: 107,000.00", th);
+            Assert.Contains("ชำระครบยอดคงค้าง 642,000.00", th);
+            Assert.DoesNotContain(th, l => l.Contains("บางส่วน"));
+            var en = DocumentLabels.For("en").SettlementTotalsLines(v);
+            Assert.All(en, line => Assert.DoesNotMatch("[฀-๿]", line));
+        }
+    }
+
+    [Fact]
+    public void MED1_ทิศตรงข้าม_รับบางส่วนจริง_ยังเป็นบางส่วน_ยอดคงค้างก่อนหลัง()
+    {
+        var v = SettlementReceiptTotals.Decide(SettlementFacts(300_000m, Tiv) with { This = Pay(300_000m), SourcesOutstandingNow = 449_000m })!;
+        Assert.True(v.IsPartial);
+        Assert.Equal((749_000m, 449_000m), (v.BalanceBefore, v.BalanceAfter));
+        var th = DocumentLabels.For("th").SettlementTotalsLines(v);
+        Assert.Contains("รับชำระบางส่วน — ยอดคงค้างก่อนรับครั้งนี้ 749,000.00 · คงค้างหลังรับครั้งนี้ 449,000.00", th);
+        Assert.DoesNotContain(th, l => l.StartsWith("ชำระครบ"));
+    }
+
+    [Fact]
+    public void MED1_ผ่อนสองงวด_งวดแรกบางส่วน_งวดสองครบ_ภาษีหักต่องวดบวกลง_L1()
+    {
+        var src = Tiv with { WithholdingTaxAmount = 21_000m, TotalAmount = 728_000m };
+        var day1 = new DateTime(2026, 10, 28);
+        var first = Pay(300_000m, wht: 8_653.85m, on: day1);
+        var second = Pay(428_000m, wht: 12_346.15m);
+        // งวดแรก — มีรายการหลังจากนี้ (งวดสอง) ⇒ ไล่จากรายการ (ยอดค้างปัจจุบัน 0 ไม่ใช่ยอดหลังงวดแรก)
+        var v1 = SettlementReceiptTotals.Decide(SettlementFacts(300_000m, src) with
+        {
+            This = first, Events = new[] { Ev(SettlementReceiptTotals.EventKind.Payment, PayDay, 428_000m) }, SourcesOutstandingNow = 0m,
+        })!;
+        Assert.True(v1.IsPartial);
+        Assert.Equal((728_000m, 428_000m), (v1.BalanceBefore, v1.BalanceAfter));
+        Assert.Contains("ภาษีหัก ณ ที่จ่ายของการรับชำระครั้งนี้ 8,653.85", DocumentLabels.For("th").SettlementTotalsLines(v1));
+        // งวดสอง — ปิดใบ
+        var v2 = SettlementReceiptTotals.Decide(SettlementFacts(428_000m, src) with
+        {
+            This = second, Events = new[] { Ev(SettlementReceiptTotals.EventKind.Payment, day1, 300_000m) }, SourcesOutstandingNow = 0m,
+        })!;
+        Assert.False(v2.IsPartial);
+        var th2 = DocumentLabels.For("th").SettlementTotalsLines(v2);
+        Assert.Contains("รับชำระก่อนหน้า 300,000.00", th2);
+        Assert.Contains("ชำระครบยอดคงค้าง 428,000.00", th2);
+        Assert.Contains("ภาษีหัก ณ ที่จ่ายของการรับชำระครั้งนี้ 12,346.15", th2);
+        Assert.Equal(21_000m, first.WithholdingTaxAmount + second.WithholdingTaxAmount);   // สองงวดบวกเท่าภาษีหักทั้งใบ
+    }
+
+    [Fact]
+    public void MED1_ใบลดหนี้หลังชำระครบ_เป็นคืนเงิน_ไม่ลดหนี้_ไม่พิมพ์()
+    {
+        var cnAfter = Ev(SettlementReceiptTotals.EventKind.CreditNote, new DateTime(2026, 10, 30), 10_000m, "CN-LATE");
+        var v = SettlementReceiptTotals.Decide(SettlementFacts(749_000m, Tiv) with { This = Pay(749_000m), Events = new[] { cnAfter }, SourcesOutstandingNow = 0m })!;
+        Assert.False(v.IsPartial);
+        Assert.DoesNotContain(DocumentLabels.For("th").SettlementTotalsLines(v), l => l.Contains("CN-LATE"));
+    }
+
+    [Fact]
+    public void L2_ใบแจ้งหนี้ไม่ใช่ใบกำกับ_ไม่บอกว่าเรียกเก็บVATแล้ว_ทิศตรงข้ามใบกำกับคงข้อความเดิม()
+    {
+        var inv = Tiv with { Type = DocumentType.Invoice, Number = "INV-20261026-0001" };
+        var thInv = DocumentLabels.For("th").SettlementTotalsLines(SettlementReceiptTotals.Decide(SettlementFacts(300_000m, inv) with { This = Pay(300_000m), SourcesOutstandingNow = 449_000m })!);
+        Assert.Equal(SettlementReceiptTotals.VatNote.InvoiceNotTaxInvoice,
+            SettlementReceiptTotals.Decide(SettlementFacts(300_000m, inv))!.Note);
+        Assert.Contains("ยอดรับชำระรวมภาษีมูลค่าเพิ่มตามใบแจ้งหนี้ที่อ้างอิง — ใบเสร็จนี้ไม่ใช่ใบกำกับภาษี", thInv);
+        Assert.DoesNotContain(thInv, l => l.Contains("เรียกเก็บตามเอกสารอ้างอิงแล้ว"));
+        Assert.StartsWith("(ตามใบแจ้งหนี้เลขที่ INV-20261026-0001", thInv[0]);
+        // ทิศตรงข้าม: ใบกำกับ/ใบเพิ่มหนี้ ⇒ ข้อความเดิม
+        foreach (var t in new[] { DocumentType.TaxInvoice, DocumentType.DebitNote })
+            Assert.Contains("ยอดรับชำระรวมภาษีมูลค่าเพิ่มที่เรียกเก็บตามเอกสารอ้างอิงแล้ว — ใบเสร็จนี้ไม่เรียกเก็บภาษีมูลค่าเพิ่มซ้ำ",
+                DocumentLabels.For("th").SettlementTotalsLines(SettlementReceiptTotals.Decide(SettlementFacts(749_000m, Tiv with { Type = t }))!));
+        Assert.All(DocumentLabels.For("en").SettlementTotalsLines(SettlementReceiptTotals.Decide(SettlementFacts(300_000m, inv))!),
+            line => Assert.DoesNotMatch("[฀-๿]", line));
+    }
+
+    [Fact]
+    public void L4_ใบเสร็จรุ่นเก่าจากใบวางบิล_อ้างใบวางบิลและใบในบิล()
+    {
+        var inv = new SettlementReceiptTotals.Source(DocumentType.TaxInvoice, "TIV-2", new DateTime(2026, 10, 1), 1_000m, 70m, 0m, 1_070m);
+        var v = SettlementReceiptTotals.Decide(SettlementFacts(750_070m, Tiv, inv) with
+        {
+            ViaBillingNote = new SettlementReceiptTotals.BillingNoteRef("BN-20261020-0001", new DateTime(2026, 10, 20)),
+        })!;
+        Assert.False(v.IsPartial);
+        var th = DocumentLabels.For("th").SettlementTotalsLines(v);
+        Assert.Equal("(ตามใบวางบิลเลขที่ BN-20261020-0001 ลงวันที่ 20/10/2026)", th[0]);
+        Assert.StartsWith("(ตามใบกำกับภาษีเลขที่ TIV-20261026-0001", th[1]);
+        Assert.StartsWith("(ตามใบกำกับภาษีเลขที่ TIV-2", th[2]);
     }
 
     [Fact]
