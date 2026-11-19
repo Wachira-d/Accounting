@@ -29,6 +29,22 @@ public class WithholdingTaxCertController : ControllerBase
         Guid companyId, [FromBody] CreateWithholdingTaxCertRequest request)
     {
         var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        // รอบ 271 ฝ่ายค้าน H3: ระบุเอกสาร = ผูก ⇒ งานของคน (ปฏิเสธ API key) + เดินด่านผูกเดียวกับ POST document/{id}/wht-link (R1–R11 + เดือนที่ยื่นแล้ว)
+        if (request.DocumentId.HasValue)
+        {
+            if (OwnerActionGuard.DenyResult(HttpContext, "สร้าง 50 ทวิ ผูกกับเอกสาร") is { } deny) return deny;
+            var docType = await _db.Documents.Where(d => d.Id == request.DocumentId.Value && d.CompanyId == companyId)
+                .Select(d => (DocumentType?)d.DocumentType).FirstOrDefaultAsync();
+            if (docType == null)
+                return NotFound(new ApiResponse<WithholdingTaxCertResponse>(false, null, "ไม่พบเอกสารต้นทางที่อ้างถึง"));
+            var uid = JwtHelper.GetUserIdFromClaims(User);
+            if (!await DocumentPermissionHelper.CanApproveAsync(HttpContext.RequestServices.GetRequiredService<IPermissionService>(),
+                    companyId, uid, docType.Value))
+                return StatusCode(403, new ApiResponse<WithholdingTaxCertResponse>(false, null,
+                    $"ไม่มีสิทธิ์ผูก 50 ทวิ กับเอกสาร {docType} (ต้องการ Document.Approve)"));
+            var linked = await _whtService.CreateLinkedAsync(companyId, request, userId, uid);
+            return StatusCode(201, new ApiResponse<WithholdingTaxCertResponse>(true, linked, "สร้างและผูกหนังสือรับรองหัก ณ ที่จ่ายสำเร็จ"));
+        }
         var result = await _whtService.CreateAsync(companyId, request, userId);
         return StatusCode(201, new ApiResponse<WithholdingTaxCertResponse>(true, result, "สร้างหนังสือรับรองหัก ณ ที่จ่ายสำเร็จ"));
     }
@@ -101,7 +117,18 @@ public class WithholdingTaxCertController : ControllerBase
     public async Task<ActionResult<ApiResponse<IReadOnlyList<WhtCertPvCandidateDto>>>> GetPvCandidates(Guid companyId, Guid certId)
     {
         var result = await _whtService.GetPvCandidatesForCertAsync(companyId, certId);
-        return Ok(new ApiResponse<IReadOnlyList<WhtCertPvCandidateDto>>(true, result));
+        // ฝ่ายค้าน L2: ไม่เปิดเลข/ยอดของใบสำคัญจ่ายชั้นความลับที่ผู้ใช้ไม่มีสิทธิ์เห็น (ด่านเดียวกับหน้าเอกสาร — ISensitivityService)
+        var ids = result.Select(r => r.DocumentId).ToList();
+        var kinds = await _db.Documents.AsNoTracking().Where(d => d.CompanyId == companyId && ids.Contains(d.Id))
+            .Select(d => new { d.Id, d.Sensitivity }).ToListAsync();
+        var sens = HttpContext.RequestServices.GetService(typeof(ISensitivityService)) as ISensitivityService;
+        var uid = JwtHelper.GetUserIdFromClaims(User);
+        var hidden = new HashSet<Guid>();
+        if (sens != null)
+            foreach (var k in kinds.Where(k => SensitivityAccess.NeedsCheck(k.Sensitivity)))
+                if (!await sens.CanViewAsync(companyId, uid, k.Sensitivity)) hidden.Add(k.Id);
+        var visible = result.Where(r => !hidden.Contains(r.DocumentId)).ToList();
+        return Ok(new ApiResponse<IReadOnlyList<WhtCertPvCandidateDto>>(true, visible));
     }
 
     /// <summary>รอบ 271 (D5): ยืนยันว่าใบมือนี้ไม่มีใบสำคัญจ่ายในระบบ (เหตุผล) — ป้าย "ยังไม่ผูก" ⇒ "ไม่มีใบสำคัญจ่าย" · <c>clear: true</c> = ถอนการยืนยัน</summary>

@@ -18,7 +18,7 @@ namespace Accounting.Tests.Db;
 /// ผูกครั้งแรกในเดือนยื่นแล้ว = ผูกได้ (271-1-2) · ใบผูกเอกสารอื่น = 409 (271-0-3) · ลบใบมีเลข = 409 (271-1-1) · ตัวกรองฝั่งเซิร์ฟเวอร์ (F2) · อาจนับซ้ำ
 /// </summary>
 [Trait("Category", "Db")]
-public class WhtCertLinkDbTests
+public partial class WhtCertLinkDbTests
 {
     private readonly ITestOutputHelper _out;
     public WhtCertLinkDbTests(ITestOutputHelper output) => _out = output;
@@ -221,12 +221,12 @@ public class WhtCertLinkDbTests
         using (var req = DbTestDatabase.TryCreateContext()!)
         {
             var ex = await Assert.ThrowsAsync<BusinessRuleException>(() =>
-                Svc(req).LinkCertToDocumentAsync(s.CompanyId, pv.Id, new WhtLinkRequest(b.Id, null, null, null), null));
+                Svc(req).LinkCertToDocumentAsync(s.CompanyId, pv.Id, new WhtLinkRequest(b.Id, null, null, null, aId), null));
             Assert.Equal(WhtCertLinkPlan.RelinkRuleCode, ex.RuleCode);
         }
         using (var req = DbTestDatabase.TryCreateContext()!)
         {
-            var r = await Svc(req).LinkCertToDocumentAsync(s.CompanyId, pv.Id, new WhtLinkRequest(b.Id, null, "ออกด้วยมือไว้แล้ว", null), null);
+            var r = await Svc(req).LinkCertToDocumentAsync(s.CompanyId, pv.Id, new WhtLinkRequest(b.Id, null, "ออกด้วยมือไว้แล้ว", null, aId), null);
             Assert.Equal(aId, r.VoidedCertId);
         }
         using var chk = DbTestDatabase.TryCreateContext()!;
@@ -263,7 +263,7 @@ public class WhtCertLinkDbTests
         {
             var ex = await Assert.ThrowsAsync<BusinessRuleException>(() =>
                 Svc(req).LinkCertToDocumentAsync(s.CompanyId, pv.Id,
-                    new WhtLinkRequest(b.Id, null, "ซ้ำ", new List<string> { WhtCertLinkPlan.CodeFiled, WhtCertLinkPlan.CodeFiledLinkOnly }), null));
+                    new WhtLinkRequest(b.Id, null, "ซ้ำ", new List<string> { WhtCertLinkPlan.CodeFiled, WhtCertLinkPlan.CodeFiledLinkOnly }, aId), null));
             Assert.Equal(WhtCertLinkPlan.FiledRuleCode, ex.RuleCode);
             Assert.Equal(409, ex.StatusCode);
         }
@@ -284,8 +284,9 @@ public class WhtCertLinkDbTests
         if (db == null) { _out.WriteLine("ไม่มีฐาน — ข้าม"); return; }
         var s = await SeedAsync(db);
         var pv = await PvAsync(db, s, "PV-REMIT");
+        Guid aId;
         using (var req = DbTestDatabase.TryCreateContext()!)
-            await Svc(req).TryAutoIssueForDocumentAsync(s.CompanyId, pv.Id, WhtCertIssueTrigger.Approve, "tester");
+            aId = (await Svc(req).TryAutoIssueForDocumentAsync(s.CompanyId, pv.Id, WhtCertIssueTrigger.Approve, "tester")).CertificateId!.Value;
         var b = await ManualCertAsync(db, s, "WHT-M-0451");
         db.StatutoryRemittances.Add(new StatutoryRemittance
         {
@@ -295,7 +296,7 @@ public class WhtCertLinkDbTests
         await db.SaveChangesAsync();
         using var req2 = DbTestDatabase.TryCreateContext()!;
         var ex = await Assert.ThrowsAsync<BusinessRuleException>(() =>
-            Svc(req2).LinkCertToDocumentAsync(s.CompanyId, pv.Id, new WhtLinkRequest(b.Id, null, "ซ้ำ", null), null));
+            Svc(req2).LinkCertToDocumentAsync(s.CompanyId, pv.Id, new WhtLinkRequest(b.Id, null, "ซ้ำ", null, aId), null));
         Assert.Equal(WhtCertLinkPlan.FiledRuleCode, ex.RuleCode);
     }
 
@@ -306,12 +307,13 @@ public class WhtCertLinkDbTests
         if (db == null) { _out.WriteLine("ไม่มีฐาน — ข้าม"); return; }
         var s = await SeedAsync(db);
         var pv = await PvAsync(db, s, "PV-DRAFTRPT");
+        Guid aId;
         using (var req = DbTestDatabase.TryCreateContext()!)
-            await Svc(req).TryAutoIssueForDocumentAsync(s.CompanyId, pv.Id, WhtCertIssueTrigger.Approve, "tester");
+            aId = (await Svc(req).TryAutoIssueForDocumentAsync(s.CompanyId, pv.Id, WhtCertIssueTrigger.Approve, "tester")).CertificateId!.Value;
         var b = await ManualCertAsync(db, s, "WHT-M-0501");
         await FileMonthAsync(db, s, Today, TaxReportStatus.Draft);
         using var req2 = DbTestDatabase.TryCreateContext()!;
-        var r = await Svc(req2).LinkCertToDocumentAsync(s.CompanyId, pv.Id, new WhtLinkRequest(b.Id, null, "ซ้ำ", null), null);
+        var r = await Svc(req2).LinkCertToDocumentAsync(s.CompanyId, pv.Id, new WhtLinkRequest(b.Id, null, "ซ้ำ", null, aId), null);
         Assert.Equal(b.Id, r.LinkedCertId);
         Assert.NotNull(r.VoidedCertId);
     }
