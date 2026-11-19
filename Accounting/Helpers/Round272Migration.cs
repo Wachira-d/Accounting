@@ -68,6 +68,11 @@ public static class Round272Migration
              OR NEW."EvidenceSource" IS DISTINCT FROM OLD."EvidenceSource"
              OR NEW."GrantedByUserId" IS DISTINCT FROM OLD."GrantedByUserId"
              OR NEW."GrantedAt" IS DISTINCT FROM OLD."GrantedAt"
+             OR NEW."EvidenceAttachmentId" IS DISTINCT FROM OLD."EvidenceAttachmentId"
+             OR NEW."IpAddress" IS DISTINCT FROM OLD."IpAddress"
+             OR NEW."UserAgent" IS DISTINCT FROM OLD."UserAgent"
+             OR NEW."CreatedAt" IS DISTINCT FROM OLD."CreatedAt"
+             OR (OLD."ApprovedAt" IS NOT NULL AND (NEW."ApprovedAt" IS DISTINCT FROM OLD."ApprovedAt" OR NEW."ApprovedByUserId" IS DISTINCT FROM OLD."ApprovedByUserId"))
              OR NEW."IsDeleted" IS DISTINCT FROM OLD."IsDeleted" THEN
             RAISE EXCEPTION 'ProviderAutomationConsents: แก้เนื้อความยินยอมไม่ได้ (append-only) — ถอนแล้วให้ใหม่';
           END IF;
@@ -210,5 +215,10 @@ public static class Round272Migration
         """ALTER TABLE "StatutoryRemittances" ADD COLUMN IF NOT EXISTS "ReviewNote" varchar(500) NULL;""",
         """ALTER TABLE "StatutoryRemittances" ADD COLUMN IF NOT EXISTS "ReviewedAt" timestamp without time zone NULL;""",
         """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "TaxSlipIntakeEnabled" boolean NOT NULL DEFAULT true;""",
+        // ฝ่ายค้าน 272 M4/H3/M6
+        """ALTER TABLE "ProviderAutomationConsents" ADD COLUMN IF NOT EXISTS "ApprovedByUserId" uuid NULL;""",
+        """ALTER TABLE "ProviderAutomationConsents" ADD COLUMN IF NOT EXISTS "ApprovedAt" timestamp without time zone NULL;""",
+        """ALTER TABLE "TaxSlipEvidences" ADD COLUMN IF NOT EXISTS "SenderUnverified" boolean NOT NULL DEFAULT false;""",
+        """ALTER TABLE "TaxSlipEvidences" ADD COLUMN IF NOT EXISTS "FilePurgedAt" timestamp without time zone NULL;""",
     };
 }

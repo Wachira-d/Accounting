@@ -241,9 +241,11 @@ public class LineWebhookController : ControllerBase
         {
             _logger.LogError(ex, "LINE webhook OA กลาง: สลิปภาษีในกลุ่มล้ม ({Route})", route);
             // ห้ามเงียบ: บอกในกลุ่มว่ายังไม่ได้บันทึก (แถวที่รับแล้วอยู่ในคิวพนักงานเอง)
+            // ฝ่ายค้าน 272 M5: ล้มก่อน/ระหว่างรับ (อาจยังไม่มีแถว) ⇒ ขอให้ส่งใหม่ (ไม่อ้างว่าส่งให้พนักงานแล้ว)
             if (!string.IsNullOrEmpty(replyToken) && _customerLinks != null)
                 await _customerLinks.ReplyAsync(Accounting.Helpers.CustomerNotifyChannel.ScopeNextAcc, null, replyToken,
-                    Accounting.Helpers.TaxSlipReplyCard.Text(Accounting.Helpers.TaxSlipReplyCard.Kind.Failed, new(), false));
+                    Accounting.Helpers.TaxSlipReplyCard.Text(route == Accounting.Helpers.CentralSlipRoute.Media
+                        ? Accounting.Helpers.TaxSlipReplyCard.Kind.FailedResend : Accounting.Helpers.TaxSlipReplyCard.Kind.Failed, new(), false));
             return true;
         }
     }

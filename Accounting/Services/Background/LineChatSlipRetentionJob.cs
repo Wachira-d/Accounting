@@ -32,6 +32,9 @@ public class LineChatSlipRetentionJob : BackgroundService
                 {
                     var n = await Accounting.Services.Implementations.LineChatSlipService.PurgeExpiredAsync(db, storage, _logger, DateTime.UtcNow, stoppingToken);
                     if (n > 0) _logger.LogInformation("ลบรูปสลิปจากแชต LINE ที่พ้นระยะเก็บ {Count} รูป", n);
+                    // รอบ 272 ฝ่ายค้าน M6: สลิปภาษีที่ปิดโดยไม่บันทึก (ไม่แตะแถวที่บันทึกแล้ว/รอตัดสิน — MAX retention)
+                    var t = await Accounting.Services.Implementations.TaxSlipIntakeService.PurgeClosedFilesAsync(db, storage, _logger, DateTime.UtcNow, stoppingToken);
+                    if (t > 0) _logger.LogInformation("ลบไฟล์สลิปภาษีที่พ้นระยะเก็บ {Count} ไฟล์", t);
                 }, _logger, ct: stoppingToken);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)

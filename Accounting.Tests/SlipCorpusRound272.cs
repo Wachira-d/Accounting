@@ -2,14 +2,14 @@ namespace Accounting.Tests;
 
 /// <summary>
 /// รอบ 272 แพ็ก P1 — ชุดสลิปชำระภาษี <b>สังเคราะห์ตามรูปที่ปิดบังแล้ว</b> (ดีไซน์ §2.1: K BIZ "Bill Payment Completed" ของเจ้าของ) ·
-/// <b>ไม่มีค่าจริงจากสลิปใดเลย</b>: เลขผู้เสียภาษี = เลขสังเคราะห์ที่ checksum ผ่าน (0105556999995 · 0105556999987) · Control Code/เลขที่รายการ = ลำดับตัวแทน
+/// <b>ไม่มีค่าจริงจากสลิปใดเลย</b>: เลขผู้เสียภาษี = เลขสังเคราะห์ที่ checksum ผ่าน (0009990000018 · 0009990000026) · Control Code/เลขที่รายการ = ลำดับตัวแทน
 /// 13579 02468 (รูปเดียวกับตัวแทนค่าของ <c>tools/slip_secret_check.py</c>) · ชื่อ ⇒ <c>&lt;PAYER_NAME&gt;</c> · เลขบัญชีปิดบางเหลือ 4 หลักสังเคราะห์ · ยอด/วันที่สังเคราะห์ ·
 /// <b>ไม่ commit รูป</b> · เมื่อเจ้าของส่งเอกสารจริงเพิ่ม (D-1) ให้แทนค่าแบบเดียวกับ <c>SlipCorpusRound264</c> แล้วเพิ่มแฮชค่าจริงลง <c>tools/slip_secret_hashes.txt</c> ก่อน commit
 /// </summary>
 public static class SlipCorpusRound272
 {
-    public const string ClientTaxId = "0105556999995";
-    public const string OtherClientTaxId = "0105556999987";
+    public const string ClientTaxId = "0009990000018";
+    public const string OtherClientTaxId = "0009990000026";
     public const string ControlCode = "135790246813579";
     public const string TxnNo = "BILS902468013579024";
 

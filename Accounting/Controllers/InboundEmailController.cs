@@ -37,7 +37,9 @@ public class InboundEmailController : ControllerBase
         var msg = _adapter.Parse(body);
         if (msg == null) return BadRequest(new ApiResponse<object>(false, null, "รูปแบบข้อความไม่ถูกต้อง"));
         if (InboundEmailRule.Problem(msg) is { } problem) return Ok(new ApiResponse<object>(false, null, problem));
-        var outcome = await _intake.HandleEmailAsync(msg.From, msg.MessageId, msg.Attachments.Select(a => new TaxSlipIntakeService.InboundFile(a.FileName, a.Bytes)).ToList(), ct);
+        // ฝ่ายค้าน 272 H3: alignment กับโดเมนของ From จากผลของผู้ให้บริการ — ไม่ align ⇒ คิวพนักงานเท่านั้น (ไม่บันทึกเอง)
+        var outcome = await _intake.HandleEmailAsync(msg.From, msg.MessageId, msg.Attachments.Select(a => new TaxSlipIntakeService.InboundFile(a.FileName, a.Bytes)).ToList(),
+            InboundEmailRule.SenderVerified(msg), ct);
         _logger.LogInformation("อีเมลขาเข้า (สลิปภาษี): {Outcome}", outcome);
         return Ok(new ApiResponse<object>(true, null, outcome));
     }

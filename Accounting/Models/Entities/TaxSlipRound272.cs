@@ -26,6 +26,9 @@ public class ProviderAutomationConsent : TenantEntity
     public string EvidenceSource { get; set; } = "web";
     /// <summary>ไฟล์หนังสือมอบอำนาจ (เฉพาะ staff-poa)</summary>
     public Guid? EvidenceAttachmentId { get; set; }
+    /// <summary>ฝ่ายค้าน 272 M4: หนังสือมอบอำนาจ — พนักงานอีกคนของผู้ให้บริการ (ไม่ใช่ผู้แนบ) อนุมัติ · ประทับครั้งเดียว (trigger) · null = ยังใช้ไม่ได้</summary>
+    public Guid? ApprovedByUserId { get; set; }
+    public DateTime? ApprovedAt { get; set; }
     public Guid GrantedByUserId { get; set; }
     public DateTime GrantedAt { get; set; }
     public string? IpAddress { get; set; }
@@ -131,4 +134,8 @@ public class TaxSlipEvidence : TenantEntity
     public string? LastCardText { get; set; }
     public string? LastCardOutcome { get; set; }
     public DateTime? LastCardAt { get; set; }
+    /// <summary>ฝ่ายค้าน 272 H3: อีเมลที่ผู้ส่งยืนยันโดเมนของ From ไม่ได้ (DKIM/SPF ไม่ align · ไม่มี DMARC) ⇒ ไม่บันทึกเองทุกกรณี (คิวพนักงานเท่านั้น)</summary>
+    public bool SenderUnverified { get; set; }
+    /// <summary>ฝ่ายค้าน 272 M6: ลบไฟล์สลิปเมื่อพ้นระยะเก็บแล้ว (ไฟล์ของแถวที่บันทึกแล้วย้ายเป็นหลักฐานของลูกค้า · แถวที่ยังไม่ตัดสินไม่ถูกลบ)</summary>
+    public DateTime? FilePurgedAt { get; set; }
 }

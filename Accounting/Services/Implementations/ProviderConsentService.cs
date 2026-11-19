@@ -349,10 +349,12 @@ public class ProviderConsentService
         var row = new ProviderAutomationConsent
         {
             CompanyId = clientId, ProviderCompanyId = providerId, Scope = ProviderConsent.Scope, TaxTypes = csv, TextVersion = ProviderConsent.CurrentTextVersion,
-            HashVersion = ProviderConsent.HashVersion, EvidenceSource = ProviderConsent.SourcePowerOfAttorney, EvidenceAttachmentId = attachmentId,
+            HashVersion = ProviderConsent.HashVersionWithEvidence, EvidenceSource = ProviderConsent.SourcePowerOfAttorney, EvidenceAttachmentId = attachmentId,
             GrantedByUserId = staffUserId, GrantedAt = now, CreatedBy = staffUserId.ToString(),
         };
-        row.EvidenceHash = ProviderConsent.Hash(clientId, providerId, csv, null, null, false, row.TextVersion, text, staffUserId, now);
+        // ฝ่ายค้าน 272 M4: ไฟล์หลักฐาน + แหล่งหลักฐานอยู่ใน hash (สลับไฟล์ภายหลัง = Tampered)
+        row.EvidenceHash = ProviderConsent.HashV2(clientId, providerId, csv, null, null, false, row.TextVersion, text, staffUserId, now,
+            ProviderConsent.SourcePowerOfAttorney, attachmentId);
         _db.ProviderAutomationConsents.Add(row);
         foreach (var cid in new[] { clientId, providerId })
             _db.AddChainedAuditLog(new AuditLog
@@ -363,7 +365,51 @@ public class ProviderConsentService
             });
         await _db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
+        await NotifyClientPoaAsync(clientId, row, "แนบหนังสือมอบอำนาจ — รอพนักงานอีกคนของสำนักงานบัญชีอนุมัติ", ct);
         return row;
+    }
+
+    /// <summary>ฝ่ายค้าน 272 M4: ผู้อนุมัติคนที่สองของหนังสือมอบอำนาจ — สมาชิกบริษัทผู้ให้บริการที่<b>ไม่ใช่ผู้แนบ</b> · ประทับครั้งเดียว (trigger) · audit สองบริษัท + กระดิ่งเจ้าของลูกค้า</summary>
+    public async Task<ProviderAutomationConsent> ApprovePowerOfAttorneyAsync(Guid providerId, Guid clientId, Guid approverUserId, Guid consentId, CancellationToken ct = default)
+    {
+        if (await ProviderIdAsync(ct) != providerId || providerId == clientId)
+            throw new BusinessRuleException("ใช้ได้เฉพาะบริษัทผู้ให้บริการกับบริษัทลูกค้า", ProviderConsent.RuleCode, 403);
+        if (!await _db.CompanyUsers.AsNoTracking().AnyAsync(cu => cu.CompanyId == providerId && cu.UserId == approverUserId, ct))
+            throw new BusinessRuleException("ผู้อนุมัติต้องเป็นพนักงานของสำนักงานบัญชี", ProviderConsent.RuleCode, 403);
+        await using var tx = await _db.Database.BeginTransactionAsync(ct);
+        await _db.Database.ExecuteSqlInterpolatedAsync($"SELECT 1 FROM \"ProviderAutomationConsents\" WHERE \"Id\" = {consentId} AND \"CompanyId\" = {clientId} FOR UPDATE", ct);
+        var row = await _db.ProviderAutomationConsents.FirstOrDefaultAsync(x => x.Id == consentId && x.CompanyId == clientId && x.ProviderCompanyId == providerId
+            && x.EvidenceSource == ProviderConsent.SourcePowerOfAttorney, ct) ?? throw new KeyNotFoundException("ไม่พบหนังสือมอบอำนาจ");
+        if (row.WithdrawnAt != null) throw new BusinessRuleException("หนังสือมอบอำนาจนี้ถูกแทน/ถอนแล้ว", ProviderConsent.RuleCode, 409);
+        if (row.ApprovedAt != null) throw new BusinessRuleException("อนุมัติไปแล้ว", ProviderConsent.RuleCode, 409);
+        if (row.GrantedByUserId == approverUserId) throw new BusinessRuleException("ผู้แนบหนังสือมอบอำนาจอนุมัติเองไม่ได้ — ให้พนักงานอีกคนตรวจ", ProviderConsent.RuleCode, 403);
+        var now = DateTime.UtcNow;
+        row.ApprovedByUserId = approverUserId; row.ApprovedAt = now;
+        foreach (var cid in new[] { clientId, providerId })
+            _db.AddChainedAuditLog(new AuditLog
+            {
+                CompanyId = cid, UserId = approverUserId, Action = AuditAction.Update, EntityType = nameof(ProviderAutomationConsent), EntityId = row.Id.ToString(),
+                NewValues = JsonSerializer.Serialize(new { @event = "ProviderPowerOfAttorneyApproved", clientId, providerId, uploader = row.GrantedByUserId, ruleCode = ProviderConsent.RuleCode }),
+                Timestamp = now,
+            });
+        await _db.SaveChangesAsync(ct);
+        await tx.CommitAsync(ct);
+        await NotifyClientPoaAsync(clientId, row, "หนังสือมอบอำนาจได้รับการอนุมัติแล้ว — พนักงานกดบันทึกการชำระภาษีจากสลิปแทนบริษัททีละใบได้ (ระบบไม่บันทึกเอง)", ct);
+        return row;
+    }
+
+    private async Task NotifyClientPoaAsync(Guid clientId, ProviderAutomationConsent row, string message, CancellationToken ct)
+    {
+        if (_notify == null) return;
+        try
+        {
+            await _notify.DispatchAsync(clientId, NotificationEvents.ProviderConsentRequested, new NotificationContext
+            {
+                Title = "🧾 หนังสือมอบอำนาจถึงสำนักงานบัญชี NextAcc", Message = message + " · ตรวจ/ถอนได้ที่ศูนย์บิล",
+                ActionUrl = ProviderConsent.PageUrl(clientId), EntityType = nameof(ProviderAutomationConsent), EntityId = row.Id,
+            });
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException) { _logger.LogError(ex, "แจ้งเจ้าของบริษัท {Client} เรื่องหนังสือมอบอำนาจไม่สำเร็จ", clientId); }
     }
 
     private static string? Clip(string? s, int n) => string.IsNullOrWhiteSpace(s) ? null : (s.Trim().Length > n ? s.Trim()[..n] : s.Trim());

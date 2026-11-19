@@ -1320,6 +1320,12 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
                 Accounting.Helpers.WhtUnissuedCertGate.RuleCode);
 
         var amount = item.Amount;
+        // รอบ 272 ฝ่ายค้าน H1: เส้นสลิปส่งยอดที่สลิปจ่าย — สมุดเปลี่ยนหลังตัดสิน (ลงบิลเพิ่ม/แก้ยอด) ⇒ ไม่ประทับ "ชำระแล้ว" ด้วยยอดสมุด ณ วันที่กด
+        if (req.ExpectedAmount is decimal expected
+            && Math.Round(expected, 2, MidpointRounding.AwayFromZero) != Math.Round(amount, 2, MidpointRounding.AwayFromZero))
+            throw new Accounting.Helpers.BusinessRuleException(
+                $"{form} งวด {req.PeriodMonth:D2}/{req.PeriodYear}: ยอดค้างในสมุดตอนนี้ {amount:N2} ไม่ตรงยอดที่ชำระตามสลิป {expected:N2} — ไม่บันทึก (สมุดเปลี่ยนหลังระบบตัดสิน) ให้พนักงานตรวจ",
+                Accounting.Helpers.TaxSlipMatch.Codes.BooksChanged, 409);
         // ══ เงินเพิ่ม / เบี้ยปรับ / ค่าปรับ (รอบ 220 · คำตัดสินข้อ 181) ══ ทุกแบบ — ค่าที่ผู้ใช้เห็น/แก้บนจอชนะ ·
         // ไม่ส่งเงินเพิ่ม = ปกส./ภ.พ.36 ใช้ค่าเสนอ (เดิม) · แบบอื่น 0 · ไม่ส่งเบี้ยปรับ/ค่าปรับ = 0 · ติดลบ = ปฏิเสธ
         // ⚠️ ภ.พ.30 คิดจากยอดที่ต้องชำระสุทธิ (amount = NetVat) — งวดเครดิตไม่มียอดค้าง จึงไม่ถึงบรรทัดนี้
@@ -1631,7 +1637,9 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
             // ไปแล้ว. งวดที่นำส่งแล้ว = ยืนยันตัวเลขแล้ว จึงต้องมีรายงานคู่เสมอ
             // ⚠️ อยู่ **นอก** transaction ของการนำส่งโดยตั้งใจ (commit ไปแล้ว) —
             // สร้างรายงานพลาดต้องไม่ทำให้การนำส่ง (JE เงินจริง) ล้มตาม
-            var reportNote = isPp36
+            // รอบ 272 ฝ่ายค้าน M7: ร่วมธุรกรรมของผู้เรียก (เส้นสลิป) ⇒ ไม่สร้างรายงานภาษีจากเส้นนี้ (272-1-4 ไม่แตะ TaxReport) และงานหลัง commit
+            // ต้องไม่อยู่ในธุรกรรมที่ยังไม่ commit (ล้มแล้วธุรกรรมนอก abort ⇒ การนำส่งถูกย้อน) — เส้นมือ (ownTx) เหมือนเดิม
+            var reportNote = isPp36 && ownTx
                 ? await TryEnsurePp36ReportAsync(companyId, req.PeriodYear, req.PeriodMonth)
                 : "";
 

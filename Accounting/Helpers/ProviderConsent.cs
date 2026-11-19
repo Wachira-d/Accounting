@@ -104,12 +104,27 @@ public static class ProviderConsent
     public static string PreviewHash(Guid clientCompanyId, Guid providerCompanyId, string taxTypesCsv, decimal? maxAmount, Guid? payBankAccountId, bool includesHeld, Guid userId)
         => Hash(clientCompanyId, providerCompanyId, taxTypesCsv, maxAmount, payBankAccountId, includesHeld, CurrentTextVersion, TextFor(CurrentTextVersion)!, userId, DateTime.UnixEpoch);
 
+    /// <summary>ฝ่ายค้าน 272 M4 — รุ่น 2 (<c>PRC2</c>): + แหล่งหลักฐาน + ไฟล์หลักฐาน (หนังสือมอบอำนาจ) ⇒ สลับไฟล์/แหล่งหลังบันทึก = hash ไม่ตรง · แถวหนังสือมอบอำนาจใช้รุ่นนี้เสมอ</summary>
+    public const int HashVersionWithEvidence = 2;
+
+    public static string HashV2(Guid clientCompanyId, Guid providerCompanyId, string taxTypesCsv, decimal? maxAmount, Guid? payBankAccountId,
+        bool includesHeld, int textVersion, string text, Guid grantedByUserId, DateTime grantedAtUtc, string evidenceSource, Guid? evidenceAttachmentId)
+        => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(string.Join("\n", "PRC2", evidenceSource, evidenceAttachmentId is Guid g ? g.ToString("D") : "-",
+            Canonical(clientCompanyId, providerCompanyId, taxTypesCsv, maxAmount, payBankAccountId, includesHeld, textVersion, text, grantedByUserId, grantedAtUtc))))).ToLowerInvariant();
+
     public static bool HashMatches(ProviderAutomationConsent row)
     {
         var text = TextFor(row.TextVersion);
-        if (text == null || row.HashVersion != HashVersion) return false;
-        var expected = Hash(row.CompanyId, row.ProviderCompanyId, row.TaxTypes, row.MaxAmount, row.DefaultTaxPayBankAccountId, row.IncludesHeldSlips,
-            row.TextVersion, text, row.GrantedByUserId, row.GrantedAt);
+        if (text == null) return false;
+        var expected = row.HashVersion switch
+        {
+            HashVersion when row.EvidenceSource == SourceWeb => Hash(row.CompanyId, row.ProviderCompanyId, row.TaxTypes, row.MaxAmount, row.DefaultTaxPayBankAccountId,
+                row.IncludesHeldSlips, row.TextVersion, text, row.GrantedByUserId, row.GrantedAt),
+            HashVersionWithEvidence => HashV2(row.CompanyId, row.ProviderCompanyId, row.TaxTypes, row.MaxAmount, row.DefaultTaxPayBankAccountId, row.IncludesHeldSlips,
+                row.TextVersion, text, row.GrantedByUserId, row.GrantedAt, row.EvidenceSource, row.EvidenceAttachmentId),
+            _ => null,
+        };
+        if (expected == null) return false;
         return CryptographicOperations.FixedTimeEquals(Encoding.ASCII.GetBytes(expected), Encoding.ASCII.GetBytes(row.EvidenceHash ?? ""));
     }
 
@@ -148,6 +163,7 @@ public static class ProviderConsent
         public const string Tampered = "Tampered";
         public const string TextOutdated = "TextOutdated";
         public const string PowerOfAttorneyOnly = "PowerOfAttorneyOnly";
+        public const string PowerOfAttorneyPendingApproval = "PowerOfAttorneyPendingApproval";
         public const string TaxTypeNotCovered = "TaxTypeNotCovered";
         public const string OverCap = "OverCap";
         public const string GrantorLostPermission = "GrantorLostPermission";
@@ -172,6 +188,9 @@ public static class ProviderConsent
         if (row.WithdrawnAt != null || row.IsDeleted) return new(false, Codes.Withdrawn, "บริษัทถอนการอนุญาตแล้ว", row.Id);
         if (!HashMatches(row)) return new(false, Codes.Tampered, "หลักฐานความยินยอมไม่ตรงกับเนื้อแถว (hash) — ให้ความยินยอมใหม่", row.Id);
         if (row.TextVersion < MinTextVersion) return new(false, Codes.TextOutdated, "ข้อความยินยอมเป็นเวอร์ชันเก่า — ยืนยันใหม่", row.Id);
+        // ฝ่ายค้าน 272 M4: หนังสือมอบอำนาจต้องมีผู้อนุมัติคนที่สองของผู้ให้บริการ (ไม่ใช่ผู้แนบ) ก่อนใช้กดบันทึกได้
+        if (row.EvidenceSource == SourcePowerOfAttorney && (row.ApprovedByUserId is not Guid ap || ap == row.GrantedByUserId || row.ApprovedAt == null))
+            return new(false, Codes.PowerOfAttorneyPendingApproval, "หนังสือมอบอำนาจยังไม่ได้รับการอนุมัติจากพนักงานอีกคนของสำนักงานบัญชี (ผู้แนบอนุมัติเองไม่ได้)", row.Id);
         if (row.EvidenceSource == SourcePowerOfAttorney)
             return new(false, Codes.PowerOfAttorneyOnly, "มีหนังสือมอบอำนาจ (แนบโดยพนักงาน) — ไม่เปิดการบันทึกเอง ทุกสลิปให้พนักงานกดบันทึก (272-1-6)", row.Id);
         if (!grantorStillPermitted) return new(false, Codes.GrantorLostPermission, "ผู้ให้ความยินยอมไม่มีสิทธิ์แล้ว — ผู้มีสิทธิ์ยืนยันใหม่", row.Id);
