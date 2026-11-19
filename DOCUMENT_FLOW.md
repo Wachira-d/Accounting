@@ -5950,7 +5950,14 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
   ปฏิเสธเมื่อผู้รับเลขใช้ไม่ได้ (ทางแก้ "สร้างเอกสารใหม่" ที่รอบเงินเดือน) · กล่อง 13 หลัก HTML + QuestPDF = `WhtCertFormText.TaxIdBoxDigits` (ใช้ไม่ได้ = ว่างทั้งหมด) ·
   **คีย์:** `EncryptedColumnConverter` ลองคีย์ปัจจุบัน → `ENCRYPTION_KEY_PREVIOUS` → config เดิม → dev key (ถอดอย่างเดียว · `EncryptionKeyResolver.PiiPreviousKeys`) ·
   `PiiReprotectJob` (บูตละครั้ง · JobLock · audit `PDPA-26-KEY-ROTATE`) เข้ารหัสแถวคีย์เดิมใหม่ด้วยคีย์ปัจจุบัน · ถอดไม่ออกทุกคีย์ = ไม่แตะ ⇒ รายงาน
-  `GET payroll/tax-identity-health` (อ่านอย่างเดียว · ปิดบัง) · ทางออกอื่นของคอลัมน์ชุดเดียวกัน: ไฟล์ สปส. (`SsoInsuredNumber.CitizenIdForFile` — enc1 ⇒ ว่าง) · ไฟล์โอนเงินเดือน (`PayrollBankTransfer` — enc1 ⇒ ไม่พร้อมโอน "เลขบัญชีถอดรหัสไม่ได้") · production ปฏิเสธคีย์ placeholder · คำตัดสิน 274-1…7 (`erp-review/2026-09-29/DECISIONS.md`)
+  `GET payroll/tax-identity-health` (อ่านอย่างเดียว · ปิดบัง · ทุกคอลัมน์ PII ทะเบียนเดียวกับงานย้ายคีย์ · ทางไปต่อของแถว "รอย้ายคีย์" ตามผลรันล่าสุดใน JobRunLog) ·
+  **ผลตรวจฝ่ายค้าน:** มีแถวถูกกันแม้แถวเดียว ⇒ **ไม่ออกไฟล์ ภ.ง.ด.1/1ก ทุกรูปแบบ** (422 `RD-PND1-PAYEE-TAXID` · รายชื่อ+เลขปิดบัง+ภาษีที่ขาด — เดิมออกไฟล์บางส่วน 200) ·
+  พรีวิวยังแสดง · แนบอัตโนมัติตอนจ่ายได้เหตุเดียวกันเข้าแบนเนอร์รอบ (`PayrollFilingAttachmentNotice`) · ไฟล์ สปส. เลขบัตรใช้ไม่ได้ ⇒ ไม่ออกไฟล์ (`SSO-CITIZENID-UNUSABLE` · ว่างคงเดิม) ·
+  ciphertext รุ่นก่อนไม่มีคำนำหน้าที่ถอดไม่ออก = ถอดไม่ได้ (`EncryptedColumnConverter.IsUnreadable` ตัวตัดสินกลาง) · งานย้ายคีย์เลือกรุ่นก่อนด้วย · ทุก 6 ชั่วโมง ·
+  UPDATE+audit ธุรกรรมเดียวต่อชุด · production เตือนเมื่ออ่านด้วย dev key (ชั่วโมงละครั้ง) · export/แม่แบบนำเข้าไม่ส่ง ciphertext ดิบ ·
+  **หมุนคีย์แบบ rolling deploy:** instance ใหม่ต้องตั้ง `ENCRYPTION_KEY_PREVIOUS` = คีย์เดิม · **ห้าม**มี instance เก่า (คีย์เดิมเป็นคีย์ปัจจุบัน) รันพร้อม instance ใหม่
+  — instance เก่าอ่านแถวที่ย้ายแล้วไม่ออก และเขียนแถวใหม่ด้วยคีย์เดิม (ระบบไม่มีด่านข้าม instance ⇒ ปิดเครื่องเก่าก่อนเปิดใหม่ · ลบคีย์เดิมเมื่อ JobRunLog `PiiReprotect` สำเร็จและรายงานไม่มีแถวรอย้ายคีย์) ·
+  ทางออกอื่นของคอลัมน์ชุดเดียวกัน: ไฟล์ สปส. (`SsoInsuredNumber.CitizenIdForFile` — enc1 ⇒ ว่าง) · ไฟล์โอนเงินเดือน (`PayrollBankTransfer` — enc1 ⇒ ไม่พร้อมโอน "เลขบัญชีถอดรหัสไม่ได้") · production ปฏิเสธคีย์ placeholder · คำตัดสิน 274-1…7 (`erp-review/2026-09-29/DECISIONS.md`)
 - **รอบ 200 ทีม R (กวาดค้างรอบ 189)**: ฐานภาษีสะสม (YTD) ของงวดก่อน = `PayrollIncomeBase.PriorTaxBase(TaxableGross, GrossIncome)` (D-09 — เดิม gross
   รวมสวัสดิการยกเว้น ⇒ หักเกินงวดหลัง · แถวเก่าที่ TaxableGross = 0 ใช้ gross เหมือนเดิม) · PVD = `PayrollIncomeBase.PvdContribution(proratedBaseSalary, %)`
   (D-10 — เดิมเต็มเดือน + ไม่ปัด) · เพดานสมทบปัด AwayFromZero (D-08) · กำหนดนำส่ง สปส. + เงินเพิ่ม §49 = `Helpers/SsoLateFee` ตัวเดียว
@@ -9773,3 +9780,6 @@ _Last verified against codebase: 2026-11-19 (รอบ 273 — §3.4b-273: ใ�
 _Last verified against codebase: 2026-11-19 (รอบ 274 — เลขผู้เสียภาษีพนักงานผิดจำนวนหลักในไฟล์ ภ.ง.ด.1/1ก และ 50 ทวิ หลังเปลี่ยน ENCRYPTION_KEY: converter ลองคีย์เดิม ·
 `EmployeeTaxIdentity.Inspect` (13 หลัก + mod-11 · enc1 ที่ถอดไม่ออก) หน้าทุกทางออก · ไฟล์กันแถวพร้อมเหตุ · กล่อง 50 ทวิ ตัวเดียว · `PiiReprotectJob` · รายงาน `tax-identity-health` ·
 เทสต์ `PiiKeyRotationRound274Tests` + Db `PiiKeyRotationDbTests` · กติกา R274 ×8 — commit 150a9f17 + 11b8d39d (เปลี่ยนชื่อเป็นรอบ 274))_
+
+_Last verified against codebase: 2026-11-19 (รอบ 274 ผลตรวจฝ่ายค้าน HIGH-1/MED-1/MED-2/LOW-1…5 — ไฟล์ ภ.ง.ด.1/1ก ที่มีแถวถูกกันไม่ออก · ciphertext รุ่นก่อน · งานย้ายคีย์เป็นระยะ+ผลจริง ·
+ไฟล์ สปส. · export — build + test 23,540 ผ่านในเครื่องนี้ (รวม Db) — commit <เติมในคอมมิตตามหลัง>)_

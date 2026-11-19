@@ -1816,7 +1816,7 @@ public class ImportExportService : IImportExportService
             ["LastNameTh"] = e.LastNameTh,
             ["FirstNameEn"] = e.FirstNameEn ?? "",
             ["LastNameEn"] = e.LastNameEn ?? "",
-            ["CitizenId"] = e.CitizenId ?? "",
+            ["CitizenId"] = Accounting.Helpers.EncryptedColumnConverter.ForExport(e.CitizenId) ?? "",   // รอบ 274: ไม่ส่ง ciphertext ดิบ
             ["DateOfBirth"] = e.DateOfBirth?.ToString("yyyy-MM-dd") ?? "",
             ["Phone"] = e.Phone ?? "",
             ["Email"] = e.Email ?? "",
@@ -1826,8 +1826,8 @@ public class ImportExportService : IImportExportService
             ["BaseSalary"] = e.BaseSalary.ToString("F2"),
             ["SalaryType"] = e.SalaryType,
             ["BankName"] = e.BankName ?? "",
-            ["BankAccountNumber"] = e.BankAccountNumber ?? "",
-            ["SocialSecurityNumber"] = e.SocialSecurityNumber ?? "",
+            ["BankAccountNumber"] = Accounting.Helpers.EncryptedColumnConverter.ForExport(e.BankAccountNumber) ?? "",   // รอบ 274: ไม่ส่ง ciphertext ดิบ
+            ["SocialSecurityNumber"] = Accounting.Helpers.EncryptedColumnConverter.ForExport(e.SocialSecurityNumber) ?? "",   // รอบ 274: ไม่ส่ง ciphertext ดิบ
             ["IsActive"] = e.IsActive.ToString()
         }).ToList();
     }

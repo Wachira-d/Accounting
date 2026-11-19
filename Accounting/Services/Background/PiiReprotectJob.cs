@@ -73,7 +73,7 @@ public static class PiiReprotectPass
                     {
                         var company = col.HasCompanyId ? "\"CompanyId\"" : "NULL::uuid";
                         cmd.CommandText = $"SELECT \"Id\", {company}, \"{col.Column}\" FROM \"{col.Table}\" "
-                            + $"WHERE \"{col.Column}\" LIKE 'enc1:%'"
+                            + $"WHERE {CandidateSql(col.Column)}"
                             + (last != null ? " AND \"Id\" > @last" : "")
                             + (onlyCompanyId != null ? " AND \"CompanyId\" = @cid" : "")
                             + $" ORDER BY \"Id\" LIMIT {BatchSize}";
@@ -86,7 +86,11 @@ public static class PiiReprotectPass
                     if (batch.Count == 0) break;
                     last = batch[^1].Id;
 
+                    // ฝ่ายค้าน LOW-2: UPDATE ของชุด + audit ของชุด อยู่ในธุรกรรมเดียว (ล้มกลางชุด ⇒ ไม่มีแถวที่เปลี่ยนโดยไม่มี audit)
+                    await using var tx = await db.Database.BeginTransactionAsync(ct);
+                    var dbTx = Microsoft.EntityFrameworkCore.Storage.DbContextTransactionExtensions.GetDbTransaction(tx);
                     var audits = 0;
+                    var batchPer = new Dictionary<string, int>(StringComparer.Ordinal);
                     foreach (var row in batch)
                     {
                         scanned++;
@@ -98,6 +102,7 @@ public static class PiiReprotectPass
                         int n;
                         await using (var up = conn.CreateCommand())
                         {
+                            up.Transaction = dbTx;
                             up.CommandText = $"UPDATE \"{col.Table}\" SET \"{col.Column}\" = @nv WHERE \"Id\" = @id AND \"{col.Column}\" = @old";
                             AddParam(up, "nv", nv);
                             AddParam(up, "id", row.Id);
@@ -105,7 +110,7 @@ public static class PiiReprotectPass
                             n = await up.ExecuteNonQueryAsync(ct);
                         }
                         if (n != 1) { skipped++; continue; }
-                        per[$"{col.Table}.{col.Column}"] = per.GetValueOrDefault($"{col.Table}.{col.Column}") + 1;
+                        batchPer[$"{col.Table}.{col.Column}"] = batchPer.GetValueOrDefault($"{col.Table}.{col.Column}") + 1;
                         audits++;
                         db.AddChainedAuditLog(new AuditLog
                         {
@@ -115,12 +120,15 @@ public static class PiiReprotectPass
                             EntityId = row.Id.ToString(),
                             NewValues = System.Text.Json.JsonSerializer.Serialize(new
                             {
-                                action = "PiiReprotected", field = col.Property, fromKeyIndex = r.KeyIndex, ruleCode = "PDPA-26-KEY-ROTATE",
+                                action = "PiiReprotected", field = col.Property, fromKeyIndex = r.KeyIndex,
+                                fromDevKey = previous[r.KeyIndex] == EncryptionKeyResolver.DevKey, ruleCode = "PDPA-26-KEY-ROTATE",
                             }),
                             Timestamp = DateTime.UtcNow,
                         });
                     }
                     if (audits > 0) await db.SaveChangesAsync(ct);
+                    await tx.CommitAsync(ct);
+                    foreach (var kv in batchPer) per[kv.Key] = per.GetValueOrDefault(kv.Key) + kv.Value;
                     db.ChangeTracker.Clear();
                     if (batch.Count < BatchSize) break;
                 }
@@ -132,6 +140,11 @@ public static class PiiReprotectPass
         }
         return new Result(scanned, per.Values.Sum(), undecryptable, skipped, per);
     }
+
+    /// <summary>แถวที่อาจเป็น ciphertext — enc1 หรือรุ่นก่อนไม่มีคำนำหน้า (base64 ล้วน ≥ 40 ตัว · ฝ่ายค้าน MED-1 เดิมเลือกแค่ enc1) ·
+    /// ตัดสินจริงด้วย <see cref="EncryptedColumnConverter.Inspect"/> ตัวเดียว</summary>
+    public static string CandidateSql(string column)
+        => $"(\"{column}\" LIKE 'enc1:%' OR (length(\"{column}\") >= 40 AND \"{column}\" ~ '^[A-Za-z0-9+/]+={{0,2}}$'))";
 
     private static void AddParam(DbCommand cmd, string name, object value)
     {
@@ -152,30 +165,49 @@ public class PiiReprotectJob : BackgroundService
     public PiiReprotectJob(IServiceScopeFactory scopeFactory, ILogger<PiiReprotectJob> logger)
     { _scopeFactory = scopeFactory; _logger = logger; }
 
+    /// <summary>ชื่องานใน JobRunLog — รายงาน <see cref="EmployeeIdentityHealth"/> อ่านผลรันล่าสุดจากชื่อนี้</summary>
+    public const string JobName = "PiiReprotect";
+    /// <summary>ฝ่ายค้าน MED-2: รันเป็นระยะ (ไม่ใช่แค่ตอนบูต) — แถวที่เพิ่งตั้งคีย์เดิมถูกย้ายโดยไม่ต้องรีสตาร์ตอีกรอบ</summary>
+    public static readonly TimeSpan Interval = TimeSpan.FromHours(6);
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         try { await Task.Delay(TimeSpan.FromMinutes(3), stoppingToken); } catch { return; }
+        while (!stoppingToken.IsCancellationRequested)
+        {
+            await RunOnceAsync(stoppingToken);
+            try { await Task.Delay(Interval, stoppingToken); } catch { return; }
+        }
+    }
+
+    private async Task RunOnceAsync(CancellationToken stoppingToken)
+    {
         var startedAt = DateTime.UtcNow;
+        IJobRunRecorder? recorder = null;
         try
         {
             using var scope = _scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<AccountingDbContext>();
-            var recorder = scope.ServiceProvider.GetService<IJobRunRecorder>();
+            recorder = scope.ServiceProvider.GetService<IJobRunRecorder>();
             await JobLock.RunExclusiveAsync(db, AdvisoryLockKey.BackgroundJob, nameof(PiiReprotectJob), async () =>
             {
                 var r = await PiiReprotectPass.RunAsync(db, stoppingToken);
                 var summary = $"ตรวจ PII ที่เข้ารหัส {r.Scanned} ค่า · เข้ารหัสใหม่ด้วยคีย์ปัจจุบัน {r.Rekeyed} ค่า"
                     + (r.PerColumn.Count == 0 ? "" : " (" + string.Join(", ", r.PerColumn.Select(kv => $"{kv.Key}={kv.Value}")) + ")")
                     + (r.Undecryptable == 0 ? "" : $" · ⛔ ถอดไม่ออกทุกคีย์ {r.Undecryptable} ค่า — ตั้ง {EncryptionKeyResolver.PreviousKeyEnv} เป็นคีย์เดิม หรือให้ผู้ใช้กรอกใหม่ "
-                        + "(รายงาน: หน้าเงินเดือน › เลขประจำตัวที่ต้องแก้)")
+                        + "(รายงาน: GET payroll/tax-identity-health)")
                     + (r.SkippedConcurrent == 0 ? "" : $" · ข้าม {r.SkippedConcurrent} ค่าที่ผู้ใช้เพิ่งแก้");
                 if (r.Rekeyed > 0 || r.Undecryptable > 0) _logger.LogWarning("PiiReprotect: {Summary}", summary);
-                if (recorder != null) await recorder.RecordAsync("PiiReprotect", r.Undecryptable == 0, summary, r.Rekeyed, startedAt);
+                // สำเร็จ = งานรันจบ (ค่าที่ถอดไม่ออกเป็นงานของผู้ใช้ — อยู่ในข้อความ + รายงานรายแถว)
+                if (recorder != null) await recorder.RecordAsync(JobName, true, summary, r.Rekeyed, startedAt);
             }, _logger, ct: stoppingToken);
         }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "PiiReprotectJob ล้ม — คอลัมน์ PII ที่เข้ารหัสด้วยคีย์เดิมยังอ่านได้ผ่านคีย์เดิม จะลองใหม่ในการบูตครั้งถัดไป");
+            // ล้มดัง 3 ที่: LogError · JobRunLog (สถานะงาน) · รายงาน tax-identity-health แสดง "งานย้ายคีย์ล้ม" แทน "ไม่ต้องทำอะไร"
+            _logger.LogError(ex, "PiiReprotectJob ล้ม — คอลัมน์ PII ที่เข้ารหัสด้วยคีย์เดิมยังอ่านได้ผ่านคีย์เดิม จะลองใหม่ในรอบถัดไป");
+            if (recorder != null) await recorder.RecordAsync(JobName, false, "ล้ม: " + ex.Message, 0, startedAt);
         }
     }
 }

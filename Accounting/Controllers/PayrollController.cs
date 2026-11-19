@@ -757,6 +757,8 @@ public class PayrollController : ControllerBase
         return Ok(new ApiResponse<object>(true, new
         {
             Blocking = report.Blocking,
+            RekeyJob = report.RekeyJob == null ? null : new { report.RekeyJob.FinishedAt, report.RekeyJob.Success, report.RekeyJob.Message },
+            RekeyJobStatusText = EmployeeIdentityHealth.RekeyAction(report.RekeyJob),   // ฝ่ายค้าน MED-2: สถานะงานย้ายคีย์ตามผลรันจริง (บรรทัดสรุปของรายงาน)
             Rows = report.Rows.Select(r => new { r.Source, r.Ref, r.Name, r.Field, Issue = r.Issue.ToString(), r.Masked, r.Action, r.BlocksFiling }),
         }));
     }

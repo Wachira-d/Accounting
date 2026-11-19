@@ -59,8 +59,40 @@ public class EncryptedColumnConverter : ValueConverter<string?, string?>
         if (TryDecrypt(stored, currentKey, out var p)) return new(PiiCipherState.Current, p);
         for (var i = 0; i < previousKeys.Count; i++)
             if (TryDecrypt(stored, previousKeys[i], out p)) return new(PiiCipherState.Previous, p, i);
-        // ไม่มีคำนำหน้าและถอดไม่ออกทุกคีย์ = plaintext เก่าที่บังเอิญเป็น base64 (AmbiguousBase64 ในภาษาของ SecretProtector) — ใช้ตามเดิม
-        return prefixed ? new(PiiCipherState.Undecryptable, stored) : new(PiiCipherState.Plaintext, stored);
+        // รอบ 274 (ฝ่ายค้าน MED-1): ไม่มีคำนำหน้าแต่รูปเป็น ciphertext รุ่นก่อน (base64 ≥ 40 ตัว ≥ nonce+tag) และถอดไม่ออกทุกคีย์ = <b>ถอดไม่ได้</b>
+        // (เดิม = plaintext ⇒ ผู้เรียกตัดตัวเลขจาก base64 ลงแบบ) · คอลัมน์ PII เป็นเลขสั้น/JSON — plaintext จริงไม่มีรูปนี้
+        return new(PiiCipherState.Undecryptable, stored);
+    }
+
+    /// <summary>รอบ 274: ค่าที่ <b>ได้มาจาก</b> converter แล้วยังเป็น ciphertext (enc1 หรือรุ่นก่อนไม่มีคำนำหน้า) = ถอดรหัสไม่ได้ ·
+    /// ตัวตัดสินเดียวของผู้อ่านปลายทาง (ไฟล์ยื่น · ไฟล์ สปส. · ไฟล์โอน · export · import matching) — ห้ามตัดตัวเลขจากค่านี้</summary>
+    public static bool IsUnreadable(string? valueFromEntity)
+    {
+        var t = valueFromEntity?.Trim();
+        return !string.IsNullOrEmpty(t) && (EncryptionHelper.IsEncrypted(t) || EncryptionHelper.LooksLikeLegacyCiphertext(t));
+    }
+
+    /// <summary>รอบ 274 (ฝ่ายค้าน LOW-3): ค่าที่ส่งออกไฟล์/ตาราง (export · แม่แบบนำเข้า) — ถอดรหัสไม่ได้ ⇒ ป้าย ไม่ส่ง ciphertext ดิบ</summary>
+    public const string UnreadableExportText = "⛔ ถอดรหัสไม่ได้";
+    public static string? ForExport(string? valueFromEntity) => IsUnreadable(valueFromEntity) ? UnreadableExportText : valueFromEntity;
+
+    /// <summary>รอบ 274 (ฝ่ายค้าน LOW-1): ผู้รับคำเตือนเมื่อถอดด้วย dev key — Program.cs ต่อ logger (production) · null = ไม่เตือน</summary>
+    public static Action<long>? DevKeyUseWarning { get; set; }
+    private static long _devKeyReads;
+    private static long _devKeyLastWarnTicks;
+    /// <summary>จำนวนครั้งที่อ่านค่าด้วย dev key ตั้งแต่บูต</summary>
+    public static long DevKeyReads => System.Threading.Interlocked.Read(ref _devKeyReads);
+    internal static readonly TimeSpan DevKeyWarnInterval = TimeSpan.FromHours(1);
+
+    private static void NoteDevKeyRead()
+    {
+        var n = System.Threading.Interlocked.Increment(ref _devKeyReads);
+        var now = DateTime.UtcNow.Ticks;
+        var last = System.Threading.Interlocked.Read(ref _devKeyLastWarnTicks);
+        // จำกัดความถี่: ครั้งแรก + ไม่เกินชั่วโมงละครั้ง (ห้าม log spam)
+        if (last != 0 && now - last < DevKeyWarnInterval.Ticks) return;
+        if (System.Threading.Interlocked.CompareExchange(ref _devKeyLastWarnTicks, now, last) != last) return;
+        DevKeyUseWarning?.Invoke(n);
     }
 
     private static bool TryDecrypt(string stored, string key, out string plain)
@@ -88,7 +120,7 @@ public class EncryptedColumnConverter : ValueConverter<string?, string?>
     private static string? EncryptOnSave(string? value)
     {
         if (string.IsNullOrEmpty(value)) return value;
-        if (EncryptionHelper.IsEncrypted(value) && PassThrough.ContainsKey(Fingerprint(value))) return value;   // ค่าเดิมที่อ่านมาแล้วถอดไม่ออก — คงไว้
+        if (IsUnreadable(value) && PassThrough.ContainsKey(Fingerprint(value))) return value;   // ค่าเดิมที่อ่านมาแล้วถอดไม่ออก — คงไว้
         return EncryptionHelper.Encrypt(value, _key);
     }
 
@@ -107,6 +139,7 @@ public class EncryptedColumnConverter : ValueConverter<string?, string?>
             PassThrough.TryAdd(Fingerprint(value!), 0);
             return value;
         }
+        if (r.State == PiiCipherState.Previous && _previousKeys[r.KeyIndex] == EncryptionKeyResolver.DevKey) NoteDevKeyRead();
         return r.Plain;
     }
 

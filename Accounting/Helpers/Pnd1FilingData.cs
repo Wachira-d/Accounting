@@ -62,6 +62,17 @@ public static class Pnd1FilingData
         public decimal TotalTax => Rows.Sum(r => Pnd1FileFormat.Money(r.TaxAmount));
     }
 
+    /// <summary>รอบ 274 (ฝ่ายค้าน HIGH-1): รหัสเมื่อมีแถวถูกกัน ⇒ ไม่ออกไฟล์ยื่น (ห้ามไฟล์บางส่วน)</summary>
+    public const string BlockedRuleCode = "RD-PND1-PAYEE-TAXID";
+
+    /// <summary>ข้อความปฏิเสธ: รายชื่อ (เลขปิดบัง) + เหตุ/ทางไปต่อรายแถว + ยอดภาษีที่ขาด — ตัวเดียวของทุกทาง (ดาวน์โหลด · แนบอัตโนมัติ · ภ.ง.ด.1ก)</summary>
+    public static string BlockedMessage(string formName, string periodText, IReadOnlyList<BlockedRow> blocked)
+        => $"{formName} {periodText}: ไม่ออกไฟล์ยื่น — เลขประจำตัวของผู้มีเงินได้ {blocked.Count} รายใช้ไม่ได้ "
+            + $"(ภาษีรวม {blocked.Sum(b => b.TaxAmount):N2} บาท จะขาดจากแบบถ้าออกไฟล์ตอนนี้):\n"
+            + string.Join("\n", blocked.Select(b => $"• {b.SourceRef}{(string.IsNullOrWhiteSpace(b.Name) ? "" : " " + b.Name)} "
+                + $"[{b.MaskedTaxId ?? "-"}]: {b.Reason}"))
+            + "\nแก้ทุกแถวแล้วดาวน์โหลดใหม่ (ดูรายการทั้งหมด: GET payroll/tax-identity-health)";
+
     /// <summary>รอบ 274: แถวที่ถูกกันออกจากไฟล์ — <paramref name="SourceRef"/> = รหัสพนักงาน/เลขที่ใบ · <paramref name="MaskedTaxId"/> ปิดบังเสมอ ·
     /// <paramref name="Reason"/> = เหตุ + ทางไปต่อ (<see cref="EmployeeTaxIdentity.Result.Reason"/>)</summary>
     public sealed record BlockedRow(string SourceRef, string? Name, string? MaskedTaxId, TaxIdProblem Problem, string Reason, decimal TaxAmount);

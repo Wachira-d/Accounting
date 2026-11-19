@@ -917,7 +917,7 @@ builder.Services.AddHostedService<Accounting.Services.Background.PlatformTransfe
 builder.Services.AddHostedService<Accounting.Services.Background.TrialDataRetentionJob>();   // รอบ 231 (231-10) — ปิดข้อมูลทดลองใช้ที่หมดอายุพ้นระยะเก็บ (ผู้อ่าน TrialConfig.DeleteDataAfterGracePeriod/DataRetentionDays · legal hold ไม่แตะ · JobLock)
 // ฝ่ายค้านรอบ 219 B2: เข้ารหัสความลับที่ยังอยู่บนคีย์เดิมใหม่ด้วยคีย์ปัจจุบัน (ครั้งเดียวต่อบูต · JobLock)
 builder.Services.AddHostedService<Accounting.Services.Background.SecretReprotectJob>();
-// รอบ 274: ย้ายคอลัมน์ PII (EncryptedColumnConverter) ที่ยังอยู่บนคีย์เดิมไปคีย์ปัจจุบัน — JobLock · audit · ครั้งเดียวต่อการบูต (idempotent)
+// รอบ 274: ย้ายคอลัมน์ PII (EncryptedColumnConverter) ที่ยังอยู่บนคีย์เดิมไปคีย์ปัจจุบัน — JobLock · audit · หลังบูต 3 นาทีแล้วทุก 6 ชั่วโมง (idempotent · ผลลง JobRunLog)
 builder.Services.AddHostedService<Accounting.Services.Background.PiiReprotectJob>();
 // ตาข่ายรับของ webhook — webhook เป็นเส้นเร็ว ไม่ใช่เส้นเดียว (มันหายได้จริง)
 builder.Services.AddHostedService<Accounting.Services.Background.PaymentIntentReconcileJob>();
@@ -1096,6 +1096,13 @@ builder.Services.AddHsts(options =>
 });
 
 var app = builder.Build();
+// รอบ 274 (ฝ่ายค้าน LOW-1): production ถอดค่า PII ด้วย dev key ⇒ เตือน (ครั้งแรก + ไม่เกินชั่วโมงละครั้ง · นับสะสม) — ข้อมูลนั้นถูกเข้ารหัสด้วยคีย์ที่อยู่ใน source
+if (app.Environment.IsProduction())
+{
+    var devKeyLogger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("PiiEncryption");
+    Accounting.Helpers.EncryptedColumnConverter.DevKeyUseWarning = n => devKeyLogger.LogWarning(
+        "PII ถูกอ่านด้วย dev key {Count} ครั้งตั้งแต่บูต — ค่าเหล่านี้เข้ารหัสด้วยคีย์ใน source; PiiReprotectJob จะเข้ารหัสใหม่ด้วย ENCRYPTION_KEY", n);
+}
 // ทีม W10 (ฝ่ายค้านข้อ 1): regex เลขอ้างอิงการจองที่เจ้าของตั้งแล้ว timeout ตอนใช้งาน ⇒ ด่านข้ามรูปนั้นและแจ้งเตือนครั้งเดียวต่อรูปที่นี่
 Accounting.Helpers.BookingRefPattern.TimeoutSink = msg => app.Logger.LogWarning("[BookingRefPattern] {Message}", msg);
 

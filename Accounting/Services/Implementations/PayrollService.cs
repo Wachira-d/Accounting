@@ -1190,7 +1190,8 @@ public class PayrollService : IPayrollService
         var byExtId = employees.Where(e => !string.IsNullOrEmpty(e.ExternalId))
             .GroupBy(e => e.ExternalId!).ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
         string DigitsOnly(string? s) => Accounting.Helpers.ThaiTaxId.Normalize(s);   // เลขบัตรประชาชน (= เลขผู้เสียภาษีบุคคล) — ตัวตั้งเดียว (W1d P2-6)
-        var byCitizen = employees.Where(e => !string.IsNullOrEmpty(e.CitizenId))
+        // รอบ 274 (LOW-3): เลขบัตรที่ถอดรหัสไม่ได้ไม่ใช่กุญแจจับคู่ (ห้ามตัดตัวเลขจาก ciphertext)
+        var byCitizen = employees.Where(e => !string.IsNullOrEmpty(e.CitizenId) && !Accounting.Helpers.EncryptedColumnConverter.IsUnreadable(e.CitizenId))
             .GroupBy(e => DigitsOnly(e.CitizenId)).ToDictionary(g => g.Key, g => g.First());
 
         // P6 (N+1): เดิมเช็คผังบัญชีด้วย AnyAsync **ในลูปรายบรรทัด** (2 query/

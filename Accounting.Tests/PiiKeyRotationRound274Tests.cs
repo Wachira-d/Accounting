@@ -287,4 +287,82 @@ public class PiiKeyRotationRound274Tests
         // ทิศตรงข้าม: เลขบัญชีปกติพร้อมโอนเหมือนเดิม
         Assert.True(PayrollBankTransfer.Evaluate("Paid", 10000m, 0m, false, "123-4-56789-0", true).Ready);
     }
+
+    // ───────── ผลตรวจฝ่ายค้านรอบ 274 ─────────
+
+    [Fact]
+    public void ฝ่ายค้าน_HIGH1_ข้อความปฏิเสธไฟล์_มีรายชื่อ_เลขปิดบัง_ยอดภาษีที่ขาด_ไม่มีciphertext()
+    {
+        var cipher = EncryptionHelper.Encrypt(ValidId, "lost-key");
+        var emp = new Employee { EmployeeCode = "E009", FirstNameTh = "เลข", LastNameTh = "หาย", CitizenId = cipher };
+        var d = new PayrollDetail { Employee = emp, GrossIncome = 30000m, TaxableGross = 30000m, WithholdingTax = 375m,
+            PayrollRun = new PayrollRun { Year = 2026, Month = 9, Status = PayrollRunFilingScope.Paid, PayDate = new DateTime(2026, 9, 30) } };
+        var data = Pnd1FilingData.Build(new[] { d }, Array.Empty<WithholdingTaxCert>(), annual: false);
+        var b = Assert.Single(data.BlockedRows);
+        var msg = Pnd1FilingData.BlockedMessage("ภ.ง.ด.1", "เดือน 9/2026", data.BlockedRows);
+        Assert.Contains("E009", msg);
+        Assert.Contains("375.00", msg);
+        Assert.Contains(EmployeeTaxIdentity.UndecryptableText, msg);
+        Assert.DoesNotContain(cipher, msg);
+        Assert.DoesNotContain(ValidId, msg);
+        // ข้อความไปถึงแบนเนอร์ของรอบเงินเดือน (ทางแนบอัตโนมัติ)
+        Assert.Contains("E009", PayrollFilingAttachmentNotice.Pnd1Missing(new BusinessRuleException(msg, Pnd1FilingData.BlockedRuleCode, 422)));
+    }
+
+    [Fact]
+    public void ฝ่ายค้าน_MED1_ciphertextรุ่นก่อน_ไม่มีคำนำหน้า_ถอดไม่ได้_เป็นUndecryptable_ไม่ใช่Plaintext()
+    {
+        var legacy = EncryptionHelper.Encrypt(ValidId, "lost-key")[EncryptionHelper.CipherPrefix.Length..];
+        Assert.Equal(PiiCipherState.Undecryptable, EncryptedColumnConverter.Inspect(legacy, NewKey, new[] { OldKey }).State);
+        Assert.True(EncryptedColumnConverter.IsUnreadable(legacy));
+        Assert.Equal(TaxIdProblem.Undecryptable, EmployeeTaxIdentity.InspectValue(legacy).Problem);
+        Assert.False(PayrollBankTransfer.Evaluate("Paid", 1000m, 0m, false, legacy, true).Ready);
+        Assert.Equal(("", false), SsoInsuredNumber.Resolve(legacy, legacy));
+        // ถอดได้ด้วยคีย์เดิม = Previous (ย้ายได้)
+        var legacyOld = EncryptionHelper.Encrypt(ValidId, OldKey)[EncryptionHelper.CipherPrefix.Length..];
+        var r = EncryptedColumnConverter.Inspect(legacyOld, NewKey, new[] { OldKey });
+        Assert.Equal((PiiCipherState.Previous, ValidId), (r.State, r.Plain));
+        // ทิศตรงข้าม: ค่าธรรมดา (เลขสั้น · JSON) ไม่ใช่ ciphertext
+        Assert.Equal(PiiCipherState.Plaintext, EncryptedColumnConverter.Inspect(ValidId, NewKey, new[] { OldKey }).State);
+        Assert.Equal(PiiCipherState.Plaintext, EncryptedColumnConverter.Inspect("{\"a\":\"0123456789012345678901234567890123456789\"}", NewKey, Array.Empty<string>()).State);
+        Assert.False(EncryptedColumnConverter.IsUnreadable("123-4-56789-0"));
+    }
+
+    [Fact]
+    public void ฝ่ายค้าน_MED2_ทางไปต่อของแถวรอย้ายคีย์_ตามผลรันจริง()
+    {
+        Assert.Contains("ยังไม่เคยรัน", EmployeeIdentityHealth.RekeyAction(null));
+        Assert.Contains("สำเร็จ", EmployeeIdentityHealth.RekeyAction(new(new DateTime(2026, 11, 19, 1, 0, 0), true, "ok")));
+        var failed = EmployeeIdentityHealth.RekeyAction(new(new DateTime(2026, 11, 19, 1, 0, 0), false, "ล้ม: timeout"));
+        Assert.Contains("⛔", failed);
+        Assert.Contains("timeout", failed);
+        Assert.DoesNotContain("ไม่ต้องทำอะไร", failed);
+        // คอลัมน์ที่ไม่ใช่เลขผู้เสียภาษี: ไม่ตรวจ 13 หลัก
+        Assert.Null(EmployeeIdentityHealth.Classify(EncryptionHelper.Encrypt("1234567890", NewKey), NewKey, new[] { OldKey }, taxIdColumn: false));
+        Assert.Equal(EmployeeIdentityHealth.Issue.PendingRekey,
+            EmployeeIdentityHealth.Classify(EncryptionHelper.Encrypt("1234567890", OldKey), NewKey, new[] { OldKey }, taxIdColumn: false)!.Value.Issue);
+    }
+
+    [Fact]
+    public void ฝ่ายค้าน_LOW3_ส่งออก_ไม่ส่งciphertextดิบ()
+    {
+        var cipher = EncryptionHelper.Encrypt(ValidId, "lost-key");
+        Assert.Equal(EncryptedColumnConverter.UnreadableExportText, EncryptedColumnConverter.ForExport(cipher));
+        Assert.Equal(ValidId, EncryptedColumnConverter.ForExport(ValidId));
+        Assert.Null(EncryptedColumnConverter.ForExport(null));
+    }
+
+    [Fact]
+    public void ฝ่ายค้าน_LOW5_ไฟล์สปส_เลขบัตรใช้ไม่ได้_ปฏิเสธพร้อมรายชื่อ_ทิศตรงข้ามเลขถูกหรือว่างผ่าน()
+    {
+        var cipher = EncryptionHelper.Encrypt(ValidId, "lost-key");
+        var ex = Assert.Throws<BusinessRuleException>(() => SsoInsuredNumber.ThrowIfUnusable("สปส.1-10",
+            new[] { ("E001", (string?)"ถูก", (string?)ValidId), ("E002", "หาย", cipher), ("E003", "ผิด", BadChecksum) }));
+        Assert.Equal(SsoInsuredNumber.UnusableRuleCode, ex.RuleCode);
+        Assert.Contains("E002", ex.Message);
+        Assert.Contains("E003", ex.Message);
+        Assert.DoesNotContain("E001", ex.Message);
+        Assert.DoesNotContain(cipher, ex.Message);
+        SsoInsuredNumber.ThrowIfUnusable("สปส.1-10", new[] { ("E001", (string?)"ถูก", (string?)ValidId), ("E004", "ว่าง", (string?)null) });
+    }
 }

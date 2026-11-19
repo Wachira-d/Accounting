@@ -52,7 +52,7 @@ public static class PayrollBankTransfer
         var isPaid = runStatus == "Paid";
         var amount = CashPaid(runStatus, netPay, advanceRecovered);
         // รอบ 274: ค่า enc1:… = converter ถอดไม่ออก (คีย์ถูกเปลี่ยน) — ห้ามตัดตัวเลขจาก ciphertext เป็นเลขบัญชี (โอนเงินเข้าบัญชีสุ่ม) ⇒ ไม่พร้อมโอนพร้อมเหตุ
-        var undecryptable = EncryptionHelper.IsEncrypted(bankAccountNumber?.Trim());
+        var undecryptable = EncryptedColumnConverter.IsUnreadable(bankAccountNumber);   // ตัวตัดสินกลาง (enc1 + รุ่นก่อน · MED-1)
         var digits = undecryptable ? "" : new string((bankAccountNumber ?? "").Where(char.IsDigit).ToArray());
         string? note = !isPaid && hasOutstandingAdvance
             ? "รอบยังไม่กดจ่าย และพนักงานมีเงินทดรองค้าง — ยอดโอนจริงจะถูกหักคืนตอนกดจ่าย ให้ส่งออกใหม่หลังกดจ่าย"

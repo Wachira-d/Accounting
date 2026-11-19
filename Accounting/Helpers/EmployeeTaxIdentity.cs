@@ -64,13 +64,13 @@ public static class EmployeeTaxIdentity
 
     /// <summary>มีอะไรให้ตรวจ — ciphertext หรือมีตัวเลขอย่างน้อยหนึ่งตัว (ช่องที่มีแต่ "-" = ว่าง เหมือนเดิม)</summary>
     private static bool HasContent(string? v)
-        => !string.IsNullOrWhiteSpace(v) && (EncryptionHelper.IsEncrypted(v.Trim()) || ThaiTaxId.Normalize(v).Length > 0);
+        => !string.IsNullOrWhiteSpace(v) && (EncryptedColumnConverter.IsUnreadable(v) || ThaiTaxId.Normalize(v).Length > 0);
 
     /// <summary>ตรวจค่าเดี่ยว (เช่น <c>Contact.TaxId</c> ของผู้รับใน 50 ทวิ) ด้วยกติกาเดียวกัน</summary>
     public static Result InspectValue(string? raw)
     {
         if (!HasContent(raw)) return new(null, TaxIdProblem.Missing, null);
-        if (EncryptionHelper.IsEncrypted(raw.Trim())) return new(null, TaxIdProblem.Undecryptable, "(ถอดรหัสไม่ได้)");
+        if (EncryptedColumnConverter.IsUnreadable(raw)) return new(null, TaxIdProblem.Undecryptable, "(ถอดรหัสไม่ได้)");   // enc1 หรือรุ่นก่อน (MED-1)
         var d = ThaiTaxId.Normalize(raw);
         return ThaiTaxId.IsValid(d) ? new(d, TaxIdProblem.None, PiiMask.CitizenId(d))
             : new(null, TaxIdProblem.Invalid, MaskInvalid(d));
