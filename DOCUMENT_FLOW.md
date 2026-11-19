@@ -6576,6 +6576,11 @@ _Last verified against codebase: 2026-11-13 · commit 76130af2 (รอบแร�
       แถบอำพันใบยังไม่ผูก (นิยามเดียว `WhtCertLinkPlan.IsUnlinked` — payroll/ยกเลิก/ยืนยันไม่มีใบสำคัญจ่ายไม่นับ) · "อาจนับซ้ำ" = ใบไม่ผูกที่มีใบผูกเอกสารของผู้ถูกหัก+แบบ+เดือน+ภาษีเดียวกัน (อ่านอย่างเดียว) ·
       D5 "ไม่มีใบสำคัญจ่าย" (`NoSourceDocumentReason` + audit `RD-50BIS-NO-SOURCE` · ใบทิปตั้งให้เอง) · ทุกค่าผ่าน `Layout.esc` (F3)
     - ข้อมูลเดิม: ไม่มี data migration (ใบซ้ำเดิมระบบตัดสินแทนไม่ได้) — สแกนอ่านอย่างเดียว `scripts/wht_duplicate_cert_scan.sql` + ตัวกรอง "อาจนับซ้ำ" · คอลัมน์ใหม่ผ่าน `Round271Migration` (`SupersededByCertId` ฯลฯ)
+    - **ชุดแก้ฝ่ายค้าน review-271 (คำตัดสิน 271-2-1…9)**: ลบถาวรใบที่มี 50 ทวิ มีเลข = บล็อก (`DocumentCascadePurgePolicy.RuleWhtCertNumbered` · ทางไปต่อ = ยกเลิกใบสำคัญจ่าย) ·
+      ด่านล็อกการยื่นตรวจตามใบ+เดือน · ใบที่ผูกด้วยมือ (รวมร่าง) ครอบการจ่าย (`LinkedCertCovers` ⇒ `LinkExisting`) · `POST withholding-tax-certs` + `DocumentId` = ผูกผ่านทางเข้าเดียว (`CreateLinkedAsync` · ปฏิเสธ API key) ·
+      ลิสต์รอออกใบเคารพความตั้งใจผูก · ผูกครั้งแรกหลังใบเดิมถูกยกเลิกในเดือนยื่นแล้ว = บล็อก · ออกใบร่างที่ผูกในเดือนยื่นแล้ว = บล็อก ·
+      ล็อกแถวใบสำคัญจ่ายตัวเดียว + ดัชนี `UX_WithholdingTaxCerts_ActivePerPayment` (ข้อมูลเดิมซ้ำ ⇒ เตือนทุกบูต) · "อาจนับซ้ำ" เจ้าของเดียว `Helpers/WhtCertDuplicateSuspect` ·
+      `ExpectedCurrentCertId` (409 `RD-50BIS-LINK-STALE`) · ยกเลิกใบ ⇒ ล้างความตั้งใจผูก · ตั้งความตั้งใจผูกด้วย API key ไม่ได้ · Db `WhtCertLinkReviewDbTests` (ในคลาส `WhtCertLinkDbTests`) · Last verified commit 9b41576f
     - เทสต์ `WhtCertLinkPlanTests` · `Db/WhtCertLinkDbTests` · กติกา `_R271_*` ใน `tools/required_call_site_check.py` · Last verified commit 720884a8
   - **ผลตรวจฝ่ายค้าน 2026-10-12** (`WhtAdversarialFixTests` · กติกา `_WHTADV` ใน `tools/required_call_site_check.py` · นโยบายเจ้าของ "เตือน ไม่บล็อก"
     และผู้ถูกหักที่ต่างจากผู้รับเงินต้องถูกใช้ทุกที่): **M1** พรีวิว GL (`PdfGenerationService.BuildProjectedGlAsync` → `WhtPayableAsync`) ตัดสินผัง
@@ -9698,6 +9703,7 @@ _Last verified against codebase: 2026-11-13 (รอบ 270 ชุดแก้ฝ
 _Last verified against codebase: 2026-11-13 (รอบ 264 P4 ชุดแก้ฝ่ายค้าน — §2.12g-264-P4: H1 กุญแจกันซ้ำแจ้งโอน · H2 ขอบเขต AcceptPayerSlipCopy ของผู้ขาย · M1 บรรทัดเดียวต่อการจ่ายเดียว · M2 จองแผนก่อน PV + outbox · M3 ปิดการแจ้งด้วย PV ของแผน · M4 พร้อมเพย์ไม่บันทึกเอง · M5 ภาษีหักของเรา · M6 A2 ไม่ใช้ความยินยอม · M7 TextVersion + กระดิ่งผู้ขาย · L1/L2/L4–L9 — คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — commit 11e00f10)_
 _Last verified against codebase: 2026-11-13 (รอบ 267 แพ็ก P5 ชุดแก้ฝ่ายค้าน — §2.12n-P5 ข้อ 7: MED-1…7 · LOW-1…10 (คำตัดสิน 267-1-78…85) — คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — commit 69875c09)_
 _Last verified against codebase: 2026-11-16 (รอบ 271 — §5.4 ผูกใบสำคัญจ่ายกับ 50 ทวิ ที่ออกไว้แล้ว: P0 ด่านลบใบมีเลข (271-1-1 · ปิด F1) + `WhtCertVoidGuard.CheckPeriodAsync` (271-0-4) + สแกนอ่านอย่างเดียว `scripts/wht_duplicate_cert_scan.sql` · P1 `Helpers/WhtCertLinkPlan` R1–R11 + กิ่ง `WhtCertIssueAction.LinkExisting` ใน `WhtCertIssuePlan.Decide` (ทุกทางอัตโนมัติ) + `Document.WhtLinkCertId/WhtLinkAckCodes` + ผูกล้ม = ไม่ผูก ไม่ออกใหม่ ล้มดัง 3 ที่ (271-1-4) + radio 3 ทางบนฟอร์มใบสำคัญจ่าย + กล่องยืนยันอนุมัติ · P2 `POST document/{id}/wht-link` เปลี่ยนการผูก (ใบเดิมยกเลิก + `SupersededByCertId` · 271-0-1 · เดือนยื่นแล้ว 409 เด็ดขาด 271-0-2 · ผูกครั้งแรกในเดือนยื่นแล้วได้ 271-1-2) + กล่อง "50 ทวิ ของใบนี้" + โมดัล · P3 หน้า 50 ทวิ ตัวกรอง/ค้นหา/การ์ดฝั่งเซิร์ฟเวอร์ (F2) · คอลัมน์ "ผูกกับ" · แถบอำพัน · อาจนับซ้ำ · D5 ไม่มีใบสำคัญจ่าย · escape (F3) · P4 ตัดทิ้ง (271-0-3) — เทสต์ pure `WhtCertLinkPlanTests` + Db `WhtCertLinkDbTests` · กติกา `_R271_*` + ฝ่ายค้าน R271-1…6 · build + test + Db test ผ่านในเครื่องนี้ (PostgreSQL) — commit 720884a8)_
+_Last verified against codebase: 2026-11-16 (รอบ 271 ชุดแก้ฝ่ายค้าน `erp-review/2026-11-16/review-271.md` — H1 ลบถาวรใบที่มี 50 ทวิ มีเลข = บล็อก + ด่านล็อกการยื่นตามใบ/เดือน · H2 ใบที่ผูกด้วยมือ (รวมร่าง) ครอบการจ่าย · H3 สร้างใบพร้อมเอกสาร = ผูกผ่านทางเข้าเดียว · M1–M6 · L1–L4 · L6 (L5 ไม่แก้พร้อมเหตุผล) · คำตัดสิน 271-2-1…9 — build + test + Db test ผ่านในเครื่องนี้ (PostgreSQL ฐานใหม่ + ดัชนีใหม่) — commit 9b41576f)_
 
 ## TAX272 — สลิปชำระภาษีจากกลุ่ม LINE/อีเมล ⇒ บันทึกนำส่งในบัญชีลูกค้า (รอบ 272 · สถานะปัจจุบัน · `erp-review/2026-11-16/team-272-tax-slip-autoremit.md`)
 
@@ -9720,9 +9726,15 @@ _Last verified against codebase: 2026-11-16 (รอบ 271 — §5.4 ผูก�
 6. **งานเบื้องหลัง** `TaxSlipJob` (10 นาที · JobLock): ประมวลสลิปพักหลังอนุญาตใหม่ทั้งชุดด่าน · หมดอายุ ⇒ คิว · ปุ่มเลือกเกิน 24 ชม. ⇒ คิว · **P5 ตรวจทาน** `TaxSlipReviewService` — เทียบรายการเดินบัญชี ±3 วัน (ธง StatementFound/OtherAccount/NotFound หลัง 10 วัน · ไม่ผูก/ไม่กลับรายการเอง)
 7. **อีเมลขาเข้า (P6 · 272-1-8)** — `POST /api/inbound-email` (ลายเซ็น `WebhookSignature` · SPF/DKIM) → `TaxSlipIntakeService.HandleEmailAsync` เส้นเดียวกัน · ปิดไว้จนตั้ง `InboundEmail:Enabled` + `INBOUND_EMAIL_SECRET` (production fail-fast)
 
+**ชุดแก้ฝ่ายค้าน (review-272):** ยอดที่ลงบัญชี = ยอดสลิป และยอดค้างสด ณ ตอนบันทึกต้องเท่ายอดที่คาด (`RemitRequest.ExpectedAmount` · H1) · อ่านสลิปไม่ได้ ⇒ แถว `TAX-SLIP-OCR-OFF`
+เข้าคิว + การ์ด + กระดิ่ง (H2) · อีเมลต้อง align โดเมนของ From (DMARC/DKIM d=/SPF) มิฉะนั้นคิวเท่านั้น (`SenderUnverified` · H3) · D-3 กรองช่วงยื่น/ค่าธรรมเนียมก่อนนับ "หลายแบบ" (M1) ·
+งวดที่มีใบขอชำระ Open แต่ CC ไม่ตรง ⇒ คิว (M2) · เหตุในการ์ดปิดตัวเลขเมื่อปิด ShowAmounts (M3) · หนังสือมอบอำนาจ: ไฟล์อยู่ใน hash (PRC2) + ผู้อนุมัติคนที่สอง + แจ้งเจ้าของลูกค้า ·
+สิทธิ์ผู้ยื่นภาษีตรวจกับบริษัทที่บันทึกจริง (M4) · ปุ่มล้ม ⇒ คิวจริง (M5) · ลบไฟล์แถวที่ปิดโดยไม่บันทึกหลัง 90 วันใน `LineChatSlipRetentionJob` + RoPA (M6) · เส้นสลิปไม่สร้าง TaxReport (M7) · L1–L8 ดู review-272
+
 ยังรอเจ้าของ: สลิปจริงธนาคารอื่น/สปส./ใบแจ้งชำระของกรม (เพิ่มแถวตาราง) · ผู้ให้บริการอีเมลขาเข้า (adapter) · backlog: สลิปเดียวหลายแบบ · ยื่นเพิ่มเติม · ค่าธรรมเนียมธนาคาร · อ่านใบแจ้งชำระ PDF อัตโนมัติ
 
 _Last verified against codebase: 2026-11-16 (รอบ 272 แพ็ก P1–P6 — §TAX272: GovPaymentSlip (98037@KBank) · TaxSlipMatch (D-2/D-3) · ProviderConsent (ทาง B) · ใบขอชำระ · RemitAsync ตัวเดียว · ตรวจทานหลังนำส่ง · อีเมลขาเข้าหลัง interface — build + test + Db test ผ่านในเครื่องนี้ (PostgreSQL) — commit cd71dee0)_
+_Last verified against codebase: 2026-11-19 (รอบ 272 ชุดแก้ฝ่ายค้าน — §TAX272: H1 ExpectedAmount · H2 OCR ไม่พร้อม ⇒ คิว · H3 alignment อีเมล · M1–M7 · L1–L8 — build + test + Db test ผ่านในเครื่องนี้ (PostgreSQL) — commit 7c5a3cb4)_
 
 _Last verified against codebase: 2026-11-19 (รอบ 273 — เลขผู้เสียภาษีพนักงานผิดจำนวนหลักในไฟล์ ภ.ง.ด.1/1ก และ 50 ทวิ หลังเปลี่ยน ENCRYPTION_KEY: converter ลองคีย์เดิม ·
 `EmployeeTaxIdentity.Inspect` (13 หลัก + mod-11 · enc1 ที่ถอดไม่ออก) หน้าทุกทางออก · ไฟล์กันแถวพร้อมเหตุ · กล่อง 50 ทวิ ตัวเดียว · `PiiReprotectJob` · รายงาน `tax-identity-health` ·

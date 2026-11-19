@@ -24,6 +24,8 @@ public interface IWithholdingTaxCertService
     Task<WhtLinkCheckResponse> CheckLinkAsync(Guid companyId, Guid documentId, Guid certId, Guid? paymentId);
     /// <summary>ผูก/เปลี่ยนการผูก (ทางเข้าเดียว) — เดือนที่ยื่นแล้ว + ยกเลิกใบเดิม = 409 เด็ดขาด (271-0-2) · ใบเดิมยกเลิกเสมอ (271-0-1)</summary>
     Task<WhtLinkResult> LinkCertToDocumentAsync(Guid companyId, Guid documentId, WhtLinkRequest request, Guid? userId);
+    /// <summary>ฝ่ายค้าน H3: สร้างใบที่ระบุ DocumentId ⇒ สร้างเดี่ยวแล้วผูกผ่าน <c>LinkCertToDocumentAsync</c> (ทางเข้าเดียว) ในธุรกรรมเดียว</summary>
+    Task<WithholdingTaxCertResponse> CreateLinkedAsync(Guid companyId, CreateWithholdingTaxCertRequest request, string createdBy, Guid? userId);
     Task<WhtDocumentLinkStatus> GetDocumentLinkStatusAsync(Guid companyId, Guid documentId);
     Task<IReadOnlyList<WhtCertPvCandidateDto>> GetPvCandidatesForCertAsync(Guid companyId, Guid certId);
     /// <summary>D5: ยืนยัน/ยกเลิกการยืนยันว่าใบมือนี้ไม่มีใบสำคัญจ่ายในระบบ (เหตุผล + audit)</summary>

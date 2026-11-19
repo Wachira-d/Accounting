@@ -34,7 +34,7 @@ public class TaxSlipRound272DbTests
 
     private static async Task<Seed> SeedAsync(Accounting.Data.AccountingDbContext db)
     {
-        var provider = new Company { Name = "สำนักงานบัญชีทดสอบ 272", TaxId = "0105556999987" };
+        var provider = new Company { Name = "สำนักงานบัญชีทดสอบ 272", TaxId = "0009990000026" };
         var client = new Company { Name = "บริษัทลูกค้าทดสอบ 272", TaxId = SlipCorpusRound272.ClientTaxId, IsVatRegistered = true };
         db.Companies.AddRange(provider, client);
         var owner = new User { Email = $"r272-{Guid.NewGuid():N}@test.local", PasswordHash = "x", FullName = "เจ้าของทดสอบ" };
@@ -90,15 +90,21 @@ public class TaxSlipRound272DbTests
             new FileAttachmentService(db, NullLogger<FileAttachmentService>.Instance, F4Proxy<IErrorLogService>.Create((_, _) => null), storage), storage,
             NullLogger<TaxSlipRemitService>.Instance);
 
-    private static async Task<ProviderAutomationConsent> GrantAsync(Accounting.Data.AccountingDbContext db, Seed s, string source = ProviderConsent.SourceWeb)
+    private static async Task<ProviderAutomationConsent> GrantAsync(Accounting.Data.AccountingDbContext db, Seed s, string source = ProviderConsent.SourceWeb, bool approve = true)
     {
         var at = PartnerConsent.TruncateToSecond(DateTime.UtcNow);
         const string types = "VatPp30,VatPp36,WhtPnd53";
+        var poa = source == ProviderConsent.SourcePowerOfAttorney;
+        var file = poa ? Guid.NewGuid() : (Guid?)null;
         var row = new ProviderAutomationConsent
         {
-            CompanyId = s.Client, ProviderCompanyId = s.Provider, Scope = ProviderConsent.Scope, TaxTypes = types, TextVersion = 1, HashVersion = 1,
-            EvidenceSource = source, GrantedByUserId = s.Owner, GrantedAt = at,
-            EvidenceHash = ProviderConsent.Hash(s.Client, s.Provider, types, null, null, false, 1, ProviderConsent.TextFor(1)!, s.Owner, at),
+            CompanyId = s.Client, ProviderCompanyId = s.Provider, Scope = ProviderConsent.Scope, TaxTypes = types, TextVersion = 1,
+            HashVersion = poa ? ProviderConsent.HashVersionWithEvidence : ProviderConsent.HashVersion,
+            EvidenceSource = source, GrantedByUserId = s.Owner, GrantedAt = at, EvidenceAttachmentId = file,
+            ApprovedByUserId = poa && approve ? Guid.NewGuid() : null, ApprovedAt = poa && approve ? at : null,
+            EvidenceHash = poa
+                ? ProviderConsent.HashV2(s.Client, s.Provider, types, null, null, false, 1, ProviderConsent.TextFor(1)!, s.Owner, at, source, file)
+                : ProviderConsent.Hash(s.Client, s.Provider, types, null, null, false, 1, ProviderConsent.TextFor(1)!, s.Owner, at),
         };
         db.ProviderAutomationConsents.Add(row);
         await db.SaveChangesAsync();
@@ -158,6 +164,53 @@ public class TaxSlipRound272DbTests
         await Assert.ThrowsAsync<TaxSlipRemitService.TaxSlipGateException>(() => Remitter(db, storage).ApplyAsync(new TaxSlipRemitService.ApplyRequest(s.Provider, slip.Id, Cand(s),
             s.BankAccountId, null, null, false, slip.SlipDate!.Value, null)));
         Assert.Equal(1, await check.StatutoryRemittances.CountAsync(r => r.CompanyId == s.Client && r.RemittanceType == "VatPp36" && !r.IsDeleted));
+        // ฝ่ายค้าน 272 M7: เส้นสลิปไม่สร้างรายงานภาษี (272-1-4) — งานหลัง commit ของ ภ.พ.36 ไม่อยู่ในธุรกรรมของสลิป
+        Assert.False(await check.TaxReports.AnyAsync(t => t.CompanyId == s.Client));
+    }
+
+    [Fact]
+    public async Task สมุดเปลี่ยนหลังตัดสิน_กดบันทึก_ไม่บันทึก_ยอดสลิปไม่ตรงผู้สมัคร_ไม่บันทึก_H1()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน — ข้าม"); return; }
+        var root = Path.Combine(Path.GetTempPath(), "r272-" + Guid.NewGuid().ToString("N"));
+        var storage = Storage(root);
+        var s = await SeedAsync(db);
+        await GrantAsync(db, s);
+        var slip = await SlipAsync(db, storage, s, root);
+        // ตัดสินไว้ตอนสมุดค้าง 400.00 (= ยอดสลิป) · ตอนกด สมุดค้าง 413.56 ⇒ RemitAsync ปฏิเสธด้วย ExpectedAmount (ไม่ประทับชำระแล้วด้วยยอดสมุด)
+        await db.TaxSlipEvidences.Where(x => x.Id == slip.Id).ExecuteUpdateAsync(u => u.SetProperty(x => x.Amount, (decimal?)400m));
+        var stale = Cand(s) with { Amount = 400m };
+        using var db1 = DbTestDatabase.TryCreateContext()!;
+        var ex = await Assert.ThrowsAsync<BusinessRuleException>(() => Remitter(db1, storage).ApplyAsync(
+            new TaxSlipRemitService.ApplyRequest(s.Provider, slip.Id, stale, s.BankAccountId, null, s.Owner, false, slip.SlipDate!.Value, null)));
+        Assert.Equal(TaxSlipMatch.Codes.BooksChanged, ex.RuleCode);
+        // ยอดบนสลิปไม่ตรงผู้สมัคร ⇒ ด่านก่อน RemitAsync
+        using var db2 = DbTestDatabase.TryCreateContext()!;
+        var ex2 = await Assert.ThrowsAsync<TaxSlipRemitService.TaxSlipGateException>(() => Remitter(db2, storage).ApplyAsync(
+            new TaxSlipRemitService.ApplyRequest(s.Provider, slip.Id, Cand(s), s.BankAccountId, null, s.Owner, false, slip.SlipDate!.Value, null)));
+        Assert.Equal(TaxSlipMatch.Codes.Amount, ex2.RuleCode);
+        Assert.False(await db2.StatutoryRemittances.AnyAsync(r => r.CompanyId == s.Client && !r.IsDeleted));
+        // ทิศตรงข้าม: ยอดสลิป = สมุด ⇒ บันทึกได้
+        await db2.TaxSlipEvidences.Where(x => x.Id == slip.Id).ExecuteUpdateAsync(u => u.SetProperty(x => x.Amount, (decimal?)413.56m));
+        using var db3 = DbTestDatabase.TryCreateContext()!;
+        var ok = await Remitter(db3, storage).ApplyAsync(new TaxSlipRemitService.ApplyRequest(s.Provider, slip.Id, Cand(s), s.BankAccountId, null, null, false, slip.SlipDate!.Value, null));
+        Assert.Equal(413.56m, ok.Result.Amount);
+    }
+
+    [Fact]
+    public async Task หนังสือมอบอำนาจยังไม่อนุมัติ_พนักงานกดไม่ได้_M4()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน — ข้าม"); return; }
+        var root = Path.Combine(Path.GetTempPath(), "r272-" + Guid.NewGuid().ToString("N"));
+        var storage = Storage(root);
+        var s = await SeedAsync(db);
+        await GrantAsync(db, s, ProviderConsent.SourcePowerOfAttorney, approve: false);
+        var slip = await SlipAsync(db, storage, s, root);
+        var ex = await Assert.ThrowsAsync<TaxSlipRemitService.TaxSlipGateException>(() => Remitter(db, storage).ApplyAsync(
+            new TaxSlipRemitService.ApplyRequest(s.Provider, slip.Id, Cand(s), s.BankAccountId, null, s.Owner, false, slip.SlipDate!.Value, null)));
+        Assert.Contains(ProviderConsent.Codes.PowerOfAttorneyPendingApproval, ex.RuleCode);
     }
 
     [Fact]

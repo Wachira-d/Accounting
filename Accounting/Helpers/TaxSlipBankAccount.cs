@@ -32,7 +32,8 @@ public static class TaxSlipBankAccount
     /// <param name="payer">บล็อกผู้โอนบนสลิป (ชนิด · ธนาคาร)</param>
     /// <param name="consentAccountId">บัญชีชำระภาษีหลักที่ลูกค้าระบุในความยินยอม · null = ไม่ระบุ</param>
     /// <param name="consentAccountBankCode">ธนาคารของบัญชีนั้น (<see cref="ThaiBankCodes.FromText"/> ของช่องธนาคาร) · null = ไม่รู้ ⇒ ใช้ชั้น 2 ไม่ได้</param>
-    public static Result Decide(SlipAccountMatch.Result match, OcrSlipText.SlipParty? payer, Guid? consentAccountId, string? consentAccountBankCode)
+    /// <param name="sameBankAccounts">ฝ่ายค้าน 272 L7: จำนวนบัญชีที่ใช้งานของบริษัทลูกค้าที่ธนาคารเดียวกับบัญชีในความยินยอม — อ่านเลขบนสลิปไม่ได้ + มีหลายบัญชีธนาคารนี้ ⇒ ไม่ใช้ชั้น 2</param>
+    public static Result Decide(SlipAccountMatch.Result match, OcrSlipText.SlipParty? payer, Guid? consentAccountId, string? consentAccountBankCode, int sameBankAccounts = 1)
     {
         if (match.Kind == SlipAccountMatch.Kind.Unique && match.AccountId is Guid id)
             return new Result(Kind.FromSlip, id, new[] { id }, "บัญชีที่จ่ายจากบล็อก “จาก” บนสลิปตรงบัญชีเดียวของบริษัท", match.PartyLabel);
@@ -41,7 +42,7 @@ public static class TaxSlipBankAccount
                 "เลขบัญชีบนสลิปไม่ใช่บัญชีของบริษัท (อาจจ่ายจากบัญชีส่วนตัวกรรมการ) — ให้พนักงานเลือกผังที่จ่าย", match.PartyLabel);
         var isCard = payer?.Kind == OcrSlipText.PartyKind.Card;
         if (!isCard && consentAccountId is Guid ca && consentAccountBankCode != null && payer?.BankCode == consentAccountBankCode
-            && (match.Kind != SlipAccountMatch.Kind.Many || match.Candidates.Contains(ca)))
+            && (match.Kind == SlipAccountMatch.Kind.Many ? match.Candidates.Contains(ca) : sameBankAccounts <= 1))
             return new Result(Kind.FromConsent, ca, new[] { ca }, "บัญชีชำระภาษีที่บริษัทระบุไว้ในความยินยอม · ธนาคารบนสลิปตรง", match.PartyLabel);
         var pre = match.Candidates.Count > 0 ? match.Candidates : consentAccountId is Guid c1 ? new[] { c1 } : Array.Empty<Guid>();
         return new Result(Kind.NeedsAccount, null, pre,

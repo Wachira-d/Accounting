@@ -162,7 +162,9 @@ public record RemitRequest(
     decimal? Penalty = null,
     decimal? OtherFine = null,
     // รอบ 220 ฝ่ายค้านข้อ 1: ยื่นแบบกระดาษ ⇒ ครบกำหนดวันกระดาษเสมอ (ไม่มีสิทธิ์ขยาย e-Filing)
-    bool PaperFiling = false);
+    bool PaperFiling = false,
+    // รอบ 272 ฝ่ายค้าน H1: ยอดภาษีที่ผู้เรียกคาดไว้ (จากสลิป/ผู้สมัคร) — มีค่า ⇒ ยอดค้างในสมุดตอนบันทึกต้องเท่านี้ทุกสตางค์ มิฉะนั้นปฏิเสธ (สมุดเปลี่ยนหลังตัดสิน) · null = เส้นมือเดิม
+    decimal? ExpectedAmount = null);
 
 /// <summary>รอบ 228 — จ่ายอากรแสตมป์ (หน้าอากรแสตมป์ → <c>RemitStampDutyAsync</c>) · DutyAmount null = ยอดบนรายการ ·
 /// Surcharge/OtherFine null = 0 (หน้าเติมค่าเสนอให้เห็นก่อนกด) · ExpenseAccountId null = 54810</summary>

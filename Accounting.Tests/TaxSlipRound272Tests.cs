@@ -97,7 +97,7 @@ public class TaxSlipRound272Tests
     [Fact]
     public void Gov_เลขภาษีchecksumผิด_และControlCodeสั้น_ไม่ผ่าน()
     {
-        Assert.Equal(GovPaymentSlip.Kind.UnknownGovernment, GovPaymentSlip.Identify(Read(C.KbizRd(taxId: "0105556999990"))).Kind);
+        Assert.Equal(GovPaymentSlip.Kind.UnknownGovernment, GovPaymentSlip.Identify(Read(C.KbizRd(taxId: "0009990000010"))).Kind);
         Assert.Equal(GovPaymentSlip.Kind.UnknownGovernment, GovPaymentSlip.Identify(Read(C.KbizRd(control: "13579024681357"))).Kind);
     }
 
@@ -221,6 +221,31 @@ public class TaxSlipRound272Tests
     }
 
     [Fact]
+    public void Match_ยอดเดียวหลายงวด_กรองช่วงยื่นก่อน_เหลือตัวเดียว_One_M1()
+    {
+        // ภ.ง.ด.1 ยอดคงที่ทุกเดือน: ก.ย. เลยกำหนดแล้ว · ต.ค. อยู่ในช่วงยื่น ⇒ ต.ค. ตัวเดียว (เดิม Many แล้วปุ่มเลือก ก.ย. ได้)
+        var d = TaxSlipMatch.Decide(Slip(4250m, cc: null, date: new DateTime(2026, 11, 7)), Group, Array.Empty<TaxSlipMatch.RequestKey>(),
+            new[] { Pend("WhtPnd1", 4250m, 9), Pend("WhtPnd1", 4250m, 10) }, NoRemit, false);
+        Assert.Equal(Outcome.One, d.Outcome);
+        Assert.Equal(10, d.Chosen!.Month);
+        // ค่าธรรมเนียมไม่ศูนย์ ⇒ ไม่ถามในกลุ่ม (ด่านเดียวกับทางตัวเดียว)
+        var fee = TaxSlipMatch.Decide(Slip(5000m, cc: null, fee: 15m), Group, Array.Empty<TaxSlipMatch.RequestKey>(), new[] { Pend("WhtPnd3", 5000m), Pend("WhtPnd53", 5000m) }, NoRemit, false);
+        Assert.Equal(Outcome.FeeNotZero, fee.Outcome);
+    }
+
+    [Fact]
+    public void Match_มีใบขอชำระOpenงวดเดียวกันแต่CCไม่ตรง_ไม่บันทึกเอง_M2()
+    {
+        var d = TaxSlipMatch.Decide(Slip(5000m, cc: "999999999999999"), Group, new[] { Req(amount: 5000m, surcharge: 0m, type: "WhtPnd53") },
+            new[] { Pend("WhtPnd53", 5000m) }, NoRemit, false);
+        Assert.Equal(Outcome.RequestCcMismatch, d.Outcome);
+        Assert.False(d.Auto);
+        // ทิศตรงข้าม: ใบขอชำระของงวดนั้นถูกยกเลิก ⇒ ทาง D-3 ใช้ได้
+        Assert.Equal(Outcome.One, TaxSlipMatch.Decide(Slip(5000m, cc: "999999999999999"), Group, new[] { Req(amount: 5000m, surcharge: 0m, type: "WhtPnd53", status: "Cancelled") },
+            new[] { Pend("WhtPnd53", 5000m) }, NoRemit, false).Outcome);
+    }
+
+    [Fact]
     public void Match_สลิปไม่รู้จักหน่วยงาน_UnknownAgency()
     {
         var g = GovPaymentSlip.Identify(Read(C.ThaiRdNoCompCode));
@@ -287,6 +312,15 @@ public class TaxSlipRound272Tests
     }
 
     [Fact]
+    public void Bank_อ่านเลขไม่ได้และมีหลายบัญชีธนาคารเดียวกัน_ไม่ใช้บัญชีในความยินยอม_L7()
+    {
+        var unreadable = new OcrSlipText.SlipParty(OcrSlipText.PartyKind.BankAccount, "004", false, null, null, null);
+        var m = SlipAccountMatch.Match(unreadable, Accounts);
+        Assert.Equal(TaxSlipBankAccount.Kind.NeedsAccount, TaxSlipBankAccount.Decide(m, unreadable, Acc2, "004", sameBankAccounts: 2).Kind);
+        Assert.Equal(TaxSlipBankAccount.Kind.FromConsent, TaxSlipBankAccount.Decide(m, unreadable, Acc2, "004", sameBankAccounts: 1).Kind);
+    }
+
+    [Fact]
     public void Bank_เส้นคู่ค้าเดิมไม่ถูกแตะ_SlipUniqueยังไม่บันทึกเอง()
         => Assert.False(PartnerPaySourceAccount.Precedence.Single(p => p.Origin == PartnerPaySourceAccount.Origin.SlipUnique).AllowsAuto);
 
@@ -294,15 +328,22 @@ public class TaxSlipRound272Tests
 
     private static readonly Guid Client = Guid.NewGuid(), Provider = Guid.NewGuid(), Grantor = Guid.NewGuid();
 
-    private static ProviderAutomationConsent Row(string types = "VatPp30,WhtPnd53", string source = ProviderConsent.SourceWeb, decimal? cap = null)
+    private static readonly Guid PoaFile = Guid.NewGuid(), SecondStaff = Guid.NewGuid();
+
+    private static ProviderAutomationConsent Row(string types = "VatPp30,WhtPnd53", string source = ProviderConsent.SourceWeb, decimal? cap = null, Guid? approvedBy = null)
     {
         var at = PartnerConsent.TruncateToSecond(DateTime.UtcNow);
+        var poa = source == ProviderConsent.SourcePowerOfAttorney;
         var row = new ProviderAutomationConsent
         {
-            CompanyId = Client, ProviderCompanyId = Provider, Scope = ProviderConsent.Scope, TaxTypes = types, MaxAmount = cap, TextVersion = 1, HashVersion = 1,
-            EvidenceSource = source, GrantedByUserId = Grantor, GrantedAt = at,
+            CompanyId = Client, ProviderCompanyId = Provider, Scope = ProviderConsent.Scope, TaxTypes = types, MaxAmount = cap, TextVersion = 1,
+            HashVersion = poa ? ProviderConsent.HashVersionWithEvidence : ProviderConsent.HashVersion,
+            EvidenceSource = source, GrantedByUserId = Grantor, GrantedAt = at, EvidenceAttachmentId = poa ? PoaFile : null,
+            ApprovedByUserId = approvedBy, ApprovedAt = approvedBy == null ? null : at,
         };
-        row.EvidenceHash = ProviderConsent.Hash(Client, Provider, types, cap, null, false, 1, ProviderConsent.TextFor(1)!, Grantor, at);
+        row.EvidenceHash = poa
+            ? ProviderConsent.HashV2(Client, Provider, types, cap, null, false, 1, ProviderConsent.TextFor(1)!, Grantor, at, source, PoaFile)
+            : ProviderConsent.Hash(Client, Provider, types, cap, null, false, 1, ProviderConsent.TextFor(1)!, Grantor, at);
         return row;
     }
 
@@ -347,11 +388,29 @@ public class TaxSlipRound272Tests
     [Fact]
     public void Consent_หนังสือมอบอำนาจ_ไม่เปิดบันทึกเอง_แต่พนักงานกดได้()
     {
-        var v = ProviderConsent.Allows(Row(source: ProviderConsent.SourcePowerOfAttorney), Client, Provider, "VatPp30", 1m, true);
+        var v = ProviderConsent.Allows(Row(source: ProviderConsent.SourcePowerOfAttorney, approvedBy: SecondStaff), Client, Provider, "VatPp30", 1m, true);
         Assert.False(v.Ok);
         Assert.Equal(ProviderConsent.Codes.PowerOfAttorneyOnly, v.Code);
         Assert.True(v.AllowsStaffClick);
         Assert.False(ProviderConsent.Allows(null, Client, Provider, "VatPp30", 1m, true).AllowsStaffClick);
+    }
+
+    [Fact]
+    public void Consent_หนังสือมอบอำนาจ_ยังไม่อนุมัติหรือผู้แนบอนุมัติเอง_กดไม่ได้_สลับไฟล์แล้วhashไม่ตรง_M4()
+    {
+        var pending = ProviderConsent.Allows(Row(source: ProviderConsent.SourcePowerOfAttorney), Client, Provider, "VatPp30", 1m, true);
+        Assert.Equal(ProviderConsent.Codes.PowerOfAttorneyPendingApproval, pending.Code);
+        Assert.False(pending.AllowsStaffClick);
+        var self = ProviderConsent.Allows(Row(source: ProviderConsent.SourcePowerOfAttorney, approvedBy: Grantor), Client, Provider, "VatPp30", 1m, true);
+        Assert.False(self.AllowsStaffClick);
+        var swapped = Row(source: ProviderConsent.SourcePowerOfAttorney, approvedBy: SecondStaff);
+        swapped.EvidenceAttachmentId = Guid.NewGuid();
+        Assert.Equal(ProviderConsent.Codes.Tampered, ProviderConsent.Allows(swapped, Client, Provider, "VatPp30", 1m, true).Code);
+        // ทิศตรงข้าม: แถวเว็บรุ่น 1 ยังตรวจผ่าน · แถวหนังสือมอบอำนาจที่ใช้ hash รุ่น 1 (ไม่มีไฟล์ใน hash) ไม่ผ่าน
+        Assert.True(ProviderConsent.HashMatches(Row()));
+        var v1Poa = Row(source: ProviderConsent.SourcePowerOfAttorney, approvedBy: SecondStaff);
+        v1Poa.HashVersion = ProviderConsent.HashVersion;
+        Assert.False(ProviderConsent.HashMatches(v1Poa));
     }
 
     [Fact]
@@ -404,13 +463,25 @@ public class TaxSlipRound272Tests
     }
 
     [Fact]
+    public void Card_ShowAmountsปิด_เหตุมีตัวเลข_ไม่มีตัวเลขในการ์ด_M3()
+    {
+        var f = Full() with { Reason = "ยอด 85,000.00 บาท เกินเพดานที่อนุญาต 50,000.00 บาท · เอกสาร 3 ใบ" };
+        var hidden = TaxSlipReplyCard.Text(TaxSlipReplyCard.Kind.ToStaff, f, false);
+        Assert.DoesNotContain("85,000.00", hidden);
+        Assert.DoesNotContain("50,000.00", hidden);
+        Assert.Contains("เกินเพดาน", hidden);
+        Assert.Contains("85,000.00", TaxSlipReplyCard.Text(TaxSlipReplyCard.Kind.ToStaff, f, true));
+        Assert.Contains("ยอด ••• บาท", TaxSlipReplyCard.Text(TaxSlipReplyCard.Kind.ToStaff, Full() with { Reason = "ยอด 1,234.50 บาท" }, false));
+    }
+
+    [Fact]
     public void Card_ผลที่ยังไม่บันทึก_ไม่อ้างว่าบันทึกแล้ว()
     {
         foreach (var k in new[] { TaxSlipReplyCard.Kind.NeedsAccount, TaxSlipReplyCard.Kind.NoMatch, TaxSlipReplyCard.Kind.AwaitingConsent, TaxSlipReplyCard.Kind.ToStaff,
                      TaxSlipReplyCard.Kind.TaxIdMismatch, TaxSlipReplyCard.Kind.AmountMismatch })
             Assert.Contains("ยังไม่ได้บันทึก", TaxSlipReplyCard.Text(k, Full(), true));
-        Assert.Equal("0105556XXXXXX", TaxSlipReplyCard.MaskTaxId(C.ClientTaxId));
-        Assert.Equal("3-XXXX-XXXXX-XX-4", TaxSlipReplyCard.MaskTaxId("3100000000004"));
+        Assert.Equal("0009990XXXXXX", TaxSlipReplyCard.MaskTaxId(C.ClientTaxId));
+        Assert.Equal("3-XXXX-XXXXX-XX-9", TaxSlipReplyCard.MaskTaxId("3000999000009"));
         Assert.DoesNotContain(TaxSlipReplyCard.Clean("a\u0007b\nc"), ch => ch == (char)7);
         Assert.Contains("\n", TaxSlipReplyCard.Clean("a\nb"));
     }
@@ -464,6 +535,23 @@ public class TaxSlipRound272Tests
         Assert.Null(InboundEmailRule.RequireSecret(false, true, null));
         Assert.Equal(new string('k', 32), InboundEmailRule.RequireSecret(true, true, new string('k', 32)));
         Assert.Null(InboundEmailRule.RequireSecret(true, false, null));
+    }
+
+    [Fact]
+    public void InboundEmail_DKIMผ่านแต่โดเมนไม่ตรงFrom_ไม่ยืนยันผู้ส่ง_H3()
+    {
+        var a = new JsonInboundEmailAdapter();
+        var spoof = a.Parse("""{"from":"owner@client.example","messageId":"<m1>","dkim":"pass","dkimDomain":"attacker.example","spf":"pass","spfDomain":"attacker.example"}""")!;
+        Assert.Null(InboundEmailRule.Problem(spoof));              // รับเข้าคิวได้
+        Assert.False(InboundEmailRule.SenderVerified(spoof));      // แต่ไม่บันทึกเอง
+        var noInfo = a.Parse("""{"from":"owner@client.example","messageId":"<m2>","dkim":"pass"}""")!;
+        Assert.False(InboundEmailRule.SenderVerified(noInfo));
+        // ทิศตรงข้าม: DKIM d= ตรง/เป็นโดเมนแม่ · SPF โดเมนตรง · DMARC ผ่าน ⇒ ยืนยันได้
+        Assert.True(InboundEmailRule.SenderVerified(spoof with { DkimDomain = "client.example" }));
+        Assert.True(InboundEmailRule.SenderVerified(spoof with { From = "owner@mail.client.example", DkimDomain = "client.example" }));
+        Assert.True(InboundEmailRule.SenderVerified(spoof with { DkimPass = false, SpfDomain = "client.example" }));
+        Assert.True(InboundEmailRule.SenderVerified(noInfo with { DmarcPass = true }));
+        Assert.False(InboundEmailRule.SenderVerified(spoof with { DkimDomain = "notclient.example" }));
     }
 
     [Fact]

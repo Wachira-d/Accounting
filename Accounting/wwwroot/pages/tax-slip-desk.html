@@ -49,6 +49,7 @@
         <button class="btn btn-secondary" onclick="Desk.requestConsent()">ส่งคำขออนุญาตอีกครั้ง</button>
         <label for="tsPoa" class="btn btn-secondary" style="margin-left:4px">แนบหนังสือมอบอำนาจ<input type="file" id="tsPoa" accept="application/pdf,image/*" style="display:none" onchange="Desk.uploadPoa(this)"></label></div>
       <div id="tsClientNote" class="ts-muted" style="margin-top:6px"></div>
+      <div id="tsPoaPending" style="margin-top:6px"></div>
     </div>
 
     <div class="ts-card">
@@ -94,6 +95,10 @@
         sel.innerHTML = '<option value="">— เลือกลูกค้า —</option>' + (d.clients || []).map(c =>
           `<option value="${e(c.contactId)}">${e(c.name)} · ${e(c.consentLabel)}${c.hasLineGroup ? '' : ' · ไม่มีกลุ่ม LINE'}</option>`).join('');
         if (keep) sel.value = keep;
+        // ฝ่ายค้าน 272 M4: หนังสือมอบอำนาจที่รอผู้อนุมัติคนที่สอง (ผู้แนบอนุมัติเองไม่ได้ — เซิร์ฟเวอร์ปฏิเสธ)
+        const pend = (d.clients || []).filter(c => c.pendingPoaId);
+        document.getElementById('tsPoaPending').innerHTML = pend.length ? '<b>หนังสือมอบอำนาจรออนุมัติ:</b> ' + pend.map(c =>
+          `${e(c.name)} <button class="btn btn-sm btn-secondary" onclick="Desk.approvePoa('${e(c.contactId)}','${e(c.pendingPoaId)}')">อนุมัติ (คนที่สอง)</button>`).join(' · ') : '';
         const q = d.queue || [];
         document.getElementById('tsQueue').innerHTML = q.length ? q.map(r => this.row(r)).join('') : 'ไม่มีสลิปรอตรวจ';
         const rq = d.requests || [];
@@ -168,6 +173,11 @@
         try { const r = await API.upload(`${this.base()}/clients/${id}/power-of-attorney`, fd); Layout.toast(r?.message || 'แนบแล้ว', 'success'); await this.load(); }
         catch (e) { Layout.toast(e.message || 'แนบไม่สำเร็จ', 'error'); }
         input.value = '';
+      },
+      async approvePoa(contactId, consentId) {
+        if (!confirm('อนุมัติหนังสือมอบอำนาจนี้? (ต้องไม่ใช่คนที่แนบ) — ระบบแจ้งเจ้าของลูกค้า')) return;
+        try { const r = await API.post(`${this.base()}/clients/${contactId}/power-of-attorney/${consentId}/approve`, {}); Layout.toast(r?.message || 'อนุมัติแล้ว', 'success'); await this.load(); }
+        catch (e) { Layout.toast(e.message || 'อนุมัติไม่สำเร็จ', 'error'); }
       },
       async remit(id) {
         const c = document.getElementById('c_' + id), a = document.getElementById('a_' + id);

@@ -26,7 +26,9 @@ public class TaxPaymentRequestService
         ILogger<TaxPaymentRequestService> logger)
     { _db = db; _remit = remit; _consent = consent; _channel = channel; _logger = logger; }
 
-    public sealed record ClientOption(Guid ContactId, Guid ClientCompanyId, string Name, string ConsentLabel, bool HasLineGroup);
+    /// <param name="PendingPoaId">ฝ่ายค้าน 272 M4: หนังสือมอบอำนาจที่รอผู้อนุมัติคนที่สอง</param>
+    /// <param name="PoaUploadedBy">ผู้แนบ (ผู้อนุมัติต้องไม่ใช่คนนี้)</param>
+    public sealed record ClientOption(Guid ContactId, Guid ClientCompanyId, string Name, string ConsentLabel, bool HasLineGroup, Guid? PendingPoaId = null, Guid? PoaUploadedBy = null);
     public sealed record PendingOption(string Type, string Label, int Year, int Month, decimal Amount, DateTime DueDate);
 
     /// <summary>ผู้ติดต่อ (ของบริษัทผู้ให้บริการ) ที่เป็นบริษัทลูกค้า — ตัวเลือกบนหน้า "ส่งเอกสารชำระภาษี"</summary>
@@ -43,7 +45,11 @@ public class TaxPaymentRequestService
         {
             if (!Guid.TryParse(r.ExternalId, out var cid) || cid == providerId) continue;
             var v = await _consent.CheckAsync(cid, providerId, null, null, ct);
-            list.Add(new ClientOption(r.Id, cid, r.Name, v.Ok ? "อนุญาตแล้ว" : v.Code == ProviderConsent.Codes.PowerOfAttorneyOnly ? "มีหนังสือมอบอำนาจ" : "ยังไม่อนุญาต", groups.Contains(r.Id)));
+            var poa = await _db.ProviderAutomationConsents.AsNoTracking()
+                .Where(x => x.CompanyId == cid && x.ProviderCompanyId == providerId && x.EvidenceSource == ProviderConsent.SourcePowerOfAttorney && x.WithdrawnAt == null && x.ApprovedAt == null)
+                .Select(x => new { x.Id, x.GrantedByUserId }).FirstOrDefaultAsync(ct);
+            list.Add(new ClientOption(r.Id, cid, r.Name, v.Ok ? "อนุญาตแล้ว" : v.Code == ProviderConsent.Codes.PowerOfAttorneyOnly ? "มีหนังสือมอบอำนาจ"
+                : v.Code == ProviderConsent.Codes.PowerOfAttorneyPendingApproval ? "หนังสือมอบอำนาจรออนุมัติ" : "ยังไม่อนุญาต", groups.Contains(r.Id), poa?.Id, poa?.GrantedByUserId));
         }
         return list.OrderBy(x => x.Name).ToList();
     }

@@ -109,7 +109,8 @@ public static class WhtCertVoidGuard
         if (periodDeclaredOrFiled)
             return $"{form} เดือน {month:00}/{year + 543} ยื่นแล้ว (รายงานภาษีของเดือนนี้อยู่ในสถานะยื่นแล้ว)";
         if (remittedAtUtc is DateTime at)
-            return $"{form} เดือน {month:00}/{year + 543} นำส่งแล้ว ณ วันที่ {RemittanceInclusion.ThaiStamp(at)} (บันทึกการนำส่งของงวดนี้มีอยู่)";
+            return $"{form} เดือน {month:00}/{year + 543} นำส่งแล้ว ณ วันที่ {RemittanceInclusion.ThaiStamp(at)} (บันทึกการนำส่งของงวดนี้มีอยู่ — ถือว่ายื่นพร้อมชำระ) · "
+                + "ถ้าบันทึกนำส่งไว้ล่วงหน้าแต่ยังไม่ได้ยื่นจริง ให้ผู้มีสิทธิ์ยื่นภาษียกเลิกรายการนำส่งนั้นก่อน (หน้า \"นำส่งภาษี/ประกันสังคม\" → ประวัติ) แล้วทำรายการนี้ใหม่";
         return null;
     }
 

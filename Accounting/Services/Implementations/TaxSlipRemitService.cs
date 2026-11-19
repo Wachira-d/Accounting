@@ -66,6 +66,12 @@ public class TaxSlipRemitService
                 ?? throw new TaxSlipGateException("ไม่พบแถวสลิป", TaxSlipMatch.Codes.None);
             if (slip.Status == TaxSlipIntakeService.Statuses.Remitted)
                 throw new TaxSlipGateException("สลิปนี้บันทึกไปแล้ว", TaxSlipMatch.Codes.Duplicate);
+            // ฝ่ายค้าน 272 H1: ยอดที่ลงบัญชีต้องเป็นยอดที่สลิปจ่ายทุกสตางค์ (ผู้สมัครเก่าจากปุ่ม/คิวพนักงานไม่ถูกเชื่อ) — ยอดค้างในสมุดตรวจอีกชั้นใน RemitAsync (ExpectedAmount)
+            if (slip.Amount is decimal paid && Math.Round(paid, 2, MidpointRounding.AwayFromZero) != Math.Round(total, 2, MidpointRounding.AwayFromZero))
+                throw new TaxSlipGateException($"ยอดบนสลิป {paid:N2} ไม่ตรงรายการที่เลือก {total:N2} — ไม่บันทึก", TaxSlipMatch.Codes.Amount);
+            // ฝ่ายค้าน 272 H3: อีเมลที่ยืนยันโดเมนผู้ส่งไม่ได้ ⇒ ระบบไม่บันทึกเอง (พนักงานกดได้หลังตรวจ)
+            if (slip.SenderUnverified && a.StaffUserId == null)
+                throw new TaxSlipGateException(InboundEmailRule.UnverifiedReason, "TAX-SLIP-SENDER");
             await _db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})",
                 new object[] { AdvisoryLockKey.For(c.CompanyId, AdvisoryLockKey.StatutoryRemit, $"{c.Type}:{c.Year}") }, ct);
             TaxPaymentRequest? req = null;
@@ -92,14 +98,16 @@ public class TaxSlipRemitService
             // ── ผู้เขียนตัวเดียว (ห้ามสร้าง JE/แถวนำส่งเอง) ──
             var result = await _remit.RemitAsync(c.CompanyId, new RemitRequest(c.Type, c.Year, c.Month, a.PayDate,
                 BankAccountId: a.BankAccountId, BankGlAccountId: a.BankGlAccountId, FilingNumber: null, ReceiptAttachmentId: null,
-                IncludeLateFee: true, Note: note, LateSurcharge: c.Surcharge, Penalty: c.Penalty), actor);
+                IncludeLateFee: true, Note: note, LateSurcharge: c.Surcharge, Penalty: c.Penalty, ExpectedAmount: c.Amount), actor);
 
             var bytes = await _storage.ReadAllBytesAsync(slip.StoragePath, ct)
                 ?? throw new TaxSlipGateException("อ่านไฟล์สลิปจากที่เก็บไม่ได้ — แนบหลักฐานไม่ได้ จึงไม่บันทึก", "TAX-SLIP-FILE");
-            var uploader = a.StaffUserId ?? (await _db.ProviderAutomationConsents.AsNoTracking().Where(x => x.Id == consentId).Select(x => (Guid?)x.GrantedByUserId).FirstOrDefaultAsync(ct))
-                ?? throw new TaxSlipGateException("ไม่รู้ผู้รับผิดชอบการแนบหลักฐาน", ProviderConsent.RuleCode);
             var ext = SlipEvidenceRule.ExtensionFor(slip.ContentType) ?? ".bin";
-            var att = await _files.UploadBytesAsync(c.CompanyId, "StatutoryRemittance", result.Id, "tax-slip-" + slip.Id.ToString("N")[..8] + ext, slip.ContentType, bytes, uploader);
+            var fileName = "tax-slip-" + slip.Id.ToString("N")[..8] + ext;
+            // ฝ่ายค้าน 272 L3: เส้นอัตโนมัติไม่มีผู้แนบที่เป็นคน ⇒ ไม่ประทับผู้ให้ความยินยอมเป็นผู้แนบ (ค่าที่แต่งขึ้น) — ผู้กระทำอยู่ใน audit (provider-slip:auto + ความยินยอม)
+            var att = a.StaffUserId is Guid staffUploader
+                ? await _files.UploadBytesAsync(c.CompanyId, "StatutoryRemittance", result.Id, fileName, slip.ContentType, bytes, staffUploader)
+                : await _files.UploadAnonymousBytesAsync(c.CompanyId, "StatutoryRemittance", result.Id, fileName, slip.ContentType, bytes);
 
             var rec = await _db.StatutoryRemittances.FirstAsync(r => r.Id == result.Id && r.CompanyId == c.CompanyId, ct);
             rec.ReceiptAttachmentId = att.Id;

@@ -7268,6 +7268,7 @@ MED-3 DSR ด้วยอีเมล หรือ ชื่อ+เลขเอ�
 MED-6 ข้ามบริษัท/พนักงานบันทึกแทน ลงหลักฐานผ่านผู้เขียนเดียว + เส้น API ตั้งภาพฉาย · MED-7 ออก Rev ใบสั่งซื้อที่รับทราบต้องยืนยัน + ฉบับที่ลงนามก่อน · LOW-1…10 (ไม่แยกคีย์ของ LOW-3 พร้อมเหตุ) ·
 เทสต์ pure +10 · Db +1 (ขยาย 5) · กติกา R267f +30 + ฝ่ายค้าน R267F-1…6 · build + test + Db test ผ่านในเครื่องนี้ (PostgreSQL ฐานใหม่) · commit 69875c09_
 _Last verified against codebase: 2026-11-16 (รอบ 271 — §5.4 ผูกใบสำคัญจ่ายกับ 50 ทวิ ที่ออกไว้แล้ว: P0 ด่านลบใบมีเลข (271-1-1 · ปิด F1) + `WhtCertVoidGuard.CheckPeriodAsync` (271-0-4) + สแกนอ่านอย่างเดียว `scripts/wht_duplicate_cert_scan.sql` · P1 `Helpers/WhtCertLinkPlan` R1–R11 + กิ่ง `WhtCertIssueAction.LinkExisting` ใน `WhtCertIssuePlan.Decide` (ทุกทางอัตโนมัติ) + `Document.WhtLinkCertId/WhtLinkAckCodes` + ผูกล้ม = ไม่ผูก ไม่ออกใหม่ ล้มดัง 3 ที่ (271-1-4) + radio 3 ทางบนฟอร์มใบสำคัญจ่าย + กล่องยืนยันอนุมัติ · P2 `POST document/{id}/wht-link` เปลี่ยนการผูก (ใบเดิมยกเลิก + `SupersededByCertId` · 271-0-1 · เดือนยื่นแล้ว 409 เด็ดขาด 271-0-2 · ผูกครั้งแรกในเดือนยื่นแล้วได้ 271-1-2) + กล่อง "50 ทวิ ของใบนี้" + โมดัล · P3 หน้า 50 ทวิ ตัวกรอง/ค้นหา/การ์ดฝั่งเซิร์ฟเวอร์ (F2) · คอลัมน์ "ผูกกับ" · แถบอำพัน · อาจนับซ้ำ · D5 ไม่มีใบสำคัญจ่าย · escape (F3) · P4 ตัดทิ้ง (271-0-3) — เทสต์ pure `WhtCertLinkPlanTests` + Db `WhtCertLinkDbTests` · กติกา `_R271_*` + ฝ่ายค้าน R271-1…6 · build + test + Db test ผ่านในเครื่องนี้ (PostgreSQL) — commit 720884a8)_
+_Last verified against codebase: 2026-11-16 (รอบ 271 ชุดแก้ฝ่ายค้าน `erp-review/2026-11-16/review-271.md` — H1 ลบถาวรใบที่มี 50 ทวิ มีเลข = บล็อก + ด่านล็อกการยื่นตามใบ/เดือน · H2 ใบที่ผูกด้วยมือ (รวมร่าง) ครอบการจ่าย · H3 สร้างใบพร้อมเอกสาร = ผูกผ่านทางเข้าเดียว · M1–M6 · L1–L4 · L6 (L5 ไม่แก้พร้อมเหตุผล) · คำตัดสิน 271-2-1…9 — build + test + Db test ผ่านในเครื่องนี้ (PostgreSQL ฐานใหม่ + ดัชนีใหม่) — commit 9b41576f)_
 
 _รอบ 272 (2026-11-16 · `erp-review/2026-11-16/team-272-tax-slip-autoremit.md` · คำตัดสินเจ้าของ 272-0-1/2 · ผู้ประสานงาน 272-1-1…13 · ทีม 272-1-14/15):
 สลิปชำระภาษีที่ลูกค้าส่งในกลุ่ม LINE (OA กลาง)/อีเมลของสำนักงานบัญชี ⇒ บันทึกนำส่งในบัญชีลูกค้าเองเมื่อผ่านทุกด่าน + ตอบผลกลับทุกครั้ง ·
@@ -7277,6 +7278,12 @@ P3 `TaxPaymentRequests` + หน้า `tax-slip-desk.html` · P4 `TaxSlipEviden
 ที่มาบน `StatutoryRemittances` (Source/SlipEvidenceId/ActedByProviderCompanyId/ProviderConsentId/ControlCodeLast4) · ป้ายหน้านำส่ง "ชำระแล้ว · ยังไม่ได้บันทึกเลขรับ" ·
 P5 `TaxSlipReviewService` (ธงเตือนเท่านั้น) · `TaxSlipJob` (JobLock) · P6 `/api/inbound-email` หลัง `IInboundEmailAdapter` (production fail-fast) ·
 เทสต์ pure +44 · Db +6 · กติกา R272 +18 + ฝ่ายค้าน R272-1…12 · `ocr_helper_test_check` ครอบ 3 ตัวตัดสินใหม่ · build + test + Db test ผ่านในเครื่องนี้ · commit cd71dee0_
+
+_รอบ 272 ชุดแก้ฝ่ายค้าน (2026-11-19 · `erp-review/2026-11-16/review-272.md`): H1 `RemitRequest.ExpectedAmount` + ยอดสลิป=ผู้สมัครใต้ล็อก · H2 อ่านสลิปไม่ได้ ⇒ แถว `TAX-SLIP-OCR-OFF` คิว+การ์ด+กระดิ่ง ·
+H3 `InboundEmailRule.SenderVerified` (DMARC/DKIM/SPF align) · ไม่ align ⇒ `SenderUnverified` คิวเท่านั้น · M1 ช่วงยื่น/ค่าธรรมเนียมก่อน Many · M2 `RequestCcMismatch` · M3 `TaxSlipReplyCard.MaskNumbers` ·
+M4 hash PRC2 (ไฟล์หลักฐาน) + `ApprovePowerOfAttorneyAsync` (คนที่สอง) + trigger ครอบคอลัมน์เพิ่ม + clientFiler ของบริษัทจริง · M5 ปุ่มล้ม ⇒ คิว · M6 `PurgeClosedFilesAsync` + RoPA ·
+M7 ไม่สร้าง TaxReport จากเส้นสลิป · L1 เลือกสลิปพักต่อบริษัท + ผูกซ้ำ · L2 ปิดรับ = ตอบทุกกลุ่มที่ผูก · L3 ผู้แนบอัตโนมัติ = ไม่มีคน · L4 23505 ⇒ เหตุ · L5 CC ซ้ำ ⇒ คิว+กระดิ่ง · L6 trigger · L7 หลายบัญชีธนาคารเดียว · L8 เลขสังเคราะห์ ·
+เทสต์ pure +8 · Db +2 · กติกา R272F +9 + ฝ่ายค้าน R272F-1…5 · build + test + Db test ผ่านในเครื่องนี้ · commit 7c5a3cb4_
 
 _รอบ 273 (2026-11-19 · บั๊กเร่งด่วน): ไฟล์ ภ.ง.ด.1/1ก ช่อง "เลขประจำตัวผู้เสียภาษี" ของพนักงานยาว 5/7/8/10/14 หลัก และ 50 ทวิ ภ.ง.ด.1ก พิมพ์ 7 หลัก หลังผู้ใช้ตั้ง `ENCRYPTION_KEY`.
 สาเหตุ: `EncryptedColumnConverter` ถอดด้วยคีย์ปัจจุบันตัวเดียว ⇒ แถวที่เข้ารหัสด้วย dev key/config เดิมคืน ciphertext ⇒ `EmployeeTaxIdentity.Resolve` ตัดตัวเลขจาก base64 ลงแบบ.

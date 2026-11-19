@@ -23,7 +23,7 @@ public static class TaxSlipMatch
     public enum Outcome
     {
         One = 1, Many, None, AmountMismatch, TaxIdNotInGroup, NoTenant, Expired, Duplicate, BooksMismatch, Amendment,
-        FeeNotZero, OutOfWindow, AlreadyRemitted, RequestClosed, BooksChanged, UnknownAgency, LateWithoutRequest,
+        FeeNotZero, OutOfWindow, AlreadyRemitted, RequestClosed, BooksChanged, UnknownAgency, LateWithoutRequest, RequestCcMismatch,
     }
 
     public static class Codes
@@ -47,6 +47,7 @@ public static class TaxSlipMatch
         public const string UnknownAgency = GovPaymentSlip.UnknownAgencyRuleCode;
         public const string Late = "TAX-SLIP-LATE-NOREQ";
         public const string ControlCode = "TAX-SLIP-CC";
+        public const string RequestCcMismatch = "TAX-SLIP-REQ-CC";
     }
 
     /// <summary>สลิปที่ระบุหน่วยงานแล้ว · <paramref name="ControlCodeHash"/> = แฮช Control Code ด้วย <c>TaxSlipRefHash</c> (null = สลิปไม่มี) ·
@@ -149,23 +150,33 @@ public static class TaxSlipMatch
         // ── ทางสำรอง (D-3): ไม่มีใบขอชำระ ⇒ เฉพาะรายการค้างตัวเดียวที่ผ่านทุกด่าน ──
         var open = pending.Where(p => mine.Contains(p.CompanyId) && GovPaymentSlip.Covers(row, p.Type) && !remitted.Contains((p.CompanyId, p.Type, p.Year, p.Month))).ToList();
         var exact = open.Where(p => Same(p.Amount, slip.Amount)).ToList();
-        var cands = exact.Select(p => new Candidate(p.CompanyId, p.Type, p.Year, p.Month, p.Amount, 0m, 0m, null)).ToList();
+        Candidate C(PendingKey p) => new(p.CompanyId, p.Type, p.Year, p.Month, p.Amount, 0m, 0m, null);
         if (exact.Count == 0)
         {
             if (open.Any(p => slip.Amount > p.Amount && slip.SlipDate.Date > p.DueDate.Date))
                 return D(Outcome.LateWithoutRequest, Codes.Late, "ชำระหลังกำหนดและไม่มีใบขอชำระ — ระบบไม่แยกเงินเพิ่ม/เบี้ยปรับเอง ให้พนักงานตรวจ");
             return D(Outcome.None, Codes.None, $"ยังไม่พบรายการภาษีที่รอชำระที่ยอดตรง (ยอดบนสลิป {slip.Amount:N2})", mine.Count == 1 ? mine.First() : null);
         }
-        if (exact.Count > 1)
-            return D(Outcome.Many, Codes.Many, $"ยอดนี้ตรงรายการค้าง {exact.Count} รายการ — แบบภาษีไม่ชัด ต้องเลือก", null, cands);
-        var only = exact[0];
-        if (only.WindowFrom is DateTime from && slip.SlipDate.Date < from.Date)
-            return D(Outcome.OutOfWindow, Codes.Window, "วันที่บนสลิปอยู่ก่อนงวดสิ้นสุด — เป็นไปไม่ได้สำหรับงวดนี้", only.CompanyId, cands);
-        if (slip.SlipDate.Date > only.DueDate.Date)
-            return D(Outcome.OutOfWindow, Codes.Window, "วันที่บนสลิปเลยกำหนดยื่นของงวด — ไม่มีใบขอชำระ ให้พนักงานตรวจเงินเพิ่ม", only.CompanyId, cands);
+        // ฝ่ายค้าน 272 M2: งวดที่มีใบขอชำระเปิดอยู่ ⇒ ต้องเข้าทาง Control Code (D-2) เท่านั้น — CC ไม่ตรง (อ่านผิด/คนละใบ) ⇒ คิว ไม่ใช้ D-3
+        var withOpenRequest = exact.Where(p => requests.Any(r => r.CompanyId == p.CompanyId && r.Type == p.Type && r.Year == p.Year && r.Month == p.Month && r.Status == "Open")).ToList();
+        if (withOpenRequest.Count > 0)
+            return D(Outcome.RequestCcMismatch, Codes.RequestCcMismatch, "งวดนี้มีใบขอชำระที่ส่งไว้ แต่ Control Code บนสลิปไม่ตรงใบนั้น — ให้พนักงานตรวจ",
+                withOpenRequest[0].CompanyId, exact.Select(C).ToList());
+        // ฝ่ายค้าน 272 M1: ค่าธรรมเนียม + ช่วงยื่นกรองก่อนนับ "ยอดเดียวหลายแบบ" (ทาง Many ต้องเดินด่านเดียวกับทางตัวเดียว)
         if (slip.Fee is decimal fee && fee != 0m)
-            return D(Outcome.FeeNotZero, Codes.Fee, $"มีค่าธรรมเนียมธนาคาร {fee:N2} บาท — ไม่อยู่ในยอดนำส่ง ให้พนักงานบันทึก", only.CompanyId, cands);
-        return new Decision(Outcome.One, only.CompanyId, cands[0], cands, true, Codes.OneNoControlCode,
+            return D(Outcome.FeeNotZero, Codes.Fee, $"มีค่าธรรมเนียมธนาคาร {fee:N2} บาท — ไม่อยู่ในยอดนำส่ง ให้พนักงานบันทึก", mine.Count == 1 ? mine.First() : null, exact.Select(C).ToList());
+        var inWindow = exact.Where(p => (p.WindowFrom is not DateTime from || slip.SlipDate.Date >= from.Date) && slip.SlipDate.Date <= p.DueDate.Date).ToList();
+        if (inWindow.Count == 0)
+        {
+            var o = exact[0];
+            return D(Outcome.OutOfWindow, Codes.Window, o.WindowFrom is DateTime f2 && slip.SlipDate.Date < f2.Date
+                ? "วันที่บนสลิปอยู่ก่อนงวดสิ้นสุด — เป็นไปไม่ได้สำหรับงวดนี้"
+                : "วันที่บนสลิปเลยกำหนดยื่นของงวด — ไม่มีใบขอชำระ ให้พนักงานตรวจเงินเพิ่ม", exact.Count == 1 ? o.CompanyId : null, exact.Select(C).ToList());
+        }
+        var cands = inWindow.Select(C).ToList();
+        if (inWindow.Count > 1)
+            return D(Outcome.Many, Codes.Many, $"ยอดนี้ตรงรายการค้าง {inWindow.Count} รายการในช่วงยื่น — แบบภาษีไม่ชัด ต้องเลือก", null, cands);
+        return new Decision(Outcome.One, inWindow[0].CompanyId, cands[0], cands, true, Codes.OneNoControlCode,
             "ไม่มีใบขอชำระ · เหลือรายการค้างเดียวที่เลขภาษี/ยอด/ช่วงยื่นตรง (คำตัดสิน 272-1-3)");
     }
 }
