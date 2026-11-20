@@ -21372,7 +21372,7 @@ REVIEWER_CASES += [
 
 
 # ═══ รอบ 275 แพ็ก B (erp-review/2026-11-20/audit-T2-wht-pnd-vat.md · H1 H2 M1–M5 L1 L2 L4 · คำตัดสิน 275-B-1…4) ═══
-_R275B_WHY = "รอบ 275 แพ็ก B (T2 · commit 33b2c7de): "
+_R275B_WHY = "รอบ 275 แพ็ก B (T2 · commit 33b2c7de · ชุดแก้ฝ่ายค้าน 24aad79a): "
 _R275B_TAX = "Services/Implementations/TaxService.cs"
 _R275B_GATE = "Services/Implementations/TaxService.FilingGate.cs"
 RULES += [
@@ -21762,7 +21762,7 @@ REVIEWER_CASES += [
 # รอบ 275 แพ็ก A — คีย์และความลับ (T4 H-1 · M-1 · M-2 · M-4 · M-5):
 # ห่วงโซ่คีย์ถอดตัวเดียว (PII = ความลับ) · ผู้อ่านความลับที่ "เอาไปใช้" ผ่าน SecretUse (ห้ามใช้ค่าว่างเงียบ/ส่ง webhook ไม่เซ็น/ตรวจ HMAC ด้วยกุญแจว่าง) ·
 # งานย้ายคีย์ทั้งสองตรวจลายนิ้วมือก่อนย้าย · DTO พนักงานไม่ส่ง ciphertext
-_R275A_WHY = "รอบ 275 แพ็ก A (คีย์และความลับ): "
+_R275A_WHY = "รอบ 275 แพ็ก A (คีย์และความลับ): "   # คอมมิต 2e7199e0 · ฝ่ายค้าน 17305b6a
 RULES += [
     dict(file="Helpers/SecretProtector.cs", method="KeyChain",
          must=["EncryptionKeyResolver.DecryptKeyChain(", "config[PreviousKeyConfigKey]"],
