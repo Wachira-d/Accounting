@@ -1159,7 +1159,7 @@ public class TaxSlipIntakeService
     private async Task<string> AbsoluteAsync(string path, CancellationToken ct)
     {
         var b = await SystemBaseUrl.ResolveAsync(_db, null, ct);
-        return string.IsNullOrWhiteSpace(b) ? "อนุญาตได้ที่เมนู ค่าบริการ › สำนักงานบัญชี NextAcc ทำแทน" : b.TrimEnd('/') + path;
+        return string.IsNullOrWhiteSpace(b) ? "อนุญาตได้ที่เมนู " + ProviderConsent.ClientMenuPath : b.TrimEnd('/') + path;   // รอบ 279 (279-3): เมนูจริง
     }
 
     private static string? Clip(string? s, int n) => string.IsNullOrWhiteSpace(s) ? null : (s.Length > n ? s[..n] : s);

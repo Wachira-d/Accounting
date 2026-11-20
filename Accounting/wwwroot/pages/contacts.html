@@ -1277,7 +1277,19 @@
             </div>
             ${groupReady ? '' : `<div style="font-size:11px;color:#64748b;margin-top:4px">${esc(gb.reason || 'ยังผูกกลุ่ม LINE ไม่ได้')}${gb.viaCentralOa ? '' : ` — ตั้งที่ <a href="/pages/settings.html#lineAdvanced" style="color:#0369a1">ตั้งค่า → LINE → ตั้งค่าขั้นสูง</a> (รหัสเชื่อม · รหัสลับ · Webhook URL)`}</div>`}
             <div id="notifyGroupPreview" style="margin-top:6px"></div></div>` : '';
-        const topicOpts = (o.topics || []).map(t => `<option value="${esc(t.key)}">${esc(t.label)}</option>`).join('');
+        // รอบ 279 (คำตัดสิน 279-2): ความยินยอม "NextAcc บันทึกการชำระภาษีจากสลิปแทน" ของผู้ติดต่อที่เป็นบริษัทลูกค้า — สถานะ/ทางไปต่อ/สิทธิ์ปุ่มมาจากเซิร์ฟเวอร์ทั้งหมด
+        const pc = o.providerConsent;
+        const consentBox = pc ? `<div style="margin:8px 0;border:1px solid #e2e8f0;border-radius:6px;padding:8px;font-size:12px">
+            <div><b>บันทึกการชำระภาษีจากสลิปแทน (สำนักงานบัญชี NextAcc)</b> · <span style="color:${pc.state === 'Granted' ? '#15803d' : '#b45309' /* text — สีคงที่ */}">${esc(pc.stateLabel)}</span></div>
+            ${pc.clientHowTo ? `<div style="color:#475569;margin-top:2px">${esc(pc.clientHowTo)}</div>` : ''}
+            ${pc.clientHowTo ? `<div style="margin-top:4px;display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+              <button type="button" class="btn btn-sm btn-secondary" ${pc.canRequest ? '' : 'disabled'} ${pc.requestBlockedReason ? `title="${esc(pc.requestBlockedReason)}"` : ''} onclick="Page.requestProviderConsent()">📨 ส่งคำขอความยินยอม</button>
+              <a href="${esc(pc.staffDeskUrl)}" class="text-primary">เปิดโต๊ะสลิปภาษีของลูกค้า</a>
+            </div>
+            ${pc.requestBlockedReason ? `<div style="color:#64748b;margin-top:2px">${esc(pc.requestBlockedReason)}</div>` : ''}
+            <div style="color:#64748b;margin-top:2px">${esc(pc.hasCentralGroup ? 'คำขอส่งถึงเจ้าของบริษัททางกระดิ่ง/อีเมล + การ์ดในกลุ่ม LINE' : 'คำขอส่งถึงเจ้าของบริษัททางกระดิ่ง/อีเมล (ยังไม่มีกลุ่ม LINE ผ่าน OA กลาง)')} · ทางเดียวกับ ${esc(pc.staffHowTo)}</div>` : ''}
+          </div>` : '';
+        const topicOpts =(o.topics || []).map(t => `<option value="${esc(t.key)}">${esc(t.label)}</option>`).join('');
         panel.innerHTML = `
           <div style="background:#fef3c7;border-left:4px solid #f59e0b;padding:8px 10px;font-size:12px;margin-bottom:10px">${esc(o.note)}</div>
           ${o.etaxByEmailNote ? `<div style="background:#eff6ff;border-left:4px solid #2563eb;padding:8px 10px;font-size:12px;margin-bottom:10px">🧾 ${esc(o.etaxByEmailNote)}</div>` : ''}
@@ -1292,6 +1304,7 @@
           ${lines.length ? lines.map(row).join('') : '<div style="font-size:12px;color:#64748b;margin-bottom:6px">ยังไม่มีปลายทาง LINE</div>'}
           ${bind /* html — หนีแล้ว */}
           ${groupBind /* html — หนีแล้ว */}
+          ${consentBox /* html — หนีแล้ว */}
           ${soon /* html — หนีแล้ว */}
           <div id="notifyAutoSendBox" style="margin:12px 0 6px;font-size:12px;color:#64748b">กำลังโหลดค่าตั้งระบบอัตโนมัติ…</div>
           <div style="font-weight:600;margin:12px 0 6px">ดูว่าใครจะได้รับอีเมล (ตัวหาผู้รับเดียวกับการส่งจริง)</div>
@@ -1413,6 +1426,16 @@
         await this._notifySend('POST', '/line-group/confirm', { code, topics, showAmounts, acceptResponsibility: true }, 'ผูกกลุ่ม LINE แล้ว');
       },
       /** รอบ 254 ฝ่ายค้าน M4: ยกเลิกลิงก์ผูก LINE ที่ยังเปิด (ลิงก์หลุด/ส่งผิดคน) — วาดใหม่จากคำตอบเซิร์ฟเวอร์ */
+      /** รอบ 279 (279-2): ปุ่มส่งคำขอความยินยอม — เรียก endpoint เดียวกับโต๊ะสลิป (path จากเซิร์ฟเวอร์) แล้วโหลดแท็บใหม่ให้สถานะตรงความจริง */
+      async requestProviderConsent() {
+        const pc = this._notify && this._notify.providerConsent;
+        if (!pc || !pc.canRequest) return;
+        try {
+          const r = await API.post(pc.requestApiPath, {});
+          Layout.toast((r && r.message) || 'ส่งคำขอแล้ว', r && r.success ? 'success' : 'error');
+        } catch (e) { Layout.toast(e.message || 'ส่งคำขอไม่สำเร็จ', 'error'); }
+        await this.loadNotify();
+      },
       async revokeLineInvites() {
         if (!(await Layout.confirm({ title: 'ยกเลิกลิงก์ผูก LINE', message: 'ยกเลิกลิงก์ผูก LINE ที่ยังเปิดของผู้ติดต่อนี้? (คนที่ได้ลิงก์ไปจะผูกไม่ได้)', okText: 'ยกเลิกลิงก์', cancelText: 'ไม่ยกเลิก', danger: true }))) return;
         await this._notifySend('DELETE', '/line-link', null, 'ยกเลิกลิงก์แล้ว');
