@@ -1441,46 +1441,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **949 ไฟล์ · 10,342 `[Fact]` + 1,419 `[Theory]` (6,705 `InlineData`)** ณ 2026-11-20 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-| ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)**, **ReceiptFormRule (รูปแบบกระดาษหลักฐานรับเงิน · รอบ 203)** |
+| เทสต์ที่มี | **951 ไฟล์ · 10,357 `[Fact]` + 1,419 `[Theory]` (6,705 `InlineData`)** ณ 2026-11-20 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`) | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)**, **ReceiptFormRule (รูปแบบกระดาษหลักฐานรับเงิน · รอบ 203)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
 | CI | ✅ `.github/workflows/ci.yml` — static check → restore → build → test; รันบน PR/push เข้า main/master + `workflow_dispatch` (branch `claude/**` ปิดไว้ กัน mail spam ระหว่างพัฒนา) |
@@ -8300,6 +8261,8 @@ engine `Services/Import/ImportPipelineService*.cs` · worker `ImportBatchWorker`
 | W9-03 | (R-59) แถว `AiSuggestionFeedback` DocumentTypeClassification ก่อน 2026-10-22 15:54:58Z ที่มีแค่คำตอบครู (ชนิดกระดาษ) | `ExcludedFromTraining=true` + เหตุผล · AiPrimaryAnswer คงเดิม (ไม่ลบ · ไม่แปลง — แปลงทางเดียวไม่ได้) · `LoadFromFeedbackAsync`/`AiFeedbackTrainingJob` ข้าม · ทิศตรงข้าม: แถวที่ผู้ใช้เลือกแล้ว · หลัง cutoff · feature อื่น ไม่ถูกแตะ | `W9HygieneRuleTests` (`AiFeedbackTrainingExclusion`) · Db `W9HygieneBackfillDbTests.feedback_DocType_ความหมายเก่า_ติด_Excluded_ไม่ลบ_แถวอื่นไม่ถูกแตะ` |
 | W9-04 | (R-60) แก้กฎตราประทับ | ดู WHT-STAMP-04 | ⏳ manual |
 | W9-05 | (R-61) ผู้ลงนามที่ออกจากบริษัทแล้ว | ดู WHT-STAMP-05 | `W9HygieneRuleTests` (`DepartedSignerRule`) |
+| SIG-278-01 | (รอบ 278) ช่องผู้จัดทำ (payload "K.นัท" + ลายเซ็น) กับช่องผู้มีอำนาจลงนาม (ผู้ออก API key ไม่มีลายเซ็น) · กุญแจ: ชื่อเล่นที่ผู้ใช้ประกาศ (ตรงทั้งคำ) · PreparerUserId · ผู้ใช้เดียวกัน | คนเดียวกัน ⇒ ลายเซ็นเติมช่องที่ว่าง + ชื่อตามโปรไฟล์ทั้งสองช่อง (ไม่เลือกจากความยาว) · ชื่อคล้าย/ใกล้เคียงแต่ไม่มีกุญแจ ⇒ ไม่รวม · PreparerUserId ของคนอื่น ⇒ ไม่รวมแม้ชื่อเล่นตรง · ช่องลูกค้า/ผู้มีอำนาจลงนามที่บริษัทตั้ง ไม่แตะ · ชื่อเล่นเกินเพดานบอกเหตุ — ✅ `SignatureSlotIdentityR278Tests` |
+| SIG-278-02 | (รอบ 278 · Db) ใบเสนอราคาอนุมัติแล้วแบบภาพเจ้าของ → `ResolveSignersAsync` + HTML + QuestPDF · ใบร่าง · กุญแจทาง API (อีเมล/Id สมาชิก · คนนอก · คนละคน) | สองช่องได้ชื่อ "ณัฐพล ทรัพย์บวรโรจน์" + รูปเดียวกัน · HTML ไม่มี "K.นัท" + รูปสองที่ · PDF ออกได้ · ไม่มีกุญแจ/คนอื่น ⇒ หน้าตาเดิม (ช่อง 1 ไม่มีรูป) · ใบร่างไม่รวม · คนนอก/ไม่พบ/คนละคน ⇒ `BusinessRuleException` — ✅ `Db/SignatureSlotsR278DbTests` |
 | W9-06 | (R-62) Admin OCR ครั้ง ≠ หน้า | ดู ACA-12 | ⏳ manual |
 | W9-07 | (R-63) สิทธิ์เจ้าของบริษัททีม I | ดู TI-07 | Db `CompanyOwnershipDbTests` |
 

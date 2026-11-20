@@ -45,7 +45,7 @@ public static class AuditRedaction
     /// ตัวตั้งเดียว — ห้ามเขียนรายชื่อซ้ำที่อื่น (กฎ J minimisation ชนะประโยชน์ของการเห็นค่าเดิมใน audit)</summary>
     public static readonly IReadOnlyDictionary<string, IReadOnlySet<string>> PiiFields = new Dictionary<string, IReadOnlySet<string>>
     {
-        ["User"] = new HashSet<string> { "Email", "FullName", "Phone", "LineUserId", "AuthProviderId", "SignatureImageBase64", "SignatureName", "SignatureTitle" },
+        ["User"] = new HashSet<string> { "Email", "FullName", "Phone", "LineUserId", "AuthProviderId", "SignatureImageBase64", "SignatureName", "SignatureTitle", "SignerAliases" },
         ["PlatformPolicyAcceptance"] = new HashSet<string> { "Email", "IpAddress", "UserAgent" },
         // รอบ 219 ส่วน B ฝ่ายค้าน S4: หลักฐานยอมรับนโยบายก่อนชำระ (ผู้ยอมรับ = อีเมล/เบอร์)
         ["PolicyAcceptance"] = new HashSet<string> { "Subject", "IpAddress", "UserAgent" },

@@ -39,6 +39,13 @@
           <label class="form-label">ตำแหน่ง</label>
           <input id="sigTitle" type="text" class="form-input" placeholder="เช่น ผู้จัดการ / กรรมการ" />
         </div>
+        <!-- รอบ 278: ผูกช่อง "ผู้จัดทำ" ที่ระบบภายนอกส่งชื่อเล่นมา กับตัวฉัน (ตัดสินที่เซิร์ฟเวอร์ Helpers/SignatureSlotIdentity — ตรงทั้งคำ ไม่เดาจากความคล้าย) -->
+        <div class="form-group">
+          <label class="form-label" for="sigAliases">ชื่ออื่นที่ระบบภายนอกใช้เรียกฉัน (ช่องผู้จัดทำ/ผู้เสนอราคา)</label>
+          <textarea id="sigAliases" class="form-input" rows="2" placeholder="บรรทัดละหนึ่งชื่อ เช่น K.นัท"></textarea>
+          <p style="font-size:12px;color:#64748b;margin-top:4px">เมื่อเอกสารที่ส่งเข้ามาทาง API ระบุผู้จัดทำด้วยชื่อนี้ (ตรงทั้งคำ) และฉันเป็นผู้มีอำนาจลงนามของใบนั้น
+            ระบบถือว่าเป็นคนเดียวกัน — ใช้ลายเซ็นที่มีเติมช่องที่ว่าง และพิมพ์ชื่อตามโปรไฟล์ของฉันทั้งสองช่อง · ไม่เกิน 10 ชื่อ</p>
+        </div>
 
         <!-- วิธีที่ 1: วาดลายเซ็นบนระบบ -->
         <div class="form-group">
@@ -96,6 +103,7 @@
           const p = j.data || {};
           document.getElementById('sigName').value = p.signatureName || p.fullName || '';
           document.getElementById('sigTitle').value = p.signatureTitle || '';
+          document.getElementById('sigAliases').value = p.signerAliases || '';
           this._signatureBase64 = p.signatureImageBase64 || null;
           this._renderSignaturePreview();
           this.setupSignatureCanvas();
@@ -174,6 +182,8 @@
         const body = {
           signatureName: document.getElementById('sigName').value || null,
           signatureTitle: document.getElementById('sigTitle').value || null,
+          // "" = ล้างรายชื่อ (ห้าม || null — ล้างแล้วบันทึกต้องมีผล)
+          signerAliases: document.getElementById('sigAliases').value,
           signatureImageBase64: this._signatureBase64
         };
         try {

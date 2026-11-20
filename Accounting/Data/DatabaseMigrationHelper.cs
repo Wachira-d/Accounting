@@ -3548,6 +3548,13 @@ public static class DatabaseMigrationHelper
             """
             ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "PreparerSignatureBase64" text NULL;
             """,
+            // รอบ 278: กุญแจผูกผู้จัดทำกับผู้ใช้ (Helpers/SignatureSlotIdentity) + ชื่ออื่นที่ผู้ใช้ประกาศสำหรับช่องลายเซ็น
+            """
+            ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "PreparerUserId" uuid NULL;
+            """,
+            """
+            ALTER TABLE "Users" ADD COLUMN IF NOT EXISTS "SignerAliases" varchar(1100) NULL;
+            """,
             // Per-payment GL funding override — pay from เงินทดรองกรรมการ /
             // เงินสดย่อย / clearing instead of the default cash/bank GL.
             """

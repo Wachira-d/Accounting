@@ -2477,6 +2477,26 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   `GetDocumentSignaturesAsync` (ไม่ส่งภาพลายเซ็นที่ไม่นับ) ⑤ `CrossTenantWorkflowService.ApproveIncomingAsync` บทบาท Customer **บันทึก hash** (ทางเข้าที่สาม) ·
   ใบที่อนุมัติก่อนรอบนี้ด้วยลายเซ็นที่ไม่ตรงเนื้อหา ย้อนตรวจไม่ได้ (ไม่มี hash) — คงพิมพ์ตามเดิม
 
+### 2.8a ช่องลายเซ็นฝั่งบริษัท — ผู้จัดทำ ↔ ผู้มีอำนาจลงนาม เป็นคนเดียวกัน (รอบ 278 · คำตัดสิน 278-1…278-4 · สถานะปัจจุบัน)
+- **ที่มา**: QT-20261119-0001 (ระบบภายนอกสร้างผ่าน API key ที่ `POST /api/companies/{id}/documents`) ช่อง 0 "ผู้เสนอราคา" = `PreparerName` "K.นัท" +
+  `PreparerSignatureBase64` จาก payload · ช่อง 1 "ผู้มีอำนาจลงนาม" = ผู้ออก API key (`ApiKeyMiddleware` ตั้ง NameIdentifier = `ApiKey.CreatedByUserId` ⇒
+  CreatedBy/UpdatedBy) ซึ่งไม่ได้อัปโหลดลายเซ็นในโปรไฟล์ ⇒ ช่องว่าง ทั้งที่เป็นคนเดียวกัน
+- **แหล่งของแต่ละช่อง** (`PdfGenerationService.ResolveSignersAsync` ตัวเดียว ⇒ HTML · QuestPDF · พรีวิว `generate-html` ใน documents.html · หน้าลูกค้า (PDF)):
+  ช่อง 0 = ผู้ใช้ CreatedBy → ทับด้วยผู้จ่ายเงิน PV (`Payment.PayerSignature*`) / ผู้จัดทำจาก payload (`PreparerName`/`PreparerSignatureBase64` — สร้าง · PUT ·
+  integration invoice/expense/PV) · ช่อง 1 (เฉพาะใบอนุมัติแล้ว) = ผู้อนุมัติใน `DocumentApprovals` → UpdatedBy → (ใบ settlement) CreatedBy → ผู้มีอำนาจลงนามที่บริษัทตั้ง
+  (`UseCustomAuthorizedSignatory` · ไม่ใช่ผู้ใช้) → ลายเซ็นเจ้าของเมื่อไม่มีชื่อเลย · API v1 (`DocumentsV1Controller`) CreatedBy = `api:v1` ไม่รับผู้จัดทำ ⇒ ช่อง 0 ว่าง ·
+  LINE/OCR/convert/clone/recurring: CreatedBy = ผู้กด/ผู้ตั้งรายการ · `PreparerName`/`PreparerUserId` **ไม่สืบทอด** ลงใบลูก (ผู้จัดทำของใบลูกคือผู้แปลง — เดิมเป็นแบบนี้อยู่แล้ว)
+- **ตัวตัดสิน "คนเดียวกัน"**: `Helpers/SignatureSlotIdentity.Link` — **กุญแจเท่านั้น ห้ามเทียบความคล้ายชื่อ**: ① `Document.PreparerUserId` (API ส่ง
+  `preparerUserId`/`preparerEmail` · ตรวจว่าเป็นสมาชิกบริษัทตอนสร้าง/PUT ไม่พบ ⇒ 400 · ระบุเป็นคนอื่น ⇒ ไม่รวมแม้ชื่อเล่นตรง) ② ช่อง 0 เป็นผู้ใช้เดียวกับช่อง 1 ·
+  ③ ชื่อที่ payload ส่งมาตรงทั้งคำ (ตัดช่องว่าง/ตัวพิมพ์) กับ "ชื่ออื่นที่ระบบภายนอกใช้เรียกฉัน" ที่ผู้ใช้ช่อง 1 **ประกาศเองในหน้าลายเซ็นของฉัน** (`User.SignerAliases` ·
+  ≤ 10 ชื่อ × 100 ตัว · ฝั่งเขียน `SanitizeForStore` ตัวเดียว · PDPA ลบบัญชีล้าง) · ช่องลูกค้า/ผู้มีอำนาจลงนามที่บริษัทตั้ง ไม่มีกุญแจ ⇒ ไม่รวม
+- **เมื่อเป็นคนเดียวกัน** (`SignatureSlotIdentity.Merge` · `MergeSameSignerSlotsAsync` ก่อนกฎผู้ลงนาม): ช่องที่ไม่มีรูปรับรูปของอีกช่อง · **ชื่อทั้งสองช่อง = ชื่อตามโปรไฟล์**
+  (`ProfileDisplayName`: ชื่อใต้ลายเซ็น → ชื่อ-สกุลบัญชี — ไม่เลือกจากความยาวสตริง) · ตำแหน่งคงของช่องตัวเอง (ว่าง ⇒ ตำแหน่งในโปรไฟล์) · ช่อง 0 ถือเป็นของผู้ใช้นั้น
+  ⇒ `DocumentStampPolicy`/`DepartedSignerRule` ตัดสินทั้งสองช่องด้วยตัวตนเดียว · **คงสองช่อง ไม่ยุบเป็นช่องเดียว** (ป้ายตามชนิดเอกสาร — ผู้รับเงิน/ผู้จ่ายเงิน/ผู้จัดทำ
+  กับผู้มีอำนาจลงนามเป็นบทบาทคนละหน้าที่ · ช่อง 2 ของลูกค้าอิงตำแหน่ง) · ใบร่าง/รออนุมัติไม่มีผู้ใช้ช่อง 1 ⇒ ไม่รวม (ห้ามมีหลักฐานลงนามก่อนอนุมัติ)
+- **ข้อมูลเก่า**: เป็นการแสดงผล ⇒ ใบที่ออกแล้วใช้ตัวรวมทันทีเมื่อผู้ใช้ตั้งชื่อเล่น — ไม่มี migration ข้อมูล (คอลัมน์ใหม่ `Documents.PreparerUserId` · `Users.SignerAliases`)
+- เทสต์: `SignatureSlotIdentityR278Tests` (pure) · Db `SignatureSlotsR278DbTests` · กติกา `_R278_WHY`
+
 ### 2.8b Delivery e-sign — ลูกค้าเซ็นรับสินค้าออนไลน์ (Proof of Delivery)
 > **รอบ 267 P1 (สถานะปัจจุบัน):** เหมือน §2.8 — `POST /document/{id}/delivery-sign-link` คืนลิงก์หน้าเอกสารของใบ (§2.12n) · ช่วงเซ็นรับ 14 วันจากวันส่ง ·
 > หน้า `delivery-sign.html` รับ token ของหน้าเอกสาร และลิงก์รุ่นก่อน (คอลัมน์ `DeliverySignToken` เก็บ hash) จนหมดอายุ
@@ -9813,3 +9833,6 @@ _Last verified against codebase: 2026-11-20 (รอบ 274-10 — เลขท�
 (เลขบัตร/ผู้เสียภาษีรับเฉพาะ 13 หลัก mod-11 · อื่น ๆ ต้องไม่ใช่ ciphertext) · `PiiReprotectPass` เขียนชั้นเดียว + audit `PiiNestedUnwrapped` · รายงานไม่บอกกรอกใหม่สำหรับแถวที่แกะได้ ·
 ทุกทางเข้าพนักงาน (แก้ไข/สร้าง/HRIS sync/นำเข้า) ปฏิเสธ ciphertext ด้วย `EmployeeRecordEdit.CipherInputProblem` · ciphertext ของแถวนั้นเองส่งกลับมา = คงค่าเดิม ·
 คำตัดสิน 274-10 — commit 7c75b438)_
+
+_Last verified against codebase: 2026-11-20 (รอบ 278 — ช่องลายเซ็นผู้จัดทำ ↔ ผู้มีอำนาจลงนามคนเดียวกัน: `Helpers/SignatureSlotIdentity` ตัดสินด้วยกุญแจ
+(PreparerUserId · ผู้ใช้เดียวกัน · ชื่อเล่นที่ผู้ใช้ประกาศ) · รวมใน `ResolveSignersAsync` ก่อนกฎผู้ลงนาม · §2.8a — commit SHA_PENDING)_

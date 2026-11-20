@@ -21545,6 +21545,35 @@ RULES += [
 ]
 
 
+# รอบ 278 — ช่องลายเซ็นฝั่งบริษัทสองช่องที่เป็นคนเดียวกัน (QT-20261119-0001: ช่อง 0 "K.นัท"+ลายเซ็นจาก payload · ช่อง 1 ผู้ออกคีย์ไม่มีลายเซ็น) ·
+# ตัวตัดสินเดียว Helpers/SignatureSlotIdentity (กุญแจเท่านั้น ห้ามเทียบความคล้ายชื่อ) · จุดรวมจุดเดียวใน ResolveSignersAsync ก่อนกฎผู้ลงนาม
+_R278_WHY = "รอบ 278 (ช่องลายเซ็นคนเดียวกัน — คำตัดสิน 278-1..278-4): "
+RULES += [
+    dict(file="Services/Implementations/PdfGenerationService.cs", method="ResolveSignersAsync",
+         must=["await MergeSameSignerSlotsAsync(doc, signers, slotUsers, customerSlots, slot0FromPayload, slot0PayloadName);",
+               "slot0FromPayload = true;", "SignatureSlotIdentity.ProfileDisplayName(u.SignatureName, u.FullName)"],
+         before=[("await MergeSameSignerSlotsAsync(", "await ApplySignerPolicyAsync(")],
+         why=_R278_WHY + "รวมก่อนกฎผู้ลงนาม (ช่อง 0 ที่ผูกแล้วถูกตัดสินด้วยตัวตนเดียวกับช่อง 1) · HTML/QuestPDF/พรีวิว/หน้าลูกค้า รับ signers จากเมธอดนี้ตัวเดียว"),
+    dict(file="Services/Implementations/PdfGenerationService.cs", method="MergeSameSignerSlotsAsync",
+         must=["SignatureSlotIdentity.Link(", "SignatureSlotIdentity.LinkKind.None) return;", "SignatureSlotIdentity.Merge(",
+               "slotUsers[0] = s1User;"],
+         before=[("SignatureSlotIdentity.LinkKind.None) return;", "SignatureSlotIdentity.Merge(")],
+         why=_R278_WHY + "ไม่มีกุญแจ ⇒ ไม่แตะ (ห้ามใส่ลายเซ็นของคนหนึ่งลงช่องของอีกคน) · ชื่อ/รูปจากแผนของตัวตัดสินเท่านั้น"),
+    dict(file="Helpers/SignatureSlotIdentity.cs", method="Link",
+         must=["bound == u ? (LinkKind.PreparerUserId, u) : (LinkKind.None, null)", "s0.UserId == null && n != null"],
+         why=_R278_WHY + "PreparerUserId ของคนอื่นห้ามตกไปเทียบชื่อเล่น · ชื่อเล่นใช้เฉพาะช่อง 0 ที่มาจาก payload"),
+    dict(file="Services/Implementations/DocumentService.cs", method="CreateDocumentAsync",
+         must=["await ResolvePreparerUserIdAsync(companyId, request.PreparerUserId, request.PreparerEmail)", "PreparerUserId = preparerUserId,"],
+         why=_R278_WHY + "กุญแจจาก API ต้องเป็นสมาชิกบริษัท (ไม่พบ = 400 ไม่ผูกเงียบ)"),
+    dict(file="Services/Implementations/DocumentService.cs", method="UpdateDocumentAsync",
+         must=["await ResolvePreparerUserIdAsync(companyId, request.PreparerUserId, request.PreparerEmail)"],
+         why=_R278_WHY + "แก้ไขผ่าน PUT เดินด่านเดียวกับสร้าง"),
+    dict(file="Services/Implementations/AuthService.cs", method="UpdateProfileAsync",
+         must=["SignatureSlotIdentity.SanitizeForStore(request.SignerAliases)"],
+         why=_R278_WHY + "ฝั่งเขียนชื่อเล่นตัวเดียว (ตัดซ้ำ · เกินเพดานบอกเหตุ)"),
+]
+
+
 if __name__ == "__main__":
     sys.exit(main())
 

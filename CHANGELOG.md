@@ -7329,3 +7329,16 @@ HRIS sync (เลขบัตร/เลขบัญชี) · นำเข้า
 ciphertext ของแถวนั้นเองส่งกลับมา = คงค่าเดิม · converter ห่อค่าที่หลุดด่านพร้อมเครื่องหมาย (ไม่แกะ) · `Inspect` แกะแถวซ้อนรุ่นเก่า ≤ 3 ชั้นด้วยชุดคีย์เดียวกัน ·
 `PiiValueKind` ต่อคอลัมน์ (เลขบัตร/ผู้เสียภาษี = 13 หลัก mod-11) · `PiiReprotectPass` เขียนชั้นเดียว + audit `PiiNestedUnwrapped` (ไม่ตัดจบเมื่อไม่มีคีย์เดิม) ·
 รายงาน: แกะได้ = รอย้ายคีย์ · แกะไม่ได้ = `NestedCipher` · คำตัดสิน 274-10 · เทสต์ `PiiNestedCipherRound274_10Tests` (pure ×8) · Db `PiiNestedCipherDbTests` · กติกา `_R274_10_WHY` ×14 — commit 7c75b438_
+
+## รอบ 278 (2026-11-20 · ช่องลายเซ็นผู้จัดทำ ↔ ผู้มีอำนาจลงนาม เป็นคนเดียวกัน)
+
+**ปัญหา (เจ้าของ · QT-20261119-0001 จากระบบภายนอกผ่าน API key):** ช่อง "ผู้เสนอราคา" = "K.นัท" + ลายเซ็น (มาจาก `PreparerName`/`PreparerSignatureBase64` ใน payload) ·
+ช่อง "ผู้มีอำนาจลงนาม" = ผู้ออก API key "ณัฐพล ทรัพย์บวรโรจน์" (CreatedBy/UpdatedBy จาก `ApiKeyMiddleware`) ซึ่งไม่ได้อัปโหลดลายเซ็นในโปรไฟล์ ⇒ ช่องว่าง ทั้งที่เป็นคนเดียวกัน ·
+ระบบไม่มีกุญแจเชื่อม payload กับผู้ใช้เลย (ทาง API ได้ชื่อเล่นเพราะระบบต้นทางส่งชื่อเล่นมา · ไม่มีลายเซ็นเพราะโปรไฟล์ผู้ออกคีย์ไม่มี)
+
+**แก้:** ตัวตัดสินเดียว `Helpers/SignatureSlotIdentity` (กุญแจ: `Document.PreparerUserId` จาก `preparerUserId`/`preparerEmail` ใน API — ตรวจสมาชิก · ผู้ใช้เดียวกัน ·
+ชื่อเล่นที่ผู้ใช้ประกาศในหน้าลายเซ็นของฉัน `User.SignerAliases` ตรงทั้งคำ — ห้าม fuzzy) · รวมใน `ResolveSignersAsync` ก่อนกฎผู้ลงนาม (`MergeSameSignerSlotsAsync`) ⇒
+HTML + QuestPDF + พรีวิว + หน้าลูกค้าได้ผลเดียวกัน · ช่องที่ไม่มีรูปรับรูปของคนเดียวกัน · ชื่อทั้งสองช่อง = ชื่อตามโปรไฟล์ · คงสองช่อง · คำตัดสิน 278-1…278-4 ·
+คอลัมน์ใหม่ `Documents.PreparerUserId` · `Users.SignerAliases` (ADD COLUMN IF NOT EXISTS) · ใบเก่าใช้ทันทีเมื่อตั้งชื่อเล่น (ไม่มี migration ข้อมูล) ·
+เทสต์ `SignatureSlotIdentityR278Tests` · Db `SignatureSlotsR278DbTests` · กติกา `_R278_WHY` ×6 — commit SHA_PENDING
+
