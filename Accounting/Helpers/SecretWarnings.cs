@@ -33,8 +33,8 @@ public static class SecretWarnings
 
     /// <summary>ฝ่ายค้านรอบ 231 S1 — คำใบ้ (ไม่ใช่ข้อผิดพลาด) สำหรับ <see cref="SecretState.AmbiguousBase64"/>: ค่ายังใช้ได้เป็นค่าดิบ แต่ถ้าเคยเปลี่ยนคีย์ ค่านี้อาจเป็น
     /// ciphertext ของคีย์ที่หายไป ⇒ บอกให้กรอกใหม่ถ้าใช้ไม่ติด · null = ไม่มีคำใบ้</summary>
-    private static string? SoftHintFor(SecretState state) => state == SecretState.AmbiguousBase64
-        ? "ค่านี้ดูเหมือน ciphertext รุ่นก่อนแต่ถอดไม่ออก — ระบบใช้เป็นค่าดิบตามที่บันทึกไว้ · ถ้าเคยเปลี่ยน ENCRYPTION_KEY หรือใช้งานไม่ติด ให้กรอกใหม่"
+    public static string? SoftHintFor(SecretState state) => state == SecretState.AmbiguousBase64
+        ? "ค่านี้ดูเหมือน ciphertext รุ่นก่อนแต่ถอดไม่ออก — ระบบใช้เป็นค่าดิบตามที่บันทึกไว้ · ถ้าผู้ดูแลระบบเคยเปลี่ยนคีย์เข้ารหัส หรือใช้งานไม่ติด ให้กรอกใหม่"
         : null;
 
     private static string? SoftHint(ISecretProtector secrets, string? stored) => SoftHintFor(secrets.Inspect(stored));

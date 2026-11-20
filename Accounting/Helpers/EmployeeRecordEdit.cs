@@ -43,8 +43,27 @@ public static class EmployeeRecordEdit
     /// <summary>รอบ 274-10: ฟอร์มส่ง ciphertext ที่<b>เก็บอยู่ในแถวนี้เองและถอดไม่ได้</b>กลับมาเป๊ะ (ผู้ใช้เปิดฟอร์มแล้วกดบันทึกโดยไม่แตะช่องนี้) ⇒ "ไม่ได้แก้" = คงค่าเดิม
     /// (เดิม: ปฏิเสธทั้งคำขอ ⇒ แก้ช่องอื่นของพนักงานคนนั้นไม่ได้เลย · หรือถูกเข้ารหัสซ้ำ) · ค่านั้นยังขึ้นในรายงาน <c>tax-identity-health</c> และป้าย ⛔ ของไฟล์ยื่น (ไม่เงียบ)</summary>
     public static bool IsEchoOfStoredUnreadable(string? incoming, string? current)
-        => incoming != null && EncryptedColumnConverter.IsUnreadable(current)
-           && string.Equals(incoming.Trim(), current!.Trim(), StringComparison.Ordinal);
+    {
+        if (incoming == null || !EncryptedColumnConverter.IsUnreadable(current)) return false;
+        return string.Equals(incoming.Trim(), current!.Trim(), StringComparison.Ordinal)
+               // รอบ 275 แพ็ก A (T4 M-2): DTO ส่งป้ายแทน ciphertext ⇒ ฟอร์มส่งป้ายกลับมา = ไม่ได้แก้ (ค่าเดิมคงไว้ให้งานย้ายคีย์กู้ได้เมื่อตั้งคีย์เดิม)
+               || string.Equals(incoming.Trim(), EncryptedColumnConverter.UnreadableExportText, StringComparison.Ordinal);
+    }
+
+    /// <summary>รอบ 275 แพ็ก A (T4 M-2): ค่าช่อง PII ของพนักงานที่ส่งขึ้นจอ — ถอดไม่ได้ ⇒ ป้าย <see cref="EncryptedColumnConverter.UnreadableExportText"/>
+    /// (ทุกสิทธิ์ · ไม่เผย ciphertext และไม่ปลอมเป็นเลขปิดบัง) · ผู้มี <c>Pii.View</c> ⇒ ค่าจริง · อื่น ๆ ⇒ ตัวปิดบังของช่องนั้น</summary>
+    public static string? ForEmployeeDto(string? stored, bool includePii, Func<string?, string?> mask)
+        => EncryptedColumnConverter.IsUnreadable(stored) ? EncryptedColumnConverter.UnreadableExportText
+            : includePii ? stored : mask(stored);
+
+    /// <summary>รอบ 275 แพ็ก A (T4 M-2): ข้อความป้ายของแถว/ฟอร์มพนักงาน (null = ไม่มีปัญหา) — "ยังไม่ได้กรอก" ไม่ถือเป็นปัญหาบนจอทะเบียน (ฟอร์มเว้นว่างได้)</summary>
+    public static string? PiiProblemText(EmployeeTaxIdentity.Result identity, bool bankUnreadable)
+    {
+        var parts = new List<string>();
+        if (identity.Problem is TaxIdProblem.Undecryptable or TaxIdProblem.Invalid && identity.Reason is string r) parts.Add(r);
+        if (bankUnreadable) parts.Add("เลขบัญชีธนาคารถอดรหัสไม่ได้ — กรอกเลขบัญชีใหม่ หรือแจ้งผู้ดูแลระบบ");
+        return parts.Count == 0 ? null : "⛔ " + string.Join(" · ", parts);
+    }
 
     /// <summary>ค่าที่ฟอร์มส่งกลับมา = ค่าปิดบังของของเดิมเป๊ะ ⇒ ผู้ใช้ไม่ได้แก้ช่องนี้</summary>
     public static bool IsMaskedEcho(string? incoming, string? maskedCurrent)

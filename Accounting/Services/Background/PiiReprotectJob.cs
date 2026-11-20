@@ -202,15 +202,25 @@ public class PiiReprotectJob : BackgroundService
             using var scope = _scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<AccountingDbContext>();
             recorder = scope.ServiceProvider.GetService<IJobRunRecorder>();
+            // รอบ 275 แพ็ก A (T4 M-4): คีย์ของเครื่องนี้ไม่ตรงกับที่ระบบใช้ ⇒ ไม่ย้ายแถว (ย้าย = เขียนด้วยคีย์ที่เครื่องอื่นอ่านไม่ได้) · ตัวตัดสินเดียวกับฝั่งความลับ
+            if (scope.ServiceProvider.GetService<ISecretProtector>() is { } keyProbe)
+            {
+                var key = await Accounting.Services.Implementations.Security.EncryptionKeyFingerprintService.CheckAsync(db, keyProbe, persist: true, _logger, stoppingToken);
+                if (!key.AllowsRekey)
+                {
+                    if (recorder != null) await recorder.RecordAsync(JobName, false, "ไม่ย้ายคีย์: " + key.AdminMessage, 0, startedAt);
+                    return;
+                }
+            }
             await JobLock.RunExclusiveAsync(db, AdvisoryLockKey.BackgroundJob, nameof(PiiReprotectJob), async () =>
             {
                 var r = await PiiReprotectPass.RunAsync(db, stoppingToken);
                 var summary = $"ตรวจ PII ที่เข้ารหัส {r.Scanned} ค่า · เข้ารหัสใหม่ด้วยคีย์ปัจจุบัน {r.Rekeyed} ค่า"
                     + (r.PerColumn.Count == 0 ? "" : " (" + string.Join(", ", r.PerColumn.Select(kv => $"{kv.Key}={kv.Value}")) + ")")
                     + (r.Undecryptable == 0 ? "" : $" · ⛔ ถอดไม่ออกทุกคีย์ {r.Undecryptable} ค่า — ตั้ง {EncryptionKeyResolver.PreviousKeyEnv} เป็นคีย์เดิม หรือให้ผู้ใช้กรอกใหม่ "
-                        + "(รายงาน: GET payroll/tax-identity-health)")
+                        + "(หน้า " + EncryptionHealthText.PageName + ")")
                     + (r.Unwrapped == 0 ? "" : $" · แกะค่าเข้ารหัสซ้อนเป็นชั้นเดียว {r.Unwrapped} ค่า")
-                    + (r.NestedUnresolved == 0 ? "" : $" · ⛔ เข้ารหัสซ้อนแต่ชั้นในใช้ไม่ได้ {r.NestedUnresolved} ค่า — ให้ผู้ใช้กรอกใหม่ (รายงาน: GET payroll/tax-identity-health)")
+                    + (r.NestedUnresolved == 0 ? "" : $" · ⛔ เข้ารหัสซ้อนแต่ชั้นในใช้ไม่ได้ {r.NestedUnresolved} ค่า — ให้ผู้ใช้กรอกใหม่ (หน้า " + EncryptionHealthText.PageName + ")")
                     + (r.SkippedConcurrent == 0 ? "" : $" · ข้าม {r.SkippedConcurrent} ค่าที่ผู้ใช้เพิ่งแก้");
                 if (r.Rekeyed > 0 || r.Undecryptable > 0 || r.NestedUnresolved > 0) _logger.LogWarning("PiiReprotect: {Summary}", summary);
                 // สำเร็จ = งานรันจบ (ค่าที่ถอดไม่ออกเป็นงานของผู้ใช้ — อยู่ในข้อความ + รายงานรายแถว)

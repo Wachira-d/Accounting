@@ -29,8 +29,70 @@ public static class SecretReprotectPass
     /// <param name="SkippedConcurrent">ค่าที่ถูกผู้ใช้เปลี่ยนระหว่างอ่าน→เขียน (เงื่อนไข "ค่าเดิม" ไม่ตรง) ⇒ ไม่เขียนทับ</param>
     /// <param name="PendingWrap">ฝ่ายค้านรอบ 231 B1: ค่าไม่มีคำนำหน้า (LegacyFormat/Plaintext/AmbiguousBase64) ที่ยังไม่ถูกห่อเพราะ <c>Security:MigrateCipherPrefix</c> ปิด — อ่านได้ครบ ไม่รีบ</param>
     /// <param name="WrappedAmbiguous">S1: ค่ากำกวม (base64 ถอดไม่ออก) ที่ถูกห่อเป็น enc1 (ประตูเปิด) — ถ้าจริง ๆ เป็น ciphertext คีย์ที่หายไป การห่อทำให้เห็นชัดว่าต้องกรอกใหม่ · นับแยก + LogWarning</param>
+    /// <param name="Unusable">รอบ 275 แพ็ก A: ค่าที่ถอดไม่ออกทุกคีย์ (WrongKey) หรือเสียหาย (Malformed) — ไม่แตะ · ผู้ใช้ต้องกรอกใหม่ (หน้า "สุขภาพข้อมูลเข้ารหัส")</param>
+    /// <param name="LegacyKeyRemaining">รอบ 275 แพ็ก A (T4 M-4 watermark): ค่าที่ยังอยู่บนคีย์เดิมหลังรอบนี้ — 0 (และฝั่ง PII ก็ 0) ⇒ ถอด ENCRYPTION_KEY_PREVIOUS ออกได้</param>
+    /// <param name="States">จำนวนค่าต่อสถานะต่อช่อง (<c>ตาราง.คอลัมน์</c>) — หน้ารายงานอ่านจากตัวนี้</param>
+    /// <param name="Findings">แถวที่ต้องให้คนดู (ใช้ไม่ได้ · กำกวม) — สูงสุด <see cref="MaxFindings"/> แถว</param>
     public sealed record Result(int Scanned, int Reprotected, IReadOnlyDictionary<string, int> PerColumn, int SkippedConcurrent = 0,
-        int PendingWrap = 0, int WrappedAmbiguous = 0);
+        int PendingWrap = 0, int WrappedAmbiguous = 0, int Unusable = 0, int LegacyKeyRemaining = 0,
+        IReadOnlyDictionary<string, IReadOnlyDictionary<SecretState, int>>? States = null, IReadOnlyList<Finding>? Findings = null);
+
+    /// <summary>รอบ 275 แพ็ก A: แถวความลับหนึ่งค่าที่ต้องให้คนดู (ไม่มีค่าความลับ — แค่ที่อยู่ + สถานะ)</summary>
+    public sealed record Finding(string Table, string Column, string Label, Guid RowId, Guid? CompanyId, SecretState State);
+
+    public const int MaxFindings = 500;
+
+    /// <summary>รอบ 275 แพ็ก A (M-1): เหตุของแถว (ตรวจจริงจากสถานะ — F2 ข้อ 7) · null = ไม่มีปัญหา</summary>
+    public static string? ReasonFor(SecretState state) => SecretWarnings.ReasonFor(state) ?? SecretWarnings.SoftHintFor(state);
+
+    /// <summary>รอบ 275 แพ็ก A (M-1): ทางไปต่อของผู้ใช้บริษัทต่อช่อง (ไม่มีชื่อ env/URL ดิบ) — server computes, page displays</summary>
+    public static string ActionFor(string table, string column, SecretState state) => (table, column) switch
+    {
+        _ when state == SecretState.AmbiguousBase64 => "ใช้งานได้ตามเดิม — ถ้าการเชื่อมต่อนี้ใช้ไม่ติด ให้กรอกค่าใหม่ในหน้าตั้งค่า",
+        ("Documents", _) => "ไม่ต้องทำอะไร — ระบบออกลิงก์ชำระเงินใหม่ให้เองเมื่อส่งเอกสารครั้งถัดไป",
+        ("ContactNotifyEndpoints", _) => "ให้ผู้รับผูก LINE ใหม่ (ถ้าผู้ดูแลระบบยืนยันว่าคีย์เข้ารหัสถูกต้องแล้ว)",
+        ("LineGroupBindCodes", _) => "ไม่ต้องทำอะไร — รหัสผูกกลุ่มหมดอายุเอง",
+        ("SiteSettings", _) => "ผู้ดูแลแพลตฟอร์มกรอกค่าใหม่ในหน้าผู้ดูแลระบบ",
+        _ => "กรอกค่าใหม่ในหน้าตั้งค่า หรือแจ้งผู้ดูแลระบบให้ตรวจคีย์เข้ารหัส",
+    };
+
+    /// <summary>รอบ 275 แพ็ก A (M-1): ชื่อช่องที่ผู้ใช้เข้าใจ — ตัวเดียวของหน้า "สุขภาพข้อมูลเข้ารหัส" (server computes) · ไม่มีในตาราง = ชื่อเทคนิค</summary>
+    public static string Label(string table, string column) => Labels.TryGetValue($"{table}.{column}", out var l) ? l : $"{table}.{column}";
+
+    private static readonly Dictionary<string, string> Labels = new()
+    {
+        ["CompanySettings.EmailSmtpPassword"] = "รหัสผ่าน SMTP (อีเมลของบริษัท)",
+        ["CompanySettings.EmailMsClientSecret"] = "Client Secret ของ Microsoft 365 (อีเมลของบริษัท)",
+        ["CompanySettings.EmailGmailClientSecret"] = "Client Secret ของ Gmail (อีเมลของบริษัท)",
+        ["CompanySettings.EmailGmailRefreshToken"] = "Refresh Token ของ Gmail (อีเมลของบริษัท)",
+        ["CompanySettings.LineChannelAccessToken"] = "Channel Access Token ของ LINE OA บริษัท",
+        ["CompanySettings.LineChannelSecret"] = "Channel Secret ของ LINE OA บริษัท",
+        ["CompanySettings.EtaxCertificatePassword"] = "รหัสผ่านใบรับรอง e-Tax",
+        ["CompanySettings.EtaxRdApiSecret"] = "API Secret ของกรมสรรพากร (e-Tax)",
+        ["CompanySettings.SignCallbackSecret"] = "รหัสลับลงนาม webhook ลิงก์ให้ลูกค้าเซ็น",
+        ["SiteSettings.SystemSmtpPassword"] = "รหัสผ่าน SMTP ของระบบ",
+        ["SiteSettings.SystemMsClientSecret"] = "Client Secret ของ Microsoft 365 (อีเมลระบบ)",
+        ["SiteSettings.SystemGmailClientSecret"] = "Client Secret ของ Gmail (อีเมลระบบ)",
+        ["SiteSettings.SystemGmailRefreshToken"] = "Refresh Token ของ Gmail (อีเมลระบบ)",
+        ["SiteSettings.LineMessagingChannelAccessToken"] = "Channel Access Token ของ LINE OA กลาง",
+        ["SiteSettings.LineMessagingChannelSecret"] = "Channel Secret ของ LINE OA กลาง",
+        ["SiteSettings.GoogleClientSecret"] = "Google Client Secret (เข้าสู่ระบบ)",
+        ["SiteSettings.FacebookAppSecret"] = "Facebook App Secret (เข้าสู่ระบบ)",
+        ["SiteSettings.LineLoginChannelSecret"] = "LINE Login Channel Secret (เข้าสู่ระบบ)",
+        ["PaymentProviderConfigs.TestSecretKeyProtected"] = "คีย์ลับโหมดทดสอบของช่องทางรับชำระ",
+        ["PaymentProviderConfigs.LiveSecretKeyProtected"] = "คีย์ลับโหมดใช้งานจริงของช่องทางรับชำระ",
+        ["BankConnections.EncryptedCredentials"] = "ข้อมูลเข้าสู่ระบบธนาคาร (bank feed)",
+        ["BankConnections.AccessToken"] = "Access Token ของธนาคาร (bank feed)",
+        ["WebhookRegistrations.Secret"] = "รหัสลับลงนาม webhook ขาออก",
+        ["ExternalIntegrations.SecretKey"] = "Secret Key ของการเชื่อมต่อภายนอก",
+        ["SitePaymentGateways.ApiKeyEncrypted"] = "API Key ของช่องทางชำระบนเว็บไซต์",
+        ["SitePaymentGateways.SecretKeyEncrypted"] = "Secret Key ของช่องทางชำระบนเว็บไซต์",
+        ["SitePaymentGateways.WebhookSecret"] = "Webhook Secret ของช่องทางชำระบนเว็บไซต์",
+        ["Documents.PayLinkTokenProtected"] = "ลิงก์ชำระเงินของเอกสาร (ระบบออกใหม่ให้อัตโนมัติ)",
+        ["ContactNotifyEndpoints.LineUserId"] = "LINE ของผู้ติดต่อ (ผู้รับต้องผูกใหม่)",
+        ["ContactNotifyEndpoints.LineGroupId"] = "กลุ่ม LINE ของผู้ติดต่อ (ต้องผูกกลุ่มใหม่)",
+        ["LineGroupBindCodes.GroupIdProtected"] = "รหัสผูกกลุ่ม LINE (หมดอายุเอง)",
+    };
 
     /// <summary>ช่องความลับหนึ่งช่อง — ชื่อคอลัมน์มาจากนิพจน์ (<c>r =&gt; r.Col</c>) ตัวเดียวกับที่ใช้อ่าน ⇒ ชื่อพิมพ์ผิดไม่ได้</summary>
     public sealed record Column<T>(string Name, Func<T, string?> Get);
@@ -41,14 +103,19 @@ public static class SecretReprotectPass
     /// <param name="onlyCompanyId">จำกัดเฉพาะแถวของบริษัทนี้ (ซ่อมรายบริษัท/เทสต์บนฐานร่วม) · null = ทุกแถว รวมค่าตั้งแพลตฟอร์ม</param>
     /// <param name="beforeWrite">จุดสอดของเทสต์ — เรียกหลังอ่านค่า ก่อนเขียนแบบมีเงื่อนไข (จำลองผู้ใช้หมุนคีย์พร้อมกัน) · production = null</param>
     /// <param name="logger">LogWarning ต่อค่ากำกวมที่ถูกห่อ (S1) · null = ไม่ log</param>
+    /// <param name="inspectOnly">รอบ 275 แพ็ก A: นับสถานะอย่างเดียว ไม่เขียน (หน้า "สุขภาพข้อมูลเข้ารหัส" — ทะเบียนเดียวกับงานย้าย ไม่มีสำเนาที่สอง)</param>
     public static async Task<Result> RunAsync(AccountingDbContext db, ISecretProtector protector, CancellationToken ct = default,
-        Guid? onlyCompanyId = null, Func<Guid, Task>? beforeWrite = null, ILogger? logger = null)
+        Guid? onlyCompanyId = null, Func<Guid, Task>? beforeWrite = null, ILogger? logger = null, bool inspectOnly = false)
     {
         var per = new Dictionary<string, int>();
         var scanned = 0;
         var skipped = 0;
         var pendingWrap = 0;
         var wrappedAmbiguous = 0;
+        var unusable = 0;
+        var legacyRemaining = 0;
+        var states = new Dictionary<string, Dictionary<SecretState, int>>();
+        var findings = new List<Finding>();
 
         IQueryable<T> Scope<T>(IQueryable<T> q) where T : TenantEntity
             => onlyCompanyId is Guid c ? q.Where(r => r.CompanyId == c) : q;
@@ -77,8 +144,20 @@ public static class SecretReprotectPass
                         if (string.IsNullOrEmpty(v)) continue;
                         scanned++;
                         var state = protector.Inspect(v);
+                        var key = $"{table}.{c.Name}";
+                        if (!states.TryGetValue(key, out var byState)) states[key] = byState = new Dictionary<SecretState, int>();
+                        byState[state] = byState.GetValueOrDefault(state) + 1;
+                        if (state is SecretState.WrongKey or SecretState.Malformed or SecretState.AmbiguousBase64 && findings.Count < MaxFindings)
+                            findings.Add(new Finding(table, c.Name, Label(table, c.Name), row.Id, company(row), state));
+                        if (state is SecretState.WrongKey or SecretState.Malformed) unusable++;
+                        if (inspectOnly)
+                        {
+                            if (state == SecretState.LegacyKey) legacyRemaining++;
+                            continue;
+                        }
                         if (protector.Reprotect(v) is not string nv)
                         {
+                            if (state == SecretState.LegacyKey) legacyRemaining++;
                             // B1: ไม่มีคำนำหน้าแต่ประตูปิด ⇒ รอห่อ (สรุปใน JobRun ให้ผู้ดูแลเห็นว่ามีกี่ค่า)
                             if (state is SecretState.LegacyFormat or SecretState.Plaintext or SecretState.AmbiguousBase64) pendingWrap++;
                             continue;
@@ -100,7 +179,11 @@ public static class SecretReprotectPass
                                     table, name, id);
                             }
                         }
-                        else skipped++;   // ค่าเปลี่ยนไปแล้ว (ผู้ใช้บันทึกใหม่/ลบ) ⇒ ของผู้ใช้ชนะ
+                        else
+                        {
+                            skipped++;   // ค่าเปลี่ยนไปแล้ว (ผู้ใช้บันทึกใหม่/ลบ) ⇒ ของผู้ใช้ชนะ
+                            if (state == SecretState.LegacyKey) legacyRemaining++;
+                        }
                     }
                     if (changed.Count > 0)
                     {
@@ -169,15 +252,19 @@ public static class SecretReprotectPass
         // รอบ 254 ฝ่ายค้าน L4: + LineGroupId (ผูกกลุ่ม L3 เขียนผ่าน Protect) — ทั้งสองช่องในรอบเดียว
         await Pass(Scope(db.ContactNotifyEndpoints.IgnoreQueryFilters().Where(e => e.LineUserId != null || e.LineGroupId != null)), "ContactNotifyEndpoints", r => r.CompanyId,
             Col<ContactNotifyEndpoint>(r => r.LineUserId), Col<ContactNotifyEndpoint>(r => r.LineGroupId));
-        // รอบ 254 WP-11 L3: groupId ในรหัสผูกกลุ่ม (ระดับแพลตฟอร์ม · อายุ 30 นาที แต่ค้างได้ถึงงานลบรายคืน)
-        await Pass(db.LineGroupBindCodes.IgnoreQueryFilters().Where(r => r.GroupIdProtected != ""), "LineGroupBindCodes", _ => (Guid?)null,
-            Col<LineGroupBindCode>(r => r.GroupIdProtected));
+        // รอบ 254 WP-11 L3: groupId ในรหัสผูกกลุ่ม (ระดับแพลตฟอร์ม · อายุ 30 นาที แต่ค้างได้ถึงงานลบรายคืน) ·
+        // รอบ 275 แพ็ก A: ระดับแพลตฟอร์ม ⇒ เฉพาะรอบทั้งระบบ (เดิมรอบรายบริษัทก็แตะตารางนี้ทั้งตาราง)
+        if (onlyCompanyId == null)
+            await Pass(db.LineGroupBindCodes.IgnoreQueryFilters().Where(r => r.GroupIdProtected != ""), "LineGroupBindCodes", _ => (Guid?)null,
+                Col<LineGroupBindCode>(r => r.GroupIdProtected));
 
-        return new Result(scanned, per.Values.Sum(), per, skipped, pendingWrap, wrappedAmbiguous);
+        return new Result(scanned, per.Values.Sum(), per, skipped, pendingWrap, wrappedAmbiguous, unusable, legacyRemaining,
+            states.ToDictionary(kv => kv.Key, kv => (IReadOnlyDictionary<SecretState, int>)kv.Value), findings);
     }
 }
 
-/// <summary>รันรอบเดียวหลังบูต (รอ migration 3 นาที) — ล็อก <see cref="JobLock"/> ทั้งระบบ · บันทึกผลลง <see cref="IJobRunRecorder"/> · ล้ม = log + บันทึกล้ม (ไม่ล้มแอป)</summary>
+/// <summary>รันหลังบูต (รอ migration 3 นาที) แล้วทุก <see cref="Interval"/> — ล็อก <see cref="JobLock"/> ทั้งระบบ · บันทึกผลลง <see cref="IJobRunRecorder"/> ·
+/// รอบ 275 แพ็ก A: ตรวจลายนิ้วมือคีย์ก่อนย้าย (ไม่ตรง ⇒ ไม่ย้าย) · ล้มดัง 3 ที่ (LogError · JobRunLog ล้ม · หน้า "สุขภาพข้อมูลเข้ารหัส") · ไม่ล้มแอป</summary>
 public class SecretReprotectJob : BackgroundService
 {
     private readonly IServiceScopeFactory _scopeFactory;
@@ -186,30 +273,67 @@ public class SecretReprotectJob : BackgroundService
     public SecretReprotectJob(IServiceScopeFactory scopeFactory, ILogger<SecretReprotectJob> logger)
     { _scopeFactory = scopeFactory; _logger = logger; }
 
+    /// <summary>ชื่องานใน JobRunLog — หน้า "สุขภาพข้อมูลเข้ารหัส" อ่านผลรันล่าสุดจากชื่อนี้</summary>
+    public const string JobName = "SecretReprotect";
+    /// <summary>รอบ 275 แพ็ก A: รันเป็นระยะเหมือนฝั่ง PII — ตั้งคีย์เดิมแล้วความลับถูกย้ายโดยไม่ต้องรีสตาร์ตอีกรอบ</summary>
+    public static readonly TimeSpan Interval = TimeSpan.FromHours(6);
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         try { await Task.Delay(TimeSpan.FromMinutes(3), stoppingToken); } catch { return; }
+        while (!stoppingToken.IsCancellationRequested)
+        {
+            await RunOnceAsync(stoppingToken);
+            try { await Task.Delay(Interval, stoppingToken); } catch { return; }
+        }
+    }
+
+    /// <summary>ข้อความสรุปของรอบ (JobRunLog) — แยกเป็นฟังก์ชันให้เทสต์ล็อกได้</summary>
+    public static string Summary(SecretReprotectPass.Result r)
+        => $"ตรวจความลับ {r.Scanned} ค่า · เข้ารหัสใหม่ด้วยคีย์ปัจจุบัน {r.Reprotected} ค่า"
+           + (r.PerColumn.Count == 0 ? "" : " (" + string.Join(", ", r.PerColumn.Select(kv => $"{kv.Key}={kv.Value}")) + ")")
+           + (r.PendingWrap == 0 ? "" : $" · รอห่อ enc1 {r.PendingWrap} ค่า (เปิด {SecretProtector.MigrateCipherPrefixConfigKey} เมื่อพร้อม — forward-only)")
+           + (r.WrappedAmbiguous == 0 ? "" : $" · ห่อค่ากำกวม (base64 ถอดไม่ออก) {r.WrappedAmbiguous} ค่า — ดู log")
+           + (r.Unusable == 0 ? "" : $" · ⛔ ถอดไม่ออกทุกคีย์/เสียหาย {r.Unusable} ค่า — {EncryptionHealthText.AdminKeyAdvice} หรือให้ผู้ใช้กรอกใหม่")
+           + (r.SkippedConcurrent == 0 ? "" : $" · ข้าม {r.SkippedConcurrent} ค่าที่ผู้ใช้เพิ่งแก้")
+           + (r.LegacyKeyRemaining == 0 ? " · ✓ ไม่มีความลับบนคีย์เดิมเหลือ" : $" · ยังอยู่บนคีย์เดิม {r.LegacyKeyRemaining} ค่า (รอบถัดไปย้ายต่อ)");
+
+    private async Task RunOnceAsync(CancellationToken stoppingToken)
+    {
         var startedAt = DateTime.UtcNow;
+        IJobRunRecorder? recorder = null;
         try
         {
             using var scope = _scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<AccountingDbContext>();
             var protector = scope.ServiceProvider.GetRequiredService<ISecretProtector>();
-            var recorder = scope.ServiceProvider.GetService<IJobRunRecorder>();
+            recorder = scope.ServiceProvider.GetService<IJobRunRecorder>();
+            // T4 M-4: เครื่องนี้ใช้คีย์ที่ระบบใช้อยู่จริงไหม — ไม่ตรง ⇒ ไม่ย้าย (ย้าย = เขียนด้วยคีย์ที่เครื่องอื่นอ่านไม่ได้)
+            var key = await Accounting.Services.Implementations.Security.EncryptionKeyFingerprintService.CheckAsync(db, protector, persist: true, _logger, stoppingToken);
+            if (!key.AllowsRekey)
+            {
+                if (recorder != null) await recorder.RecordAsync(JobName, false, "ไม่ย้ายคีย์: " + key.AdminMessage, 0, startedAt);
+                return;
+            }
             await JobLock.RunExclusiveAsync(db, AdvisoryLockKey.BackgroundJob, nameof(SecretReprotectJob), async () =>
             {
                 var r = await SecretReprotectPass.RunAsync(db, protector, stoppingToken, logger: _logger);
-                var summary = $"ตรวจความลับ {r.Scanned} ค่า · เข้ารหัสใหม่ด้วยคีย์ปัจจุบัน {r.Reprotected} ค่า"
-                    + (r.PerColumn.Count == 0 ? "" : " (" + string.Join(", ", r.PerColumn.Select(kv => $"{kv.Key}={kv.Value}")) + ")")
-                    + (r.PendingWrap == 0 ? "" : $" · รอห่อ enc1 {r.PendingWrap} ค่า (เปิด {SecretProtector.MigrateCipherPrefixConfigKey} เมื่อพร้อม — forward-only)")
-                    + (r.WrappedAmbiguous == 0 ? "" : $" · ห่อค่ากำกวม (base64 ถอดไม่ออก) {r.WrappedAmbiguous} ค่า — ดู log");
-                if (r.Reprotected > 0) _logger.LogWarning("SecretReprotect: {Summary}", summary);
-                if (recorder != null) await recorder.RecordAsync("SecretReprotect", true, summary, r.Reprotected, startedAt);
+                var summary = Summary(r);
+                if (r.Reprotected > 0 || r.Unusable > 0) _logger.LogWarning("SecretReprotect: {Summary}", summary);
+                // สำเร็จ = งานรันจบ (ค่าที่ถอดไม่ออกเป็นงานของผู้ใช้ — อยู่ในข้อความ + หน้ารายงานรายแถว)
+                if (recorder != null) await recorder.RecordAsync(JobName, true, summary, r.Reprotected, startedAt);
             }, _logger, ct: stoppingToken);
         }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "SecretReprotectJob ล้ม — ความลับที่เข้ารหัสด้วยคีย์เดิมยังถอดได้ผ่านคีย์เดิม จะลองใหม่ในการบูตครั้งถัดไป");
+            // ล้มดัง 3 ที่: LogError · JobRunLog (สถานะงาน) · หน้า "สุขภาพข้อมูลเข้ารหัส" แสดง "งานย้ายคีย์ล้ม"
+            _logger.LogError(ex, "SecretReprotectJob ล้ม — ความลับที่เข้ารหัสด้วยคีย์เดิมยังถอดได้ผ่านคีย์เดิม จะลองใหม่ในรอบถัดไป");
+            if (recorder != null)
+            {
+                try { await recorder.RecordAsync(JobName, false, "ล้ม: " + ex.Message, 0, startedAt); }
+                catch (Exception rex) { _logger.LogError(rex, "SecretReprotectJob: บันทึกผลรันล้มไม่สำเร็จ"); }
+            }
         }
     }
 }

@@ -7329,3 +7329,9 @@ HRIS sync (เลขบัตร/เลขบัญชี) · นำเข้า
 ciphertext ของแถวนั้นเองส่งกลับมา = คงค่าเดิม · converter ห่อค่าที่หลุดด่านพร้อมเครื่องหมาย (ไม่แกะ) · `Inspect` แกะแถวซ้อนรุ่นเก่า ≤ 3 ชั้นด้วยชุดคีย์เดียวกัน ·
 `PiiValueKind` ต่อคอลัมน์ (เลขบัตร/ผู้เสียภาษี = 13 หลัก mod-11) · `PiiReprotectPass` เขียนชั้นเดียว + audit `PiiNestedUnwrapped` (ไม่ตัดจบเมื่อไม่มีคีย์เดิม) ·
 รายงาน: แกะได้ = รอย้ายคีย์ · แกะไม่ได้ = `NestedCipher` · คำตัดสิน 274-10 · เทสต์ `PiiNestedCipherRound274_10Tests` (pure ×8) · Db `PiiNestedCipherDbTests` · กติกา `_R274_10_WHY` ×14 — commit 7c75b438_
+
+_รอบ 275 แพ็ก A (2026-11-20 · คีย์และความลับ · T4 H-1/M-1/M-2/M-4/M-5): `SecretProtector` ใช้ห่วงโซ่คีย์เดียวกับ PII (`DecryptKeyChain` — รวม `ENCRYPTION_KEY_PREVIOUS` + `_2`…`_9` + หลายบรรทัด) ·
+`SecretReprotectJob` เป็นระยะ + ล้ม = JobRunLog + watermark · ลายนิ้วมือคีย์ใน `SiteSettings` (งานย้ายคีย์ทั้งสองหยุดเมื่อไม่ตรง · ยืนยันคีย์โดยผู้ดูแล + audit) ·
+`Helpers/SecretUse` ที่ webhook ขาออก/CMS ขาเข้า/e-Tax/อีเมล/login ภายนอก/Omise/ธนาคาร/LINE OA/ลงนาม callback (ห้ามใช้ค่าว่างเงียบ · ห้ามส่งไม่เซ็น · ห้ามตรวจด้วยกุญแจว่าง) ·
+DTO พนักงานส่งป้าย ⛔ แทน ciphertext + ฟอร์มบอกชัด (ฝ่ายค้าน 274-10 MED-2) · หน้า `/pages/encryption-health.html` + มุมผู้ดูแล · runbook `docs/runbooks/encryption-key-rotation.md` ·
+คำตัดสิน 275-A-1…7 · pure + Db `KeysSecretsRound275A*` · กติกา `_R275A_` — commit (เติมในคอมมิตตามหลัง)_

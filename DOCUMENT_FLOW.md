@@ -5973,6 +5973,15 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
   **หมุนคีย์แบบ rolling deploy:** instance ใหม่ต้องตั้ง `ENCRYPTION_KEY_PREVIOUS` = คีย์เดิม · **ห้าม**มี instance เก่า (คีย์เดิมเป็นคีย์ปัจจุบัน) รันพร้อม instance ใหม่
   — instance เก่าอ่านแถวที่ย้ายแล้วไม่ออก และเขียนแถวใหม่ด้วยคีย์เดิม (ระบบไม่มีด่านข้าม instance ⇒ ปิดเครื่องเก่าก่อนเปิดใหม่ · ลบคีย์เดิมเมื่อ JobRunLog `PiiReprotect` สำเร็จและรายงานไม่มีแถวรอย้ายคีย์) ·
   ทางออกอื่นของคอลัมน์ชุดเดียวกัน: ไฟล์ สปส. (`SsoInsuredNumber.CitizenIdForFile` — enc1 ⇒ ว่าง) · ไฟล์โอนเงินเดือน (`PayrollBankTransfer` — enc1 ⇒ ไม่พร้อมโอน "เลขบัญชีถอดรหัสไม่ได้") · production ปฏิเสธคีย์ placeholder · คำตัดสิน 274-1…7 (`erp-review/2026-09-29/DECISIONS.md`)
+- **รอบ 275 แพ็ก A — คีย์และความลับ** (T4 H-1/M-1/M-2/M-4/M-5 · คำตัดสิน 275-A-1…7 · runbook `docs/runbooks/encryption-key-rotation.md`):
+  **ห่วงโซ่คีย์ถอดตัวเดียว** `EncryptionKeyResolver.DecryptKeyChain` ใช้ทั้งคอลัมน์ PII และ `SecretProtector` (เดิมความลับไม่อ่าน `ENCRYPTION_KEY_PREVIOUS` ⇒ หมุนคีย์แล้ว SMTP/LINE/Omise/e-Tax/webhook ดับทั้งชุด) ·
+  รับคีย์เดิมหลายตัว (หลายบรรทัด หรือ `_2`…`_9`) · `SecretReprotectJob` รันหลังบูต 3 นาทีแล้วทุก 6 ชม. (JobLock · audit `SEC-KEY-REPROTECT` · JobRunLog รวมล้ม · watermark "ไม่มีความลับบนคีย์เดิมเหลือ") ·
+  **ลายนิ้วมือคีย์** `SiteSettings.EncryptionKeyFingerprint*` — งานย้ายคีย์ทั้งสองตรวจก่อน (`EncryptionKeyFingerprintRule`): `Mismatch`/`RotatedBack` ⇒ ไม่เขียนแถว + LogError + JobRunLog ล้ม · ผู้ดูแลแพลตฟอร์มยืนยันคีย์ (`POST api/admin/encryption-health/accept-current-key` · audit) ·
+  **ผู้อ่านความลับที่เอาไปใช้** ผ่าน `Helpers/SecretUse` — ตั้งไว้แต่ถอดไม่ได้ ⇒ webhook ขาออกไม่ส่ง (แถวประวัติบอกเหตุ) · webhook CMS ขาเข้าไม่ตรวจด้วยกุญแจว่าง · e-Tax ไม่เซ็น/ไม่ส่ง (เหตุบนแถว) ·
+  อีเมลบริษัท/ระบบตอบล้มพร้อมเหตุ (`UnusableSecretEmailSender`) · Google/LINE/Facebook login ปฏิเสธ (Facebook ไม่ข้ามตรวจ app id) · Omise/ธนาคาร/LINE OA/ลงนาม callback บอก "ใช้ไม่ได้" แทน "ยังไม่ได้ตั้งค่า" ·
+  **DTO พนักงาน** ไม่ส่ง ciphertext: ป้าย `⛔ ถอดรหัสไม่ได้` + `IdentityProblem`/`BankAccountProblem`/`PiiProblemText` · ฟอร์มส่งป้ายกลับ = คงค่าเดิม · ฟอร์มแสดงกล่องเหตุ + ขอบแดงที่ช่อง ·
+  **หน้า "สุขภาพข้อมูลเข้ารหัส"** `/pages/encryption-health.html` (ความลับ `GET encryption-health/secrets` · สิทธิ์ตั้งค่าบริษัท + PII `GET payroll/tax-identity-health` เดิม) · มุมผู้ดูแลใน admin › งานเบื้องหลัง (`GET api/admin/encryption-health`) ·
+  ข้อความถึงผู้ใช้บริษัทไม่ชี้ URL ดิบ/ชื่อ env (`EncryptionHealthText`)
 - **รอบ 200 ทีม R (กวาดค้างรอบ 189)**: ฐานภาษีสะสม (YTD) ของงวดก่อน = `PayrollIncomeBase.PriorTaxBase(TaxableGross, GrossIncome)` (D-09 — เดิม gross
   รวมสวัสดิการยกเว้น ⇒ หักเกินงวดหลัง · แถวเก่าที่ TaxableGross = 0 ใช้ gross เหมือนเดิม) · PVD = `PayrollIncomeBase.PvdContribution(proratedBaseSalary, %)`
   (D-10 — เดิมเต็มเดือน + ไม่ปัด) · เพดานสมทบปัด AwayFromZero (D-08) · กำหนดนำส่ง สปส. + เงินเพิ่ม §49 = `Helpers/SsoLateFee` ตัวเดียว
@@ -9813,3 +9822,6 @@ _Last verified against codebase: 2026-11-20 (รอบ 274-10 — เลขท�
 (เลขบัตร/ผู้เสียภาษีรับเฉพาะ 13 หลัก mod-11 · อื่น ๆ ต้องไม่ใช่ ciphertext) · `PiiReprotectPass` เขียนชั้นเดียว + audit `PiiNestedUnwrapped` · รายงานไม่บอกกรอกใหม่สำหรับแถวที่แกะได้ ·
 ทุกทางเข้าพนักงาน (แก้ไข/สร้าง/HRIS sync/นำเข้า) ปฏิเสธ ciphertext ด้วย `EmployeeRecordEdit.CipherInputProblem` · ciphertext ของแถวนั้นเองส่งกลับมา = คงค่าเดิม ·
 คำตัดสิน 274-10 — commit 7c75b438)_
+
+_Last verified against codebase: 2026-11-20 (รอบ 275 แพ็ก A — คีย์และความลับ: ห่วงโซ่คีย์ถอดเดียว (PII = ความลับ) · คีย์เดิมหลายตัว · ลายนิ้วมือคีย์กันหลายเครื่อง ·
+`SecretUse` ด่านเดียวของผู้อ่านความลับ · DTO พนักงานไม่ส่ง ciphertext · หน้า "สุขภาพข้อมูลเข้ารหัส" · เทสต์ `KeysSecretsRound275ATests` + Db `KeysSecretsRound275ADbTests` · กติกา `_R275A_` — commit (เติมในคอมมิตตามหลัง))_

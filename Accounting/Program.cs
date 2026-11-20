@@ -156,10 +156,11 @@ else
 // รอบ 274 (บั๊ก production — เลขผู้เสียภาษีพนักงานผิดจำนวนหลักหลังตั้ง ENCRYPTION_KEY): คีย์เดิมสำหรับ<b>ถอด</b>คอลัมน์ PII ·
 // ENCRYPTION_KEY_PREVIOUS (หมุนคีย์ env→env) + config เดิมที่ env ชนะ + dev key (แถวที่บันทึกก่อนตั้งคีย์) · เขียนด้วยคีย์ปัจจุบันเสมอ ·
 // PiiReprotectJob ย้ายแถวไปคีย์ปัจจุบัน (JobLock · audit)
-Accounting.Helpers.EncryptedColumnConverter.ConfigurePreviousKeys(Accounting.Helpers.EncryptionKeyResolver.PiiPreviousKeys(
+// รอบ 275 แพ็ก A (T4 H-1/M-4): ห่วงโซ่ตัวเดียวกับ SecretProtector (DecryptKeyChain) — รับ ENCRYPTION_KEY_PREVIOUS หลายบรรทัด + _2…_9
+Accounting.Helpers.EncryptedColumnConverter.ConfigurePreviousKeys(Accounting.Helpers.EncryptionKeyResolver.DecryptKeyChain(
     string.IsNullOrWhiteSpace(encryptionKey) ? Accounting.Helpers.EncryptionKeyResolver.DevKey : encryptionKey,
-    Environment.GetEnvironmentVariable(Accounting.Helpers.EncryptionKeyResolver.PreviousKeyEnv) ?? builder.Configuration["Security:EncryptionKeyPrevious"],
-    Environment.GetEnvironmentVariable("ENCRYPTION_KEY"), builder.Configuration["Security:EncryptionKey"]));
+    Environment.GetEnvironmentVariable, builder.Configuration["Security:EncryptionKey"],
+    builder.Configuration[Accounting.Helpers.SecretProtector.PreviousKeyConfigKey]));
 // ฝ่ายค้าน 267-P2 M1: กุญแจ HMAC ของรหัสยืนยันอีเมลผู้ลงนาม — แหล่งเดียวกับข้างบน · production ไม่มีคีย์/เป็น dev key = boot ไม่ขึ้น
 Accounting.Helpers.CustomerSignRule.ConfigureOtpKey(Accounting.Helpers.EncryptionKeyResolver.RequireUsable(
     Accounting.Helpers.EncryptionKeyResolver.Resolve(Environment.GetEnvironmentVariable("ENCRYPTION_KEY"), builder.Configuration["Security:EncryptionKey"]),

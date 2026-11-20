@@ -39,10 +39,12 @@ public class LineNotifyService : ILineNotifyService
     }
 
     /// <summary>OA ของบริษัท (ถอดรหัสแล้ว) — <see cref="Configured"/> = เปิด LINE + token ถอดได้ · <see cref="GroupId"/> = "LINE กลุ่มของทีม"</summary>
-    private sealed record CompanyOa(bool Configured, string? Token, string? GroupId)
+    /// <param name="Problem">รอบ 275 แพ็ก A (T4 S1): token ตั้งไว้แต่ถอดไม่ได้ — เหตุจริงแทน "ยังไม่ได้ตั้งค่า" ในผลส่ง (เดิมเงียบเหมือนไม่มี OA)</param>
+    private sealed record CompanyOa(bool Configured, string? Token, string? GroupId, string? Problem = null)
     {
         public static CompanyOa None { get; } = new(false, null, null);
     }
+
 
     /// <summary>ค่าตั้ง OA ของ<b>บริษัท</b>เท่านั้น — รอบ 232: ไม่มี ⇒ <see cref="CompanyOa.None"/> (เดิมถอยไป token + GroupId ของ OA กลาง = ต้นตอที่เหตุการณ์ของผู้เช่าเด้งเข้าห้องแอดมินแพลตฟอร์ม) ·
     /// db null (เทสต์ที่สร้างตรง) = ไม่มี OA ของบริษัท</summary>
@@ -55,7 +57,9 @@ public class LineNotifyService : ILineNotifyService
             .FirstOrDefaultAsync();
         if (s == null || !s.LineEnabled || string.IsNullOrWhiteSpace(s.LineChannelAccessToken)) return CompanyOa.None;
         // ฝ่ายค้าน 232 S2: token ที่เก็บไว้แต่ถอดไม่ได้ (คีย์เปลี่ยน/ค่าเสีย) = ไม่มี OA (IsUsable ก่อน Unprotect — Unprotect คืนค่าว่าง/ค่าดิบเมื่อถอดไม่ออก)
-        if (!_secrets.IsUsable(s.LineChannelAccessToken)) return CompanyOa.None;
+        // รอบ 275 แพ็ก A (T4 S1): ถอดไม่ได้ ⇒ ไม่มี OA <b>พร้อมเหตุจริง</b> จาก SecretUse (ผลส่ง/แถวคิว/หน้าทดสอบเห็นว่าเพราะคีย์ ไม่ใช่ "ยังไม่ได้ตั้ง")
+        if (!_secrets.IsUsable(s.LineChannelAccessToken))
+            return new CompanyOa(false, null, null, SecretUse.Open(_secrets, "Channel Access Token ของ LINE OA บริษัท", s.LineChannelAccessToken).Problem);
         var token = _secrets.Unprotect(s.LineChannelAccessToken);
         if (string.IsNullOrWhiteSpace(token)) return CompanyOa.None;
         return new CompanyOa(true, token, string.IsNullOrWhiteSpace(s.LineDefaultGroupId) ? null : s.LineDefaultGroupId.Trim());
@@ -135,7 +139,7 @@ public class LineNotifyService : ILineNotifyService
         if (string.IsNullOrWhiteSpace(message)) return LinePushResult.Fail("ไม่มีข้อความให้ส่ง");
         var oa = await ResolveCompanyOaAsync(companyId);
         var route = NotificationAudiencePolicy.LineRoute(NotificationAudience.TenantBusiness, LineOaKind.CompanyOa, LineTargetKind.CompanyGroup, oa.Configured);
-        if (!route.Allowed) return LinePushResult.Denied(route.RuleCode, route.Reason!);
+        if (!route.Allowed) return LinePushResult.Denied(route.RuleCode, oa.Problem ?? route.Reason!);
         if (oa.GroupId == null) return LinePushResult.Fail("ยังไม่ได้ใส่ \"LINE กลุ่มของทีม\" (Group ID) ในหน้าตั้งค่า LINE ของบริษัท");
         return await PushCoreAsync(oa.Token, TextPayload(oa.GroupId, LineMessageLimits.Truncate(message, 5000)), $"company-group {companyId}");
     }
@@ -145,7 +149,7 @@ public class LineNotifyService : ILineNotifyService
         if (string.IsNullOrWhiteSpace(lineUserId)) return LinePushResult.Fail("ผู้รับยังไม่ผูก LINE");
         var oa = await ResolveCompanyOaAsync(companyId);
         var route = NotificationAudiencePolicy.LineRoute(NotificationAudience.TenantBusiness, LineOaKind.CompanyOa, LineTargetKind.TenantMember, oa.Configured);
-        if (!route.Allowed) return LinePushResult.Denied(route.RuleCode, route.Reason!);
+        if (!route.Allowed) return LinePushResult.Denied(route.RuleCode, oa.Problem ?? route.Reason!);
         return await PushCoreAsync(oa.Token, TextPayload(lineUserId, message), $"user {CustomerLineLinkRule.Mask(lineUserId)}");
     }
 
@@ -154,7 +158,7 @@ public class LineNotifyService : ILineNotifyService
         if (string.IsNullOrWhiteSpace(lineUserId)) return LinePushResult.Fail("ผู้รับยังไม่ผูก LINE");
         var oa = await ResolveCompanyOaAsync(companyId);
         var route = NotificationAudiencePolicy.LineRoute(NotificationAudience.TenantBusiness, LineOaKind.CompanyOa, LineTargetKind.TenantMember, oa.Configured);
-        if (!route.Allowed) return LinePushResult.Denied(route.RuleCode, route.Reason!);
+        if (!route.Allowed) return LinePushResult.Denied(route.RuleCode, oa.Problem ?? route.Reason!);
         return await PushCoreAsync(oa.Token, FlexPayload(lineUserId, altText, flexContents), $"flex user {CustomerLineLinkRule.Mask(lineUserId)}");
     }
 
@@ -216,7 +220,7 @@ public class LineNotifyService : ILineNotifyService
                 : LinePushResult.Fail("ไม่รู้ว่าปลายทางนี้ผูกกับ LINE OA ใด — ไม่ส่ง (ให้ผู้รับผูกใหม่)"), null, false);
         var oa = await ResolveCompanyOaAsync(companyId);
         var route = NotificationAudiencePolicy.LineRoute(NotificationAudience.TenantBusiness, LineOaKind.CompanyOa, target, oa.Configured);
-        if (!route.Allowed) return (LinePushResult.Denied(route.RuleCode, route.Reason!), null, false);
+        if (!route.Allowed) return (LinePushResult.Denied(route.RuleCode, oa.Problem ?? route.Reason!), null, false);
         return (null, oa.Token, false);
     }
 
@@ -390,7 +394,8 @@ public class LineNotifyService : ILineNotifyService
         var oa = await ResolveCompanyOaAsync(companyId);
         var route = NotificationAudiencePolicy.LineRoute(NotificationAudience.TenantBusiness, LineOaKind.CompanyOa, LineTargetKind.TenantMember, oa.Configured);
         if (!route.Allowed)
-            return (false, "ยังไม่ได้ตั้งค่า Channel Access Token ของ LINE OA ของร้าน (ติ๊ก \"เปิดใช้งาน\" + ใส่ Token แล้วบันทึกก่อน) — " + route.Reason);
+            return (false, oa.Problem   // รอบ 275 แพ็ก A: token ตั้งไว้แต่ถอดไม่ได้ — เหตุจริง ไม่ใช่ "ยังไม่ได้ตั้งค่า"
+                ?? "ยังไม่ได้ตั้งค่า Channel Access Token ของ LINE OA ของร้าน (ติ๊ก \"เปิดใช้งาน\" + ใส่ Token แล้วบันทึกก่อน) — " + route.Reason);
         // รอบ 260-4 (ฝ่ายค้าน H1): ปลายทางทดสอบอาจเป็นผู้รับของลูกค้า ⇒ ข้อความไม่มี GUID/ศัพท์เทคนิค (ตัวประกอบเดียว LineOaHealth.TestMessage)
         var companyName = _db == null ? null : await _db.Companies.AsNoTracking().Where(c => c.Id == companyId).Select(c => c.Name).FirstOrDefaultAsync();
         var r = await PushCoreAsync(oa.Token, TextPayload(toLineId.Trim(), LineOaHealth.TestMessage(companyName, NowIct())), "test");

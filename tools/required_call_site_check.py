@@ -4370,7 +4370,7 @@ RULES += [
          forbid=["employee.SocialSecurityNumber = request.SocialSecurityNumber"],
          why="PR2 A-PR1: แก้เลขประกันสังคมผ่านตัวตัดสินเดียว · ค่าปิดบังของเดิมไม่เขียนทับของจริง"),
     dict(file=PAYROLL, method="MapToEmployeeResponse",
-         must=["PiiMask.CitizenId(e.SocialSecurityNumber)"],
+         must=["EmployeeRecordEdit.ForEmployeeDto(e.SocialSecurityNumber, includePii, Accounting.Helpers.PiiMask.CitizenId)"],
          why="PR2 A-PR1: เลขประกันสังคมเป็น PII ม.26 — echo ปิดบังเว้นแต่มีสิทธิ์ pii:view"),
     dict(file="Controllers/PayrollController.cs", method="GetItemSsoSuggestion",
          must=["PayrollIncomeNatureRules.SuggestedCountsForSsoBase("],
@@ -11039,7 +11039,7 @@ REVIEWER_CASES += [
 # เคสฝ่ายค้าน 232-Notify: ใส่ fallback กลับ / ทิ้งผลตัวตัดสิน / ถอดช่องกลุ่มของบริษัท / ประกาศกลุ่มเดิมกลับมา ⇒ ต้องฟ้อง · จัดรูปแบบใหม่ ⇒ ต้องไม่ฟ้อง
 REVIEWER_CASES += [
     ("NT1", "TryPushCompanyGroupAsync",
-     "if (!route.Allowed) return LinePushResult.Denied(route.RuleCode, route.Reason!);\n        if (oa.GroupId == null)",
+     "if (!route.Allowed) return LinePushResult.Denied(route.RuleCode, oa.Problem ?? route.Reason!);\n        if (oa.GroupId == null)",
      "_ = route;\n        if (oa.GroupId == null)", True),
     ("NT2", "ResolveCompanyOaAsync",
      "if (s == null || !s.LineEnabled || string.IsNullOrWhiteSpace(s.LineChannelAccessToken)) return CompanyOa.None;",
@@ -11055,8 +11055,8 @@ REVIEWER_CASES += [
      "if (!route.Allowed)\n            return (false,", "if (route.Allowed || !route.Allowed)\n            _ = (false,", True),
     # ทิศตรงข้าม: จัดรูปแบบใหม่ (ขึ้นบรรทัด) ต้องไม่ฟ้อง
     ("NT7", "TryPushToUserAsync",
-     "if (!route.Allowed) return LinePushResult.Denied(route.RuleCode, route.Reason!);\n        return await PushCoreAsync(oa.Token, TextPayload(lineUserId, message)",
-     "if (!route.Allowed)\n            return LinePushResult.Denied(route.RuleCode, route.Reason!);\n        return await PushCoreAsync(oa.Token, TextPayload(lineUserId, message)", False),
+     "if (!route.Allowed) return LinePushResult.Denied(route.RuleCode, oa.Problem ?? route.Reason!);\n        return await PushCoreAsync(oa.Token, TextPayload(lineUserId, message)",
+     "if (!route.Allowed)\n            return LinePushResult.Denied(route.RuleCode, oa.Problem ?? route.Reason!);\n        return await PushCoreAsync(oa.Token, TextPayload(lineUserId, message)", False),
 ]
 RULES += [
     # ── รอบ 212 แพ็ก B (คำตัดสินข้อ 171 ข้อ 4 · เจ้าของ: "ส่ง"): ร้านเปลี่ยน LINE OA ⇒ บันทึกการสลับ (PUT ค่าตั้ง · webhook) ⇒ งานเบื้องหลังเชิญลูกค้าผูกใหม่ ·
@@ -12245,9 +12245,9 @@ RULES += [
          forbid=["await q.ToListAsync(ct)"],
          why=_R219_WHY + "B2 ทะเบียนช่องความลับตัวเดียว (ครบทุกผู้เขียน — tools/secret_registry_check.py) · รอบ 2: อ่านทีละชุด + "
              "เขียนแบบมีเงื่อนไขค่าเดิม (ไม่ทับความลับที่ผู้ใช้หมุนระหว่างงาน)"),
-    dict(file="Services/Background/SecretReprotectJob.cs", method="ExecuteAsync",
+    dict(file="Services/Background/SecretReprotectJob.cs", method="RunOnceAsync",
          must=["JobLock.RunExclusiveAsync(", "SecretReprotectPass.RunAsync("],
-         why=_R219_WHY + "B2 เข้ารหัสใหม่ครั้งเดียวต่อบูต ทีละเครื่อง"),
+         why=_R219_WHY + "B2 เข้ารหัสใหม่ทีละเครื่อง (รอบ 275 แพ็ก A: รันเป็นระยะ · ย้ายเมธอดจาก ExecuteAsync เป็น RunOnceAsync)"),
 ]
 
 
@@ -21542,6 +21542,74 @@ RULES += [
          must=["EmployeeRecordEdit.CipherInputProblem(citizenRaw", "EmployeeRecordEdit.CipherInputProblem(row.GetValueOrDefault("],
          before=[("CipherInputProblem(citizenRaw", "new Employee")],
          why=_R274_10_WHY + "นำเข้าไฟล์ (เช่นไฟล์ที่ส่งออกไว้ช่วงถอดรหัสไม่ได้): ciphertext ⇒ แถวล้มพร้อมเหตุ"),
+]
+
+
+# รอบ 275 แพ็ก A — คีย์และความลับ (T4 H-1 · M-1 · M-2 · M-4 · M-5):
+# ห่วงโซ่คีย์ถอดตัวเดียว (PII = ความลับ) · ผู้อ่านความลับที่ "เอาไปใช้" ผ่าน SecretUse (ห้ามใช้ค่าว่างเงียบ/ส่ง webhook ไม่เซ็น/ตรวจ HMAC ด้วยกุญแจว่าง) ·
+# งานย้ายคีย์ทั้งสองตรวจลายนิ้วมือก่อนย้าย · DTO พนักงานไม่ส่ง ciphertext
+_R275A_WHY = "รอบ 275 แพ็ก A (คีย์และความลับ): "
+RULES += [
+    dict(file="Helpers/SecretProtector.cs", method="KeyChain",
+         must=["EncryptionKeyResolver.DecryptKeyChain(", "config[PreviousKeyConfigKey]"],
+         forbid=["EncryptionKeyResolver.LegacyCandidates("],
+         why=_R275A_WHY + "H-1: SecretProtector ใช้ห่วงโซ่คีย์เดียวกับคอลัมน์ PII (รวม ENCRYPTION_KEY_PREVIOUS) — เดิมหมุนคีย์แล้วความลับทุกตัว WrongKey"),
+    dict(file="Services/Implementations/WebhookService.cs", method="DeliverWebhookAsync",
+         must=["SecretUse.Open(_secrets,", "signing.Unusable", "var clearSecret = signing.Value;"],
+         before=[("signing.Unusable", "httpClient.SendAsync(")],
+         forbid=["_secrets.Unprotect(registration.Secret)"],
+         why=_R275A_WHY + "M-5/S4: secret ตั้งไว้แต่ถอดไม่ได้ ⇒ ไม่ส่ง (เดิมส่งแบบไม่มีลายเซ็นเงียบ ๆ)"),
+    dict(file="Controllers/CmsWebhookController.cs", method="ReceivePaymentWebhook",
+         must=["SecretUse.Open(_secretProtector,", "if (string.IsNullOrEmpty(secret)) continue;"],
+         before=[("if (string.IsNullOrEmpty(secret)) continue;", "VerifyHmac(body, signature, secret)")],
+         forbid=["_secretProtector?.Unprotect(gw.WebhookSecret!)"],
+         why=_R275A_WHY + "M-5/S4: ห้ามตรวจ HMAC ด้วยกุญแจว่างบนทางเข้าสาธารณะ"),
+    dict(file="Services/Implementations/EtaxInvoiceService.cs", method="SubmitToRevenueCoreAsync",
+         must=["etaxConfig.ApiSecretProblem is string rdSecretProblem"],
+         before=[("etaxConfig.ApiSecretProblem", "CallRdApi(")],
+         why=_R275A_WHY + "M-5/S3: RD API secret ใช้ไม่ได้ ⇒ ล้มพร้อมเหตุบนแถว (ไม่ยิงด้วยค่าว่าง) · GetEtaxConfig ประกอบผ่าน SecretUse.Open"),
+    dict(file="Services/Implementations/EtaxInvoiceService.cs", method="SignAsync",
+         must=["etaxConfig.CertPasswordProblem is string certPwProblem"],
+         before=[("etaxConfig.CertPasswordProblem", "SignXmlWithCertificate(")],
+         why=_R275A_WHY + "S3: รหัสใบรับรองใช้ไม่ได้ ⇒ ล้มพร้อมเหตุบนแถวก่อนเซ็น"),
+    dict(file="Services/Implementations/AuthService.cs", method="GetFacebookAppSecretAsync",
+         must=["OpenLoginSecret("], forbid=["_secrets.Unprotect(enc)"],
+         why=_R275A_WHY + "M-5: Facebook app secret ถอดไม่ได้ ⇒ ปฏิเสธ (เดิมคืน \"\" แล้วข้ามการตรวจ app id ของ token = fail-open)"),
+    dict(file="Services/Implementations/AuthService.cs", method="GetGoogleClientSecretAsync",
+         must=["OpenLoginSecret("], forbid=["_secrets.Unprotect(enc)"], why=_R275A_WHY + "M-5: เหตุจริงแทน \"ยังไม่ได้ตั้ง\""),
+    dict(file="Services/Implementations/AuthService.cs", method="GetLineChannelSecretAsync",
+         must=["OpenLoginSecret("], forbid=["_secrets.Unprotect(enc)"], why=_R275A_WHY + "M-5: เหตุจริงแทน \"ยังไม่ได้ตั้ง\""),
+    dict(file="Services/Implementations/Email/EmailSenderFactory.cs", method="GetSenderForSettings",
+         must=["SecretUse.Open(_secrets,", "new UnusableSecretEmailSender("], forbid=["_secrets.Unprotect("],
+         why=_R275A_WHY + "M-5/S1: ความลับอีเมลบริษัทถอดไม่ได้ ⇒ ล้มพร้อมเหตุ ไม่ยืนยันตัวตนด้วยรหัสว่าง"),
+    dict(file="Services/Implementations/Email/EmailSenderFactory.cs", method="BuildSystemSender",
+         must=["SecretUse.Open(_secrets,", "new UnusableSecretEmailSender("], forbid=["_secrets.Unprotect("],
+         why=_R275A_WHY + "M-5: อีเมลระบบแบบเดียวกัน"),
+    dict(file="Services/Payments/Providers/OmisePaymentProvider.cs", method="SecretKey",
+         must=["SecretUse.Open(_secrets, label, raw)"], forbid=["_secrets.Unprotect(raw)"],
+         why=_R275A_WHY + "S2: แยก \"ยังไม่ได้ตั้ง\" กับ \"ตั้งไว้แต่ถอดไม่ได้\""),
+    dict(file="Services/Implementations/BankFeedService.cs", method="FetchTransactionsFromBankAsync",
+         must=["SecretUse.Optional(_secrets,"], forbid=["_secrets.Unprotect(conn.AccessToken)"],
+         why=_R275A_WHY + "M-5: token ธนาคารถอดไม่ได้ ⇒ ล้มพร้อมเหตุ ไม่ยิงแบบไม่ยืนยันตัวตน"),
+    dict(file="Services/Implementations/LineNotifyService.cs", method="ResolveCompanyOaAsync",
+         must=["new CompanyOa(false, null, null, SecretUse.Open(_secrets,"],
+         why=_R275A_WHY + "S1: LINE OA ของบริษัทถอดไม่ได้ ⇒ เหตุจริงในผลส่ง (เดิมเงียบเหมือนไม่มี OA)"),
+    dict(file="Services/Background/SecretReprotectJob.cs", method="RunOnceAsync",
+         must=["EncryptionKeyFingerprintService.CheckAsync(db, protector, persist: true", "key.AllowsRekey", "recorder.RecordAsync(JobName, false"],
+         before=[("key.AllowsRekey", "JobLock.RunExclusiveAsync(")],
+         why=_R275A_WHY + "M-4: คีย์ไม่ตรงกับที่ระบบใช้ ⇒ ไม่ย้าย · ล้ม = JobRunLog ล้ม (ล้มดัง 3 ที่)"),
+    dict(file="Services/Background/PiiReprotectJob.cs", method="RunOnceAsync",
+         must=["EncryptionKeyFingerprintService.CheckAsync(db, keyProbe, persist: true", "key.AllowsRekey"],
+         before=[("key.AllowsRekey", "JobLock.RunExclusiveAsync(")],
+         why=_R275A_WHY + "M-4: ฝั่ง PII ใช้ตัวตัดสินเดียวกัน — ไม่ย้ายแถวไปคีย์ที่เครื่องอื่นอ่านไม่ได้"),
+    dict(file=PAYROLL, method="MapToEmployeeResponse",
+         must=["EmployeeRecordEdit.ForEmployeeDto(e.CitizenId", "EmployeeRecordEdit.ForEmployeeDto(e.TaxId", "EmployeeRecordEdit.ForEmployeeDto(e.BankAccountNumber",
+               "EmployeeRecordEdit.ForEmployeeDto(e.SocialSecurityNumber", "PiiProblemText: Accounting.Helpers.EmployeeRecordEdit.PiiProblemText("],
+         forbid=["includePii ? e.CitizenId", "includePii ? e.BankAccountNumber", "includePii ? e.SocialSecurityNumber", "includePii ? e.TaxId"],
+         why=_R275A_WHY + "M-2: DTO พนักงานไม่ส่ง ciphertext ดิบ (ป้าย ⛔ + เหตุ) · ฟอร์มส่งป้ายกลับ = ไม่ได้แก้"),
+    dict(file="Helpers/EmployeeRecordEdit.cs", method="IsEchoOfStoredUnreadable",
+         must=["EncryptedColumnConverter.UnreadableExportText"],
+         why=_R275A_WHY + "M-2: ป้ายที่ DTO ส่งไปแล้วถูกส่งกลับ = คงค่าเดิม (echo guard รอบ 274-10 คงอยู่)"),
 ]
 
 

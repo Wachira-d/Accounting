@@ -5071,12 +5071,16 @@ public class PayrollService : IPayrollService
     /// masked (deny by default). controller ต้อง opt-in.</summary>
     private static EmployeeResponse MapToEmployeeResponse(Employee e, bool includePii = false, bool includeSalary = true)
     {
-        var citizenId = includePii ? e.CitizenId : Accounting.Helpers.PiiMask.CitizenId(e.CitizenId);
+        // รอบ 275 แพ็ก A (T4 M-2): ค่าที่ถอดรหัสไม่ได้ ⇒ ป้าย "⛔ ถอดรหัสไม่ได้" (ตัวเดียวกับไฟล์ส่งออก) ไม่ใช่ ciphertext ดิบ (ผู้มี Pii.View เดิมเห็น enc1:…)
+        // และไม่ใช่ XXXX ที่ดูเหมือนเลขปกติ (ผู้ไม่มีสิทธิ์) · ฟอร์มส่งป้ายกลับมา = ไม่ได้แก้ (EmployeeRecordEdit.IsEchoOfStoredUnreadable)
+        var citizenId = Accounting.Helpers.EmployeeRecordEdit.ForEmployeeDto(e.CitizenId, includePii, Accounting.Helpers.PiiMask.CitizenId);
         // เลขผู้เสียภาษีของ "บุคคล" = เลขบัตรประชาชน ⇒ ปิดบังแบบเลขบัตร (เปิดหลักแรก+หลักท้าย)
         // ไม่ใช่แบบ PiiMask.TaxId ที่เปิด 7 หลักแรก (ใช้กับนิติบุคคล) · ตัวปิดบังต้องเป็น
         // ตัวเดียวกับที่ EmployeeRecordEdit.ThaiIdNumber ใช้จับ "ค่าปิดบังที่ส่งกลับมา"
-        var taxId = includePii ? e.TaxId : Accounting.Helpers.PiiMask.CitizenId(e.TaxId);
-        var bankAccountNo = includePii ? e.BankAccountNumber : Accounting.Helpers.PiiMask.BankAccountNo(e.BankAccountNumber);
+        var taxId = Accounting.Helpers.EmployeeRecordEdit.ForEmployeeDto(e.TaxId, includePii, Accounting.Helpers.PiiMask.CitizenId);
+        var bankAccountNo = Accounting.Helpers.EmployeeRecordEdit.ForEmployeeDto(e.BankAccountNumber, includePii, Accounting.Helpers.PiiMask.BankAccountNo);
+        var identity = Accounting.Helpers.EmployeeTaxIdentity.Inspect(e.TaxId, e.CitizenId);
+        var bankUnreadable = Accounting.Helpers.EncryptedColumnConverter.IsUnreadable(e.BankAccountNumber);
         var phone = includePii ? e.Phone : Accounting.Helpers.PiiMask.Phone(e.Phone);
         var email = includePii ? e.Email : Accounting.Helpers.PiiMask.Email(e.Email);
         // เงินเดือน = ข้อมูลอ่อนไหว (payroll sensitivity) — ผู้ไม่มีสิทธิ์ดูเงินเดือน
@@ -5108,7 +5112,10 @@ public class PayrollService : IPayrollService
             BankAccountNumber: bankAccountNo,
             BankAccountName: e.BankAccountName,
             // A-PR1: เลขที่กรอกไว้เท่านั้น (ไม่แต่งจากเลขบัตร — ช่องว่าง = ใช้เลขบัตร) · ปิดบังแบบเลข 13 หลักของบุคคล
-            SocialSecurityNumber: includePii ? e.SocialSecurityNumber : Accounting.Helpers.PiiMask.CitizenId(e.SocialSecurityNumber));
+            SocialSecurityNumber: Accounting.Helpers.EmployeeRecordEdit.ForEmployeeDto(e.SocialSecurityNumber, includePii, Accounting.Helpers.PiiMask.CitizenId),
+            IdentityProblem: identity.Ok ? null : identity.Problem.ToString(),
+            BankAccountProblem: bankUnreadable ? Accounting.Helpers.TaxIdProblem.Undecryptable.ToString() : null,
+            PiiProblemText: Accounting.Helpers.EmployeeRecordEdit.PiiProblemText(identity, bankUnreadable));
     }
 
     private static PayrollItemResponse MapToPayrollItemResponse(PayrollItem i)
