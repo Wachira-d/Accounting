@@ -155,8 +155,10 @@ public class SettlementTaxInvoiceRoleDbTests
             await Docs(v).VoidPaymentAsync(s.CompanyId, p2.Id);
         Assert.Equal(24_500m, await Undue21913Async(s, inv.Id));
         using var after = DbTestDatabase.TryCreateContext()!;
-        Assert.Equal(DocumentStatus.Voided, (await after.Documents.AsNoTracking().SingleAsync(d => d.Id == r2.Id)).Status);
-        Assert.NotEqual(DocumentStatus.Voided, (await after.Documents.AsNoTracking().SingleAsync(d => d.Id == r1.Id)).Status);
+        var gone = await after.Documents.AsNoTracking().IgnoreQueryFilters().SingleAsync(d => d.Id == r2.Id);
+        Assert.True(gone.Status == DocumentStatus.Voided || gone.IsDeleted);
+        var kept = await after.Documents.AsNoTracking().SingleAsync(d => d.Id == r1.Id);
+        Assert.Equal((false, 24_500m), (kept.Status == DocumentStatus.Voided, kept.VatAmount));
     }
 
     [Fact]

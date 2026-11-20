@@ -960,11 +960,8 @@ public class CustomerCreditDbTests
         using (var req = DbTestDatabase.TryCreateContext()!)
             await RefusedAsync(() => Docs(req).CreateMultiDocPaymentAsync(s.CompanyId,
                 Receive(1_500m, null, (plain.Id, 1_000m), (vatInv.Id, 500m)), "tester"), VatInvoiceSettlementGate.RuleCode);
-        // M5 (รับชำระใบเดียวจากหน้าจอ) — ทางเข้าอัตโนมัติ (เงินเข้าจริงจากภายนอก) ไม่ถูกกัน
-        using (var req = DbTestDatabase.TryCreateContext()!)
-            await RefusedAsync(() => Docs(req).CreatePaymentAsync(s.CompanyId,
-                new CreatePaymentRequest(vatInv.Id, Today, 500m, PaymentMethod.BankTransfer, "SLIP-P", null, null), "tester", PaymentEntrySource.Manual),
-                VatInvoiceSettlementGate.RuleCode);
+        // M5 (รับชำระใบเดียวจากหน้าจอ): รอบ 275 แพ็ก C (คำตัดสิน 275-C-1) — ใบแจ้งหนี้งานบริการ (ภาษีพัก 21913) รับเป็นงวดได้แล้ว (ใบกำกับรายงวด) ·
+        // ด่านเดิมของเส้นใบเดียวเหลือเฉพาะขายสินค้า/ไม่รู้ว่าพัก — ล็อกที่ Db SettlementTaxInvoiceRoleDbTests.ทิศตรงข้าม_ใบแจ้งหนี้ขายสินค้า_* · ทางจัดสรรหลายใบข้างบนยังถูกกัน
         using (var check = DbTestDatabase.TryCreateContext()!)
         {
             Assert.False(await check.Payments.AsNoTracking().AnyAsync(p => p.CompanyId == s.CompanyId));
