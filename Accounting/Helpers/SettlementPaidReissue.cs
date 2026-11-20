@@ -402,7 +402,7 @@ public static class SettlementPaidReissue
     /// เลขรับ ภ.พ.36 · คำขอออกใบแทนที่ค้าง · หมายเหตุภายใน (ตั้งใหม่)</summary>
     public static readonly IReadOnlyList<string> DocumentNotCarriedFields = new[]
     {
-        nameof(Document.Id), nameof(Document.CreatedAt), nameof(Document.UpdatedAt), nameof(Document.CreatedBy), nameof(Document.UpdatedBy),
+        nameof(Document.Id), nameof(Document.CreatedAt), nameof(Document.UpdatedAt), nameof(Document.CreatedBy), nameof(Document.CreatedByUserId), nameof(Document.UpdatedBy),
         nameof(Document.IsDeleted), nameof(Document.DocumentNumber), nameof(Document.Status),
         nameof(Document.QuotationAcceptToken), nameof(Document.QuotationAcceptTokenExpiresAt), nameof(Document.QuotationAcceptedAt),
         nameof(Document.QuotationAcceptedBy), nameof(Document.RevisionNumber), nameof(Document.DeliverySignToken),
@@ -435,7 +435,7 @@ public static class SettlementPaidReissue
         nameof(Document.ReissueRequestedBy), nameof(Document.ReissueRequestJson),
         // รอบ 200 ทีม V1G: RV1F-12 — ผู้จัดทำใบแทนคือผู้ขอ (CreatedBy) ไม่ใช่ผู้จัดทำภายนอกของใบเดิม ⇒ ลายเซ็นผู้จัดทำใบเดิมไม่ตามไป ·
         // ใบลดหนี้ที่ปิดธง e-Tax ของใบเสร็จ (ข้อ 47) เป็นของใบเสร็จนั้นเท่านั้น
-        nameof(Document.PreparerName), nameof(Document.PreparerSignatureBase64), nameof(Document.EtaxCancelledByCreditNoteId),
+        nameof(Document.PreparerName), nameof(Document.PreparerSignatureBase64), nameof(Document.PreparerUserId), nameof(Document.EtaxCancelledByCreditNoteId),
         // รอบ 201 ทีม DV (A-DV2 · ข้อ 65): ผลการปิดธง e-Tax ทาง (ค) เป็นของใบเสร็จนั้นเท่านั้น
         nameof(Document.EtaxKeptOriginalAt),
         // ผูกเอกสารภายหลัง (a13a995b · ข้อ 138ข) — ตราประทับ "ใคร/เมื่อไรผูกใบเดิมกับต้นทาง" เป็นการกระทำบนใบเดิม ⇒ ไม่ตามไป
