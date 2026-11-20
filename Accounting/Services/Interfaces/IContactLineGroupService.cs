@@ -42,4 +42,7 @@ public interface IContactLineGroupService
     /// รอบ 256-2: <paramref name="oaScope"/> = OA ที่ปลายทางผูก (nextacc ⇒ บอทกลางออกเมื่อไม่เหลือการผูกในบริษัทใด · เฉพาะบริษัทผู้ให้บริการ) ·
     /// คืนประโยคถึงผู้ใช้เมื่อบอทยังอยู่ในกลุ่มและผู้ใช้ต้องเอาออกเอง (null = ไม่มีอะไรต้องบอก)</summary>
     Task<string?> LeaveIfUnboundAsync(Guid companyId, string? protectedGroupId, string? lineIdHash, CancellationToken ct = default, string? oaScope = null);
+
+    /// <summary>รอบ 279 (คำตัดสิน 279-2): สถานะความยินยอมบันทึกสลิปภาษีของผู้ติดต่อ (บริษัทผู้ให้บริการ + ผู้ติดต่อที่เป็นบริษัทลูกค้า) · null = ไม่ใช้กับผู้ติดต่อนี้</summary>
+    Task<ContactProviderConsentView?> ProviderConsentViewAsync(Guid companyId, Guid contactId, CancellationToken ct = default);
 }

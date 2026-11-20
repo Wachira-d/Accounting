@@ -139,8 +139,9 @@ public class PartnerOutboundPaymentService
         var sellerSlip = _readConsent == null ? null : await _readConsent.CheckAsync(c.SourceCompanyId, c.PartnershipId, Scope.AcceptPayerSlipCopy, c.SourceCap, ct);
         var transferLabel = sellerSlip is { Ok: true } ? "บันทึกจ่าย + ส่งสลิปให้ผู้ขาย" : "บันทึกจ่าย (ผู้ขายยังไม่เปิดรับสลิปจากระบบ — แจ้งผู้ขายเอง)";
         // ยอดเงินที่โอน = ยอดสุทธิหลังภาษีหักของใบ (ตัวคิดเดียวกับปุ่มเดียว/ท่อ) — แสดงเป็นค่าแนะนำ ผู้แจ้งแก้ได้ (ด่านเดิมตรวจซ้ำตอนบันทึก)
-        var cap = await DocumentService.PaymentWhtFiguresAsync(_db, companyId, c.Purchase, c.Purchase.BalanceDue, ct);
-        var (netPlan, _) = await PartnerPaymentNoticeService.PlanForAsync(_db, companyId, TransientNotice(c, cap.NetCap, DateTime.UtcNow), ct);
+        // รอบ 281 (281-1): ยอดค้างของใบซื้อ<b>คือ</b>ยอดหลังหักแล้ว (TotalAmount = ฐาน + VAT − WHT) ⇒ เงินที่โอน = ยอดค้าง · เดิมส่ง "ภาษีหักที่เหลือ" (NetCap)
+        // เป็นยอดเงิน ⇒ แผนโอนเพี้ยน · ตัวคิดยอดก่อนหักอยู่ที่ PlanForAsync ตัวเดียว
+        var (netPlan, _) = await PartnerPaymentNoticeService.PlanForAsync(_db, companyId, TransientNotice(c, c.Purchase.BalanceDue, DateTime.UtcNow), ct);
         return new PartnerOutboundOptionsDto(true, null, c.SellerName, c.SourceNumber, c.Purchase.BalanceDue, accounts, gatewayProblem == null, gatewayProblem, gatewayAmount,
             gatewayMethods, PartnerPaymentPlanRule.GatewayCaveat, transferMethods, netPlan.Amount, netPlan.Wht, netPlan.Problem, plans, afterNote, transferLabel);
     }

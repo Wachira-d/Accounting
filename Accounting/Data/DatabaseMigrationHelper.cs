@@ -315,6 +315,7 @@ public static class DatabaseMigrationHelper
         list.AddRange(Accounting.Helpers.Round276Migration.Statements());   // รอบ 276 — ผู้ใช้เห็นเฉพาะเอกสารของตัวเอง/เฉพาะร่าง + คำขออนุมัติพื้นฐาน
         list.AddRange(Accounting.Helpers.Round278Migration.Statements());   // รอบ 278 — ชื่อเล่นต่อบริษัท + แช่แข็งผู้ลงนาม (ใบเก่า = ไม่รวม)
         list.AddRange(Accounting.Helpers.Round277Migration.Statements());   // รอบ 277 — คำเชิญเข้าบริษัท (token เก็บเป็น hash) + สมาชิกยังไม่ได้รับสิทธิ์
+        list.AddRange(Accounting.Helpers.Round280Migration.Statements());   // รอบ 280 — ช่องทางแจ้งคำขอเชื่อมคู่ค้า (กลุ่ม LINE/อีเมลของผู้ติดต่อ) + บันทึกผลการแจ้ง
         return list;
     }
 
@@ -3959,6 +3960,8 @@ public static class DatabaseMigrationHelper
             // รอบ 249: แยกคีย์ document.payment_made (จ่ายชำระฝั่งซื้อ) จาก payment_received — คัดลอกค่าตั้ง/การปิดช่องรายคนครั้งเดียว
             // (ต้องอยู่หลัง EnableLineGroup + ตาราง NotificationPreferences ข้างบน · ตัวตั้ง SQL ตัวเดียว Helpers/NotificationEventSplit)
             Accounting.Helpers.NotificationEventSplit.MigrationSql,
+            // รอบ 281 (คำตัดสิน 281-2): คีย์ต่อขั้นของเส้นคู่ค้า A↔B — คัดลอกค่าตั้ง/การปิดช่องของ autopilot.partner_exchange ครั้งเดียว (Helpers/PartnerFlowNotificationSplit)
+            Accounting.Helpers.PartnerFlowNotificationSplit.MigrationSql,
 
             // ===== SystemAccountTemplates: admin-editable master Chart of Accounts =====
             """

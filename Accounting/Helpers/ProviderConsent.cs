@@ -36,6 +36,47 @@ public static class ProviderConsent
 
     public static string PageUrl(Guid clientCompanyId) => ProviderCentralOa.BillingPath(clientCompanyId) + PageAnchor;
 
+    // ═══ รอบ 279 (คำตัดสิน 279-2/279-3): ทางไปต่อที่ชี้เมนูจริง + สถานะความยินยอมสำหรับการ์ดสถานะกลุ่ม/หน้าผู้ติดต่อ ═══
+
+    /// <summary>เมนูจริงของการ์ดความยินยอมฝั่งบริษัทลูกค้า (layout.js: "แพ็กเกจและการชำระเงิน" · แท็บ "ใบแจ้งหนี้ &amp; ใบเสร็จ" · billing.html การ์ด #provider-consent) —
+    /// เดิมการ์ดบอทชี้เมนูชื่อ "ค่าบริการ" ซึ่งไม่มีในระบบ · เทสต์ล็อกกับไฟล์หน้าเว็บ</summary>
+    public const string ClientMenuPath = "แพ็กเกจและการชำระเงิน › ใบแจ้งหนี้ & ใบเสร็จ › สำนักงานบัญชี NextAcc ทำแทนบริษัทนี้";
+    /// <summary>เมนูจริงของปุ่มส่งคำขอฝั่งพนักงานบริษัทผู้ให้บริการ (tax-remittance.html ปุ่ม "สลิปภาษีของลูกค้า" → tax-slip-desk.html ปุ่ม "ส่งคำขออนุญาตอีกครั้ง")</summary>
+    public const string StaffRequestMenuPath = "นำส่งภาษี / ประกันสังคม › สลิปภาษีของลูกค้า › เลือกบริษัท › ส่งคำขออนุญาตอีกครั้ง";
+    public const string StaffDeskPage = "/pages/tax-slip-desk.html";
+
+    /// <summary>ลิงก์เต็ม (ตั้ง URL ของระบบแล้ว) หรือทางในเมนู (ยังไม่ตั้ง — ไม่เดาโดเมน) — ตัวประกอบเดียวของทุกการ์ด/ข้อความที่ชี้ไปหน้ายืนยัน</summary>
+    public static string GrantLinkOrMenu(string? baseUrl, Guid clientCompanyId)
+        => string.IsNullOrWhiteSpace(baseUrl) ? "อนุญาตได้ที่เมนู " + ClientMenuPath : baseUrl.TrimEnd('/') + PageUrl(clientCompanyId);
+
+    /// <summary>รอบ 280 (ฝ่ายค้าน LOW-2 ของการ์ด 279): ลิงก์ที่<b>โพสต์เข้ากลุ่ม LINE</b> ห้ามมี id บริษัทลูกค้า (GUID ภายในของผู้เช่า — สมาชิกกลุ่มทุกคนเห็น) ⇒
+    /// หน้าเดียวกันแบบไม่มีพารามิเตอร์ (หน้าเลือกบริษัทของผู้ใช้เองหลังเข้าสู่ระบบ) · ไม่ตั้ง URL ของระบบ ⇒ ทางในเมนู · ลิงก์ที่มี id ใช้ได้เฉพาะหน้าพนักงาน/การแจ้งส่วนตัว</summary>
+    public const string GroupPagePath = "/pages/billing.html" + PageAnchor;
+
+    public static string GroupGrantLinkOrMenu(string? baseUrl)
+        => string.IsNullOrWhiteSpace(baseUrl) ? "อนุญาตได้ที่เมนู " + ClientMenuPath : baseUrl.TrimEnd('/') + GroupPagePath;
+
+    /// <summary>สถานะความยินยอมของบริษัทลูกค้าหนึ่งราย (มุมกลุ่ม LINE/หน้าผู้ติดต่อ)</summary>
+    public enum GroupConsentState { Granted, PowerOfAttorney, Pending, NotRequested }
+
+    /// <summary>ตัวจำแนกเดียว: อนุญาตแล้ว (ตัวตรวจผ่าน) · มีหนังสือมอบอำนาจ (ไม่เปิดการบันทึกเอง) · รอยืนยัน (มีคำขอเปิดที่ยังไม่หมดอายุ) · ยังไม่ได้ขอ</summary>
+    public static GroupConsentState Classify(Verdict verdict, bool openRequest)
+        => verdict.Ok ? GroupConsentState.Granted
+            : verdict.Code is Codes.PowerOfAttorneyOnly or Codes.PowerOfAttorneyPendingApproval ? GroupConsentState.PowerOfAttorney
+            : openRequest ? GroupConsentState.Pending
+            : GroupConsentState.NotRequested;
+
+    public static string StateLabel(GroupConsentState s) => s switch
+    {
+        GroupConsentState.Granted => "ยินยอมแล้ว ✅",
+        GroupConsentState.PowerOfAttorney => "มีหนังสือมอบอำนาจ (พนักงานบันทึกทีละใบ)",
+        GroupConsentState.Pending => "ส่งคำขอแล้ว — รอเจ้าของบริษัทยืนยันบนเว็บ",
+        _ => "ยังไม่ได้ขอ",
+    };
+
+    /// <summary>ต้องบอกทางยืนยันของลูกค้า/ทางส่งคำขอของพนักงานไหม (ยินยอมแล้ว ⇒ ไม่ต้อง)</summary>
+    public static bool NeedsClientAction(GroupConsentState s) => s != GroupConsentState.Granted;
+
     /// <summary>แบบที่ครอบได้ · <paramref name="ReaderWired"/> = ระบบอ่านสลิปของแบบนี้ได้แล้ว (สปส. ยังไม่ — รูปแบบสลิปยังไม่ยืนยัน · ห้าม silent no-op)</summary>
     public sealed record TaxTypeDef(string Type, string Label, bool ReaderWired);
 

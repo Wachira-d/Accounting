@@ -14,6 +14,10 @@
     .pt-badge { display:inline-block; font-size:12px; padding:2px 8px; border-radius:999px; background:#f1f5f9; color:#334155; }
     .pt-warn { background:#fef3c7; color:#92400e; }
     .pt-ok { background:#dcfce7; color:#166534; }
+    .pt-bad { background:#fee2e2; color:#991b1b; }
+    .pt-ch { display:flex; gap:8px; align-items:flex-start; padding:6px 0; border-top:1px dashed #e2e8f0; font-size:13px; }
+    .pt-steps { list-style:none; margin:6px 0 0; padding:0; }
+    .pt-steps li { display:flex; gap:8px; align-items:flex-start; padding:3px 0; font-size:13px; }
   </style>
 </head>
 <body>
@@ -36,8 +40,10 @@
         <div><label for="ptTax" class="form-label">เลขประจำตัวผู้เสียภาษีของคู่ค้า (13 หลัก)</label><input id="ptTax" class="form-input" maxlength="17" autocomplete="off"></div>
         <div><label for="ptBranch" class="form-label">รหัสสาขา (5 หลัก · ว่าง = ไม่ระบุ)</label><input id="ptBranch" class="form-input" maxlength="5" autocomplete="off"></div>
       </div>
-      <label for="ptMsg" class="form-label">ข้อความถึงคู่ค้า (ไม่บังคับ · ≤ 500 ตัวอักษร)</label>
+      <label for="ptMsg" class="form-label">ข้อความถึงคู่ค้า (ไม่บังคับ · ≤ 500 ตัวอักษร · แสดงในระบบของคู่ค้าเท่านั้น ไม่ส่งไปกลุ่ม LINE/อีเมล)</label>
       <input id="ptMsg" class="form-input" maxlength="500">
+      <!-- รอบ 280: เลือกช่องทางแจ้ง — ผู้ติดต่อ/ช่องที่ส่งได้/เหตุที่ปิด มาจากเซิร์ฟเวอร์ (channel-options) -->
+      <div id="ptChannels" style="margin-top:10px"><p class="pt-muted">ช่องทางแจ้ง: กรอกเลขผู้เสียภาษี 13 หลักเพื่อดูผู้ติดต่อและช่องทางที่ส่งได้</p></div>
       <div style="margin-top:8px"><button class="btn btn-primary" id="ptInviteBtn" onclick="Page.invite()">ส่งคำขอเชื่อม</button></div>
     </div>
 
@@ -56,10 +62,11 @@
       <p class="pt-muted">สถานะมีแค่ "รอคู่ค้าตอบรับ" · "เชื่อมแล้ว" · "หมดอายุ" — ระบบไม่บอกว่าเลขนี้ใช้ NextAcc หรือไม่ และไม่บอกการปฏิเสธ (คุ้มครองข้อมูลของคู่ค้า)</p>
       <div class="table-container">
         <table class="table">
-          <thead><tr><th>วันที่ส่ง</th><th>เลขผู้เสียภาษี / สาขาที่กรอก</th><th>สถานะ</th></tr></thead>
-          <tbody id="ptOutBody"><tr><td colspan="3" class="text-center text-gray-400">กำลังโหลด...</td></tr></tbody>
+          <thead><tr><th>วันที่ส่ง</th><th>เลขผู้เสียภาษี / สาขาที่กรอก</th><th>สถานะ</th><th>แจ้งทาง</th><th></th></tr></thead>
+          <tbody id="ptOutBody"><tr><td colspan="5" class="text-center text-gray-400">กำลังโหลด...</td></tr></tbody>
         </table>
       </div>
+      <div class="pt-card" id="ptRenotify" style="display:none;margin-top:10px;border-color:#6366f1"></div>
     </div>
 
     <div class="pt-card">
@@ -87,6 +94,14 @@
       </div>
     </div>
 
+    <!-- รอบ 281 (คำตัดสิน 281-3): เส้นทางของใบนี้ — ใบแจ้งหนี้ → ใบซื้อร่าง → ชำระ → ใบเสร็จ/ใบกำกับ → ใบสำคัญจ่าย → 50 ทวิ ส่ง/รับ (ทั้งสองฝั่ง · สถานะ/ป้ายจากเซิร์ฟเวอร์) -->
+    <div class="pt-card" id="partner-journey">
+      <h3>🧭 เส้นทางของใบ (ระหว่างคู่ค้า)</h3>
+      <p class="pt-muted">ใบแจ้งหนี้ที่ส่งถึงกันผ่าน NextAcc ล่าสุด — แต่ละใบแสดงทุกขั้นจนถึง 50 ทวิ กลับถึงผู้ขาย · "หยุด" = ระบบทำต่อเองไม่ได้ (บอกเหตุ + ทางไปต่อ) ·
+        ของอีกบริษัทเห็นเฉพาะสถานะและวันที่ · การแจ้งเตือนทีละขั้นตั้งช่องได้ที่หน้า <a href="/pages/notifications.html">แจ้งเตือน</a> (รายการที่ขึ้นต้น "คู่ค้า NextAcc:")</p>
+      <div id="ptJourney" class="pt-muted">กำลังโหลด...</div>
+    </div>
+
     <div class="pt-card">
       <h3>⚙️ ค่าตั้งของเรา</h3>
       <div class="pt-grid2">
@@ -111,11 +126,40 @@ const Page = {
   async init() {
     if (!Layout.init('partners')) return;
     Layout.setTitle('คู่ค้าที่ใช้ NextAcc');
+    // รอบ 280: กรอกเลขภาษีครบ ⇒ โหลดผู้ติดต่อ/ช่องทางแจ้ง (เซิร์ฟเวอร์ตัดสิน)
+    const tax = document.getElementById('ptTax');
+    if (tax) tax.addEventListener('input', () => {
+      clearTimeout(this._chTimer);
+      this._chTimer = setTimeout(() => this.loadChannels('ptChannels', tax.value, null), 300);
+    });
     await this.load();
+    // รอบ 280: ลิงก์ในข้อความ LINE/อีเมลถึงคู่ค้า (?incoming=1) ⇒ เลื่อนไปที่ "คำขอที่รอเรายอมรับ"
+    try { if (new URLSearchParams(location.search).get('incoming')) document.getElementById('ptBody').scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch { /* ไม่มีพารามิเตอร์ */ }
+    await this.loadJourney();
+  },
+
+  // รอบ 281: เส้นทางของใบ — เซิร์ฟเวอร์ตัดสินสถานะ/ป้าย/เหตุทุกแถว (PartnerJourney) · หน้าแสดงอย่างเดียว · ทุกค่าผ่าน Layout.esc
+  async loadJourney() {
+    const box = document.getElementById('ptJourney');
+    const api = Layout.api(); if (!api || !box) return;
+    let list;
+    try { list = (await api.getPartnerJourney()).data || []; }
+    catch (e) { box.textContent = 'โหลดเส้นทางของใบไม่สำเร็จ: ' + (e.message || 'ไม่ทราบสาเหตุ'); return; }
+    if (!list.length) { box.textContent = 'ยังไม่มีใบแจ้งหนี้ที่ส่งถึงกันผ่าน NextAcc'; return; }
+    const cls = { Done: 'pt-ok', Waiting: 'pt-warn', Blocked: 'pt-bad' };
+    const when = t => t ? ' · ' + new Date(t).toLocaleDateString('th-TH') : '';
+    box.innerHTML = list.map(j => `<details style="margin:6px 0" ${j.currentStep && j.steps.some(s => s.state === 'Blocked') ? 'open' : ''}>
+        <summary style="cursor:pointer">${j.direction === 'Seller' ? '📤 เราขายให้' : '📥 เราซื้อจาก'} ${Layout.esc(j.partnerName)} · ${Layout.esc(j.ownDocumentNumber || '-')} · ${Layout.esc(Layout.money(j.total))} บาท
+          — ${j.currentStep ? Layout.esc((j.steps.find(s => s.step === j.currentStep) || {}).label || '') : '✅ ครบทั้งเส้น'}</summary>
+        <ol class="pt-steps">${j.steps.map(s => `<li><span class="pt-badge ${/* html: คลาสจากตารางคงที่ cls */ cls[s.state] || ''}">${Layout.esc(s.stateLabel)}</span>
+          <div><div>${Layout.esc(s.label)}${Layout.esc(when(s.at))}</div>${s.detail ? `<div class="pt-muted">${Layout.esc(s.detail)}</div>` : ''}</div></li>`).join('')}</ol>
+      </details>`).join('');
   },
 
   async load() {
     const api = Layout.api(); if (!api) return;
+    // รอบ 280 (ฝ่ายค้าน MED-1): เปิดคำขอที่ส่งถึงเลขของเราหลังตั้งเลขนี้ — ต้องมีสิทธิ์ตั้งค่าบริษัท · ไม่มีสิทธิ์/ล้ม ⇒ ตารางแสดงตามที่มี (ไม่บล็อกหน้า)
+    try { await api.refreshIncomingPartnerRequests(); } catch { /* ไม่มีสิทธิ์ตั้งค่าบริษัท — รายการคู่ค้ายังโหลดได้ */ }
     try {
       const [p, d, c, n, o] = await Promise.all([
         api.getTradingPartners(),
@@ -230,11 +274,15 @@ const Page = {
     const ob = document.getElementById('ptOutBody');
     if (ob) {
       ob.innerHTML = this.outgoing == null
-        ? `<tr><td colspan="3" class="text-center">${Layout.esc('โหลดคำขอที่เราส่งไม่สำเร็จ: ' + (this.outgoingErr || ''))}</td></tr>`
-        : this.outgoing.length === 0 ? '<tr><td colspan="3" class="text-center text-gray-400">ยังไม่เคยส่งคำขอ</td></tr>'
+        ? `<tr><td colspan="5" class="text-center">${Layout.esc('โหลดคำขอที่เราส่งไม่สำเร็จ: ' + (this.outgoingErr || ''))}</td></tr>`
+        : this.outgoing.length === 0 ? '<tr><td colspan="5" class="text-center text-gray-400">ยังไม่เคยส่งคำขอ</td></tr>'
         : this.outgoing.map(o => `<tr><td>${Layout.esc(new Date(o.sentAt).toLocaleDateString('th-TH'))}</td>
-            <td>${Layout.esc(o.partnerTaxId)}<div class="pt-muted">${Layout.esc(o.branchLabel || '')}</div></td>
-            <td><span class="pt-badge ${o.state === 'Accepted' ? 'pt-ok' : o.state === 'Expired' ? 'pt-warn' : ''}">${Layout.esc(o.stateLabel || o.state)}</span></td></tr>`).join('');
+            <td>${Layout.esc(o.partnerTaxId)}<div class="pt-muted">${Layout.esc(o.branchLabel || '')}</div>${o.contactName ? `<div class="pt-muted">ผู้ติดต่อ: ${Layout.esc(o.contactName)}</div>` : ''}</td>
+            <td><span class="pt-badge ${o.state === 'Accepted' ? 'pt-ok' : o.state === 'Expired' ? 'pt-warn' : ''}">${Layout.esc(o.stateLabel || o.state)}</span></td>
+            <td>${/* html: noticeCells ห่อทุกค่าด้วย Layout.esc แล้ว */ this.noticeCells(o.notices)}</td>
+            <td>${o.canNotify ? `<button class="btn btn-secondary btn-sm" data-renotify="${Layout.esc(o.id)}">ส่งแจ้งอีกครั้ง</button>`
+              : `<span class="pt-muted">${Layout.esc(o.notifyProblem || '')}</span>`}</td></tr>`).join('');
+      ob.querySelectorAll('[data-renotify]').forEach(b => b.addEventListener('click', () => this.openRenotify(b.dataset.renotify)));
     }
 
     const dBody = document.getElementById('ptDraftBody');
@@ -360,12 +408,87 @@ const Page = {
         partnerTaxId: document.getElementById('ptTax').value.trim(),
         partnerBranchCode: document.getElementById('ptBranch').value.trim() || null,
         message: document.getElementById('ptMsg').value.trim() || null,
+        contactId: this.chContactId('ptChannels'),
+        channels: this.chSelected('ptChannels'),
       });
       Layout.toast((r && r.message) || 'ส่งคำขอแล้ว', 'success');
+      this.toastNotices(r && r.data && r.data.notices);
       document.getElementById('ptTax').value = ''; document.getElementById('ptMsg').value = '';
-      await this.load();   // รอบ 264: แถวใหม่ใน "คำขอที่เราส่ง"
+      document.getElementById('ptChannels').innerHTML = '<p class="pt-muted">ช่องทางแจ้ง: กรอกเลขผู้เสียภาษี 13 หลักเพื่อดูผู้ติดต่อและช่องทางที่ส่งได้</p>';
+      await this.load();   // รอบ 264: แถวใหม่ใน "คำขอที่เราส่ง" · รอบ 280: + แจ้งทางช่องไหน/ผล
     } catch (e) { Layout.toast(e.message || 'ส่งคำขอไม่สำเร็จ', 'error'); }
     finally { btn.disabled = false; }
+  },
+
+  // ═══ รอบ 280: ช่องทางแจ้งคำขอ — เซิร์ฟเวอร์ตัดสินผู้ติดต่อ/ช่องที่ส่งได้/เหตุที่ปิด · หน้าแสดง + ส่งชื่อช่องที่ติ๊ก ═══
+  async loadChannels(boxId, taxId, contactId) {
+    const box = document.getElementById(boxId); if (!box) return;
+    const digits = (taxId || '').replace(/[^0-9]/g, '');
+    if (digits.length !== 13) { box.innerHTML = '<p class="pt-muted">ช่องทางแจ้ง: กรอกเลขผู้เสียภาษี 13 หลักเพื่อดูผู้ติดต่อและช่องทางที่ส่งได้</p>'; return; }
+    const api = Layout.api(); if (!api) return;
+    let o;
+    try { o = (await api.getPartnerRequestChannels(digits, contactId)).data; }
+    catch (e) { box.innerHTML = `<p class="pt-muted">${Layout.esc('โหลดช่องทางแจ้งไม่สำเร็จ: ' + (e.message || ''))}</p>`; return; }
+    const contacts = o.contacts || [];
+    const picker = contacts.length
+      ? `<select class="form-input" data-ch-contact style="max-width:420px"><option value="">— เลือกผู้ติดต่อ —</option>${contacts.map(c =>
+          `<option value="${Layout.esc(c.id)}" ${c.id === o.selectedContactId ? 'selected' : ''}>${Layout.esc(c.name)} · ${Layout.esc(c.branchLabel || '')}</option>`).join('')}</select>`
+      : `<span class="pt-muted">ยังไม่มีผู้ติดต่อเลขนี้ในบริษัทของคุณ</span>${o.newContactUrl ? ` · <a href="${Layout.esc(o.newContactUrl)}" target="_blank" rel="noopener">เพิ่มผู้ติดต่อ</a>` : ''}`;
+    box.innerHTML = `<div class="form-label">แจ้งคู่ค้าทาง</div>
+      <div class="pt-ch"><input type="checkbox" checked disabled><div><strong>${Layout.esc(o.inApp.label)}</strong><div class="pt-muted">${Layout.esc(o.inApp.note)}</div></div></div>
+      <div class="pt-ch"><span style="min-width:90px">ผู้ติดต่อ</span><div>${/* html: picker ประกอบจาก Layout.esc แล้ว */ picker}</div></div>
+      ${(o.channels || []).map(c => `<div class="pt-ch"><input type="checkbox" data-ch="${Layout.esc(c.channel)}" ${c.available ? 'checked' : 'disabled'}>
+        <div><strong>${Layout.esc(c.label)}</strong>${c.available ? `<div class="pt-muted">ถึง: ${Layout.esc((c.targets || []).join(', '))}</div>`
+          : `<div class="pt-muted">ปิด — ${Layout.esc(c.reason || '')}${c.fixUrl ? ` · <a href="${Layout.esc(c.fixUrl)}" target="_blank" rel="noopener">เพิ่ม/แก้ช่องทาง</a>` : ''}</div>`}</div></div>`).join('')}`;
+    const sel = box.querySelector('[data-ch-contact]');
+    if (sel) sel.addEventListener('change', () => this.loadChannels(boxId, digits, sel.value || null));
+  },
+
+  chContactId(boxId) {
+    const sel = document.querySelector(`#${boxId} [data-ch-contact]`);
+    return sel && sel.value ? sel.value : null;
+  },
+
+  chSelected(boxId) {
+    return Array.from(document.querySelectorAll(`#${boxId} input[data-ch]`)).filter(cb => cb.checked && !cb.disabled).map(cb => cb.dataset.ch);
+  },
+
+  noticeCells(list) {
+    if (!list || !list.length) return '<span class="pt-muted">-</span>';
+    return list.map(n => `<div style="margin-bottom:4px"><span class="pt-badge ${n.status === 'Sent' ? 'pt-ok' : n.status === 'Failed' ? 'pt-bad' : (n.status === 'Refused' || n.status === 'Partial') ? 'pt-warn' : ''}"
+      title="${Layout.esc(n.statusLabel || '')}">${Layout.esc(n.channelLabel)}: ${Layout.esc(n.status === 'Queued' ? 'เข้าคิวแล้ว' : n.statusLabel)}</span>
+      <div class="pt-muted">${Layout.esc(new Date(n.at).toLocaleString('th-TH'))}${n.recipient ? ' · ' + Layout.esc(n.recipient) : ''}${n.reason ? ' · ' + Layout.esc(n.reason) : ''}</div></div>`).join('');
+  },
+
+  toastNotices(list) {
+    (list || []).forEach(n => Layout.toast(`${n.channelLabel}: ${n.statusLabel}${n.reason ? ' — ' + n.reason : ''}`,
+      n.status === 'Sent' ? 'success' : n.status === 'Failed' ? 'error' : 'warning'));
+  },
+
+  async openRenotify(id) {
+    const o = (this.outgoing || []).find(x => x.id === id); if (!o) return;
+    const host = document.getElementById('ptRenotify');
+    host.style.display = '';
+    host.innerHTML = `<h3>📣 ส่งแจ้งอีกครั้ง — เลขผู้เสียภาษี ${Layout.esc(o.partnerTaxId)} (${Layout.esc(o.branchLabel || '')})</h3>
+      <div id="ptReChannels"><p class="pt-muted">กำลังโหลดช่องทาง...</p></div>
+      <div style="margin-top:8px;display:flex;gap:8px"><button class="btn btn-primary" id="ptReBtn">ส่งแจ้ง</button>
+        <button class="btn btn-secondary" id="ptReCancel">ปิด</button></div>`;
+    document.getElementById('ptReCancel').addEventListener('click', () => { host.style.display = 'none'; host.innerHTML = ''; });
+    document.getElementById('ptReBtn').addEventListener('click', () => this.renotify(id));
+    host.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    await this.loadChannels('ptReChannels', o.partnerTaxId, o.contactId);
+  },
+
+  async renotify(id) {
+    const api = Layout.api(); if (!api) return;
+    const btn = document.getElementById('ptReBtn'); if (btn) btn.disabled = true;
+    try {
+      const r = await api.renotifyPartnerRequest(id, { contactId: this.chContactId('ptReChannels'), channels: this.chSelected('ptReChannels') });
+      this.toastNotices(r && r.data && r.data.notices);
+      const host = document.getElementById('ptRenotify'); host.style.display = 'none'; host.innerHTML = '';
+      await this.load();
+    } catch (e) { Layout.toast(e.message || 'ส่งแจ้งไม่สำเร็จ', 'error'); }
+    finally { if (btn) btn.disabled = false; }
   },
 
   async partnerAction(act, id) {

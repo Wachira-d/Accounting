@@ -54,7 +54,8 @@ public partial class CrossTenantWorkflowService
     /// เคยปฏิเสธไม่ถึง 7 วัน ⇒ ไม่เปิดคำเชิญซ้ำ (กันสแปม §6.3) — คำตอบยังเหมือนเดิม</para>
     /// เลขภาษีผิดรูป ⇒ <see cref="Accounting.Helpers.BusinessRuleException"/> (ตัดสินจากรูปแบบอย่างเดียว ไม่ดูฐาน ⇒ ไม่รั่ว)
     /// </summary>
-    public async Task InvitePartnerAsync(
+    /// <returns>รอบ 280: id ของ "คำขอที่เราส่ง" (เกิดทุกกรณี ⇒ ไม่บอกสมาชิกภาพ) — ใช้ต่อกับ <c>PartnerLinkRequestNotifier.SendAsync</c></returns>
+    public async Task<Guid> InvitePartnerAsync(
         Guid invitingCompanyId, string partnerTaxId, string? partnerBranchCode, Guid invitedByUserId, string? message)
     {
         // ฝ่ายค้าน H3: ข้อความเชิญยาวไม่จำกัด = ช่องฟิชชิง — ตัดที่ 500 ตัวอักษร (ข้อความถูกแสดงแบบ text เท่านั้น)
@@ -72,7 +73,7 @@ public partial class CrossTenantWorkflowService
         var sw = System.Diagnostics.Stopwatch.StartNew();
         try
         {
-            await InviteCoreAsync(invitingCompanyId, taxId, (partnerTaxId ?? "").Trim(), partnerBranchCode, invitedByUserId, message);
+            return await InviteCoreAsync(invitingCompanyId, taxId, (partnerTaxId ?? "").Trim(), partnerBranchCode, invitedByUserId, message);
         }
         finally
         {
@@ -81,7 +82,7 @@ public partial class CrossTenantWorkflowService
         }
     }
 
-    private async Task InviteCoreAsync(Guid invitingCompanyId, string taxId, string rawTax, string? partnerBranchCode, Guid invitedByUserId, string? message)
+    private async Task<Guid> InviteCoreAsync(Guid invitingCompanyId, string taxId, string rawTax, string? partnerBranchCode, Guid invitedByUserId, string? message)
     {
         var now = DateTime.UtcNow;
         // รอบ 264 (คำตัดสิน 264-1-2): "คำขอที่เราส่ง" — เกิดทุกครั้ง รูปเดียวกันทุกกรณี (ไม่มีผลการค้นในแถว) ⇒ ผู้ขอติดตามสถานะได้โดยไม่รู้ว่าเลขนี้ใช้ NextAcc
@@ -199,6 +200,7 @@ public partial class CrossTenantWorkflowService
             await _db.SaveChangesAsync();
             if (ownTx != null) await ownTx.CommitAsync();
             _logger.LogInformation("Trading partner invite from {Company}: outcome {Outcome}", invitingCompanyId, string.Join(",", outcomes));
+            return request.Id;
         }
         finally
         {
@@ -435,7 +437,46 @@ public partial class CrossTenantWorkflowService
             CreatedBy = "system-routing",
         };
         _db.CrossTenantDocumentLinks.Add(link);
-        await _db.SaveChangesAsync();
+        // รอบ 281 (คำตัดสิน 281-4): ผู้ติดต่อที่เราส่งเอกสารถึง = บริษัทคู่ค้านี้ (ตัดสินด้วยกุญแจเลขภาษี + สาขา ข้างบน ไม่ใช่ชื่อ) ⇒ ผูก NextAccTenant
+        // เมื่อยังไม่ผูกระบบใด — เดิมฝั่งผู้ขายไม่เคยผูก ⇒ 50 ทวิ ที่ผู้ซื้อส่งกลับมาพิสูจน์ที่มาไม่ได้ (WhtCertIntakeService: ผู้จ่ายของแถวรอใบต้องผูกคู่ค้า)
+        // ⇒ ค้าง "รอยืนยัน" ทุกใบ · ผูกระบบอื่นอยู่แล้ว = ไม่แตะ · ฝ่ายค้าน 281: (MED-2) มีแถวอื่นผูกบริษัทนี้อยู่แล้ว ⇒ ไม่ผูกซ้ำ ·
+        // (LOW-1) เลขผิด checksum / เลขขยะ / ผู้ติดต่อที่เส้นเงินเดือนสร้าง (PayrollJunkPayee — กุญแจของรอบ 275-E) ⇒ ไม่ผูก ·
+        // (LOW-2) ผูก + audit + แถว link ในธุรกรรมเดียว
+        var partnerKey = partnerCompanyId.ToString();
+        var mayLink = string.IsNullOrWhiteSpace(contact.ExternalSystem) && string.IsNullOrWhiteSpace(contact.ExternalId)
+            && Accounting.Helpers.ThaiTaxId.IsValid(taxId)
+            && !Accounting.Helpers.PayrollJunkPayee.IsJunkTaxId(contact.TaxId)
+            && !Accounting.Helpers.PayrollJunkPayee.IsPayrollCreated(_db, doc.CompanyId, contact)
+            && !await _db.Contacts.AsNoTracking().AnyAsync(c => c.CompanyId == doc.CompanyId && !c.IsDeleted && c.Id != contact.Id
+                && c.ExternalSystem == "NextAccTenant" && c.ExternalId == partnerKey);
+        var linkTx = _db.Database.CurrentTransaction == null ? await _db.Database.BeginTransactionAsync() : null;
+        try
+        {
+            if (mayLink)
+            {
+                var linkedRows = await _db.Contacts
+                    .Where(c => c.Id == contact.Id && c.CompanyId == doc.CompanyId
+                        && (c.ExternalSystem == null || c.ExternalSystem == "") && (c.ExternalId == null || c.ExternalId == ""))
+                    .ExecuteUpdateAsync(s => s.SetProperty(c => c.ExternalSystem, "NextAccTenant").SetProperty(c => c.ExternalId, partnerKey));
+                if (linkedRows > 0)
+                    _db.AddChainedAuditLog(new AuditLog
+                    {
+                        CompanyId = doc.CompanyId, Action = AuditAction.Update, EntityType = "Contact", EntityId = contact.Id.ToString(),
+                        NewValues = System.Text.Json.JsonSerializer.Serialize(new
+                        {
+                            @event = "PartnerContactLinked", documentId = doc.Id, matchedBy = "TaxId+Branch",
+                            ruleCode = Accounting.Helpers.PartnerCompanyMatch.RuleCode,
+                        }),
+                        Timestamp = DateTime.UtcNow,
+                    });
+            }
+            await _db.SaveChangesAsync();
+            if (linkTx != null) await linkTx.CommitAsync();
+        }
+        finally
+        {
+            if (linkTx != null) await linkTx.DisposeAsync();
+        }
 
         // Check target's config for auto-approve
         await TryAutoApproveAsync(link);
@@ -476,6 +517,7 @@ public partial class CrossTenantWorkflowService
         }
         if (Accounting.Helpers.PartnerRoutingFailedNote.Has(doc.InternalNotes))
             await StampRoutingNoteAsync(doc, null, ct);   // ส่งสำเร็จ/ไม่มีคู่ค้าแล้ว ⇒ ป้ายของรอบก่อนไม่จริงอีกต่อไป
+        await FlushPendingNoticesAsync();   // ฝ่ายค้าน 281 LOW-5: การแจ้งของเส้นคู่ค้ายิงหลัง commit (ผู้เรียกถือธุรกรรม ⇒ คงคิวจนผู้เรียก flush)
         return new PartnerRouteOutcome(link != null, null);
     }
 
@@ -873,8 +915,10 @@ public partial class CrossTenantWorkflowService
 
         // (1) กุญแจแรกเสมอ = แถวที่ผูกกับบริษัทคู่ค้านี้แล้ว (ฝ่ายค้านรอบสอง R2-C9 — เดิมไม่มีกุญแจนี้ ⇒ คู่ค้าที่กรอกเลขทีหลัง
         //     ได้ผู้ติดต่อแถวที่สอง) · ข้ามเมื่อแถวนั้นถือเลข/สาขาอื่นแล้ว (คู่ค้าเปลี่ยนสาขา ⇒ ผู้ติดต่อของสาขาใหม่ §86/4)
-        var found = await _db.Contacts.FirstOrDefaultAsync(c => c.CompanyId == ownerCompanyId && !c.IsDeleted
-            && c.ExternalSystem == "NextAccTenant" && c.ExternalId == partnerKey);
+        // ฝ่ายค้าน 281 MED-2: หลายแถวผูกบริษัทเดียวกัน (ข้อมูลเก่า) ⇒ เลือกแบบกำหนดได้ (แถวเก่าสุด) ไม่ใช่ลำดับที่ฐานคืนมา
+        var found = await _db.Contacts.Where(c => c.CompanyId == ownerCompanyId && !c.IsDeleted
+            && c.ExternalSystem == "NextAccTenant" && c.ExternalId == partnerKey)
+            .OrderBy(c => c.CreatedAt).ThenBy(c => c.Id).FirstOrDefaultAsync();
         if (found != null && taxId != null && Accounting.Helpers.ContactTaxBranchKey.HasTaxId(found.TaxId)
             && !Accounting.Helpers.ContactTaxBranchKey.Pick(
                 new[] { new Accounting.Helpers.ContactKeyCandidate(found.Id, found.TaxId, found.BranchCode) }, taxId, branch).Found)

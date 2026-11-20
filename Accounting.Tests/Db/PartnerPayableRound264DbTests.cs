@@ -82,8 +82,10 @@ public class PartnerPayableRound264DbTests
         using var c = DbTestDatabase.TryCreateContext()!;
         var pid = await c.Documents.AsNoTracking().Where(d => d.CompanyId == s.Buyer.Id && d.PartnerSourceLinkId == link!.Id).Select(d => d.Id).SingleAsync();
         if (approve)
+            // รอบ 281 (281-1): ยอดค้างของใบซื้อเก็บ "หลังหัก" (TotalAmount = ฐาน + VAT − WHT — แบบเดียวกับใบจริง/ตัวคัดลอก CopyPartnerMoney) ·
+            // เดิม fixture ตั้ง 1,070 ทั้งที่มีภาษีหัก ⇒ เทสต์ล็อกตัวคิดผิดสมมาตรกับข้อมูลจริง
             await c.Documents.Where(d => d.Id == pid).ExecuteUpdateAsync(x => x.SetProperty(d => d.Status, DocumentStatus.Approved)
-                .SetProperty(d => d.BalanceDue, 1_070m).SetProperty(d => d.WithholdingTaxAmount, wht));
+                .SetProperty(d => d.TotalAmount, 1_070m - wht).SetProperty(d => d.BalanceDue, 1_070m - wht).SetProperty(d => d.WithholdingTaxAmount, wht));
         if (wht > 0m)
             await c.DocumentLines.Where(l => l.DocumentId == pid).ExecuteUpdateAsync(x => x.SetProperty(l => l.WithholdingTaxRate, 3m));
         return (inv, pid);
@@ -135,7 +137,8 @@ public class PartnerPayableRound264DbTests
             };
             other.Payments.Add(pay);
             await other.SaveChangesAsync();
-            await other.Documents.Where(d => d.Id == req.DocumentId).ExecuteUpdateAsync(x => x.SetProperty(d => d.BalanceDue, d => d.BalanceDue - req.Amount - (req.WithholdingTaxAmount ?? 0m)));
+            // รอบ 281: การจ่ายลดยอดค้างเฉพาะเงิน (ภาษีหักไม่ลดยอดค้างหลังหัก — แบบเส้นจ่ายจริง)
+            await other.Documents.Where(d => d.Id == req.DocumentId).ExecuteUpdateAsync(x => x.SetProperty(d => d.BalanceDue, d => d.BalanceDue - req.Amount));
             return new PaymentResponse(pay.Id, pay.PaymentNumber, req.DocumentId, req.PaymentDate, req.Amount, req.PaymentMethod, req.Reference, null, req.OverrideBankAccountId, req.Notes, DateTime.UtcNow);
         }
         return Run();

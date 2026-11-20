@@ -313,7 +313,7 @@ public class ContactRecipientRuleTests
     public void ค่าตั้งต้นต่อชนิด_และป้ายยาวเกินถูกปฏิเสธ_ไม่ตัดเงียบ()
     {
         Assert.Equal(NotifyTopics.All, NotifyTopics.DefaultsFor(NotifyEndpointKind.Email));
-        Assert.Equal(new[] { NotifyTopic.Document, NotifyTopic.Dunning }, NotifyTopics.DefaultsFor(NotifyEndpointKind.LineGroup));
+        Assert.Equal(new[] { NotifyTopic.Document, NotifyTopic.Dunning, NotifyTopic.PartnerLink }, NotifyTopics.DefaultsFor(NotifyEndpointKind.LineGroup));   // รอบ 280: + คำขอเชื่อมคู่ค้า
         Assert.DoesNotContain(NotifyTopic.Wht, NotifyTopics.DefaultsFor(NotifyEndpointKind.LineUser));
         Assert.NotNull(ContactRecipientRule.NormalizeLabel(new string('ก', ContactRecipientRule.MaxLabelLength + 1)).Problem);
         var blank = ContactRecipientRule.NormalizeLabel("   ");

@@ -1629,6 +1629,11 @@ const API = {
       // รอบ 264: การ์ดยอมรับจากลิงก์แจ้งเตือน · "คำขอที่เราส่ง"
       getPartnerLinkRequest: (id) => API.get(`${base}/trading-partners/requests/${encodeURIComponent(id)}`),
       getOutgoingPartnerRequests: () => API.get(`${base}/trading-partners/requests/outgoing`),
+      // รอบ 280: ช่องทางแจ้งคำขอ (กลุ่ม LINE/อีเมลของผู้ติดต่อ) · ส่งแจ้งอีกครั้ง
+      getPartnerRequestChannels: (taxId, contactId) => API.get(`${base}/trading-partners/requests/channel-options?taxId=${encodeURIComponent(taxId || '')}${contactId ? '&contactId=' + encodeURIComponent(contactId) : ''}`),
+      renotifyPartnerRequest: (id, d) => API.post(`${base}/trading-partners/requests/${encodeURIComponent(id)}/notify`, d),
+      // รอบ 280 ฝ่ายค้าน MED-1: เปิดคำขอที่ส่งถึงเลขของเรา (ต้องมีสิทธิ์ตั้งค่าบริษัท — ไม่ทำใน GET)
+      refreshIncomingPartnerRequests: () => API.post(`${base}/trading-partners/requests/incoming/refresh`),
       acceptPartner: (id) => API.post(`${base}/trading-partners/${encodeURIComponent(id)}/accept`),
       rejectPartner: (id, reason, blockRequester) => API.post(`${base}/trading-partners/${encodeURIComponent(id)}/reject`, { reason: reason || null, blockRequester: !!blockRequester }),
       suspendPartner: (id, reason) => API.post(`${base}/trading-partners/${encodeURIComponent(id)}/suspend`, { reason: reason || null }),
@@ -1638,6 +1643,8 @@ const API = {
       getPartnerPurchaseDrafts: () => API.get(`${base}/partner-purchase-drafts`),
       // รอบ 258-3 F-H3: ผู้ขายคู่ค้ารับเงินผ่านลิงก์แล้ว ⇒ ผู้ซื้อกดบันทึกจ่ายเอง
       getPartnerPaymentNotices: () => API.get(`${base}/partner-payment-notices`),
+      // รอบ 281: "เส้นทางของใบนี้" ระหว่างคู่ค้า (ทั้งสองทิศตามสิทธิ์ · สถานะจากเซิร์ฟเวอร์)
+      getPartnerJourney: (documentId) => API.get(`${base}/partner-journey${documentId ? `?documentId=${encodeURIComponent(documentId)}` : ''}`),
       recordPartnerPaymentNotice: (id, d) => API.post(`${base}/partner-payment-notices/${encodeURIComponent(id)}/record`, d || {}),
       dismissPartnerPaymentNotice: (id, reason) => API.post(`${base}/partner-payment-notices/${encodeURIComponent(id)}/dismiss`, { reason: reason || null }),
       confirmPartnerOriginal: (id, kind) => API.post(`${base}/partner-purchase-drafts/${encodeURIComponent(id)}/confirm-original`, { kind: kind || 'Paper' }),

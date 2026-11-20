@@ -305,12 +305,39 @@ public class WhtCertIntakeService : IWhtCertIntakeService
             WhtCertIntakeVerdict.Outcome.Reject => match.Reason,
             _ => "ได้รับแล้ว — รอตรวจและกดยืนยัน: " + (gates.Count > 0 ? gates[0] : "การตรวจของจริงยังไม่มั่นใจพอจะยืนยันอัตโนมัติ"),
         };
-        if (outcome == WhtCertIntakeVerdict.Outcome.AwaitUser) await NotifyAwaitingAsync(companyId, intake.Id, msg, ct);
+        // รอบ 281 (คำตัดสิน 281-2): ใบจากคู่ค้า NextAcc ⇒ คีย์ของขั้นนี้เอง (ยืนยันแล้ว/รอยืนยัน — ผู้ขายรู้ว่าได้ 50 ทวิ แล้วทั้งสองกรณี) ·
+        // ช่องทางอื่น (อัปโหลด · สแกน · ลิงก์ลูกค้า) คงเดิม: แจ้งเฉพาะรอคนยืนยัน ด้วยคีย์ partner_exchange
+        if (s.Channel == WhtCertIntakeChannel.NextAccLink && outcome != WhtCertIntakeVerdict.Outcome.Reject)
+            await NotifyPartnerCertAsync(companyId, intake.Id, s, outcome == WhtCertIntakeVerdict.Outcome.AutoConfirm, msg, ct);
+        else if (outcome == WhtCertIntakeVerdict.Outcome.AwaitUser) await NotifyAwaitingAsync(companyId, intake.Id, msg, ct);
         return new(intake.Id, intake.Status.ToString(), intake.AutoConfirmed, false, msg);
     }
 
     /// <summary>รอบ 258-3 (F-M4): หนังสือรับรอง 50 ทวิ มาถึงกล่องรับ (ลูกค้าอัปโหลด · คู่ค้าส่งเข้า · สแกน) แต่ยืนยันอัตโนมัติไม่ได้ ⇒ แจ้งทีม
     /// (คีย์ <c>AutopilotPartnerExchange</c> — ค่าตั้งต้นกระดิ่ง+อีเมลเจ้าของ) · ยืนยันเอง/ปฏิเสธ ⇒ ไม่แจ้ง (ไม่มีอะไรต้องทำ) · แจ้งล้มไม่ย้อนการรับใบ</summary>
+    /// <summary>รอบ 281: 50 ทวิ จากคู่ค้า NextAcc เข้ากล่องรับ — ยืนยันเองด้วยที่มาแล้ว (กระทบภาษีถูกหักแล้ว) หรือรอคนยืนยัน · แจ้งล้มไม่ย้อนการรับใบ</summary>
+    private async Task NotifyPartnerCertAsync(Guid companyId, Guid intakeId, WhtCertSubmission s, bool confirmed, string message, CancellationToken ct)
+    {
+        if (_notify == null) return;
+        try
+        {
+            await _notify.DispatchAsync(companyId, Accounting.Models.Constants.NotificationEvents.PartnerWhtCertReceived, new NotificationContext
+            {
+                Title = confirmed
+                    ? $"🧾 ได้รับ 50 ทวิ {s.CertificateNumber} จาก {s.PayerName} — ภาษีถูกหัก {s.WhtAmount:N2} บาท ยืนยันแล้ว"
+                    : $"🧾 ได้รับ 50 ทวิ {s.CertificateNumber} จาก {s.PayerName} — รอตรวจและยืนยัน",
+                Message = message,
+                ActionUrl = "/pages/wht-credit.html",
+                EntityType = "WhtCertIntake", EntityId = intakeId,
+            });
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _ = ct;
+            _logger.LogError(ex, "แจ้งทีมเรื่อง 50 ทวิ จากคู่ค้าเข้ากล่องรับ {Intake} ไม่สำเร็จ", intakeId);
+        }
+    }
+
     private async Task NotifyAwaitingAsync(Guid companyId, Guid intakeId, string message, CancellationToken ct)
     {
         if (_notify == null) return;

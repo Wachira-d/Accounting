@@ -3414,6 +3414,39 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
   แผนแจ้งโอนรุ่นแรก (ก่อนชุดแก้) ไม่มีกุญแจ/สถานะ outbox ⇒ ไม่ถูก outbox หยิบ (สำเนาสลิปรุ่นแรกส่งในคำขอแล้วหรือมีเหตุบนแผน)
 - **kill-switch**: ไม่มีจุดเรียก AI ในแพ็กนี้ (ตัวตัดสิน pure · อ่านสลิปในเครื่อง) ⇒ ไม่มี AiFeatureKey ใหม่ · เทสต์ `BankPaymentLineMatchTests` · Db `PartnerOutboundRound264P4DbTests`
 
+### 2.12g-281 รอบ 281 เส้นคู่ค้า A↔B ครบเส้น — ใบแจ้งหนี้ → จ่าย → ใบเสร็จ/ใบกำกับ → ใบสำคัญจ่าย + 50 ทวิ → 50 ทวิ กลับ · แจ้งทุกขั้น (`erp-review/2026-11-20/dev-281-partner-e2e.md` · คำตัดสิน 281-1…281-5)
+
+- **เส้นทั้งหมด (A = ผู้ขาย · B = ผู้ซื้อ · ทั้งคู่ใช้ NextAcc · คู่ Accepted)**:
+  ① A อนุมัติใบแจ้งหนี้/ใบกำกับ ⇒ `RouteSentDocumentAsync` ⇒ link InvoiceFlow ⇒ B ได้ใบซื้อร่าง (B เปิด `CreatePurchaseDraftsFromPartners` · ไม่อนุมัติเอง) — แจ้ง B `partner.purchase_draft_received` ·
+  ② B จ่าย: ลิงก์/gateway ของ A (`DocumentPaymentHandler`) · โอนเอง+สลิป · หรือเริ่มจากระบบ B (P4 `PartnerOutboundPaymentService`) ⇒ ทุกทางจบที่ `CreatePaymentAsync` ของ A ·
+  ③ A รับเงิน ⇒ ใบเสร็จ/ใบกำกับ ณ วันรับเงิน (`SettlementTaxInvoiceRole` 275-C) ⇒ `AfterSettlementReceiptIssuedAsync` ⇒ ReceiptFlow แนบใบซื้อเดิมของ B (ภาษีซื้อพักจนยืนยันต้นฉบับ) — แจ้ง B `partner.tax_invoice_received` + A `partner.receipt_delivered` ·
+  ④ หลัง commit ⇒ การแจ้ง "ผู้ขายรับเงินแล้ว" ใน B (`PartnerPaymentNotices`) — แจ้ง B `partner.seller_paid` ·
+  ⑤ ท่อ B (`PartnerPayablePipeline` · ความยินยอม `AutoRecordPayment` + หลักฐานรายการเดินบัญชี) ⇒ `CreatePaymentAsync(PartnerAuto)` = ใบสำคัญจ่าย + ภาษีหัก ⇒ 50 ทวิ ตามเส้นเดิม — แจ้ง B `partner.payment_auto_recorded` · ไม่ผ่าน ⇒ ปุ่มเดียว + เหตุ ·
+  ⑥ `PartnerWhtCertExchangeService` (AutopilotJob · B เปิด `SendWhtCertsToPartners` + ความยินยอม `ReturnWhtCerts`) ⇒ กล่องรับของ A ยืนยันด้วยที่มา — แจ้ง B `partner.wht_cert_delivered` + A `partner.wht_cert_received`
+- **281-1 ยอดก่อนหักของตัวคิดการแจ้ง (บั๊กจริง)**: ใบเก็บ `TotalAmount = ฐาน + VAT − WHT` · ยอดค้างหลังหัก ⇒ `PartnerPaymentNoticeService.PlanForAsync` ส่ง
+  `DocumentPayLinkPolicy.AmountsFor(doc.BalanceDue, wht.NetCap, 0m).Gross` เข้า `PartnerPaymentNoticeRule.For` (เดิมส่งยอดค้างหลังหัก ⇒ ผู้ขายรับ 10,400 ของใบ 10,700 หัก 300 ได้แผน "หัก 0 + คำเตือน" ·
+  ปุ่มเดียวบันทึกไม่มี 50 ทวิ · ท่อไม่บันทึกเอง) · P4 `OptionsAsync` เงินที่โอน = ยอดค้าง (เดิมส่ง NetCap เป็นยอดเงิน) · fixture ของเทสต์ P3/P4 แก้เป็นยอดค้างหลังหักแบบใบจริง ·
+  การจ่ายที่บันทึกไปแล้วด้วยแผนเดิม **ไม่แก้ย้อนหลัง** (แผน P-6 ในไฟล์ผล)
+- **281-2 คีย์แจ้งเตือนต่อขั้น**: `NotificationEvents.PartnerPurchaseDraftReceived` · `PartnerTaxInvoiceReceived` · `PartnerReceiptDelivered` · `PartnerSellerPaid` · `PartnerPaymentAutoRecorded` ·
+  `PartnerWhtCertDelivered` · `PartnerWhtCertReceived` (ตัวตั้งรายชื่อ `Helpers/PartnerFlowNotificationSplit.Keys`) · ค่าตั้งต้นเดียวกับ `autopilot.partner_exchange` (`EmailDefaultKeys`) ·
+  migration คัดลอกแถวค่าตั้งบริษัท/การปิดช่องรายคนของคีย์เดิมครั้งเดียว (เฉพาะที่ยังไม่มีแถวคีย์ใหม่ · `DatabaseMigrationHelper`) · คีย์เดิมคงไว้สำหรับเรื่องยกเลิก/ข้อยกเว้น/คำขอความยินยอม ·
+  แจ้งหลัง commit · แจ้งล้ม = LogError ไม่ย้อนงาน · ช่อง (กระดิ่ง/อีเมล/LINE/กลุ่ม LINE) ตัดสินที่ `NotificationEngine` ตัวเดียวตามหน้าแจ้งเตือนเดิม
+- **281-3 เส้นทางของใบนี้**: `GET api/companies/{c}/partner-journey[?documentId=]` (`PartnerExchangeController.Journey` · ทิศขาย/ซื้อตาม `DocumentPermissionHelper.VisibleDirectionsAsync`) →
+  `PartnerJourneyService` (อ่านอย่างเดียว · link ต้องมีบริษัทผู้เรียกเป็นฝั่งหนึ่ง · ทุก query ผูก CompanyId ของฝั่งที่อ่าน) → `Helpers/PartnerJourney.Build` (8 ขั้น · Done/Waiting/Blocked/NotApplicable ·
+  "เสร็จ" เฉพาะเมื่อมีแถว/เวลาจริง · อีกฝั่งเห็นแค่สถานะ+วันที่ ไม่เห็นเลข/เหตุภายใน) · หน้า `partners.html` §partner-journey แสดงอย่างเดียว
+- **281-4 ผูกผู้ติดต่อตอนส่งใบ**: `OnDocumentSentAsync` หลังตัวจับคู่เลขภาษี+สาขา (`PartnerCompanyMatch.Pick`) ⇒ ผู้ติดต่อที่ยังไม่ผูกระบบใด ⇒ `ExternalSystem = NextAccTenant` + id บริษัทคู่ค้า + audit `PartnerContactLinked` ·
+  ผูกระบบอื่นอยู่แล้ว = ไม่แตะ · เหตุ: กล่องรับ 50 ทวิ พิสูจน์ที่มาด้วยผู้ติดต่อที่ผูก — เดิมฝั่ง A ไม่เคยผูก ⇒ 50 ทวิ จากคู่ค้าค้างรอยืนยันทุกใบ
+- **kill-switch**: ไม่มีจุดเรียก AI ใหม่ · Db test ปิด provider ทุกตัวแล้ว 50 ทวิ ยังยืนยันเอง · ล็อกจุดเรียก `_R281_*` (+11) · Db `PartnerFlowRound281DbTests` · pure `PartnerFlowRound281Tests`
+- **ชุดแก้ฝ่ายค้าน (คำตัดสิน 281-6…281-9)**: (MED-1) ผู้ขายรับเต็มยอดก่อนหัก (10,700) แต่ใบซื้อมีภาษีหัก (ยอดค้าง 10,400) ⇒ `PartnerPaymentNoticeRule.For(…, netDue)`
+  คืนเหตุ "ยอดไม่ตรง บันทึกเอง" ((ข้อความเดียวใน `PartnerPaymentNoticeRule`)) แทนแผนจ่ายเกินที่เส้นจ่ายโยน 409/500 · (MED-2) ไม่ผูกผู้ติดต่อเมื่อมีแถวอื่นผูกบริษัทคู่ค้านี้แล้ว + `FindPartnerContactAsync` เลือกแถวเก่าสุด ·
+  (LOW-1) เลขผิด checksum/เลขขยะ/ผู้ติดต่อที่เส้นเงินเดือนสร้าง (`PayrollJunkPayee`) ไม่ผูก · (LOW-2) ผูก + audit + link ธุรกรรมเดียว ·
+  (LOW-3) เส้นทางฝั่งตรงข้ามไม่แสดงยอดรับของผู้ขาย/ยอดภาษีหักบน 50 ทวิ · การแจ้ง "ใบเข้าระบบผู้ซื้อแล้ว" ไม่บอกผลตรวจ VAT ของผู้ซื้อ ·
+  (LOW-4) `PartnerJourneyService.BuildAllAsync` โหลดเป็นชุด (จับคู่ทุกแถวด้วย (Id, CompanyId) ของฝั่งที่ link ระบุ) ·
+  (LOW-5) การแจ้งของเส้นคู่ค้ายิงหลัง commit เสมอ — ผู้เรียกถือธุรกรรม ⇒ คิวในหน่วยความจำ + `FlushPendingNoticesAsync` (ธุรกรรมย้อน ⇒ เอกสารไม่อยู่ ⇒ ไม่แจ้ง) ·
+  (LOW-6) คัดลอกค่าตั้งแจ้งเตือนครั้งเดียวต่อบริษัท — ตารางธง `NotificationKeySplitMarks` (marker `281-partner-flow`) · Last verified `commit 94c52138`
+- ยังไม่ทำ (แผน P-1…P-6 ในไฟล์ผล): อนุมัติใบซื้อร่างอัตโนมัติ · บัตร/พร้อมเพย์เป็นหลักฐานบัญชีจ่าย · เพดานความยินยอมเทียบยอดก่อนหัก · งานหลังรับชำระนับปลายทางคู่ค้า · ปลุกส่ง 50 ทวิ ทันที · รายงานการจ่ายเดิมที่หัก 0 ·
+  Last verified `commit 22572b0c`
+
 ### 2.12g-270 รอบ 270 งานค้างจาก 266/268/269 (คำตัดสิน 270-1-1…5 ใน `erp-review/2026-09-29/DECISIONS.md`)
 
 - **270-1-1 คืนมัดจำการจองหลายงวด (ฝ่ายค้าน 268 L7)**: `DocumentService.RefundDepositAsync` (ไม่ได้เลือกบัญชี) → `BookingDepositRefundPlanAsync` (ใบผูก `SiteBooking.ErpDocumentId`) →
@@ -3746,6 +3779,17 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
     หน้าผู้ติดต่อ: กล่องผูกกลุ่มใช้ `lineGroupBind` (เซิร์ฟเวอร์บอกให้เชิญ OA กลาง + Basic ID จากค่าตั้ง) แยกจากลิงก์ 1:1 (`lineBind` — ยังผ่าน OA บริษัทเท่านั้น) ·
     เทสต์ `LineCentralGroupPlatformRound256Tests` · Db `LineCentralGroupRound256DbTests` · ล็อก `_R256C` (+ เคส R256a–i) — ยังไม่ได้คอมไพล์ในเครื่องนี้ ·
     Last verified commit dcca54ec (เปิดเส้น) · แก้ตามฝ่ายค้าน M1/M2/L1–L8 ในคอมมิตถัดไป
+  - **`#HeyNextAcc` ในกลุ่มที่ผูกแล้ว ⇒ การ์ดสถานะ ไม่ออกรหัส (รอบ 279 · DECISIONS 279-1…279-3 · สถานะปัจจุบัน)**: เดิม `IssueCodeAsync` ไม่ดูว่ากลุ่มผูกอยู่ ⇒ ผู้ใช้พิมพ์ซ้ำได้รหัส `GB-…`
+    ใหม่ทุกครั้ง · ตอนนี้ทั้ง OA บริษัทและ OA กลางเดิน `HeyAsync` → `BoundEndpointsAsync` (ปลายทางกลุ่มที่ยังผูกของ**บริษัทนี้ผ่าน OA นี้** · ผู้ติดต่อที่ไม่ถูกลบ · แถวเก่า `OaScope=""` = OA บริษัท)
+    → ตัวตัดสินเดียว `LineGroupBindRule.ShouldIssueCode`: ยังไม่ผูก ⇒ รหัสเหมือนเดิม · ผูกแล้ว + `#HeyNextAcc` ⇒ `Replies.Status` (ชื่อกลุ่ม · บริษัท · ผู้ติดต่อทุกราย + เรื่องที่ส่ง ·
+    ผ่าน OA กลาง + ผู้ติดต่อ `NextAccTenant` ⇒ สถานะความยินยอมบันทึกสลิปภาษี `ProviderConsent.Classify` = ยินยอมแล้ว / มีหนังสือมอบอำนาจ / ส่งคำขอแล้ว-รอยืนยัน / ยังไม่ได้ขอ +
+    ลิงก์หน้ายืนยัน `ProviderConsent.GrantLinkOrMenu` + ทางส่งคำขอของพนักงาน `StaffRequestMenuPath` · ไม่มีเลขภาษี/ยอดเงิน · ไม่สร้างแถวรหัส · จำกัด 5/นาที ต่อกลุ่ม) ·
+    `#HeyNextAcc เพิ่ม` (`LineGroupCommand.HeyNextAccAdd`) ⇒ ออกรหัสเสมอ (กลุ่มหนึ่งผูกได้หลายผู้ติดต่อโดยตั้งใจ) · ประกาศหลังผูกบอก "#HeyNextAcc เพื่อดูสถานะ" ·
+    ขั้นตอนบนหน้าผู้ติดต่อต่อท้าย `GroupAddHint` · แท็บช่องทางแจ้งเตือนมีกล่อง `providerConsent` (`ContactProviderConsentView` จาก `ProviderConsentViewAsync` — ทุกคำตอบของ
+    `ContactNotifyEndpointsController` เติมผ่าน `WithConsentAsync`) + ปุ่ม "ส่งคำขอความยินยอม" (POST `tax-slip-desk/clients/{id}/request-consent` เดิม · ไม่มีสิทธิ์ยื่นภาษี ⇒ ปุ่มล็อก + เหตุ) ·
+    การ์ด/ข้อความที่เคยชี้ "เมนู ค่าบริการ" (ไม่มีจริง) ⇒ `ProviderConsent.ClientMenuPath` (แพ็กเกจและการชำระเงิน › ใบแจ้งหนี้ & ใบเสร็จ › การ์ด) — เทสต์ล็อกกับ layout.js/billing.html/tax-slip-desk.html ·
+    tenant isolation: การผูกของบริษัทอื่นบนกลุ่มเดียวกันไม่ถูกนับ/แสดง · เทสต์ `LineGroupStatusRound279Tests` · Db `LineGroupStatusRound279DbTests` · ล็อก `_R279_` (+ R279-1/2) ·
+    Last verified commit aed2ad1f
   - **ฝ่ายค้าน fix2 (รอบ 254 · DECISIONS 254-WP11-12)**: ยกเลิกปลายทางทุกเส้น (หยุด/ผู้ดูแลยกเลิก/ผูกใหม่แทน/บอทถูกเตะ/#ByeNextAcc/รวมผู้ติดต่อ) ผ่านตัวเดียว
     `NotifyEndpointKind.MarkUnlinked` — ล้าง id + ป้ายที่มาจาก LINE (ชื่อโปรไฟล์/ชื่อกลุ่ม) + `GroupNameSnapshot` (ป้ายที่ผู้ดูแลพิมพ์เองคงไว้) · webhook OA บริษัท: ประมวลเหตุการณ์ล้ม ⇒
     ถอนการประทับ "เห็นแล้ว" + ตอบ 500 ให้ LINE ส่งซ้ำ · ยกเลิกคิว LINE/อีเมลเป็นคำสั่งเดียวแบบมีเงื่อนไข (แถวที่ตัวส่งจองไปไม่ถูกทับ) · แถวที่ผู้ให้บริการรับแล้ว (Sent) ไม่ถูกลดสถานะ
@@ -3985,6 +4029,22 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
     เกินเพดานแจ้ง ⇒ เลื่อน (ไม่เงียบถาวร) · ปฏิเสธได้เฉพาะคำขอที่รอเรา (คู่ที่เชื่อมแล้ว ⇒ 409 "ระงับการเชื่อม") + audit `TradingPartnerLinkRejected` ·
     "ปฏิเสธและไม่รับคำขอจากบริษัทนี้อีก" (`RequestsBlockedByCompanyId` · ผู้บล็อกส่งคำขอเอง = ปลด) · ส่งซ้ำระหว่างรอต่ออายุคู่ · ยอมรับประทับเฉพาะคำขอที่ส่งถึงผู้ยอมรับจริง ·
     ส่งถึงคู่ที่เชื่อมอยู่ = เชื่อมแล้วทันที · ลิงก์กระดิ่ง `href` จากเซิร์ฟเวอร์ (`NotificationLink.InternalPath`) · `CompanyAdmin` ผ่าน `BuiltInRolePermissions.Grants` · ส่งล้มรายผู้รับไม่ส่งซ้ำคนที่ได้แล้ว
+  - **(รอบ 280) เลือกช่องทางแจ้งคำขอ** (คำตัดสิน 280-1…280-9 · ตัวตัดสิน `Helpers/PartnerLinkRequestChannels` · บริการ `PartnerLinkRequestNotifier`): เดิมแจ้งเฉพาะในระบบของคู่ค้า
+    (ข้างบน) ⇒ คู่ค้าที่ยังไม่ใช้ NextAcc ไม่ได้อะไร และกลุ่ม LINE/อีเมลที่**เรา**ผูกกับผู้ติดต่อไม่ถูกใช้ ("ไลน์ที่ผูกไว้ไม่เด้ง เมล์ไม่มี") ·
+    ตอนส่งคำขอ: กรอกเลข ⇒ `GET …/trading-partners/requests/channel-options` (ผู้ติดต่อของเราที่ตรงเลข + ความพร้อมของ `LineGroup`/`Email` จากตัวหาผู้รับเดียว เรื่อง `PartnerLink`) ⇒
+    `POST …/invite {contactId, channels}` ⇒ `SendAsync` (ล็อกต่อคำขอ + ต่อผู้ติดต่อ · กันถี่ 3 ครั้ง/ช่อง/คำขอ ห่าง 12 ชม. **และ** LINE+อีเมลรวม ≤ 3 ครั้ง/ผู้ติดต่อ/7 วันข้ามทุกคำขอ ·
+    ผู้ติดต่อของเราต้องมีเลขภาษีตรงคำขอ — เลขว่างไม่ส่ง) ⇒ กลุ่ม: `TryPushContactTextAsync` ผ่าน OA ที่กลุ่มผูก (สำเร็จบางกลุ่ม = "ส่งได้บางส่วน") ·
+    อีเมล: ผู้ส่งเดียว `ResolveOnBehalfSenderAsync` (+ เพดาน/โควตาของ NextAcc · `DocumentEmailLogs` Purpose `partner-link-request`) · ช่องในระบบ = แถว "เข้าคิว" เสมอ ·
+    ข้อความ: บรรทัดคงที่ "ข้อความนี้ส่งโดยบริษัท X ผ่าน NextAcc" + เลขคู่ค้าปิดบัง + สาขา + หมดอายุ + ลิงก์ `partners.html?incoming=1` / `register.html` · หัวเรื่องอีเมลคงที่ (ไม่มีข้อความอิสระ) · ผล `PartnerLinkRequestNotices` ⇒ คอลัมน์ "แจ้งทาง" ใน "คำขอที่เราส่ง"
+    (ช่อง · เวลา · ส่งสำเร็จ/ส่งได้บางส่วน/ล้ม/ไม่ได้ส่ง + เหตุ) + ปุ่ม "ส่งแจ้งอีกครั้ง" (`POST …/requests/{id}/notify` · 30 ครั้ง/วัน/บริษัท · ตั้ง outbox ในระบบใหม่ + เสนอคำขอเดิมถึงบริษัทที่ตรงเลขตอนนี้
+    `OfferLinkRequestAsync` — คำตอบไม่บอกจำนวน) · ช่องปิด ⇒ เหตุ + ลิงก์
+    `contacts.html?id=…&tab=notify` / เพิ่มผู้ติดต่อ · เรื่อง `PartnerLink` เป็นค่าตั้งต้นของปลายทางใหม่ — ปลายทางเดิมไม่ถูกเปิดให้เอง (280-2) ·
+    คู่ค้าที่สมัครทีหลัง (ฝ่ายค้าน MED-1 · 280-10 — ไม่มีขั้นยืนยันเลขภาษี): หน้าคู่ค้าเรียก `POST …/trading-partners/requests/incoming/refresh` (สิทธิ์ตั้งค่าบริษัท · GET ไม่สร้างแถวแล้ว)
+    ⇒ เปิดเฉพาะคำขอที่ส่ง**หลัง** `Company.TaxIdSetAt` (ประทับโดย `AccountingDbContext.StampTaxIdSetAt` ทุกทางเข้า) · คำขอก่อนหน้า ⇒ ผู้ขอ "ส่งแจ้งอีกครั้ง" · เปลี่ยนเลขภาษี (`CompanyService.UpdateAsync`) ⇒
+    `VoidIncomingRequestsForOldTaxIdAsync` ยกเลิกคำขอรอเรายอมรับของเลขเดิม (Rejected + เหตุ + audit · คู่ที่เชื่อมแล้วไม่แตะ) ·
+    migration `Round280Migration` (คอลัมน์ `PartnerLinkRequests.ContactId` + ตาราง `PartnerLinkRequestNotices` + `Companies.TaxIdSetAt` = เวลาที่ deploy สำหรับบริษัทเดิม · ไม่แก้ TopicsJson)
+  - **(รอบ 280 ฝ่ายค้าน LOW-2 ของรอบ 279) การ์ดสถานะ `#HeyNextAcc`**: กลุ่มผูกผู้ติดต่อหลายราย ⇒ `Replies.StatusMulti` (บริษัท · จำนวนผู้ติดต่อ · เรื่องที่ส่งรวม · ดูรายละเอียดที่เว็บ — ไม่มีชื่อ/ความยินยอมรายผู้ติดต่อ) ·
+    ลิงก์ที่โพสต์เข้ากลุ่ม = `ProviderConsent.GroupGrantLinkOrMenu` (ไม่มี id บริษัทลูกค้า) · ผูกรายเดียว = การ์ดเดิม
   - **(D-M2) ใบซื้อร่างตามต้นฉบับ**: คัดลอกส่วนลดรายบรรทัด/ท้ายบิล (`DiscountAmount` · `BillDiscountPercent/Amount`) · ผลต่างปัดเศษ · ภาษีหัก ณ ที่จ่ายหัวใบ + บรรทัด · หน่วย · % ส่วนลด ·
     ประเภทเงินได้ · ข้ามบรรทัดที่ลบ · สาขาผู้ขาย = สาขาที่ออกใบ (`DocumentIssuerBranch.ResolveCode`) · คัดลอกครบไม่ได้ ⇒ **ไม่สร้าง + เหตุบนแถวกล่องเข้า** (`PartnerExchangeRules.CopyProblem`:
     Σ บรรทัด + ปัดเศษ ≠ ฐาน · Σ ภาษีหักบรรทัด ≠ หัวใบ · ยอดรวม ≠ ฐาน + VAT − ภาษีหัก · หักมัดจำที่ออกใบกำกับแล้ว · ผู้จ่ายออกภาษีแทน · ส่วนลดหลัง VAT · ไม่มีบรรทัด)
@@ -10042,6 +10102,15 @@ _Last verified against codebase: 2026-11-20 (รอบ 275 แพ็ก E ชุ
 _Last verified against codebase: 2026-11-20 (รอบ 278 ชุดแก้ฝ่ายค้าน HIGH-1/2/3 + MED — ช่องผู้มีอำนาจลงนามไม่รับรูป payload · preparerUserId ผูกได้เฉพาะผู้เรียกเอง/ผู้เปิดสิทธิ์ ·
 ชื่อเล่นต่อบริษัทต้องเจ้าของอนุมัติ · แช่แข็งผู้ลงนามตอนออก (`StampSignerFreeze` · ใบเก่า = ไม่รวม) · ปุ่มปรับผู้ลงนามของเจ้าของ · §2.8a — commit b8960a48)_
 
-_Last verified against codebase: 2026-11-20 (รอบ 278-9 คำสั่งเจ้าของ — ผูกด้วยกุญแจที่ยืนยันแล้ว ⇒ รูปเดียวกันทั้งสองช่อง โปรไฟล์เป็นหลัก ไม่มีจึงใช้รูปจากระบบภายนอก ·
-แหล่งรูปแช่แข็งใน snapshot · §2.8a — commit a5d1162c)_
+_Last verified against codebase: 2026-11-20 (รอบ 279 — กลุ่ม LINE ที่ผูกแล้วพิมพ์ #HeyNextAcc ได้การ์ดสถานะ (ผูกกับใคร · เรื่องที่ส่ง · ความยินยอมบันทึกสลิปภาษี · ทางไปต่อ)
+แทนรหัสใหม่ · #HeyNextAcc เพิ่ม = ผูกผู้ติดต่ออีกราย · กล่องความยินยอมบนหน้าผู้ติดต่อ · §2.12h — commit aed2ad1f)_
 
+_Last verified against codebase: 2026-11-20 (รอบ 280 — §2.12l เลือกช่องทางแจ้งคำขอเชื่อมคู่ค้า: กลุ่ม LINE/อีเมลของผู้ติดต่อผ่านตัวหาผู้รับเดียว (เรื่อง `PartnerLink`) ·
+ช่องในระบบ "เข้าคิว" เสมอ · กันถี่ต่อคำขอต่อช่อง · ผลจริงบนแถว + ส่งแจ้งอีกครั้ง · คู่ค้าสมัครทีหลังเห็นคำขอ · คำตัดสิน 280-1…280-9 — commit 4274be39)_
+
+_Last verified against codebase: 2026-11-20 (รอบ 280 ชุดแก้ฝ่ายค้าน MED-1/MED-2/LOW-1/LOW-2 — เปิดคำขอเฉพาะหลัง `TaxIdSetAt` ผ่าน POST ที่มีสิทธิ์ · เปลี่ยนเลขยกเลิกคำขอเลขเดิม ·
+เพดานต่อผู้ติดต่อ 3 ครั้ง/7 วัน · เลขภาษีผู้ติดต่อต้องตรง · หัวเรื่อง/บรรทัดผู้ส่งคงที่ · ส่งได้บางส่วน · การ์ดสถานะหลายผู้ติดต่อ · คำตัดสิน 280-10…280-13 — commit e9ffcfea)_
+
+_Last verified against codebase: 2026-11-20 (รอบ 281 เส้นคู่ค้า A↔B ครบเส้น — §2.12g-281: ยอดก่อนหักของตัวคิดการแจ้ง (บั๊ก หัก 0) · คีย์แจ้งเตือนต่อขั้น 7 คีย์ + คัดลอกค่าตั้งเดิม · เส้นทางของใบ · ผูกผู้ติดต่อตอนส่งใบ — คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — commit 22572b0c)_
+
+_Last verified against codebase: 2026-11-20 (รอบ 281 ชุดแก้ฝ่ายค้าน MED-1/2 + LOW 1–6 — §2.12g-281: จ่ายเต็มเกินยอดค้างหลังหัก ⇒ หยุดพร้อมเหตุ · ผูกผู้ติดต่อไม่ซ้ำ/ไม่ผูกเลขขยะ · เส้นทางไม่เปิดยอดอีกฝั่ง · โหลดเป็นชุด · แจ้งหลัง commit · ธงคัดลอกค่าตั้ง — คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — commit 94c52138)_

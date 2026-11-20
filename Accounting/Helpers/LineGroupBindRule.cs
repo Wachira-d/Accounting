@@ -10,6 +10,8 @@ public enum LineGroupCommand
     None,
     HeyNextAcc,
     ByeNextAcc,
+    /// <summary>รอบ 279 (คำตัดสิน 279-1): <c>#HeyNextAcc เพิ่ม</c> — ขอรหัสเพื่อผูกผู้ติดต่ออีกรายกับกลุ่มที่ผูกแล้ว</summary>
+    HeyNextAccAdd,
 }
 
 /// <summary>
@@ -35,16 +37,33 @@ public static class LineGroupBindRule
     public static readonly TimeSpan SeenRetention = TimeSpan.FromDays(7);
 
     private static readonly Regex HeyRe = new(@"^\s*[#＃]\s*heynextacc\s*$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
-    private static readonly Regex ByeRe = new(@"^\s*[#＃]\s*byenextacc\s*$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+    private static readonly Regex HeyAddRe = new(@"^\s*[#＃]\s*heynextacc\s+(เพิ่ม|add)\s*$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+    private static readonly Regex ByeRe =new(@"^\s*[#＃]\s*byenextacc\s*$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
     private static readonly Regex CodeRe = new(@"^\s*GB\s*-?\s*([A-Za-z0-9]{8})\s*$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
     public static LineGroupCommand Parse(string? text)
     {
         if (string.IsNullOrWhiteSpace(text)) return LineGroupCommand.None;
         if (HeyRe.IsMatch(text)) return LineGroupCommand.HeyNextAcc;
+        if (HeyAddRe.IsMatch(text)) return LineGroupCommand.HeyNextAccAdd;
         if (ByeRe.IsMatch(text)) return LineGroupCommand.ByeNextAcc;
         return LineGroupCommand.None;
     }
+
+    /// <summary>รอบ 279: คำสั่งขอรหัสเพื่อผูกผู้ติดต่อเพิ่ม (การ์ดสถานะ/หน้าผู้ติดต่อใช้ค่านี้ตัวเดียว)</summary>
+    public const string AddCommandText = "#HeyNextAcc เพิ่ม";
+    /// <summary>รอบ 279: ต่อท้ายขั้นตอนบนหน้าผู้ติดต่อ — กลุ่มที่ผูกแล้วพิมพ์ #HeyNextAcc เปล่าจะได้การ์ดสถานะ ไม่ใช่รหัส</summary>
+    public const string GroupAddHint = " · กลุ่มที่ผูกผู้ติดต่ออื่นไว้แล้ว: พิมพ์ " + AddCommandText + " (พิมพ์ #HeyNextAcc เปล่า = ดูสถานะกลุ่ม)";
+
+    /// <summary>รอบ 279 (คำตัดสิน 279-1) — <b>ตัวตัดสินเดียว</b>ว่าคำสั่ง <c>#HeyNextAcc</c> ออกรหัสใหม่หรือตอบการ์ดสถานะ:
+    /// กลุ่มที่ยังผูกอยู่ (<paramref name="activeBindings"/> &gt; 0 กับบริษัท/OA ที่ตอบ) + <c>#HeyNextAcc</c> เปล่า ⇒ <b>ไม่ออกรหัส</b> (ตอบสถานะ) ·
+    /// ยังไม่ผูก ⇒ ออกรหัสเหมือนเดิม · <c>#HeyNextAcc เพิ่ม</c> ⇒ ออกรหัสเสมอ (ผูกผู้ติดต่ออีกราย — กลุ่มหนึ่งผูกได้หลายผู้ติดต่อโดยตั้งใจ)</summary>
+    public static bool ShouldIssueCode(LineGroupCommand command, int activeBindings)
+        => command == LineGroupCommand.HeyNextAccAdd || (command == LineGroupCommand.HeyNextAcc && activeBindings <= 0);
+
+    /// <summary>รอบ 279: หนึ่งแถวของการ์ดสถานะกลุ่ม — ชื่อผู้ติดต่อ (ประกาศในกลุ่มแล้วตอนผูก) · เรื่องที่ส่ง · สถานะความยินยอมบันทึกสลิปภาษี (null = ไม่ใช้กับผู้ติดต่อนี้) ·
+    /// ทางยืนยันของเจ้าของบริษัทลูกค้า (ลิงก์/เมนู · null = ไม่ต้อง) — <b>ไม่มี</b>เลขภาษี/ยอดเงิน</summary>
+    public sealed record GroupStatusLine(string? ContactName, IReadOnlyList<string> TopicLabels, string? ConsentLabel, string? ConsentHowTo);
 
     public static string NewCode() => CustomerLineLinkRule.NewCode();
 
@@ -103,7 +122,34 @@ public static class LineGroupBindRule
         public const string Throttled = "⛔ ขอรหัสบ่อยเกินไป — กรุณารอสักครู่แล้วลองใหม่";
         public static string Bound(string? companyName, string? contactName, IEnumerable<string> topics)
             => $"✅ กลุ่มนี้ผูกกับ {(string.IsNullOrWhiteSpace(companyName) ? "บริษัท" : companyName)} สำหรับผู้ติดต่อ {(string.IsNullOrWhiteSpace(contactName) ? "-" : contactName)} แล้ว\n"
-               + $"เรื่องที่ส่ง: {string.Join(", ", topics)} · พิมพ์ #ByeNextAcc เพื่อยกเลิก";
+               + $"เรื่องที่ส่ง: {string.Join(", ", topics)} · พิมพ์ #HeyNextAcc เพื่อดูสถานะ · #ByeNextAcc เพื่อยกเลิก";
+        /// <summary>รอบ 279 (คำตัดสิน 279-1): <c>#HeyNextAcc</c> ในกลุ่มที่ผูกแล้ว ⇒ การ์ดสถานะแทนรหัสใหม่ — ผูกกับใคร · เรื่องที่ส่ง · ความยินยอม · ทางไปต่อ ·
+        /// <paramref name="staffRequestHowTo"/> = ทางส่งคำขอของพนักงาน (null = ไม่มีผู้ติดต่อที่ต้องขอ)</summary>
+        public static string Status(string? companyName, string? groupName, IReadOnlyList<GroupStatusLine> lines, string? staffRequestHowTo)
+        {
+            var sb = new StringBuilder();
+            sb.Append($"📋 สถานะกลุ่ม \"{(string.IsNullOrWhiteSpace(groupName) ? "กลุ่มนี้" : groupName!.Trim())}\" — ผูกแล้ว (ไม่ต้องขอรหัสใหม่)\n");
+            sb.Append($"ผูกกับ {(string.IsNullOrWhiteSpace(companyName) ? "บริษัท" : companyName!.Trim())} · {lines.Count} ผู้ติดต่อ");
+            foreach (var l in lines)
+            {
+                sb.Append($"\n• {(string.IsNullOrWhiteSpace(l.ContactName) ? "-" : l.ContactName!.Trim())} — เรื่องที่ส่ง: {(l.TopicLabels.Count == 0 ? "-" : string.Join(", ", l.TopicLabels))}");
+                if (l.ConsentLabel != null) sb.Append($"\n  บันทึกการชำระภาษีจากสลิป: {l.ConsentLabel}");
+                if (!string.IsNullOrWhiteSpace(l.ConsentHowTo)) sb.Append($"\n  เจ้าของบริษัทยืนยันบนเว็บ: {l.ConsentHowTo!.Trim()}");
+            }
+            if (!string.IsNullOrWhiteSpace(staffRequestHowTo)) sb.Append($"\nส่งคำขอยืนยัน (พนักงาน): {staffRequestHowTo!.Trim()}");
+            sb.Append($"\nผูกผู้ติดต่ออื่นเพิ่ม: พิมพ์ {AddCommandText} · ยกเลิกการผูกทั้งกลุ่ม: พิมพ์ #ByeNextAcc");
+            return sb.ToString();
+        }
+        /// <summary>รอบ 280 (ฝ่ายค้าน LOW-2 ของการ์ด 279): กลุ่มเดียวผูกกับผู้ติดต่อ<b>หลายราย</b> ⇒ ไม่แสดงชื่อ/สถานะความยินยอมรายผู้ติดต่อในกลุ่ม
+        /// (ลูกค้ารายหนึ่งต้องไม่เห็นสถานะของอีกราย) — แสดงเฉพาะ บริษัทที่ผูก · จำนวนผู้ติดต่อ · เรื่องที่ส่ง (รวม) · ทางดูรายละเอียดบนเว็บ</summary>
+        public static string StatusMulti(string? companyName, string? groupName, int contactCount, IReadOnlyList<string> topicLabels)
+            => $"📋 สถานะกลุ่ม \"{(string.IsNullOrWhiteSpace(groupName) ? "กลุ่มนี้" : groupName!.Trim())}\" — ผูกแล้ว (ไม่ต้องขอรหัสใหม่)\n"
+               + $"ผูกกับ {(string.IsNullOrWhiteSpace(companyName) ? "บริษัท" : companyName!.Trim())} · ผู้ติดต่อ {contactCount} ราย\n"
+               + $"เรื่องที่ส่ง: {(topicLabels.Count == 0 ? "-" : string.Join(", ", topicLabels))}\n"
+               + MultiContactWebHint + "\n"
+               + $"ผูกผู้ติดต่ออื่นเพิ่ม: พิมพ์ {AddCommandText} · ยกเลิกการผูกทั้งกลุ่ม: พิมพ์ #ByeNextAcc";
+        public const string MultiContactWebHint =
+            "รายละเอียดผู้ติดต่อและความยินยอม: ดูที่หน้าเว็บ (ผู้ติดต่อ › ช่องทางแจ้งเตือน) — ไม่แสดงในกลุ่มเพราะกลุ่มนี้ผูกกับผู้ติดต่อหลายราย";
         public const string Bye = "ยกเลิกการผูกกลุ่มนี้แล้ว — บอทจะไม่ส่งการแจ้งเอกสารเข้ากลุ่มนี้อีกและจะออกจากกลุ่ม";
         public const string ByeNothing = "กลุ่มนี้ยังไม่ได้ผูกกับผู้ติดต่อใด";
         /// <summary>รอบ 256: คำสั่งกลุ่มที่ส่งถึง LINE OA กลางของ NextAcc — เดิม webhook กลางทิ้ง event กลุ่มเงียบ ⇒ ผู้ใช้พิมพ์แล้วไม่มีอะไรตอบ ·

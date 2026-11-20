@@ -4,7 +4,8 @@ namespace Accounting.Models.DTOs.Notification;
 /// (รอบ 267 P3: ลิงก์เซ็น = 1:1 ได้ · กลุ่มไม่ได้ — 267-1-7) · หน้าเว็บล็อกช่องตามชนิดของปลายทาง (ไม่มีสำเนากติกาในหน้า)</summary>
 /// <param name="LineUserUnsupported">เรื่องนี้ส่งถึง LINE 1:1 ไม่ได้ ⇒ เหตุ · null = ได้</param>
 /// <param name="LineGroupUnsupported">เรื่องนี้ส่งเข้ากลุ่ม LINE ไม่ได้ ⇒ เหตุ · null = ได้</param>
-public record NotifyTopicOption(string Key, string Label, string? LineUserUnsupported = null, string? LineGroupUnsupported = null);
+/// <param name="LineGroupDefault">รอบ 280: ติ๊กไว้ก่อนในกล่องผูกกลุ่ม (ตัวตั้งเดียว <c>NotifyTopics.DefaultsFor(LineGroup)</c> — หน้าเว็บไม่มีสำเนารายการ)</param>
+public record NotifyTopicOption(string Key, string Label, string? LineUserUnsupported = null, string? LineGroupUnsupported = null, bool LineGroupDefault = false);
 
 /// <summary>ปลายทางหนึ่งแถว — ทุกป้าย/สถานะ/สิทธิ์กดปุ่มคำนวณที่เซิร์ฟเวอร์ (หน้าแสดงอย่างเดียว) · <paramref name="Id"/> null = อีเมลหลักที่ยังไม่มีแถวค่าตั้ง (รับทุกเรื่อง) ·
 /// ไม่มี LINE id ใน DTO (แม้แบบปิดบัง — เจ้าหน้าที่ไม่ต้องใช้)</summary>
@@ -57,7 +58,16 @@ public record ContactNotifyOverviewResponse(
     // รอบ 256 (คำตัดสิน 256-2): กล่อง "เพิ่มกลุ่ม LINE" แยกจากลิงก์ผูก 1:1 (บริษัทผู้ให้บริการผูกกลุ่มผ่าน OA กลางได้ แต่ลิงก์ 1:1 ยังผ่าน OA บริษัทเท่านั้น) · null = ไม่แสดง
     ContactLineGroupBindOffer? LineGroupBind = null,
     // รอบ 256-2 (ฝ่ายค้าน L2): ผลข้างเคียงของคำสั่งล่าสุดที่ผู้ใช้ต้องทำต่อเอง (เช่น บอท OA กลางยังอยู่ในกลุ่ม) · null = ไม่มี
-    string? ActionNote = null);
+    string? ActionNote = null,
+    // รอบ 279 (คำตัดสิน 279-2): สถานะความยินยอม "NextAcc บันทึกการชำระภาษีจากสลิปแทน" ของผู้ติดต่อที่เป็นบริษัทลูกค้า (บริษัทผู้ให้บริการเท่านั้น) · null = ไม่ใช้กับผู้ติดต่อนี้
+    ContactProviderConsentView? ProviderConsent = null);
+
+/// <summary>รอบ 279 (คำตัดสิน 279-2) — กล่องความยินยอมบนแท็บ "ช่องทางแจ้งเตือน" (server computes · page displays): <paramref name="State"/> ชื่อ enum
+/// (<c>ProviderConsent.GroupConsentState</c>) · <paramref name="ClientHowTo"/> ทางยืนยันของเจ้าของบริษัทลูกค้า (null = ยินยอมแล้ว) · <paramref name="StaffHowTo"/>/<paramref name="StaffDeskUrl"/>
+/// เมนูจริงของพนักงาน · <paramref name="CanRequest"/> = ปุ่มส่งคำขอ (POST <paramref name="RequestApiPath"/> — ด่านเดียวกับโต๊ะสลิป: สิทธิ์ยื่นภาษี + บริษัทผู้ให้บริการ) ·
+/// <paramref name="HasCentralGroup"/> = มีกลุ่ม LINE ผ่าน OA กลางที่ผูกอยู่ (คำขอจะไปเป็นการ์ดในกลุ่มด้วย)</summary>
+public record ContactProviderConsentView(string State, string StateLabel, string? ClientHowTo, string StaffHowTo, string StaffDeskUrl, bool CanRequest,
+    string RequestApiPath, bool HasCentralGroup, string? RequestBlockedReason = null);
 
 public record ContactNotifyComingSoon(string Key, string Label, string Reason);
 

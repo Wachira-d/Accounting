@@ -225,7 +225,8 @@ public class PartnerPaymentNoticeService
         if (notify == null) return;
         try
         {
-            await notify.DispatchAsync(buyerCompanyId, NotificationEvents.AutopilotPartnerExchange, new NotificationContext
+            // รอบ 281 (คำตัดสิน 281-2): คีย์ของขั้นนี้เอง (เดิมยืม partner_exchange) — ค่าตั้งเดิมถูกคัดลอกมาครั้งเดียว
+            await notify.DispatchAsync(buyerCompanyId, NotificationEvents.PartnerSellerPaid, new NotificationContext
             {
                 Title = $"💳 {sellerName} ได้รับเงินของ {n.SourceDocumentNumber} แล้ว — บันทึกจ่ายใบซื้อ",
                 Message = $"ผู้ขายรับเงิน {n.CashAmount:N2} บาท ผ่าน{PartnerPaymentNoticeRule.ChannelLabel(n.SourceChannel)} (ผู้ขายบันทึกภาษีหัก ณ ที่จ่าย {n.SellerRecordedWht:N2} บาท) · "
@@ -456,8 +457,13 @@ public class PartnerPaymentNoticeService
         var wht = await DocumentService.PaymentWhtFiguresAsync(db, companyId, doc, n.CashAmount, ct);
         var rates = doc.Lines.Where(l => !l.IsDeleted && l.Amount != 0m).Select(l => l.WithholdingTaxRate).Distinct().ToList();
         decimal? singleRate = rates.Count == 1 && rates[0] > 0m ? rates[0] : null;
-        return (PartnerPaymentNoticeRule.For(doc.Status, doc.BalanceDue, wht.NetCap, n.CashAmount, doc.DocumentNumber,
-            sellerRecordedWht: n.SellerRecordedWht, singleWhtRatePercent: singleRate, purchaseHasVat: doc.VatAmount > 0m), doc);
+        // รอบ 281 (คำตัดสิน 281-1 · บั๊กจริงของเส้นเจ้าของ): ตัวคิด For เทียบ "เงิน + ภาษีหัก = ยอดค้างก่อนหัก" แต่ใบซื้อเก็บยอดค้าง<b>หลังหัก</b>
+        // (TotalAmount = ฐาน + VAT − WHT · การจ่ายนับเฉพาะเงิน — แบบเดียวกับที่รอบ 244 แก้ลิงก์ชำระ) ⇒ ใบ 10,700 หัก 300 ยอดค้าง 10,400 ·
+        // ผู้ขายรับ 10,400 ⇒ เดิมได้แผน "จ่าย 10,400 หัก 0 + คำเตือนผู้ขายรับเต็ม" (ปุ่มเดียวบันทึกไม่มี 50 ทวิ · ท่อไม่บันทึกเอง) ·
+        // ยอดก่อนหัก = ยอดค้าง + ภาษีหักที่เหลือ ผ่านตัวตั้งเดียว DocumentPayLinkPolicy.AmountsFor (ยอดค้าง 0 ⇒ 0 — "ชำระครบแล้ว" เหมือนเดิม)
+        var grossDue = DocumentPayLinkPolicy.AmountsFor(doc.BalanceDue, wht.NetCap, 0m).Gross;
+        return (PartnerPaymentNoticeRule.For(doc.Status, grossDue, wht.NetCap, n.CashAmount, doc.DocumentNumber,
+            sellerRecordedWht: n.SellerRecordedWht, singleWhtRatePercent: singleRate, purchaseHasVat: doc.VatAmount > 0m, netDue: doc.BalanceDue), doc);
     }
 
     /// <summary>ใบซื้อปลายทางของการแจ้ง (ผูกบริษัทผู้เรียก) — ให้ controller ตรวจสิทธิ์ตามชนิดจริง + ความลับ · null = ไม่พบ</summary>
