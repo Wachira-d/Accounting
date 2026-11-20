@@ -135,10 +135,34 @@ public class DocumentRestrictionFilter : IAsyncActionFilter
 
         // ฝ่ายค้าน MED-4: ทางเขียน (สร้าง/แก้/แปลง/คัดลอก/ขออนุมัติ) — ทุก id ที่อ้างถูกตรวจว่าเป็นของตัวเองแล้วข้างบน ⇒ ด่านระดับบริษัทใน service
         // (ยอดที่แปลงไปแล้ว · ผลรวมใบลดหนี้ · ใบซ้ำ · สต็อก) ต้องเห็นทั้งบริษัท ไม่ใช่เห็นแค่ใบของเขา ⇒ ยกตัวกรองแถวของคำขอนี้ (ธงเฉพาะร่าง + ผู้สร้างคงอยู่)
-        if (r.OwnDocumentsOnly && DocumentRestrictionPolicy.IsWrite(http.Request.Method))
-            DocumentRestrictionGuard.LiftRowFilterForWrite(_db);
+        if (!(r.OwnDocumentsOnly && DocumentRestrictionPolicy.IsWrite(http.Request.Method)))
+        {
+            await next();
+            return;
+        }
+        DocumentRestrictionGuard.LiftRowFilterForWrite(_db);
+        var executed = await next();
+        // ฝ่ายค้าน 276 (ข้อความตอบกลับ): ยกตัวกรองแถวแล้ว ⇒ เหตุ/ผลที่ตอบต้องไม่มีเลข · ลูกค้า · ยอดของใบที่ผู้ใช้มองไม่เห็น — ตัวช่วยกลางตัวเดียว
+        await RedactAsync(executed, companyId, userId, http.RequestAborted);
+    }
 
-        await next();
+    private async Task RedactAsync(ActionExecutedContext executed, Guid companyId, Guid userId, CancellationToken ct)
+    {
+        if (executed.Exception is { } ex && !executed.ExceptionHandled
+            && ex is BusinessRuleException or InvalidOperationException or KeyNotFoundException or ArgumentException)
+        {
+            var code = (ex as BusinessRuleException)?.RuleCode;
+            var status = ex switch { BusinessRuleException b => b.StatusCode, KeyNotFoundException => 404, _ => 400 };
+            var safe = await RestrictedResponseRedactor.SafeMessageAsync(_db, companyId, userId, ex.Message, code, ct);
+            if (!ReferenceEquals(safe, ex.Message))
+            {
+                executed.Result = Deny(status, safe);
+                executed.ExceptionHandled = true;
+            }
+            return;
+        }
+        if (executed.Result is ObjectResult { Value: { } value })
+            await RestrictedResponseRedactor.RedactValueAsync(_db, companyId, userId, value, ct);
     }
 
     private Task<bool> VisibleAsync(Guid companyId, Guid docId, CancellationToken ct) =>
