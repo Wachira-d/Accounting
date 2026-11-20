@@ -22,7 +22,7 @@ namespace Accounting.Helpers;
 /// ใบต้นทางที่ไม่มี VAT ก็ไม่เข้า (ไม่มี VAT ให้อธิบาย · กระดาษเดิมไม่ถูกแตะ)</para>
 ///
 /// <para>═══ รอบ 273 ชุดแก้ฝ่ายค้าน ═══ <b>MED-1</b> "รับบางส่วน" ตัดสินจาก<b>ยอดคงค้างก่อนรับครั้งนี้</b> (ยอดใบต้นทาง − ใบลดหนี้ − การรับก่อนหน้า ตามลำดับเวลา ·
-/// ใบลดหนี้ลดหนี้ได้เฉพาะเมื่อยังมียอดค้าง — กติกาเดียวกับ <c>UpdateSourceDocumentSettlementAsync</c>) เทียบกับ<b>ยอดที่การรับครั้งนี้ตัด</b>
+/// ใบลดหนี้ลดหนี้ได้เฉพาะเมื่อยังมียอดค้าง — กติกาเดียวกับฝั่งเขียน <c>DocumentService.ApplySourceDocumentAdjustmentsAsync</c> (สาขาใบลดหนี้ · รอบ 275 LOW-3 แก้ชื่อที่อ้างผิด)) เทียบกับ<b>ยอดที่การรับครั้งนี้ตัด</b>
 /// (เงินรับ + ค่าธรรมเนียมที่ถูกหัก + บรรทัดปรับ — สามตัวเดียวกับที่บวกเข้า <c>PaidAmount</c> ตอนบันทึก) · ไม่มีรายการหลังครั้งนี้ ⇒ ยึดยอดค้างปัจจุบันของใบต้นทาง (ตรงที่สุด ·
 /// ครอบการตัดชำระช่องทางอื่นที่ตัวนี้ไม่ได้ไล่ เช่น หักมัดจำ) · ใบลดหนี้ก่อนรับพิมพ์เป็นบรรทัดอ้างอิง ·
 /// <b>L1</b> ภาษีหัก ณ ที่จ่ายที่พิมพ์ = ของ<b>การรับครั้งนี้</b> (<c>Payment.WithholdingTaxAmount</c>/การจัดสรร) ไม่ใช่ทั้งใบ — งวดผ่อนบวกกันลง ·
@@ -138,14 +138,36 @@ public static class SettlementReceiptTotals
                 Note: note, ViaBillingNote: f.ViaBillingNote);
         }
 
-        // MED-1: ไล่ยอดคงค้างตามลำดับเวลา — ใบลดหนี้ลดหนี้ได้เฉพาะตอนยังค้าง (ใบที่ออกหลังชำระครบ = คืนเงิน ไม่ลดหนี้ · ไม่พิมพ์)
-        var events = (f.Events ?? Array.Empty<LedgerEvent>())
+        var w = Walk(sourcesTotal, f.Events, me, f.SourcesOutstandingNow);
+        var before = w.BalanceBefore;
+        var after = w.BalanceAfterRaw;
+        var partial = after > Eps;
+        return new View(f.ReceiptTotalAmount, gross, partial, sourcesTotal, sources,
+            BalanceKnown: true, BalanceBefore: Round2(before), BalanceAfter: Round2(Math.Max(0m, after)),
+            PriorCreditNotes: w.PriorCreditNotes, PriorSettled: Round2(w.PriorSettled), This: me, Note: note, ViaBillingNote: f.ViaBillingNote);
+    }
+
+    /// <summary>ผลการไล่ยอดคงค้างของใบต้นทางรอบการรับครั้งนี้ (ตัวไล่ตัวเดียว — ใช้ทั้งแถวยอดใบเสร็จ <see cref="Decide"/> และ
+    /// ตัวตัดสินบทบาทใบกำกับ ณ วันรับเงิน <see cref="SettlementTaxInvoiceRole"/> · รอบ 275 แพ็ก C)</summary>
+    /// <param name="BalanceBefore">ยอดคงค้างก่อนรับครั้งนี้ (ไม่ติดลบ)</param>
+    /// <param name="BalanceAfterRaw">ยอดคงค้างหลังรับครั้งนี้ (ยังไม่ตัดค่าติดลบ)</param>
+    /// <param name="PriorCreditNotes">ใบลดหนี้ที่ลดหนี้ก่อนรับครั้งนี้ (ยอดที่ลดจริง)</param>
+    /// <param name="PriorSettled">การรับ/ตัดชำระก่อนครั้งนี้รวม (เท่าที่ไล่ได้)</param>
+    /// <param name="HasLater">มีรายการตัดยอดหลังการรับครั้งนี้</param>
+    public sealed record LedgerWalk(decimal BalanceBefore, decimal BalanceAfterRaw, IReadOnlyList<LedgerEvent> PriorCreditNotes,
+        decimal PriorSettled, bool HasLater);
+
+    /// <summary>MED-1 (รอบ 273): ไล่ยอดคงค้างตามลำดับเวลา — ใบลดหนี้ลดหนี้ได้เฉพาะตอนยังค้าง (ใบที่ออกหลังชำระครบ = คืนเงิน ไม่ลดหนี้) ·
+    /// ไม่มีรายการหลังครั้งนี้ ⇒ ยึดยอดค้างปัจจุบันของใบต้นทาง (ครอบการตัดชำระช่องทางที่ไม่ได้ไล่ เช่น หักมัดจำ)</summary>
+    public static LedgerWalk Walk(decimal sourcesTotal, IReadOnlyList<LedgerEvent>? events, ThisSettlement me, decimal? sourcesOutstandingNow)
+    {
+        var ordered = (events ?? Array.Empty<LedgerEvent>())
             .OrderBy(e => e.Date.Date).ThenBy(e => e.RecordedAt).ToList();
         var bal = sourcesTotal;
         var priorCn = new List<LedgerEvent>();
         var priorSettled = 0m;
         var later = false;
-        foreach (var e in events)
+        foreach (var e in ordered)
         {
             if (!Before(e.Date, e.RecordedAt, me.Date, me.RecordedAt)) { later = true; continue; }
             if (e.Kind == EventKind.CreditNote)
@@ -163,16 +185,12 @@ public static class SettlementReceiptTotals
         }
         var before = Math.Max(0m, bal);
         var after = before - me.Settled;
-        // ไม่มีรายการหลังครั้งนี้ ⇒ ยอดค้างปัจจุบันของใบต้นทาง = ยอดหลังรับครั้งนี้พอดี (ครอบการตัดชำระช่องทางที่ไม่ได้ไล่ข้างบน เช่น หักมัดจำ)
-        if (!later && f.SourcesOutstandingNow is decimal now)
+        if (!later && sourcesOutstandingNow is decimal now)
         {
             after = now;
             before = Math.Max(0m, now + me.Settled);
         }
-        var partial = after > Eps;
-        return new View(f.ReceiptTotalAmount, gross, partial, sourcesTotal, sources,
-            BalanceKnown: true, BalanceBefore: Round2(before), BalanceAfter: Round2(Math.Max(0m, after)),
-            PriorCreditNotes: priorCn, PriorSettled: Round2(priorSettled), This: me, Note: note, ViaBillingNote: f.ViaBillingNote);
+        return new LedgerWalk(before, after, priorCn, priorSettled, later);
     }
 
     private static decimal Round2(decimal x) => Math.Round(x, 2, MidpointRounding.AwayFromZero);

@@ -1,0 +1,111 @@
+using Accounting.Helpers;
+using Accounting.Models.DTOs.Document;
+using Accounting.Models.Entities;
+using Accounting.Models.Enums;
+using Microsoft.EntityFrameworkCore;
+
+namespace Accounting.Services.Implementations;
+
+/// <summary>
+/// รอบ 275 แพ็ก C — ใบกำกับภาษี ณ วันรับเงิน (ม.78/1) ของการรับชำระใบแจ้งหนี้: คิว "รับเงินแล้วยังไม่มีใบกำกับภาษี" + ปุ่มออกใบกำกับเพิ่ม
+/// (คำตัดสิน 4.1 / 275-C-1 · ใบเก่าที่ออกไปแล้วไม่แก้ย้อนหลัง — ผู้ทำบัญชีกดทีละรายการ) · ตัวตัดสินเดียว <see cref="SettlementTaxInvoiceRole"/>
+/// </summary>
+public partial class DocumentService
+{
+    /// <summary>คิว (อ่านอย่างเดียว · tenant) — ตัวอ่านเดียวกับ Autopilot (<see cref="SettlementTaxInvoiceLoader.QueueAsync"/>)</summary>
+    public async Task<IReadOnlyList<ReceivedWithoutTaxInvoiceRow>> ReceivedWithoutTaxInvoiceAsync(Guid companyId, CancellationToken ct = default)
+        => (await SettlementTaxInvoiceLoader.QueueAsync(_db, companyId, 200, ct)).Select(ToQueueDto).ToList();
+
+    internal static ReceivedWithoutTaxInvoiceRow ToQueueDto(SettlementTaxInvoiceLoader.QueueRow r) => new(
+        r.DocumentId, r.DocumentNumber, r.ContactName, r.PaymentId, r.PaymentNumber, r.PaymentDate, r.Amount,
+        r.PlainReceiptId, r.PlainReceiptNumber, r.Decision.Mode.ToString(), r.Decision.Reason.ToString(),
+        r.Decision.CarriesRole ? r.Decision.VatAmount : null,
+        r.Decision.CarriesRole ? null : SettlementTaxInvoiceRole.ReasonText(r.Decision.Reason),
+        r.Decision.CarriesRole);
+
+    /// <summary>ปุ่ม "ออกใบกำกับภาษี ณ วันรับเงิน" ของคิว — ยกเลิกใบรับเปล่าของการรับนี้ (ถ้ามี) แล้วออกใบเสร็จที่ถือ VAT ตามตัวตัดสินเดียว ในธุรกรรมเดียว ·
+    /// ตัวตัดสินไม่ออก (ใบลดหนี้ก่อนรับ ฯลฯ) ⇒ 409 พร้อมเหตุ ไม่แตะอะไร · ใบรับเปล่าที่ถึงกรมสรรพากรแล้ว ⇒ 409</summary>
+    /// <para>ใบเก่าที่ภาษีขายทั้งใบรายงานแล้วตอนรับงวดแรก (<see cref="SettlementTaxInvoiceLoader.VatReportedWholesaleAsync"/>) ⇒ ออกใบกำกับให้<b>ทุกงวดที่ยังไม่มี</b>
+    /// ตามลำดับวันรับเงินในธุรกรรมเดียว (งวดรายงาน = เดือนที่ภาษีถูกรายงานแล้ว — ภ.พ.30 ไม่เปลี่ยน · ออกทีละงวด = เดือนนั้นลดลงระหว่างทาง) · งวดใดตัดสินไม่ได้ = ทั้งชุดไม่ออก</para></summary>
+    public async Task<IssuedReceiptResult> IssueTaxInvoiceForPaymentAsync(Guid companyId, Guid paymentId, Guid documentId, string createdBy)
+    {
+        var invoice = await _db.Documents.AsNoTracking()
+            .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId && !d.IsDeleted)
+            ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
+        if (!await SettlementTaxInvoiceLoader.VatReportedWholesaleAsync(_db, companyId, invoice))
+            return await IssueReceiptForPaymentCoreAsync(companyId, paymentId, createdBy, documentId, replacePlainWithTaxInvoice: true);
+
+        var batch = (await SettlementTaxInvoiceLoader.QueueAsync(_db, companyId, invoice.Id, CancellationToken.None))
+            .Where(r => r.DocumentId == invoice.Id).ToList();
+        if (batch.All(r => r.PaymentId != paymentId))
+            return await IssueReceiptForPaymentCoreAsync(companyId, paymentId, createdBy, documentId, replacePlainWithTaxInvoice: true);
+        if (batch.FirstOrDefault(r => !r.Decision.CarriesRole) is { } blocked)
+            throw new BusinessRuleException(
+                $"การรับ {blocked.PaymentNumber} ของใบแจ้งหนี้ {invoice.DocumentNumber}: "
+                + (SettlementTaxInvoiceRole.ReasonText(blocked.Decision.Reason) ?? "ออกใบกำกับให้ไม่ได้")
+                + " · ใบนี้ต้องออกใบกำกับทุกงวดพร้อมกัน — ระบบยังไม่ได้แตะอะไร", SettlementTaxInvoiceRole.RuleCode, 409);
+
+        var issued = new List<Document>();
+        var strategy = _db.Database.CreateExecutionStrategy();
+        var result = await strategy.ExecuteAsync(async () =>
+        {
+            issued.Clear();
+            await using var tx = await _db.Database.BeginTransactionAsync();
+            IssuedReceiptResult? mine = null;
+            foreach (var row in batch.OrderBy(r => r.PaymentDate))
+            {
+                var r = await IssueReceiptForPaymentCoreAsync(companyId, row.PaymentId, createdBy, documentId, replacePlainWithTaxInvoice: true,
+                    inOuterTransaction: true, issuedOut: issued);
+                if (row.PaymentId == paymentId) mine = r;
+            }
+            await tx.CommitAsync();
+            return mine!;
+        });
+        foreach (var receipt in issued)
+        {
+            await _issuedHooks.RunAsync(companyId, receipt);
+            await AfterSettlementReceiptIssuedAsync(companyId, receipt);
+        }
+        return result;
+    }
+
+    /// <summary>งวดรายงาน (TaxPointDate) ของใบกำกับรายงวดที่ออก<b>หลัง</b>วันรับเงิน: วันที่ของ JE ย้ายภาษีตามส่วนที่ผูกการรับนี้ (เส้นใหม่) ·
+    /// ไม่มี (ใบเก่าที่ภาษีย้ายทั้งก้อนตอนรับงวดแรก) ⇒ <c>OutputVatDueAt</c> ของใบแจ้งหนี้ (ภ.พ.30 ที่ยื่นไปแล้วไม่เปลี่ยน — ไม่แก้ย้อนหลัง) · ยังไม่ย้าย ⇒ วันรับเงิน</summary>
+    private async Task<DateTime> InstallmentTaxPointAsync(Guid companyId, Document invoice, Payment payment)
+    {
+        var tag = SettlementTaxInvoiceLoader.InstallmentReclassTag(payment.Id);
+        var tagged = await _db.JournalEntries.AsNoTracking()
+            .Where(j => j.CompanyId == companyId && j.SourceDocumentId == invoice.Id && j.Note == tag && !j.IsDeleted
+                && j.Status == JournalEntryStatus.Posted && j.OriginalEntryId == null && j.ReversedByEntryId == null)
+            .Select(j => (DateTime?)j.EntryDate).FirstOrDefaultAsync();
+        return (tagged ?? invoice.OutputVatDueAt ?? payment.PaymentDate).Date;
+    }
+
+    /// <summary>ยกเลิกใบรับเปล่า (VAT 0) ที่ถูกแทนด้วยใบกำกับ ณ วันรับเงิน — ใบที่ถึงกรมสรรพากรแล้ว (e-Tax) ⇒ ปฏิเสธ (ยกเลิกเงียบไม่ได้) · tenant</summary>
+    private async Task VoidPlainReceiptForTaxInvoiceAsync(Guid companyId, Document plain, Document invoice)
+    {
+        var strongest = (await DocumentVoidPreconditions.EffectiveEtaxAsync(_db, companyId, new[] { plain.Id })).GetValueOrDefault(plain.Id);
+        var etax = DocumentVoidPreconditions.AutoReceiptOnPaymentVoid(strongest, plain.DocumentNumber, PaymentVoidCause.User);
+        if (etax.Action == AutoReceiptEtaxAction.Refuse)
+            throw new BusinessRuleException(
+                $"ใบเสร็จ {plain.DocumentNumber} ของการรับนี้ส่ง e-Tax ถึงกรมสรรพากรแล้ว — ยกเลิกเพื่อออกใบกำกับภาษีแทนเงียบ ๆ ไม่ได้ · "
+                + "ยกเลิกทาง e-Tax ก่อน แล้วกดอีกครั้ง · ระบบยังไม่ได้แตะอะไร", SettlementTaxInvoiceRole.RuleCode, 409);
+        var now = DateTime.UtcNow;
+        plain.Status = DocumentStatus.Voided;
+        plain.UpdatedAt = now;
+        AppendInternalNote(plain, $"[{SettlementTaxInvoiceRole.RuleCode}] ยกเลิกเพื่อออกใบกำกับภาษี ณ วันรับเงินแทน (ใบแจ้งหนี้ {invoice.DocumentNumber} · "
+            + $"{SettlementTaxInvoiceRole.LegalReference})");
+        var pending = await _db.EtaxInvoices
+            .Where(e => e.CompanyId == companyId && e.DocumentId == plain.Id && e.Status != EtaxStatus.Voided
+                && !DocumentVoidPreconditions.EtaxReachedRdStatuses.Contains(e.Status))
+            .ToListAsync();
+        foreach (var e in pending)
+        {
+            e.Status = EtaxStatus.Voided;
+            e.VoidedAt = now;
+            e.VoidReason = "ยกเลิกเพื่อออกใบกำกับภาษี ณ วันรับเงินแทน";
+            e.UpdatedAt = now;
+        }
+        await _db.SaveChangesAsync();
+    }
+}

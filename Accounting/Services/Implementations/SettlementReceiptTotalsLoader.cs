@@ -69,7 +69,7 @@ internal static class SettlementReceiptTotalsLoader
         if (SettlementReceiptTotals.Decide(Facts(sourcesOne)) == null) return;
 
         var me = await ThisSettlementAsync(db, companyId, doc, srcId);
-        var events = await LedgerEventsAsync(db, companyId, doc, srcId, me.PaymentId, me.ExcludeAllocationIds);
+        var events = await LedgerEventsAsync(db, companyId, doc.Id, srcId, me.PaymentId, me.ExcludeAllocationIds);
         doc.SettlementTotals = SettlementReceiptTotals.Decide(Facts(sourcesOne) with
         {
             This = me.This,
@@ -105,26 +105,28 @@ internal static class SettlementReceiptTotalsLoader
             null, new List<Guid>());
     }
 
-    /// <summary>รายการตัดยอดอื่นของใบต้นทาง (บริษัทเดียวกัน · ยังมีผล) — การรับตรง · การจัดสรรของการรับหลายใบ · ใบลดหนี้ · ใบเสร็จที่ผูกเอง (ไม่ใช่ใบรับชำระอัตโนมัติ — กันนับซ้ำกับการรับ)</summary>
-    private static async Task<List<SettlementReceiptTotals.LedgerEvent>> LedgerEventsAsync(
-        AccountingDbContext db, Guid companyId, Document doc, Guid srcId, Guid? thisPaymentId, List<Guid> excludeAllocationIds)
+    /// <summary>รายการตัดยอดอื่นของใบต้นทาง (บริษัทเดียวกัน · ยังมีผล) — การรับตรง · การจัดสรรของการรับหลายใบ · ใบลดหนี้ · ใบเสร็จที่ผูกเอง (ไม่ใช่ใบรับชำระอัตโนมัติ — กันนับซ้ำกับการรับ)
+    /// <para>ตัวโหลดเดียวของแถวยอดใบเสร็จ และตัวตัดสินบทบาทใบกำกับ ณ วันรับเงิน (<see cref="SettlementTaxInvoiceLoader"/> · รอบ 275 แพ็ก C) ·
+    /// รอบ 275: การรับชำระที่ถูกยกเลิก (<c>Payment.IsDeleted</c> — ตาราง Payments ไม่มี query filter) ไม่นับ (เดิมนับเป็น "รับชำระก่อนหน้า")</para></summary>
+    internal static async Task<List<SettlementReceiptTotals.LedgerEvent>> LedgerEventsAsync(
+        AccountingDbContext db, Guid companyId, Guid? exceptDocumentId, Guid srcId, Guid? thisPaymentId, IReadOnlyCollection<Guid> excludeAllocationIds)
     {
         var events = new List<SettlementReceiptTotals.LedgerEvent>();
         var direct = await db.Payments.AsNoTracking()
-            .Where(x => x.CompanyId == companyId && (x.MovedToDocumentId ?? x.DocumentId) == srcId && x.Id != thisPaymentId
+            .Where(x => x.CompanyId == companyId && !x.IsDeleted && (x.MovedToDocumentId ?? x.DocumentId) == srcId && x.Id != thisPaymentId
                 && !db.PaymentAllocations.Any(a => a.PaymentId == x.Id && a.ReleasedAt == null))
             .Select(x => new { x.PaymentDate, x.CreatedAt, Amount = x.Amount + x.FeeAmount + x.SettlementAdjustmentAmount, x.PaymentNumber })
             .ToListAsync();
         events.AddRange(direct.Select(x => new SettlementReceiptTotals.LedgerEvent(
             SettlementReceiptTotals.EventKind.Payment, x.PaymentDate, x.CreatedAt, x.Amount, x.PaymentNumber)));
         var allocs = await db.PaymentAllocations.AsNoTracking()
-            .Where(a => a.CompanyId == companyId && a.DocumentId == srcId && a.ReleasedAt == null && !excludeAllocationIds.Contains(a.Id))
+            .Where(a => a.CompanyId == companyId && a.DocumentId == srcId && a.ReleasedAt == null && !a.Payment.IsDeleted && !excludeAllocationIds.Contains(a.Id))
             .Select(a => new { Date = a.AppliedAt ?? a.Payment.PaymentDate, a.CreatedAt, a.AllocatedAmount })
             .ToListAsync();
         events.AddRange(allocs.Select(a => new SettlementReceiptTotals.LedgerEvent(
             SettlementReceiptTotals.EventKind.Payment, a.Date, a.CreatedAt, a.AllocatedAmount)));
         var docs = await db.Documents.AsNoTracking()
-            .Where(d => d.CompanyId == companyId && d.RelatedDocumentId == srcId && d.Id != doc.Id && !NotLive.Contains(d.Status)
+            .Where(d => d.CompanyId == companyId && d.RelatedDocumentId == srcId && d.Id != exceptDocumentId && !d.IsDeleted && !NotLive.Contains(d.Status)
                 && (d.DocumentType == DocumentType.CreditNote
                     || ((d.DocumentType == DocumentType.Receipt || d.DocumentType == DocumentType.ReceiptVoucher) && !d.IsSettlementReceipt && !d.IsDeposit)))
             .Select(d => new { d.DocumentType, d.DocumentDate, d.CreatedAt, d.TotalAmount, d.DocumentNumber })

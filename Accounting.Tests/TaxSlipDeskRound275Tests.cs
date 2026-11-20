@@ -63,14 +63,14 @@ public class TaxSlipDeskRound275Tests
     }
 
     [Theory]
-    [InlineData("ToStaff", 1, null, TaxSlipOpenAge.Action.None)]
-    [InlineData("ToStaff", 3, null, TaxSlipOpenAge.Action.Remind)]
-    [InlineData("ToStaff", 3, 2, TaxSlipOpenAge.Action.None)]       // เตือนไปแล้ว 2 ชม.ก่อน
-    [InlineData("ToStaff", 3, 30, TaxSlipOpenAge.Action.Remind)]    // เตือนเกิน 24 ชม. ⇒ เตือนซ้ำ
-    [InlineData("ToStaff", 91, 1, TaxSlipOpenAge.Action.Expire)]
-    [InlineData("AwaitingConsent", 91, null, TaxSlipOpenAge.Action.None)]   // นาฬิกาของตัวเอง (30 วัน)
-    [InlineData("Remitted", 400, null, TaxSlipOpenAge.Action.None)]
-    public void M4_อายุแถวรอพนักงาน(string status, int ageDays, int? remindedHoursAgo, TaxSlipOpenAge.Action expected)
+    [InlineData("ToStaff", 1, null, TaxSlipOpenAge.AgeAction.None)]
+    [InlineData("ToStaff", 3, null, TaxSlipOpenAge.AgeAction.Remind)]
+    [InlineData("ToStaff", 3, 2, TaxSlipOpenAge.AgeAction.None)]       // เตือนไปแล้ว 2 ชม.ก่อน
+    [InlineData("ToStaff", 3, 30, TaxSlipOpenAge.AgeAction.Remind)]    // เตือนเกิน 24 ชม. ⇒ เตือนซ้ำ
+    [InlineData("ToStaff", 91, 1, TaxSlipOpenAge.AgeAction.Expire)]
+    [InlineData("AwaitingConsent", 91, null, TaxSlipOpenAge.AgeAction.None)]   // นาฬิกาของตัวเอง (30 วัน)
+    [InlineData("Remitted", 400, null, TaxSlipOpenAge.AgeAction.None)]
+    public void M4_อายุแถวรอพนักงาน(string status, int ageDays, int? remindedHoursAgo, TaxSlipOpenAge.AgeAction expected)
     {
         var now = new DateTime(2026, 11, 20, 3, 0, 0, DateTimeKind.Utc);
         Assert.Equal(expected, TaxSlipOpenAge.Decide(status, now.AddDays(-ageDays), remindedHoursAgo is int h ? now.AddHours(-h) : null, now));
@@ -85,6 +85,8 @@ public class TaxSlipDeskRound275Tests
         Assert.False(TaxPaymentRequestLifecycle.IsExpired(null, now));
         Assert.Equal(TaxPaymentRequestLifecycle.Open, TaxPaymentRequestLifecycle.StatusAfterVoid(null, now));
         Assert.Equal(TaxPaymentRequestLifecycle.Expired, TaxPaymentRequestLifecycle.StatusAfterVoid(new DateTime(2026, 11, 1), now));
+        Assert.True(TaxSlipDeskRule.MultiPerPeriod("VatPp36"));
+        Assert.False(TaxSlipDeskRule.MultiPerPeriod("WhtPnd53"));
         Assert.True(TaxPaymentRequestLifecycle.ClosesOnRemit("WhtPnd3"));
         Assert.False(TaxPaymentRequestLifecycle.ClosesOnRemit("VatPp36"));
         Assert.False(TaxPaymentRequestLifecycle.ClosesOnRemit(WorkersCompensationBase.RemittanceType));

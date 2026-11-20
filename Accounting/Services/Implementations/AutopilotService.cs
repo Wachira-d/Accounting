@@ -219,8 +219,31 @@ public class AutopilotService : IAutopilotService
         list.AddRange(await PartnerTaxEvidenceIssuesAsync(companyId, nowUtc, ct));
         // รอบ 270 (ฝ่ายค้าน 266-C L2 · คำตัดสิน 270-1-4): ใบลดหนี้ร่างที่ตัวช่วยใบซ้ำสร้างแล้วยังไม่อนุมัติ (ภาษีขายนับสองครั้งระหว่างนั้น) — คิวเดิมของ Autopilot ไม่ใช่ระบบใหม่
         list.AddRange(await DuplicateSaleCreditNoteDraftIssuesAsync(companyId, nowUtc, ct));
+        // รอบ 275 แพ็ก C (คำตัดสิน 4.1 / 275-C-1): รับเงินแล้วยังไม่มีใบกำกับภาษี ณ วันรับเงิน — ใบเก่าไม่แก้ย้อนหลัง ผู้ทำบัญชีกดออกเพิ่มทีละรายการ
+        list.AddRange(await ReceivedWithoutTaxInvoiceIssuesAsync(companyId, ct));
 
         return list.OrderByDescending(i => i.At).ToList();
+    }
+
+    /// <summary>รอบ 275 แพ็ก C — อ่านอย่างเดียว · ตัวอ่านเดียวกับ <c>GET document/received-without-tax-invoice</c> (<see cref="SettlementTaxInvoiceLoader.QueueAsync"/>) ·
+    /// ปุ่ม POST ออกใบกำกับ (เซิร์ฟเวอร์กำหนด path) เฉพาะแถวที่ตัวตัดสินออกให้ได้ · แถวที่ต้องให้คนตัดสินพาไปที่ใบแจ้งหนี้พร้อมเหตุ</summary>
+    private async Task<List<AutopilotIssueDto>> ReceivedWithoutTaxInvoiceIssuesAsync(Guid companyId, CancellationToken ct)
+    {
+        var rows = await SettlementTaxInvoiceLoader.QueueAsync(_db, companyId, 100, ct);
+        return rows.Take(50).Select(r =>
+        {
+            var dto = DocumentService.ToQueueDto(r);
+            var title = $"รับเงิน {r.Amount:N2} บาท ({r.PaymentNumber}) ของใบแจ้งหนี้ {r.DocumentNumber} ยังไม่มีใบกำกับภาษี ณ วันรับเงิน";
+            var detail = dto.CanIssue
+                ? $"ระบบออกใบกำกับภาษี/ใบเสร็จรับเงินให้ได้ (VAT {dto.VatAmount:N2} บาท · {SettlementTaxInvoiceRole.LegalReference})"
+                    + (r.PlainReceiptNumber != null ? $" — ใบเสร็จ {r.PlainReceiptNumber} (ไม่ใช่ใบกำกับ) จะถูกยกเลิกและออกใบแทน" : "")
+                : dto.HumanReason ?? "";
+            return new AutopilotIssueDto("ReceivedWithoutTaxInvoice", title, detail, DateTime.SpecifyKind(r.PaymentDate, DateTimeKind.Utc), r.DocumentId,
+                dto.CanIssue ? "ออกใบกำกับภาษี ณ วันรับเงิน" : "เปิดใบแจ้งหนี้",
+                dto.CanIssue ? null : DocHref(r.DocumentId),
+                dto.CanIssue ? $"document/payments/{r.PaymentId}/tax-invoice/{r.DocumentId}" : null,
+                dto.CanIssue ? "เปิดใบแจ้งหนี้" : null, dto.CanIssue ? DocHref(r.DocumentId) : null);
+        }).ToList();
     }
 
     /// <summary>รอบ 270 (270-1-4) — อ่านอย่างเดียว · ใบลดหนี้ที่ audit ของตัวช่วยใบซ้ำสร้าง (<see cref="DuplicateSalePolicy.CreditNoteFromAudit"/> — ครอบใบก่อนรอบนี้ด้วย)

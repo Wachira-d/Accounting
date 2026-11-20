@@ -78,7 +78,7 @@ public class SettlementReceiptPolicyTests
             false, DocumentType.Invoice, DocumentStatus.Paid, allocationCount: 3,
             sourceServesAsReceipt: false);
         Assert.NotNull(why);
-        Assert.Contains("แปลงเอกสาร", why!);   // ปฏิเสธแล้วต้องมีทางไปต่อ ไม่ใช่ตันเฉย ๆ
+        Assert.Contains("ทางไปต่อ", why!);   // ปฏิเสธแล้วต้องมีทางไปต่อ ไม่ใช่ตันเฉย ๆ (รอบ 275 LOW-3: ชี้ปุ่มออกใบเสร็จรายใบ)
     }
 
     [Theory]

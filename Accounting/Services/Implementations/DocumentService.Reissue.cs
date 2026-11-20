@@ -397,7 +397,10 @@ public partial class DocumentService
                         etax.VoidReason = $"ยกเลิกพร้อมใบต้นทาง {old.DocumentNumber} (ยกเลิกและออกใบแทน)";
                         etax.UpdatedAt = now;
                     }
-                    var nr = await CreateSettlementReceiptAsync(companyId, neo, p, actor, wasIssued, carriesVat);
+                    // รอบ 275 แพ็ก C: ใบเดิมเป็นใบกำกับรายงวด (VAT บางส่วน) ⇒ ใบแทนถือยอดเดิมทุกสตางค์ (ไม่คัดลอก VAT เต็มของใบใหม่)
+                    var nr = await CreateSettlementReceiptAsync(companyId, neo, p, actor, wasIssued, carriesVat,
+                        taxInvoicePlan: SettlementTaxInvoiceRole.CarryIssued(carriesVat, r.SubTotal, r.VatAmount, r.WithholdingTaxAmount, r.TotalAmount, neo.VatAmount),
+                        installmentTaxPointDate: r.TaxPointDate ?? r.DocumentDate);
                     p.ReceiptDocumentId = nr.Id;
                     newReceipts.Add(nr);
                     // V1-R9: PaymentIntent ที่ชี้ใบเสร็จเดิม ⇒ ใบเสร็จใหม่
