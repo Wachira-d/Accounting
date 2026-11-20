@@ -99,10 +99,11 @@ public class PayrollCleanupRound275EDbTests
             Assert.Equal("John Smith", fc.PayeeContact.Name);
             var emp = await c1.Set<Employee>().AsNoTracking().SingleAsync(e => e.Id == foreign.Id);
             Assert.Equal(fc.PayeeContactId, emp.ContactId);
-            var note = await WhtCertPayeeNote.LoadAsync(c1, cid, fc);
-            Assert.Contains("GB7654321", note);
+            // ข้อความประกอบจากสำเนา ณ วันออก (LOW (ข)(ฉ)) — เต็มบน PDF · ปิดบังบน DTO
+            Assert.Contains("GB7654321", WhtCertPayeeNote.Of(fc, includePii: true));
+            Assert.DoesNotContain("7654", WhtCertPayeeNote.Of(fc, includePii: false));
             var tc = certs.Single(w => w.CertificateNumber.Contains("E001"));
-            Assert.Null(await WhtCertPayeeNote.LoadAsync(c1, cid, tc));   // ทิศตรงข้าม: คนมีเลขไม่มีข้อความประกอบ
+            Assert.Null(WhtCertPayeeNote.Of(tc, includePii: true));   // ทิศตรงข้าม: คนมีเลขไม่มีข้อความประกอบ
             var file = await Pnd1FilingData.LoadMonthAsync(c1, cid, Period.Year, Period.Month);
             Assert.Empty(file.BlockedRows);
             Assert.Equal(2, file.Rows.Count);
@@ -121,6 +122,25 @@ public class PayrollCleanupRound275EDbTests
             await b.SaveChangesAsync();
             var ex = await Assert.ThrowsAsync<BusinessRuleException>(() => EmployeeTaxIdWaiver.AcknowledgeAsync(b, cid, bad.Id, "พยายามข้ามเลขผิด", user.Id));
             Assert.Contains("checksum", ex.Message);
+        }
+
+        // ── LOW (จ): ถอนต้องมีเหตุ · LOW (ง): ได้เลขถูกแล้วการรับทราบถูกล้าง (ไม่กลับมามีผลถ้าช่องว่างภายหลัง) ──
+        using (var r = DbTestDatabase.TryCreateContext()!)
+            await Assert.ThrowsAsync<BusinessRuleException>(() => EmployeeTaxIdWaiver.RevokeAsync(r, cid, foreign.Id, "", user.Id));
+        using (var u = DbTestDatabase.TryCreateContext()!)
+        {
+            var e = await u.Set<Employee>().SingleAsync(x => x.Id == foreign.Id);
+            e.TaxId = ValidB;
+            await u.SaveChangesAsync();
+            e.TaxId = null;
+            await u.SaveChangesAsync();
+        }
+        using (var w = DbTestDatabase.TryCreateContext()!)
+        {
+            var e = await w.Set<Employee>().AsNoTracking().SingleAsync(x => x.Id == foreign.Id);
+            Assert.Null(e.TaxIdWaiverAcknowledgedAt);
+            Assert.Equal(EmployeeTaxIdentity.FilingKind.NeedsAcknowledgement, EmployeeTaxIdentity.ForFiling(e).Kind);
+            Assert.True(await w.AuditLogs.AnyAsync(l => l.CompanyId == cid && l.EntityType == "Employee.TaxIdWaiver" && l.NewValues!.Contains("cleared")));
         }
     }
 
@@ -191,24 +211,37 @@ public class PayrollCleanupRound275EDbTests
         // ── ซ่อมโดยไม่ยืนยันยื่นเพิ่มเติม ⇒ ไม่แตะ ──
         using (var r1 = DbTestDatabase.TryCreateContext()!)
         {
-            var o = Assert.Single(await PayrollJunkPayee.RepairAsync(r1, cid, new[] { junkId }, confirmFiledAmendment: false, userId: null));
+            var o = Assert.Single(await PayrollJunkPayee.RepairAsync(r1, cid, new[] { junkId }, confirmedPeriods: new[] { "1999-01" }, userId: null));
             Assert.False(o.Repaired);
             Assert.Contains("ยืนยัน", o.Message);
             Assert.Equal("1234567", (await r1.Contacts.AsNoTracking().SingleAsync(c => c.Id == junkId)).TaxId);
         }
-        // ── ยืนยันแล้ว ⇒ เลขถูก + สำเนาบนใบใหม่ (เลขที่/ยอดเดิม) + audit ──
+        // ── ยืนยันงวดนั้น ⇒ เลขถูก · MED-3: ใบเดิมไม่ถูกเขียนทับ (สำเนาเดิมคงอยู่ · ยกเลิก-แทนด้วยใบใหม่) · ใบแทนเลขที่ใหม่ยอดเดิม · รายการค้างยื่นเพิ่มเติม · audit ──
+        var period = $"{Period.Year:D4}-{Period.Month:D2}";
         using (var r2 = DbTestDatabase.TryCreateContext()!)
         {
-            var o = Assert.Single(await PayrollJunkPayee.RepairAsync(r2, cid, new[] { junkId }, confirmFiledAmendment: true, userId: null));
+            var o = Assert.Single(await PayrollJunkPayee.RepairAsync(r2, cid, new[] { junkId }, confirmedPeriods: new[] { period }, userId: null));
             Assert.True(o.Repaired, o.Message);
+            Assert.Equal(new[] { period }, o.AmendmentPeriods);
         }
         using (var v = DbTestDatabase.TryCreateContext()!)
         {
             Assert.Equal(ValidA, (await v.Contacts.AsNoTracking().SingleAsync(c => c.Id == junkId)).TaxId);
-            var cert = await v.WithholdingTaxCerts.AsNoTracking().SingleAsync(w => w.Id == certId);
-            Assert.Contains(ValidA, cert.PayeeSnapshotJson);
-            Assert.Equal(5000m, cert.TotalTaxAmount);
-            Assert.Equal(WithholdingTaxCertStatus.Issued, cert.Status);
+            var old = await v.WithholdingTaxCerts.AsNoTracking().SingleAsync(w => w.Id == certId);
+            Assert.Contains("1234567", old.PayeeSnapshotJson);   // ใบที่ยื่นแล้วไม่ถูกเขียนทับ
+            Assert.Equal(WithholdingTaxCertStatus.Voided, old.Status);
+            var neo = await v.WithholdingTaxCerts.Include(w => w.Lines).AsNoTracking().SingleAsync(w => w.Id == old.SupersededByCertId);
+            Assert.Contains(ValidA, neo.PayeeSnapshotJson);
+            Assert.Equal(5000m, neo.TotalTaxAmount);
+            Assert.Equal(WithholdingTaxCertStatus.Issued, neo.Status);
+            Assert.Equal(old.SourcePayrollRunId, neo.SourcePayrollRunId);
+            Assert.EndsWith("-E001-2", neo.CertificateNumber);
+            var am = Assert.Single(await Pnd1AmendmentQueue.ListAsync(v, cid));
+            Assert.True(am.Pending);
+            Assert.Contains(neo.CertificateNumber, am.CertificateNumbers);
+            await Assert.ThrowsAsync<BusinessRuleException>(() => Pnd1AmendmentQueue.ResolveAsync(v, cid, am.Id, "", null));
+            await Pnd1AmendmentQueue.ResolveAsync(v, cid, am.Id, "ยื่นเพิ่มเติม ref 123", null);
+            Assert.DoesNotContain(await Pnd1AmendmentQueue.ListAsync(v, cid), a => a.Pending);
             Assert.True(await v.AuditLogs.AnyAsync(l => l.CompanyId == cid && l.EntityType == "Contact" && l.EntityId == junkId.ToString()
                 && l.NewValues!.Contains(PayrollJunkPayee.RepairRuleCode)));
             // แถว audit ของเครื่องมือซ่อมเก็บเลขปิดบังเท่านั้น (แถว audit อัตโนมัติของ Contact เป็นพฤติกรรมเดิม — ไม่ใช่ของแพ็กนี้)
@@ -228,7 +261,7 @@ public class PayrollCleanupRound275EDbTests
         Assert.Equal(PayrollJunkPayee.Plan.MoveToExistingContact, row.Plan);
         Assert.Empty(row.FiledPeriods);
         using (var r = DbTestDatabase.TryCreateContext()!)
-            Assert.True(Assert.Single(await PayrollJunkPayee.RepairAsync(r, cid, new[] { junkId }, confirmFiledAmendment: false, userId: null)).Repaired);
+            Assert.True(Assert.Single(await PayrollJunkPayee.RepairAsync(r, cid, new[] { junkId }, confirmedPeriods: null, userId: null)).Repaired);
         using var v = DbTestDatabase.TryCreateContext()!;
         var cert = await v.WithholdingTaxCerts.AsNoTracking().SingleAsync(w => w.Id == certId);
         Assert.Equal(row.TargetContactId, cert.PayeeContactId);

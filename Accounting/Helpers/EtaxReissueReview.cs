@@ -202,7 +202,7 @@ public static class EtaxReissueReview
     /// <summary>ช่องตัวตน/เวลา/สถานะของใบแทนเองที่ต่างจากใบเดิมโดยธรรมชาติ — ไม่นับในการตรวจช่องเกิน</summary>
     private static readonly HashSet<string> OwnFields = new(StringComparer.Ordinal)
     {
-        nameof(Document.Id), nameof(Document.CreatedAt), nameof(Document.UpdatedAt), nameof(Document.CreatedBy), nameof(Document.UpdatedBy),
+        nameof(Document.Id), nameof(Document.CreatedAt), nameof(Document.UpdatedAt), nameof(Document.CreatedBy), nameof(Document.CreatedByUserId), nameof(Document.UpdatedBy),
         nameof(Document.IsDeleted), nameof(Document.DocumentNumber), nameof(Document.Status), nameof(Document.ReplacedByDocumentId),
         nameof(Document.ReplacesDocumentId), nameof(Document.ReplacementReason), nameof(Document.ReplacedAt),
         nameof(Document.ReplacementCarriesPostings), nameof(Document.InternalNotes), nameof(Document.AgingDays),

@@ -321,8 +321,9 @@ public partial class WithholdingTaxCertService : IWithholdingTaxCertService
 
         // รอบ 271: ช่องการผูก (ผูกกับ · ลบ/ยกเลิกได้ไหม · อาจนับซ้ำ) — ตัวเดียวกับรายการ
         var decorated = (await DecorateLinkAsync(companyId, new List<WithholdingTaxCert> { cert }, new List<WithholdingTaxCertResponse> { MapToResponse(cert, company) }))[0];
-        // รอบ 275 แพ็ก E (คำตัดสิน 4.2): หน้าพิมพ์ wht.html แสดงข้อความเดียวกับ PDF (ผู้ไม่มีเลข 13 หลัก + เลขพาสปอร์ต)
-        return decorated with { PayeeReferenceNote = await Accounting.Helpers.WhtCertPayeeNote.LoadAsync(_db, companyId, cert) };
+        // รอบ 275 แพ็ก E (คำตัดสิน 4.2 · ฝ่ายค้าน LOW (ข)): ข้อความเดียวกับ PDF จากสำเนา ณ วันออก · พาสปอร์ต<b>ปิดบัง</b>เป็นค่าตั้งต้น —
+        // คอนโทรลเลอร์ขอเลขเต็มเฉพาะผู้มี pii:view (WhtCertPayeeNote.Of(cert, includePii: true))
+        return decorated with { PayeeReferenceNote = Accounting.Helpers.WhtCertPayeeNote.Of(cert, includePii: false) };
     }
 
     /// <summary>ทางเดิม (แบบ/ปี/เดือน) — รอบ 271 เดินทางเดียวกับ <see cref="GetListAsync"/> (ตัวกรองฝั่งเซิร์ฟเวอร์ + ช่องการผูก)</summary>

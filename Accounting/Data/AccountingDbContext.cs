@@ -105,6 +105,7 @@ public class AccountingDbContext : DbContext
     public DbSet<DocumentLine> DocumentLines => Set<DocumentLine>();
     public DbSet<DocumentAdjustingJournalLine> DocumentAdjustingJournalLines => Set<DocumentAdjustingJournalLine>();
     public DbSet<Contact> Contacts => Set<Contact>();
+    public DbSet<Pnd1AmendmentRequired> Pnd1AmendmentsRequired => Set<Pnd1AmendmentRequired>();   // รอบ 275 แพ็ก E ฝ่ายค้าน MED-3 (Helpers/Round275EMigration)
     public DbSet<Payment> Payments => Set<Payment>();
     public DbSet<PaymentAllocation> PaymentAllocations => Set<PaymentAllocation>();
     /// <summary>รอบ 259 P4 — ขาออกของเงินรอจัดสรร (คืนเงิน · ย้ายเป็นมัดจำ · ตัดเศษ · จองให้ใบ)</summary>
@@ -3208,6 +3209,16 @@ public class AccountingDbContext : DbContext
                 .HasDatabaseName("IX_Contacts_CompanyId_IsCustomer");
             e.HasIndex(c => new { c.CompanyId, c.IsSupplier })
                 .HasDatabaseName("IX_Contacts_CompanyId_IsSupplier");
+            e.Property(c => c.TaxIdWaiverReason).HasMaxLength(500);   // รอบ 275 แพ็ก E — ตรงกับ Round275EMigration
+        });
+
+        modelBuilder.Entity<Pnd1AmendmentRequired>(e =>
+        {
+            e.ToTable("Pnd1AmendmentsRequired");
+            e.HasIndex(r => new { r.CompanyId, r.TaxYear, r.TaxMonth }).HasDatabaseName("IX_Pnd1AmendmentsRequired_Company_Period");
+            e.Property(r => r.Reason).HasMaxLength(500);
+            e.Property(r => r.ResolvedReference).HasMaxLength(500);
+            e.HasQueryFilter(r => !r.IsDeleted);
         });
 
         // BankTransaction: reconciliation + date range queries
@@ -4779,6 +4790,30 @@ public class AccountingDbContext : DbContext
     /// 50 ทวิ ภ.ง.ด.3/53 ระหว่างรอซ่อม — จุดเดียวที่ทุกทางสร้าง/ออก/เปลี่ยนผู้ถูกหักผ่าน (มือ · จากใบสำคัญจ่าย · อัตโนมัติ · ออกใหม่) ·
     /// ตัดสินด้วย "เลขไม่ผ่าน 13 หลัก + mod-11" <b>และ</b> "มาจากเงินเดือน" (ผู้ขายจริงที่เลขไม่ครบไม่ถูกกันที่นี่ — ด่านเดิมของ 50 ทวิ ตัดสิน) ·
     /// ใบที่ยกเลิก/ใบเงินเดือนเอง/แก้ช่องอื่นของใบเดิม ไม่ถูกตรวจ</summary>
+    /// <summary>รอบ 275 แพ็ก E ฝ่ายค้าน LOW (ง): ได้เลข 13 หลักที่ถูกต้องแล้ว ⇒ การรับทราบ "ไม่มีเลข" หมดผล — ล้างทิ้งที่จุดเดียวที่ทุกทางเขียน
+    /// (แก้ไข · สร้าง · HRIS sync · นำเข้า · หน้าผู้ติดต่อ) + audit chain · ไม่ล้าง ⇒ ถ้าช่องถูกล้างภายหลัง การรับทราบเดิมจะกลับมามีผลเงียบ ๆ</summary>
+    private void ClearTaxIdWaiversWhenIdValid()
+    {
+        foreach (var e in ChangeTracker.Entries<Models.Entities.Employee>().Where(x => x.State is EntityState.Added or EntityState.Modified).ToList())
+        {
+            var emp = e.Entity;
+            if (!Accounting.Helpers.EmployeeTaxIdWaiver.ShouldClear(emp.TaxIdWaiverAcknowledgedAt, emp.TaxId, emp.CitizenId)) continue;
+            var before = new { emp.TaxIdWaiverAcknowledgedAt, emp.TaxIdWaiverReason };
+            emp.TaxIdWaiverAcknowledgedAt = null; emp.TaxIdWaiverAcknowledgedBy = null; emp.TaxIdWaiverReason = null;
+            Accounting.Helpers.EmployeeTaxIdWaiver.Audit(this, emp.CompanyId, Accounting.Helpers.EmployeeTaxIdWaiver.SubjectEmployee, emp.Id, null, before,
+                new { cleared = true, reason = "มีเลขประจำตัว 13 หลักที่ถูกต้องแล้ว", ruleCode = Accounting.Helpers.EmployeeTaxIdWaiver.RuleCode });
+        }
+        foreach (var e in ChangeTracker.Entries<Models.Entities.Contact>().Where(x => x.State is EntityState.Added or EntityState.Modified).ToList())
+        {
+            var c = e.Entity;
+            if (!Accounting.Helpers.EmployeeTaxIdWaiver.ShouldClear(c.TaxIdWaiverAcknowledgedAt, c.TaxId, null)) continue;
+            var before = new { c.TaxIdWaiverAcknowledgedAt, c.TaxIdWaiverReason };
+            c.TaxIdWaiverAcknowledgedAt = null; c.TaxIdWaiverAcknowledgedBy = null; c.TaxIdWaiverReason = null;
+            Accounting.Helpers.EmployeeTaxIdWaiver.Audit(this, c.CompanyId, Accounting.Helpers.EmployeeTaxIdWaiver.SubjectContact, c.Id, null, before,
+                new { cleared = true, reason = "มีเลขประจำตัว 13 หลักที่ถูกต้องแล้ว", ruleCode = Accounting.Helpers.EmployeeTaxIdWaiver.RuleCode });
+        }
+    }
+
     private void GuardPayrollJunkPayees()
     {
         foreach (var e in ChangeTracker.Entries<Models.Entities.WithholdingTaxCert>())
@@ -4794,7 +4829,8 @@ public class AccountingDbContext : DbContext
                 ?? Set<Models.Entities.Contact>().IgnoreQueryFilters().AsNoTracking()
                     .FirstOrDefault(x => x.Id == w.PayeeContactId && x.CompanyId == w.CompanyId);
             if (c == null || !Accounting.Helpers.PayrollJunkPayee.IsJunkTaxId(c.TaxId)) continue;
-            if (!Accounting.Helpers.PayrollJunkPayee.IsPayrollOrigin(this, w.CompanyId, c.Id)) continue;
+            // ฝ่ายค้าน LOW (ก): กุญแจเดียวกับรายงาน — "สร้างโดยเส้นเงินเดือน" (ผู้ติดต่อที่ HR ผูกเอง/ผู้ขายจริงไม่ถูกกัน)
+            if (!Accounting.Helpers.PayrollJunkPayee.IsPayrollCreated(this, w.CompanyId, c)) continue;
             throw new Accounting.Helpers.BusinessRuleException(Accounting.Helpers.PayrollJunkPayee.QuarantineMessage(c.Name, c.TaxId),
                 Accounting.Helpers.PayrollJunkPayee.QuarantineRuleCode, 422);
         }
@@ -4802,6 +4838,7 @@ public class AccountingDbContext : DbContext
 
     public override int SaveChanges()
     {
+        ClearTaxIdWaiversWhenIdValid();
         GuardPayrollJunkPayees();
         StampDocumentCreators();
         StampSignerFreeze();
@@ -4917,6 +4954,7 @@ public class AccountingDbContext : DbContext
 
     public override async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
     {
+        ClearTaxIdWaiversWhenIdValid();
         GuardPayrollJunkPayees();
         StampDocumentCreators();
         StampSignerFreeze();

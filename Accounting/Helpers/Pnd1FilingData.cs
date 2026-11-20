@@ -200,7 +200,7 @@ public static class Pnd1FilingData
         bool Blocks(EmployeeTaxIdentity.Result id) => id.Problem is TaxIdProblem.Undecryptable or TaxIdProblem.Invalid;
         // รอบ 275 แพ็ก E (T4 H-3 · คำตัดสิน 4.2): ตัวตัดสินเดียวกับ 50 ทวิ (EmployeeTaxIdentity.ForFiling) — ไม่มีเลข + มีภาษีหัก + ยังไม่รับทราบ ⇒ กันแถว
         // (เดิมไฟล์เติม 0 แต่ 50 ทวิ ไม่ออก ⇒ ไฟล์กับด่านนำส่งขัดกัน) · รับทราบแล้ว ⇒ เติม 0 ตามสเปก + Notes ℹ️ · ภาษี 0 ไม่ต้องรับทราบ (ไม่มี 50 ทวิ ให้ออก)
-        var waived = 0;
+        var waivedRefs = new HashSet<string>(StringComparer.Ordinal);
         bool BlockEmployee(Employee e, decimal tax)
         {
             var f = EmployeeTaxIdentity.ForFiling(e);
@@ -208,7 +208,7 @@ public static class Pnd1FilingData
                 || (f.Kind == EmployeeTaxIdentity.FilingKind.NeedsAcknowledgement && tax > 0);
             if (!blocks)
             {
-                if (f.Kind == EmployeeTaxIdentity.FilingKind.WaivedNoId) waived++;
+                if (f.Kind == EmployeeTaxIdentity.FilingKind.WaivedNoId) waivedRefs.Add(e.EmployeeCode);
                 return false;
             }
             blocked.Add(new BlockedRow(e.EmployeeCode, $"{e.FirstNameTh} {e.LastNameTh}".Trim(), f.Inspected.Masked, f.Inspected.Problem, f.Reason!, tax));
@@ -242,7 +242,6 @@ public static class Pnd1FilingData
 
         // ── 2. 50 ทวิ ที่ออกด้วยมือของผู้รับนอกรอบเงินเดือน ──
         var certRows = new List<Pnd1FileFormat.Row>();
-        var foreignCertNos = new HashSet<string>(StringComparer.Ordinal);
         var unknown = new List<(string CertNo, decimal Tax)>();
         var duplicates = new List<(string CertNo, decimal Tax)>();
         foreach (var c in certs
@@ -250,20 +249,17 @@ public static class Pnd1FilingData
             .OrderBy(c => c.CertificateNumber, StringComparer.Ordinal))
         {
             var contact = c.PayeeContact;
-            var payeeId = EmployeeTaxIdentity.InspectValue(contact?.TaxId);
-            // รอบ 275 แพ็ก E (T4 F12): ผู้รับที่ไม่อยู่ในไทย (ประเทศของผู้ติดต่อไม่ใช่ TH) ที่ช่องเลขเป็นเลขต่างประเทศ — ไม่ใช่เลขไทยที่ผิด ⇒ ไม่กันทั้งไฟล์
-            // ลงเลข 0 13 หลักตามสเปกช่องที่ 5 + Notes (เดิม InspectValue = Invalid ⇒ ไฟล์ ภ.ง.ด.1 ของทั้งบริษัทถูกปฏิเสธ)
-            if (payeeId.Problem == TaxIdProblem.Invalid && !IsThaiResident(contact?.CountryCode))
+            // รอบ 275 แพ็ก E ฝ่ายค้าน MED-2: ตัวตัดสินเดียวกับแถวเงินเดือน/รายงานสุขภาพ (EmployeeTaxIdentity.ForFiling) — ไม่มีทางลัดผ่านประเทศของผู้ติดต่อ ·
+            // ไม่มีเลข + มีภาษี ⇒ ต้องรับทราบรายคน (ผู้ติดต่อ) · เลขต่างประเทศในช่องเลข = เลขไทยที่ผิด ⇒ กัน (ล้างช่องแล้วรับทราบ หรือกรอกเลขที่กรมออกให้)
+            var payeeF = EmployeeTaxIdentity.ForFiling(contact?.TaxId, null, contact?.TaxIdWaiverAcknowledgedAt);
+            if (payeeF.Kind == EmployeeTaxIdentity.FilingKind.Unusable
+                || (payeeF.Kind == EmployeeTaxIdentity.FilingKind.NeedsAcknowledgement && c.TotalTaxAmount > 0))
             {
-                foreignCertNos.Add(c.CertificateNumber);
-                payeeId = new EmployeeTaxIdentity.Result(null, TaxIdProblem.Missing, payeeId.Masked);
-            }
-            if (Blocks(payeeId))
-            {
-                blocked.Add(new BlockedRow(c.CertificateNumber, contact?.Name, payeeId.Masked, payeeId.Problem, payeeId.Reason!, c.TotalTaxAmount));
+                blocked.Add(new BlockedRow(c.CertificateNumber, contact?.Name, payeeF.Inspected.Masked, payeeF.Inspected.Problem, payeeF.Reason!, c.TotalTaxAmount));
                 continue;
             }
-            var tid = payeeId.Value ?? "";
+            if (payeeF.Kind == EmployeeTaxIdentity.FilingKind.WaivedNoId) waivedRefs.Add(c.CertificateNumber);
+            var tid = payeeF.Value ?? "";
 
             var cond = WhtGrossUp.FilingCondition(c.CertificateType);
             // รอบ 2026-10-16 (สเปก WHTSVS): นิติบุคคล = ชื่อเต็มในช่องชื่อ · นามสกุล/คำนำหน้าว่าง (ไม่ผ่า "บริษัท ก จำกัด" เป็นชื่อ/สกุล) ·
@@ -329,13 +325,15 @@ public static class Pnd1FilingData
                 + string.Join(", ", unknown.Select(u => u.CertNo).Distinct().Take(3))
                 + (unknown.Select(u => u.CertNo).Distinct().Count() > 3 ? ", …" : "")
                 + " · แก้ประเภทเงินได้ในหนังสือรับรอง (หรือย้ายไปแบบ ภ.ง.ด.3) แล้วสร้างไฟล์ใหม่");
-        var noTaxId = rows.Count(r => ThaiTaxId.Normalize(r.PayeeTaxId).Length == 0
-            && !(r.SourceRef != null && foreignCertNos.Any(n => r.SourceRef.Contains(n, StringComparison.Ordinal)))) - waived;
-        if (foreignCertNos.Count > 0)
-            notes.Add($"ℹ️ 50 ทวิ {foreignCertNos.Count} ใบเป็นของผู้รับที่ไม่อยู่ในประเทศไทยซึ่งเลขในช่องเลขประจำตัวไม่ใช่เลขไทย 13 หลัก — ไฟล์ลงเลข 0 13 หลักตามสเปกช่องที่ 5");
-        if (waived > 0)
-            notes.Add($"ℹ️ {waived} รายการเป็นผู้ไม่มีเลขประจำตัว 13 หลักที่ผู้ทำบัญชีรับทราบแล้ว — ไฟล์ลงเลข 0 13 หลักตามสเปกช่องที่ 5 "
-                + "(50 ทวิ ของคนนั้นพิมพ์เลขหนังสือเดินทางเป็นข้อมูลประกอบ) · ได้เลขจากกรมสรรพากรแล้ว ให้กรอกที่ทะเบียนพนักงานก่อนยื่นงวดถัดไป");
+        bool IsWaivedRow(Pnd1FileFormat.Row r) => r.SourceRef != null
+            && waivedRefs.Any(n => string.Equals(r.SourceRef, n, StringComparison.Ordinal) || r.SourceRef.Split(' ').Contains(n));
+        var waivedRows = rows.Count(r => ThaiTaxId.Normalize(r.PayeeTaxId).Length == 0 && IsWaivedRow(r));
+        var noTaxId = rows.Count(r => ThaiTaxId.Normalize(r.PayeeTaxId).Length == 0 && !IsWaivedRow(r));
+        // ฝ่ายค้าน MED-2: ยังไม่ได้ยืนยันกับสเปก RD ว่าช่อง 5 รับเลข 0 ได้ (หรือต้องใช้เลขผู้เสียภาษีที่กรมออกให้คนต่างชาติ) — คำถามถึงเจ้าของ/นักบัญชี (DECISIONS 275-E-7)
+        if (waivedRows > 0)
+            notes.Add($"⚠️ {waivedRows} รายการเป็นผู้ไม่มีเลขประจำตัว 13 หลักที่ผู้ทำบัญชีรับทราบแล้ว — ไฟล์ลงเลข 0 13 หลักในช่องที่ 5 "
+                + "**ยังไม่ได้ยืนยันกับสเปกกรมสรรพากรว่ารับเลข 0 ได้** (อาจต้องใช้เลขประจำตัวผู้เสียภาษีที่กรมออกให้ผู้มีเงินได้ต่างชาติ) — ตรวจกับนักบัญชีก่อนยื่น · "
+                + "ได้เลขแล้วให้กรอกที่ทะเบียนพนักงาน/ผู้ติดต่อ (การรับทราบถูกล้างเอง)");
         if (noTaxId > 0)
             notes.Add($"⚠️ {noTaxId} รายการไม่มีเลขประจำตัวผู้เสียภาษี (ไฟล์ลงเลข 0 13 หลักตามสเปกช่องที่ 5 — สรรพากรจะไม่รับเป็นเลขของผู้มีเงินได้) — "
                 + "กรอกเลขบัตรประชาชนที่ทะเบียนพนักงาน/ผู้ติดต่อ แล้วสร้างไฟล์ใหม่");

@@ -17,12 +17,38 @@ public static class WhtPayeeSnapshot
 {
     public sealed record Snapshot(string? Title, string? Name, string? TaxId, string? BranchCode, string? BranchName,
         string? Address, string? BuildingNumber, string? BuildingName, string? Moo, string? StreetName,
-        string? SubDistrict, string? District, string? Province, string? PostalCode);
+        string? SubDistrict, string? District, string? Province, string? PostalCode,
+        // รอบ 275 แพ็ก E ฝ่ายค้าน LOW (ข)(ฉ): ผู้ไม่มีเลข 13 หลักที่รับทราบแล้ว + เลขพาสปอร์ต ณ วันออก (ข้อความประกอบบนใบ — ไม่อ่านค่าสดภายหลัง)
+        bool NoThaiIdAcknowledged = false, string? Passport = null);
 
     private static readonly JsonSerializerOptions Json = new() { PropertyNameCaseInsensitive = true };
 
-    public static string Serialize(Contact c) => JsonSerializer.Serialize(new Snapshot(c.TitleTh, c.Name, c.TaxId, c.BranchCode, c.BranchName,
-        c.Address, c.BuildingNumber, c.BuildingName, c.Moo, c.StreetName, c.SubDistrict, c.District, c.Province, c.PostalCode));
+    public static string Serialize(Contact c) => Serialize(c, waivedPassport: null, employeeWaived: false);
+
+    /// <summary>รอบ 275 แพ็ก E: <paramref name="employeeWaived"/> = ผู้รับเป็นพนักงานที่รับทราบแล้วว่าไม่มีเลข (เส้นเงินเดือนส่ง) · ผู้ติดต่อที่รับทราบเองใช้ธงบนผู้ติดต่อ ·
+    /// มีผลเฉพาะเมื่อเลขบนใบว่าง · พาสปอร์ตที่ถอดรหัสไม่ได้ไม่ถูกคัดลอก</summary>
+    public static string Serialize(Contact c, string? waivedPassport, bool employeeWaived)
+    {
+        var noId = EmployeeTaxIdentity.InspectValue(c.TaxId).Problem == TaxIdProblem.Missing;
+        var ack = noId && (employeeWaived || c.TaxIdWaiverAcknowledgedAt != null);
+        var passport = (waivedPassport ?? "").Trim();
+        var keepPassport = ack && passport.Length > 0 && !EncryptedColumnConverter.IsUnreadable(passport);
+        return JsonSerializer.Serialize(new Snapshot(c.TitleTh, c.Name, c.TaxId, c.BranchCode, c.BranchName,
+            c.Address, c.BuildingNumber, c.BuildingName, c.Moo, c.StreetName, c.SubDistrict, c.District, c.Province, c.PostalCode,
+            ack, keepPassport ? passport : null));
+    }
+
+    /// <summary>รอบ 275 แพ็ก E: (รับทราบไม่มีเลข, พาสปอร์ต) ตามสำเนา ณ วันออก · ไม่มีสำเนา/สำเนาเสีย ⇒ (false, null)</summary>
+    public static (bool NoThaiIdAcknowledged, string? Passport) WaiverOf(WithholdingTaxCert cert)
+    {
+        if (string.IsNullOrWhiteSpace(cert.PayeeSnapshotJson)) return (false, null);
+        try
+        {
+            var s = JsonSerializer.Deserialize<Snapshot>(cert.PayeeSnapshotJson!, Json);
+            return s == null ? (false, null) : (s.NoThaiIdAcknowledged, s.Passport);
+        }
+        catch (JsonException) { return (false, null); }
+    }
 
     /// <summary>ใบนี้ควรมีสำเนาไหม (ออกแล้ว/พิมพ์แล้ว)</summary>
     public static bool ShouldStamp(WithholdingTaxCertStatus status) => WhtCertFilingScope.Filed.Contains(status);

@@ -13,6 +13,10 @@
 | P275E-9 | ตัวช่วย: เลขที่ใบเงินเดือน → รหัสพนักงาน · "เลขขยะ" · ทางไปต่อตามงวด · M-3 แบบ/ประเทศ | ตามตาราง | `EmployeeCodeCandidates_*` · `IsJunkTaxId_*` · `PayeeAction_*` · `PayeeNeedsThaiId_*` |
 | P275E-10 | (M-6) แถวพักนำเข้าถอดไม่ได้ | `BusinessRuleException` `IMPORT-ROW-UNREADABLE` ข้อความไทย ไม่เผย ciphertext · JSON ปกติอ่านได้ · ย้อนการนำเข้าปฏิเสธเฉพาะแถวนั้น | `ImportJson_*` |
 | P275E-11 | (L-7) ชื่อผู้ติดต่อของพนักงานต่างชาติ | ไม่มีชื่อไทย ⇒ ชื่ออังกฤษ · มีชื่อไทยคงรูปเดิม | `PayeeName_*` |
+| P275E-13 | (ฝ่ายค้าน MED-1) เลข ปกส. ที่ปล่อยเลขบัตรผิดผ่าน | เท่ากับเลขบัตรผิด/13 หลัก checksum ผิด/ไม่ครบ/ตัวอักษร ⇒ กัน · เลข ปกส. ถูก ⇒ ผ่าน | `Sso_เลขปกสที่ไม่ผ่านรูปแบบ_*` · `Sso_เลขบัตรผิดแต่มีเลขประกันสังคมที่ถูกต้อง_*` |
+| P275E-14 | (ฝ่ายค้าน MED-2) ผู้รับใบมือ ภ.ง.ด.1 — ไม่มีทางลัดผ่านประเทศ | เลขต่างประเทศ + รับทราบ ⇒ ยังกัน · ไม่มีเลข ⇒ ต้องรับทราบ · รับทราบ ⇒ เลข 0 + ⚠️ "ยังไม่ได้ยืนยันกับสเปก" · เลขถูก/ภาษี 0 ไม่ถูกแตะ | `Pnd1_ผู้รับใบมือ_ไม่มีทางลัดผ่านประเทศ_*` (แทน `Pnd1_F12_*` เดิม) |
+| P275E-15 | (ฝ่ายค้าน MED-3 · Db) ซ่อมใบในงวดที่ยื่นแล้ว | ยืนยันงวดผิด ⇒ ไม่แตะ · ยืนยันงวดนั้น ⇒ ใบเดิมสำเนาเดิมคงอยู่ (ยกเลิก + SupersededByCertId) · ใบแทน `-E001-2` ยอด/รอบเดิม เลขถูก · รายการค้างยื่นเพิ่มเติม · บันทึกต้องมีเลขอ้างอิง → ค้าง 0 | Db `ผู้ติดต่อเลขขยะจากเงินเดือน_*` |
+| P275E-16 | (ฝ่ายค้าน LOW) กุญแจสร้างโดยเงินเดือน · ล้างการรับทราบเมื่อได้เลข · พาสปอร์ตจากสำเนา ณ วันออก (ปิดบัง/เต็ม) · ถอนต้องมีเหตุ | ตามตาราง · Db: เลขถูก → ล้างช่อง ⇒ กลับเป็นต้องรับทราบ + audit "cleared" | `IsPayrollCreated_*` · `ShouldClear_*` · `WhtCertPayeeNote_*` · Db `ไม่มีเลข13หลัก_*` |
 | P275E-12 | จุดเรียก: ForFiling ทุกทางออก · ด่าน SaveChanges ทั้งสองเมธอด · ซ่อมต้องยืนยันงวดยื่นแล้ว · พาสปอร์ตจากตัวโหลดเดียว · ImportJson | ล็อกด้วย `required_call_site_check` (`_R275E_`) | `tools/required_call_site_check.py` |
 
 ## P276 — ผู้ใช้เห็นเฉพาะเอกสารที่ตัวเองสร้าง / เฉพาะร่าง + ส่งขออนุมัติพื้นฐาน (รอบ 276 · คำตัดสิน 276-1…8 · DOCUMENT_FLOW §3.2-276)
@@ -1501,7 +1505,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **966 ไฟล์ · 10,531 `[Fact]` + 1,434 `[Theory]` (6,811 `InlineData`)** ณ 2026-11-20 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`) | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)**, **ReceiptFormRule (รูปแบบกระดาษหลักฐานรับเงิน · รอบ 203)** |
+| เทสต์ที่มี | **966 ไฟล์ · 10,534 `[Fact]` + 1,435 `[Theory]` (6,815 `InlineData`)** ณ 2026-11-20 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`) | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)**, **ReceiptFormRule (รูปแบบกระดาษหลักฐานรับเงิน · รอบ 203)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
 | CI | ✅ `.github/workflows/ci.yml` — static check → restore → build → test; รันบน PR/push เข้า main/master + `workflow_dispatch` (branch `claude/**` ปิดไว้ กัน mail spam ระหว่างพัฒนา) |

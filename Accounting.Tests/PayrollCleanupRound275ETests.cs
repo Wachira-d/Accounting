@@ -104,8 +104,9 @@ public class PayrollCleanupRound275ETests
         var waived = Pnd1FilingData.Build(new[] { Detail("F001", null, 2291.67m, Ack) }, Array.Empty<WithholdingTaxCert>(), annual: true);
         Assert.Empty(waived.BlockedRows);
         Assert.Null(Assert.Single(waived.Rows).PayeeTaxId);
-        Assert.Contains(waived.Notes, n => n.StartsWith("ℹ️ 1 รายการเป็นผู้ไม่มีเลขประจำตัว 13 หลักที่ผู้ทำบัญชีรับทราบแล้ว"));
-        Assert.DoesNotContain(waived.Notes, n => n.StartsWith("⚠️") && n.Contains("ไม่มีเลขประจำตัวผู้เสียภาษี"));
+        // ฝ่ายค้าน MED-2: ป้ายเตือนบอกชัดว่ายังไม่ยืนยันกับสเปก RD ว่าช่อง 5 รับเลข 0 ได้
+        Assert.Contains(waived.Notes, n => n.StartsWith("⚠️ 1 รายการเป็นผู้ไม่มีเลขประจำตัว 13 หลักที่ผู้ทำบัญชีรับทราบแล้ว") && n.Contains("ยังไม่ได้ยืนยันกับสเปกกรมสรรพากร"));
+        Assert.DoesNotContain(waived.Notes, n => n.Contains("รายการไม่มีเลขประจำตัวผู้เสียภาษี (ไฟล์ลงเลข 0"));
     }
 
     [Fact]
@@ -125,38 +126,54 @@ public class PayrollCleanupRound275ETests
         Assert.Empty(r.Rows);
     }
 
-    [Fact]
-    public void Pnd1_F12_ผู้รับไม่อยู่ในไทยเลขต่างประเทศ_ไม่กันทั้งไฟล์_ทิศตรงข้ามผู้รับไทยเลขผิดยังกัน()
+    private static WithholdingTaxCert ManualCert(string no, string? taxId, string country, DateTime? waiver = null, decimal tax = 1500m)
     {
-        WithholdingTaxCert Cert(string no, string taxId, string country)
+        var c = new WithholdingTaxCert
         {
-            var c = new WithholdingTaxCert
-            {
-                CertificateNumber = no, TaxFormType = TaxType.WithholdingTax1, TaxYear = 2026, TaxMonth = 9, Status = WithholdingTaxCertStatus.Issued,
-                TotalIncomeAmount = 10000m, TotalTaxAmount = 1500m,
-                PayeeContact = new Contact { Name = "Foreign Agent", TaxId = taxId, CountryCode = country, ContactType = ContactType.Individual, PostalCode = "10500" },
-            };
-            c.Lines.Add(new WithholdingTaxCertLine { LineOrder = 1, IncomeTypeCode = "2", PaymentDate = new DateTime(2026, 9, 15), IncomeAmount = 10000m, TaxRate = 15m, TaxAmount = 1500m });
-            return c;
-        }
-        var foreign = Pnd1FilingData.Build(Array.Empty<PayrollDetail>(), new[] { Cert("WHT-1", "US-998877", "US") }, annual: false);
-        Assert.Empty(foreign.BlockedRows);
-        var row = Assert.Single(foreign.Rows);
-        Assert.Equal("", ThaiTaxId.Normalize(row.PayeeTaxId));   // ไฟล์ลงเลข 0 13 หลักตามสเปก (ไม่ลงเลขต่างประเทศ)
-        Assert.Equal(Pnd1FileFormat.Section40_2NonResident, row.Category);
-        Assert.Contains(foreign.Notes, n => n.Contains("ไม่อยู่ในประเทศไทย"));
-        Assert.DoesNotContain(foreign.Notes, n => n.StartsWith("⚠️") && n.Contains("ไม่มีเลขประจำตัวผู้เสียภาษี"));
+            CertificateNumber = no, TaxFormType = TaxType.WithholdingTax1, TaxYear = 2026, TaxMonth = 9, Status = WithholdingTaxCertStatus.Issued,
+            TotalIncomeAmount = 10000m, TotalTaxAmount = tax,
+            PayeeContact = new Contact { Name = "Foreign Agent", TaxId = taxId, CountryCode = country, ContactType = ContactType.Individual, PostalCode = "10500",
+                TaxIdWaiverAcknowledgedAt = waiver },
+        };
+        c.Lines.Add(new WithholdingTaxCertLine { LineOrder = 1, IncomeTypeCode = "2", PaymentDate = new DateTime(2026, 9, 15), IncomeAmount = 10000m, TaxRate = 15m, TaxAmount = tax });
+        return c;
+    }
 
-        var thai = Pnd1FilingData.Build(Array.Empty<PayrollDetail>(), new[] { Cert("WHT-2", "12345", "TH") }, annual: false);
-        Assert.Equal(TaxIdProblem.Invalid, Assert.Single(thai.BlockedRows).Problem);
+    /// <summary>ฝ่ายค้าน MED-2: ไม่มีทางลัดผ่านประเทศของผู้ติดต่อ — เลขต่างประเทศในช่องเลข = เลขผิด (กัน) · ไม่มีเลข + ภาษี ⇒ ต้องรับทราบรายคน ·
+    /// รับทราบแล้ว ⇒ เลข 0 + ป้ายเตือน · ทิศตรงข้าม: ผู้รับเลขถูกไม่ถูกแตะ</summary>
+    [Fact]
+    public void Pnd1_ผู้รับใบมือ_ไม่มีทางลัดผ่านประเทศ_ต้องรับทราบรายคน_ทิศตรงข้ามเลขถูกผ่าน()
+    {
+        var foreignNo = Pnd1FilingData.Build(Array.Empty<PayrollDetail>(), new[] { ManualCert("WHT-1", "US-998877", "US", waiver: Ack) }, annual: false);
+        Assert.Equal(TaxIdProblem.Invalid, Assert.Single(foreignNo.BlockedRows).Problem);   // รับทราบไม่มีผลกับเลขผิด
+
+        var noAck = Pnd1FilingData.Build(Array.Empty<PayrollDetail>(), new[] { ManualCert("WHT-2", null, "US") }, annual: false);
+        var b = Assert.Single(noAck.BlockedRows);
+        Assert.Equal(TaxIdProblem.Missing, b.Problem);
+        Assert.Contains("รับทราบไม่มีเลข 13 หลัก", b.Reason);
+
+        var acked = Pnd1FilingData.Build(Array.Empty<PayrollDetail>(), new[] { ManualCert("WHT-3", null, "US", waiver: Ack) }, annual: false);
+        Assert.Empty(acked.BlockedRows);
+        var row = Assert.Single(acked.Rows);
+        Assert.Equal("", ThaiTaxId.Normalize(row.PayeeTaxId));
+        Assert.Equal(Pnd1FileFormat.Section40_2NonResident, row.Category);
+        Assert.Contains(acked.Notes, n => n.Contains("ยังไม่ได้ยืนยันกับสเปกกรมสรรพากร"));
+
+        var ok = Pnd1FilingData.Build(Array.Empty<PayrollDetail>(), new[] { ManualCert("WHT-4", Valid, "TH") }, annual: false);
+        Assert.Empty(ok.BlockedRows);
+        Assert.Equal(Valid, Assert.Single(ok.Rows).PayeeTaxId);
+        // ภาษี 0 ไม่ต้องรับทราบ (เส้นเดิม)
+        Assert.Empty(Pnd1FilingData.Build(Array.Empty<PayrollDetail>(), new[] { ManualCert("WHT-5", null, "TH", tax: 0m) }, annual: false).BlockedRows);
     }
 
     // ───────── H-3 / F3 · ไฟล์ สปส. ตามเลข ปกส. ─────────
 
+    private const string ValidSsn = "3100500123458";
+
     [Fact]
-    public void Sso_เลขบัตรผิดแต่มีเลขประกันสังคม_ไม่กันไฟล์_ช่องเลขบัตรว่าง_ทิศตรงข้ามไม่มีเลขปกสยังกัน()
+    public void Sso_เลขบัตรผิดแต่มีเลขประกันสังคมที่ถูกต้อง_ไม่กันไฟล์_ช่องเลขบัตรว่าง_ทิศตรงข้ามไม่มีเลขปกสยังกัน()
     {
-        SsoInsuredNumber.ThrowIfUnusable("สปส.1-10", new[] { ("F001", (string?)"ต่างชาติ", (string?)"AB1234567", (string?)"1234567890123") });
+        SsoInsuredNumber.ThrowIfUnusable("สปส.1-10", new[] { ("F001", (string?)"ต่างชาติ", (string?)"AB1234567", (string?)ValidSsn) });
         Assert.Equal("", SsoInsuredNumber.CitizenIdForFile("AB1234567"));
         Assert.Equal(Valid, SsoInsuredNumber.CitizenIdForFile(Valid));
         var ex = Assert.Throws<BusinessRuleException>(() => SsoInsuredNumber.ThrowIfUnusable("สปส.1-10",
@@ -165,7 +182,22 @@ public class PayrollCleanupRound275ETests
         // ถอดรหัสไม่ได้ยังกันทั้งไฟล์แม้มีเลข ปกส. (ข้อมูลหาย ต้องให้คนเห็น)
         var cipher = EncryptionHelper.Encrypt(Valid, "lost-key-275e");
         Assert.Throws<BusinessRuleException>(() => SsoInsuredNumber.ThrowIfUnusable("สปส.1-10",
-            new[] { ("F003", (string?)"หาย", (string?)cipher, (string?)"1234567890123") }));
+            new[] { ("F003", (string?)"หาย", (string?)cipher, (string?)ValidSsn) }));
+    }
+
+    /// <summary>ฝ่ายค้าน MED-1: เลข ปกส. ที่ปล่อยผ่านเลขบัตรผิดต้องเป็น 13 หลัก + mod-11 — เท่ากับเลขบัตรที่ผิด/checksum ผิด/ไม่ครบ 13 หลัก ⇒ กัน</summary>
+    [Theory]
+    [InlineData("1101700001238")]   // เท่ากับเลขบัตรที่ checksum ผิด
+    [InlineData("1234567890123")]   // 13 หลัก checksum ผิด
+    [InlineData("1234567890")]      // ไม่ครบ 13 หลัก
+    [InlineData("SSO-ABC")]
+    public void Sso_เลขปกสที่ไม่ผ่านรูปแบบ_ไม่ปล่อยเลขบัตรผิดผ่าน(string ssn)
+    {
+        var ex = Assert.Throws<BusinessRuleException>(() => SsoInsuredNumber.ThrowIfUnusable("สปส.1-10",
+            new[] { ("E010", (string?)"เลขผิด", (string?)BadChecksum, (string?)ssn) }));
+        Assert.Contains("E010", ex.Message);
+        Assert.False(SsoInsuredNumber.HasUsableSsn(ssn));
+        Assert.True(SsoInsuredNumber.HasUsableSsn(ValidSsn));
     }
 
     // ───────── H-2 · เครื่องมือซ่อม + ทางไปต่อ ─────────
@@ -226,6 +258,48 @@ public class PayrollCleanupRound275ETests
         Assert.DoesNotContain(cipher, ex.Message);
         Assert.Equal("x", ImportJson.Deserialize<Dictionary<string, string?>>("{\"name\":\"x\"}")!["name"]);
         Assert.Null(ImportJson.Deserialize<Dictionary<string, string?>>(null));
+    }
+
+    // ───────── ฝ่ายค้าน LOW (ก)(ง)(ข)(ฉ) ─────────
+
+    [Fact]
+    public void IsPayrollCreated_กุญแจสร้างโดยเงินเดือน_ผู้ขายจริงหรือHRผูกเองไม่ใช่()
+    {
+        Assert.True(PayrollJunkPayee.IsPayrollCreated("system:payroll-pnd1", false, false, false, false));
+        Assert.True(PayrollJunkPayee.IsPayrollCreated(null, false, true, false, false));   // ข้อมูลเก่าก่อนมีเครื่องหมาย
+        Assert.False(PayrollJunkPayee.IsPayrollCreated(null, false, true, true, false));   // มีเอกสาร/ใบอื่นอ้าง = ผู้ขายจริง
+        Assert.False(PayrollJunkPayee.IsPayrollCreated(null, false, true, false, true));   // HR ผูกกับพนักงานเอง
+        Assert.False(PayrollJunkPayee.IsPayrollCreated(null, true, true, false, false));   // ลูกค้า
+        Assert.False(PayrollJunkPayee.IsPayrollCreated("hr@company.test", false, true, false, false));   // ผู้ใช้สร้างเอง
+    }
+
+    [Fact]
+    public void ShouldClear_ได้เลขถูกแล้วการรับทราบหมดผล_เลขผิดหรือว่างไม่ล้าง()
+    {
+        Assert.True(EmployeeTaxIdWaiver.ShouldClear(Ack, null, Valid));
+        Assert.False(EmployeeTaxIdWaiver.ShouldClear(Ack, null, null));
+        Assert.False(EmployeeTaxIdWaiver.ShouldClear(Ack, null, BadChecksum));
+        Assert.False(EmployeeTaxIdWaiver.ShouldClear(null, null, Valid));
+    }
+
+    [Fact]
+    public void WhtCertPayeeNote_อ่านจากสำเนาณวันออก_ปิดบังพาสปอร์ตเว้นแต่ขอเต็ม_ไม่มีธงไม่แสดง()
+    {
+        var contact = new Contact { Name = "John Smith", TaxId = null };
+        var cert = new WithholdingTaxCert { TaxFormType = TaxType.WithholdingTax1, PayeeContact = contact,
+            PayeeSnapshotJson = WhtPayeeSnapshot.Serialize(contact, "GB7654321", employeeWaived: true) };
+        Assert.Contains("GB7654321", WhtCertPayeeNote.Of(cert, includePii: true));
+        var masked = WhtCertPayeeNote.Of(cert, includePii: false)!;
+        Assert.DoesNotContain("7654", masked);
+        Assert.Contains("ไม่มีเลขประจำตัวผู้เสียภาษี 13 หลัก", masked);
+        // ค่าสดเปลี่ยนภายหลังไม่กระทบ (อ่านจากสำเนา)
+        contact.Name = "เปลี่ยนชื่อ";
+        Assert.Contains("GB7654321", WhtCertPayeeNote.Of(cert, includePii: true));
+        // ไม่มีธงรับทราบในสำเนา ⇒ ไม่แสดง · แบบอื่นไม่แสดง
+        var plain = new WithholdingTaxCert { TaxFormType = TaxType.WithholdingTax1, PayeeContact = contact, PayeeSnapshotJson = WhtPayeeSnapshot.Serialize(contact) };
+        Assert.Null(WhtCertPayeeNote.Of(plain, includePii: true));
+        cert.TaxFormType = TaxType.WithholdingTax3;
+        Assert.Null(WhtCertPayeeNote.Of(cert, includePii: true));
     }
 
     // ───────── L-7 · ชื่ออังกฤษ ─────────

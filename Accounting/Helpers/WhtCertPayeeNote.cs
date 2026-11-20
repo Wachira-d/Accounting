@@ -1,29 +1,23 @@
-using Accounting.Data;
 using Accounting.Models.Entities;
 using Accounting.Models.Enums;
-using Microsoft.EntityFrameworkCore;
 
 namespace Accounting.Helpers;
 
 /// <summary>
-/// รอบ 275 แพ็ก E (T4 H-3 · L-8 · คำตัดสิน 4.2) — ข้อความประกอบบน 50 ทวิ ภ.ง.ด.1 ของ<b>ผู้ไม่มีเลข 13 หลักที่ผู้ทำบัญชีรับทราบแล้ว</b> (เลขพาสปอร์ต) ·
-/// ตัวโหลดเดียวของ PDF (HTML + QuestPDF) และหน้าพิมพ์ <c>wht.html</c> (ผ่าน DTO <c>PayeeReferenceNote</c>) · ข้อความจาก
-/// <see cref="EmployeeTaxIdentity.WaiverCertNote"/> ตัวเดียว
-///
-/// <para>เงื่อนไข: ใบแบบ ภ.ง.ด.1 · เลขผู้ถูกหักบนใบ (สำเนา ณ วันออก) ว่าง · ผู้ติดต่อของใบคือผู้ติดต่อที่ผูกกับพนักงาน (<c>Employee.ContactId</c>) ที่รับทราบแล้ว ·
-/// พาสปอร์ตอ่านผ่าน converter (เข้ารหัสในฐาน — ไม่คัดลอกลงใบเป็นข้อความเปิด) · ทุก query กรอง <c>CompanyId</c></para>
+/// รอบ 275 แพ็ก E (T4 H-3 · L-8 · คำตัดสิน 4.2 · ฝ่ายค้าน LOW (ข)(ฉ)) — ข้อความประกอบบน 50 ทวิ ภ.ง.ด.1 ของ<b>ผู้ไม่มีเลข 13 หลักที่รับทราบแล้ว</b> (เลขพาสปอร์ต) ·
+/// อ่านจาก<b>สำเนาผู้ถูกหัก ณ วันออก</b> (<see cref="WhtPayeeSnapshot.WaiverOf"/>) เท่านั้น — ใบเก่าไม่เปลี่ยนตามทะเบียนปัจจุบัน ·
+/// ตัวเดียวของ PDF (HTML + QuestPDF · เอกสารทางการ = เลขเต็ม) และหน้าพิมพ์ <c>wht.html</c> (ผ่าน DTO — ปิดบังเว้นแต่ผู้ขอมีสิทธิ์ <c>pii:view</c>) ·
+/// ข้อความจาก <see cref="EmployeeTaxIdentity.WaiverCertNote"/> ตัวเดียว
 /// </summary>
 public static class WhtCertPayeeNote
 {
-    public static async Task<string?> LoadAsync(AccountingDbContext db, Guid companyId, WithholdingTaxCert cert, CancellationToken ct = default)
+    /// <param name="includePii">true = เลขพาสปอร์ตเต็ม (PDF ทางการ / ผู้มี pii:view) · false = ปิดบัง (<see cref="PiiMask.Passport"/>)</param>
+    public static string? Of(WithholdingTaxCert cert, bool includePii)
     {
         if (cert.TaxFormType != TaxType.WithholdingTax1) return null;
         if (EmployeeTaxIdentity.InspectValue(WhtPayeeSnapshot.Of(cert)?.TaxId).Problem != TaxIdProblem.Missing) return null;
-        var emp = await db.Set<Employee>().AsNoTracking()
-            .Where(e => e.CompanyId == companyId && e.ContactId == cert.PayeeContactId && e.TaxIdWaiverAcknowledgedAt != null)
-            .Select(e => new { e.PassportNumber })
-            .FirstOrDefaultAsync(ct);
-        // ใบออกไปแล้วโดยไม่มีเลข (สำเนา ณ วันออก) — แสดงข้อความประกอบตามการรับทราบ แม้ภายหลังพนักงานได้เลขแล้ว (ใบเดิมไม่เปลี่ยนเลขเอง)
-        return emp == null ? null : EmployeeTaxIdentity.WaiverCertNote(true, emp.PassportNumber);
+        var (ack, passport) = WhtPayeeSnapshot.WaiverOf(cert);
+        if (!ack) return null;
+        return EmployeeTaxIdentity.WaiverCertNote(true, includePii ? passport : PiiMask.Passport(passport));
     }
 }

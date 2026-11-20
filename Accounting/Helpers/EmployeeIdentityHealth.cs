@@ -143,8 +143,10 @@ public static class EmployeeIdentityHealth
             {
                 CompanyId = c.CompanyId, PayeeContactId = c.PayeeContactId, PayeeContact = k, PayeeSnapshotJson = c.PayeeSnapshotJson,
             });
-            var id = EmployeeTaxIdentity.InspectValue(onCert?.TaxId);
-            if (id.Problem is not (TaxIdProblem.Undecryptable or TaxIdProblem.Invalid)) continue;
+            // ฝ่ายค้าน MED-2: ตัวตัดสินเดียวกับไฟล์ ภ.ง.ด.1 (ForFiling) — เลขใช้ไม่ได้ = Unusable · ไม่มีเลขไม่ใช่ "เลขผิด" (อยู่ในรายการรับทราบ)
+            var fid = EmployeeTaxIdentity.ForFiling(onCert?.TaxId, null, k.TaxIdWaiverAcknowledgedAt);
+            if (fid.Kind != EmployeeTaxIdentity.FilingKind.Unusable) continue;
+            var id = fid.Inspected;
             var filed = await WhtCertVoidGuard.CheckAsync(db, companyId, new[] { c.Id }, ct) != null;
             rows.Add(new Row("หนังสือรับรอง 50 ทวิ", c.CertificateNumber, onCert?.Name ?? k.Name, "เลขผู้ถูกหักภาษี", Issue.PayeeContactInvalid, id.Masked ?? "",
                 PayeeAction(c.SourcePayrollRunId != null, filed), true));
@@ -188,8 +190,9 @@ public static class EmployeeIdentityHealth
     /// <summary>รอบ 275 แพ็ก E (T4 H-2 (ก)): ทางไปต่อของใบ 50 ทวิ ที่เลขผู้ถูกหักใช้ไม่ได้ — ตรงกับสิ่งที่ระบบทำได้จริง (pure)</summary>
     internal static string PayeeAction(bool fromPayroll, bool periodFiled) => (fromPayroll, periodFiled) switch
     {
-        (true, true) => "ใบนี้อยู่ใน ภ.ง.ด.1 ที่ยื่นแล้ว — ระบบไม่ยกเลิก/ไม่ออกใบใหม่ (“สร้างเอกสารใหม่” จะถูกปฏิเสธ) · แก้เลขที่ทะเบียนพนักงาน แล้วซ่อมผู้ติดต่อที่ "
-            + PayrollJunkPayee.ToolName + " (ยืนยันว่าจะยื่น ภ.ง.ด.1 เพิ่มเติม) ⇒ ใบเดิมพิมพ์ใหม่ได้เลขที่ถูก (เลขที่ใบ/ยอดเดิม) แล้วยื่น ภ.ง.ด.1 เพิ่มเติมของเดือนนั้นด้วยไฟล์ที่ดาวน์โหลดใหม่",
+        (true, true) => "ใบนี้อยู่ใน ภ.ง.ด.1 ที่ยื่นแล้ว — “สร้างเอกสารใหม่” ที่รอบเงินเดือนจะถูกปฏิเสธ · แก้เลขที่ทะเบียนพนักงาน แล้วซ่อมผู้ติดต่อที่ "
+            + PayrollJunkPayee.ToolName + " (ยืนยันทีละงวดว่าจะยื่น ภ.ง.ด.1 เพิ่มเติม) ⇒ ระบบออกใบแทนเลขที่ใหม่ (ใบเดิมคงอยู่) และขึ้นรายการค้าง “ต้องยื่น ภ.ง.ด.1 เพิ่มเติม” "
+            + "จนกว่าจะบันทึกว่ายื่นแล้ว",
         (true, false) => "แก้เลขที่ทะเบียนพนักงาน (หรือตั้งคีย์เดิม) แล้วกด “สร้างเอกสารใหม่” ที่รอบเงินเดือน — ระบบยกเลิกใบเดิมและออกใหม่ · "
             + "ผู้ติดต่อเลขผิดที่เหลือ ซ่อมที่ " + PayrollJunkPayee.ToolName,
         (false, true) => "ใบนี้อยู่ในแบบที่ยื่นแล้ว ยกเลิกไม่ได้ — แก้เลขที่ผู้ติดต่อ แล้วยื่นแบบเพิ่มเติมของเดือนนั้นพร้อมออกใบใหม่ให้ผู้ถูกหัก (ใบเดิมเก็บเลข ณ วันออก)",

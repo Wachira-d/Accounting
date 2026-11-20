@@ -923,6 +923,7 @@ public class TaxFilingExportService : ITaxFilingExportService
         var pnd91Blocked = new List<string>();
         byEmployee = byEmployee.Where(x =>
         {
+            // รอบ 275 แพ็ก E ฝ่ายค้าน LOW (ช): ภ.ง.ด.91 ตั้งใจใช้ Inspect ไม่ใช่ ForFiling — แบบ 91 เป็นแบบของผู้มีเงินได้เอง (ไม่ใช่การหัก ณ ที่จ่าย/50 ทวิ) · การรับทราบ "ไม่มีเลข" ของคำตัดสิน 4.2 ใช้เฉพาะ ภ.ง.ด.1 · เลขใช้ไม่ได้/ไม่มี = กันแถวพร้อมเหตุเหมือนเดิม
             var id = EmployeeTaxIdentity.Inspect(x.Employee.TaxId, x.Employee.CitizenId);
             if (id.Problem is not (TaxIdProblem.Undecryptable or TaxIdProblem.Invalid)) return true;
             pnd91Blocked.Add($"{x.Employee.EmployeeCode} {x.Employee.FirstNameTh} {x.Employee.LastNameTh} — {id.Reason}");

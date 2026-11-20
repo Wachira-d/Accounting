@@ -2630,6 +2630,7 @@ public partial class TaxService : ITaxService
         foreach (var group in employeeGroups)
         {
             var emp = group.First().Employee;
+            // รอบ 275 แพ็ก E ฝ่ายค้าน LOW (ช): ภ.ง.ด.91 ตั้งใจใช้ Inspect ไม่ใช่ ForFiling — แบบ 91 เป็นแบบของผู้มีเงินได้เอง (ไม่ใช่การหัก ณ ที่จ่าย/50 ทวิ) · การรับทราบ "ไม่มีเลข" ของคำตัดสิน 4.2 ใช้เฉพาะ ภ.ง.ด.1 · เลขใช้ไม่ได้/ไม่มี = กันแถวพร้อมเหตุเหมือนเดิม
             var empIdentity = Accounting.Helpers.EmployeeTaxIdentity.Inspect(emp.TaxId, emp.CitizenId);
             if (empIdentity.Problem is Accounting.Helpers.TaxIdProblem.Undecryptable or Accounting.Helpers.TaxIdProblem.Invalid)
                 badIdentity.Add($"{emp.EmployeeCode} — {empIdentity.Reason}");

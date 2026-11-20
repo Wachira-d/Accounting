@@ -91,7 +91,7 @@ public static class EmployeeTaxIdentity
     // ตอนนี้ 50 ทวิ รายเดือน/รายปี · ไฟล์ ภ.ง.ด.1/1ก · ด่านนำส่ง (ผ่านใบที่ออก) ใช้ตัวนี้ตัวเดียว
 
     public const string NeedsAcknowledgementText = "ยังไม่มีเลขบัตรประชาชน/เลขประจำตัวผู้เสียภาษี 13 หลัก และยังไม่ได้รับทราบ — "
-        + "กรอกเลขที่ทะเบียนพนักงาน หรือ (ผู้ที่ไม่มีเลข 13 หลักจริง เช่น ต่างชาติ) กด “รับทราบไม่มีเลข 13 หลัก” ที่ " + EncryptionHealthText.PageName;
+        + "กรอกเลขที่ทะเบียนพนักงาน/ผู้ติดต่อ หรือ (ผู้ที่ไม่มีเลข 13 หลักจริง เช่น ต่างชาติ) กด “รับทราบไม่มีเลข 13 หลัก” ที่ " + EncryptionHealthText.PageName;
 
     /// <summary>ผลตัดสินสำหรับ "ยื่นแบบ/ออก 50 ทวิ" ของพนักงานหนึ่งคน</summary>
     public enum FilingKind
@@ -139,6 +139,11 @@ public static class EmployeeTaxIdentity
 
     public static FilingIdentity ForFiling(Accounting.Models.Entities.Employee e)
         => ForFiling(e.TaxId, e.CitizenId, e.TaxIdWaiverAcknowledgedAt);
+
+    /// <summary>ฝ่ายค้าน MED-2: ผู้รับใน ภ.ง.ด.1 ที่ไม่ใช่พนักงาน (ใบ 50 ทวิ ที่ออกด้วยมือ) — กติกาเดียวกัน · ไม่มีทางลัดผ่านประเทศของผู้ติดต่อ
+    /// (ไม่มีเลขไทย ⇒ ต้องรับทราบรายคนเสมอ · เลขต่างประเทศในช่องเลข = เลขไทยที่ผิด ⇒ ล้างช่อง/แก้เลขก่อน)</summary>
+    public static FilingIdentity ForFiling(Accounting.Models.Entities.Contact c)
+        => ForFiling(c.TaxId, null, c.TaxIdWaiverAcknowledgedAt);
 
     /// <summary>รับทราบได้ไหม — null = ได้ · ข้อความ = เหตุที่ปฏิเสธ (มีเลขแล้ว/เลขผิดต้องแก้/ถอดรหัสไม่ได้)</summary>
     public static string? WaiverRefusal(string? taxId, string? citizenId)

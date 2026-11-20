@@ -6085,6 +6085,11 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
   ประทับสำเนาผู้ถูกหักใหม่ · งวดที่ยื่น ภ.ง.ด.1 แล้วต้องยืนยันยื่นเพิ่มเติม · audit) · ระหว่างรอซ่อมห้ามเป็นผู้ถูกหัก ภ.ง.ด.3/53 (`AccountingDbContext.GuardPayrollJunkPayees` · `RD-50TWI-PAYROLL-JUNK-PAYEE`) ·
   รายงานสุขภาพ: ผู้รับ 50 ทวิ ตรวจเลขบนใบ (สำเนา ณ วันออก) เฉพาะ ภ.ง.ด.1 + ภ.ง.ด.3/53 ผู้รับในไทย (M-3 · `Issue.PayeeContactInvalid`) · ทางไปต่อตามงวด (`PayeeAction` — งวดที่ยื่นแล้วไม่สั่ง "สร้างเอกสารใหม่") ·
   แถวพักนำเข้าถอดไม่ได้ ⇒ `IMPORT-ROW-UNREADABLE` ข้อความไทย · ย้อนการนำเข้าปฏิเสธเฉพาะแถวนั้น (M-6) · หน้าจอ: `/pages/encryption-health.html` ส่วนที่ 3–4
+  **ฝ่ายค้านแพ็ก E (275-E-3…9 ฉบับแก้):** เลข ปกส. ที่ปล่อยเลขบัตรผิดผ่านต้อง 13 หลัก + mod-11 · ไม่มีทางลัด CountryCode — แถวใบมือในไฟล์และรายงานใช้ `ForFiling` ·
+  ผู้รับใบมือรับทราบที่ `Contact.TaxIdWaiver*` · เลข 0 ในช่อง 5 = ⚠️ "ยังไม่ยืนยันกับสเปก RD" (คำถาม 275-E-7) · ซ่อมใบในงวดที่ยื่นแล้ว = **ใบแทน** (`SupersededByCertId` · ใบเดิมคงอยู่) +
+  รายการค้าง `Pnd1AmendmentsRequired` (หน้าสุขภาพฯ ส่วนที่ 5 + กระดิ่ง · `GET/POST payroll/pnd1-amendments`) จนบันทึกการยื่นเพิ่มเติม · ยืนยันทีละงวด ·
+  กุญแจ "สร้างโดยเงินเดือน" `PayrollJunkPayee.IsPayrollCreated` (รายงาน + ด่าน SaveChanges) · ได้เลขถูก ⇒ ล้างการรับทราบ (`ClearTaxIdWaiversWhenIdValid`) ·
+  พาสปอร์ตบนใบจากสำเนา ณ วันออก (`WhtPayeeSnapshot.WaiverOf`) — DTO ปิดบังเว้นแต่ pii:view · ถอนการรับทราบต้องมีเหตุ (`POST …/tax-id-waiver/revoke`)
 - **รอบ 200 ทีม R (กวาดค้างรอบ 189)**: ฐานภาษีสะสม (YTD) ของงวดก่อน = `PayrollIncomeBase.PriorTaxBase(TaxableGross, GrossIncome)` (D-09 — เดิม gross
   รวมสวัสดิการยกเว้น ⇒ หักเกินงวดหลัง · แถวเก่าที่ TaxableGross = 0 ใช้ gross เหมือนเดิม) · PVD = `PayrollIncomeBase.PvdContribution(proratedBaseSalary, %)`
   (D-10 — เดิมเต็มเดือน + ไม่ปัด) · เพดานสมทบปัด AwayFromZero (D-08) · กำหนดนำส่ง สปส. + เงินเพิ่ม §49 = `Helpers/SsoLateFee` ตัวเดียว
@@ -10027,6 +10032,10 @@ _Last verified against codebase: 2026-11-20 (รอบ 275 แพ็ก E — �
 
 _Last verified against codebase: 2026-11-20 (รอบ 278 — ช่องลายเซ็นผู้จัดทำ ↔ ผู้มีอำนาจลงนามคนเดียวกัน: `Helpers/SignatureSlotIdentity` ตัดสินด้วยกุญแจ
 (PreparerUserId · ผู้ใช้เดียวกัน · ชื่อเล่นที่ผู้ใช้ประกาศ) · รวมใน `ResolveSignersAsync` ก่อนกฎผู้ลงนาม · §2.8a — commit 5304acd3)_
+
+_Last verified against codebase: 2026-11-20 (รอบ 275 แพ็ก E ชุดแก้ฝ่ายค้าน MED-1…3 + LOW (ก)–(ช) — เลข ปกส. 13 หลัก mod-11 · ForFiling แถวใบมือ (ไม่มีทางลัด CountryCode) + รับทราบที่ผู้ติดต่อ ·
+ใบแทน 50 ทวิ ในงวดที่ยื่นแล้ว + รายการค้างยื่น ภ.ง.ด.1 เพิ่มเติม · กุญแจสร้างโดยเงินเดือน · ล้างการรับทราบเมื่อได้เลข · พาสปอร์ตจากสำเนา ณ วันออก (ปิดบัง/pii:view) ·
+คำตัดสิน 275-E-3…9 ฉบับแก้ — commit ca4fef5d)_
 
 _Last verified against codebase: 2026-11-20 (รอบ 278 ชุดแก้ฝ่ายค้าน HIGH-1/2/3 + MED — ช่องผู้มีอำนาจลงนามไม่รับรูป payload · preparerUserId ผูกได้เฉพาะผู้เรียกเอง/ผู้เปิดสิทธิ์ ·
 ชื่อเล่นต่อบริษัทต้องเจ้าของอนุมัติ · แช่แข็งผู้ลงนามตอนออก (`StampSignerFreeze` · ใบเก่า = ไม่รวม) · ปุ่มปรับผู้ลงนามของเจ้าของ · §2.8a — commit b8960a48)_

@@ -249,7 +249,7 @@ public partial class PdfGenerationService : IPdfGenerationService
         if (WhtCertFormText.PayeeTaxIdProblem(cert.CertificateNumber, Accounting.Helpers.WhtPayeeSnapshot.Of(cert)?.TaxId) is string payeeProblem)
             throw new BusinessRuleException(payeeProblem, "RD-50TWI-PAYEE-TAXID", 422);
         // รอบ 275 แพ็ก E (คำตัดสิน 4.2): ผู้ไม่มีเลข 13 หลักที่รับทราบแล้ว ⇒ เลขพาสปอร์ตเป็นข้อมูลประกอบ (ตัวเดียวกับหน้าพิมพ์ wht.html ผ่าน DTO)
-        var payeeNote = await Accounting.Helpers.WhtCertPayeeNote.LoadAsync(_db, companyId, cert);
+        var payeeNote = Accounting.Helpers.WhtCertPayeeNote.Of(cert, includePii: true);   // เอกสารทางการ — ค่า ณ วันออก (สำเนาผู้ถูกหัก)
 
         var company = await _db.Companies.FirstAsync(c => c.Id == companyId);
 
