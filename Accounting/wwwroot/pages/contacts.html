@@ -466,7 +466,10 @@
         this.checkDuplicates();   // ตรวจผู้ติดต่อซ้ำ (banner) — best-effort ไม่ block หน้า
         const params = new URLSearchParams(window.location.search);
         const openId = params.get('id');
-        if (openId) this.openEdit(openId);
+        if (openId) {
+          // รอบ 280: ?tab=notify (ลิงก์ "เพิ่มช่องทาง" จากหน้าคู่ค้า) ⇒ เปิดแท็บช่องทางแจ้งเตือนหลังโหลดผู้ติดต่อ
+          Promise.resolve(this.openEdit(openId)).then(() => { if (params.get('tab') === 'notify') this.showContactTab('notify'); });
+        }
         // Cross-page "create new contact" flow: documents.html opens this
         // page with ?name=<typed>&autoopen=1&returnto=opener. We auto-open
         // the create modal, pre-fill the name, and on save postMessage the
@@ -1393,7 +1396,7 @@
           if (!res || !res.success || !p) { out.innerHTML = `<div class="text-red" style="font-size:12px">${esc((res && res.message) || 'ผูกไม่ได้')}</div>`; return; }
           const topicBoxes = (this._notify?.topics || []).map(t => t.lineGroupUnsupported
             ? `<label style="font-size:12px;margin-right:8px;color:#94a3b8" title="${esc(t.lineGroupUnsupported)}"><input type="checkbox" disabled> ${esc(t.label)} (ไม่ส่งทาง LINE)</label>`
-            : `<label style="font-size:12px;margin-right:8px"><input type="checkbox" data-group-topic="${esc(t.key)}" ${t.key === 'Document' || t.key === 'Dunning' ? 'checked' : ''}> ${esc(t.label)}</label>`).join('');
+            : `<label style="font-size:12px;margin-right:8px"><input type="checkbox" data-group-topic="${esc(t.key)}" ${t.lineGroupDefault ? 'checked' : ''}> ${esc(t.label)}</label>`).join('');
           out.innerHTML = `<div style="font-size:13px"><b>${esc(p.groupName || 'กลุ่ม LINE')}</b> · ${Number(p.memberCount || 0)} คน · ผูกกับผู้ติดต่อ <b>${esc(p.contactName)}</b></div>
             <div style="margin-top:4px">${topicBoxes /* html — หนีแล้ว */}</div>
             <label style="font-size:12px;display:block;margin-top:4px"><input type="checkbox" id="notifyGroupAmounts" checked> แสดงยอดเงินในกลุ่ม</label>

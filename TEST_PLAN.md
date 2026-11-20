@@ -1505,7 +1505,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **966 ไฟล์ · 10,536 `[Fact]` + 1,435 `[Theory]` (6,815 `InlineData`)** ณ 2026-11-20 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`) | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)**, **ReceiptFormRule (รูปแบบกระดาษหลักฐานรับเงิน · รอบ 203)** |
+| เทสต์ที่มี | **968 ไฟล์ · 10,552 `[Fact]` + 1,435 `[Theory]` (6,815 `InlineData`)** ณ 2026-11-20 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`) | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)**, **ReceiptFormRule (รูปแบบกระดาษหลักฐานรับเงิน · รอบ 203)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
 | CI | ✅ `.github/workflows/ci.yml` — static check → restore → build → test; รันบน PR/push เข้า main/master + `workflow_dispatch` (branch `claude/**` ปิดไว้ กัน mail spam ระหว่างพัฒนา) |
@@ -9223,3 +9223,16 @@ H2 (OCR ไม่พร้อม ⇒ แถวเข้าคิว) ล็อ�
 | T277-09 | ฝ่ายค้าน: `ทะเบียนเมนู_ครบทุกเมนูในlayout_อยู่กลุ่มเดียว_ไม่มีidเกิน` (inventory อ่าน layout.js) · `ที่พัก_มีแค่สิทธิ์ตั้งค่าที่พัก_ยังเห็นเมนู_*` · `ทิศเอกสาร_เห็นแต่ฝั่งขาย_ซ่อนเมนูฝั่งซื้อ_*` · sim โหมดง่าย (Staff ไม่มี Reports.Dashboard ยังเห็นหน้าหลักโหมดง่าย · กลายพันธุ์ 2 แบบ) | MED-1/MED-2 |
 | T277-10 | ฝ่ายค้าน Db: `ฝ่ายค้านHIGH_สมาชิกรอสิทธิ์_ไม่อยู่ในตัวกรองสมาชิก_หน้าสำนักงานบัญชีไม่เห็น_รายชื่อบริษัทไม่มีเลขภาษี_ตั้งบทบาทแล้วเห็น` · `ฝ่ายค้านMED3_ตอบรับด้วยtoken_ประทับยืนยันอีเมล_*` · preview ไม่มีช่องบอกการมีบัญชี (LOW) · กติกา R277-5/6 | HIGH/MED-3/LOW |
 | T277-11 | ฝ่ายค้าน Db: `ฝ่ายค้านแจ้งเตือน_สมาชิกรอสิทธิ์ไม่ได้รับทั้งเส้นบทบาทและผู้รับระบุตัว_กระดิ่งเก่ากรองตอนอ่าน_ตั้งบทบาทแล้วได้` (NotificationEngine จริง · ทิศตรงข้าม เจ้าของได้) · กติกา R277-7 | ช่องรั่วแจ้งเตือน |
+
+## รอบ 280 — เลือกช่องทางแจ้งคำขอเชื่อมคู่ค้า (`erp-review/2026-11-20/dev-280-partner-request-channels.md` · คำตัดสิน 280-1…280-9)
+
+| ID | เทสต์ | ทิศ |
+| --- | --- | --- |
+| T280-01 | pure `PartnerLinkChannelsRound280Tests` — เลือกช่อง (InApp ไม่ใช่ตัวเลือก) · กันถี่ (ครั้งแรก/12 ชม./ครบ 3) · นับเฉพาะครั้งที่ลองจริง · คำขอเชื่อมแล้ว/หมดอายุ · ผู้ติดต่อเลขตรง/ว่าง/เลขอื่น · สรุปช่อง (ไม่มีกลุ่ม · ไม่ได้ติ๊กเรื่อง · ใช้ได้) · ข้อความ (ลิงก์ · เลขปิดบัง · HTML encode) · ผู้รับปิดบัง · เรื่อง PartnerLink | ทั้งสองทิศ (พ้นช่วงพักส่งได้ · ค่าที่เก็บเดิมไม่ถูกเปิดให้) |
+| T280-02 | Db `เลือกLINE_ส่งเข้ากลุ่มที่ผูกกับผู้ติดต่อ_*` — push เข้ากลุ่มของผู้ติดต่อผ่าน OA ที่ผูก · ข้อความมีลิงก์ ไม่มีเลขเต็ม · คำตอบ invite เท่ากันระหว่างเลขที่ใช้/ไม่ใช้ NextAcc · แถว "แจ้งทาง" InApp=เข้าคิว + LINE=ส่งสำเร็จ · audit 1 แถว/การกด | ไม่รั่วสมาชิกภาพ |
+| T280-03 | Db `LINEล้ม_ประทับล้มพร้อมเหตุ_ไม่ใช่ส่งสำเร็จ` | ไม่ประทับสำเร็จเอง |
+| T280-04 | Db `เลือกอีเมล_ส่งถึงอีเมลผู้ติดต่อผ่านผู้ส่งเดียว_บันทึกนับเพดาน` — ผู้ส่ง NextAcc · ไม่มีข้อความอิสระ · ผู้รับปิดบัง · DocumentEmailLogs | |
+| T280-05 | Db `ไม่มีอีเมลไม่มีกลุ่ม_ช่องปิดพร้อมเหตุและลิงก์_กดส่งก็ไม่ยิง` · `กลุ่มเดิมที่ไม่ได้ติ๊กเรื่องคำขอเชื่อมคู่ค้า_ไม่เปิดให้เอง_ปิดพร้อมเหตุ` | ทางไปต่อของผู้ใช้ (ลิงก์) |
+| T280-06 | Db `ส่งแจ้งอีกครั้งทันที_ถูกจำกัด_พ้น12ชมส่งได้_บริษัทอื่นแตะไม่ได้` — ผู้ติดต่อจำไว้บนคำขอ · tenant 404 · ผู้ติดต่อของบริษัทอื่น = ไม่พบ | ทั้งสองทิศ |
+| T280-07 | Db `คู่ค้าสมัครทีหลังด้วยเลขเดิม_เปิดหน้าคู่ค้าแล้วเห็นคำขอรอยอมรับ_*` — แถวเดียว (เปิดซ้ำไม่ซ้ำ) · บริษัทเลขอื่นไม่ได้แถว · ยอมรับ ⇒ ผู้ขอเห็นเชื่อมแล้ว | ทั้งสองทิศ |
+| T280-08 | กติกา `_R280_*` (+8 · เคสฝ่ายค้าน R280-1…2) — ถอด Classify / ด่านคู่ที่มีแถวแล้ว ⇒ checker ฟ้อง | negative |

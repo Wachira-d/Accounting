@@ -104,7 +104,8 @@ public class ContactRecipientResolver : IContactRecipientResolver
 
         return new ContactNotifyOverviewResponse(contact.Id, facts.ContactName, string.IsNullOrWhiteSpace(contact.Email) ? null : contact.Email!.Trim(), list,
             NotifyTopics.All.Select(t => new NotifyTopicOption(t.ToString(), NotifyTopics.Label(t),
-                NotifyTopics.LineUnsupportedReason(t, NotifyEndpointKind.LineUser), NotifyTopics.LineUnsupportedReason(t, NotifyEndpointKind.LineGroup))).ToList(),
+                NotifyTopics.LineUnsupportedReason(t, NotifyEndpointKind.LineUser), NotifyTopics.LineUnsupportedReason(t, NotifyEndpointKind.LineGroup),
+                NotifyTopics.DefaultsFor(NotifyEndpointKind.LineGroup).Contains(t))).ToList(),
             _secrets != null && LineDeliveryOpen,
             new List<ContactNotifyComingSoon>
             {

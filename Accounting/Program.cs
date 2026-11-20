@@ -680,6 +680,7 @@ builder.Services.AddScoped<Accounting.Services.Implementations.Ocr.ActiveLearnin
 builder.Services.AddHostedService<Accounting.Services.Implementations.OcrMlBackgroundService>();
 builder.Services.AddHostedService<Accounting.Services.Implementations.Jobs.AiFeedbackTrainingJob>();
 builder.Services.AddScoped<Accounting.Services.Implementations.CrossTenantWorkflowService>();
+builder.Services.AddScoped<Accounting.Services.Implementations.PartnerLinkRequestNotifier>();   // รอบ 280 — แจ้งคำขอเชื่อมคู่ค้าทางกลุ่ม LINE/อีเมลของผู้ติดต่อ
 // Embedded OCR is a singleton — the TesseractEngine is expensive to construct,
 // and the service maintains a thread-local engine pool for thread safety.
 builder.Services.AddSingleton<Accounting.Services.Implementations.Ocr.EmbeddedTesseractOcrService>();

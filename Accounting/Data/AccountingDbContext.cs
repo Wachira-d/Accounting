@@ -479,6 +479,7 @@ public class AccountingDbContext : DbContext
     public DbSet<TradingPartnership> TradingPartnerships => Set<TradingPartnership>();
     public DbSet<CrossTenantDocumentLink> CrossTenantDocumentLinks => Set<CrossTenantDocumentLink>();
     public DbSet<PartnerLinkRequest> PartnerLinkRequests => Set<PartnerLinkRequest>();   // รอบ 264 (Helpers/PartnerLinkRequestMigration)
+    public DbSet<PartnerLinkRequestNotice> PartnerLinkRequestNotices => Set<PartnerLinkRequestNotice>();   // รอบ 280 (Helpers/Round280Migration)
     public DbSet<PartnerPaymentPlan> PartnerPaymentPlans => Set<PartnerPaymentPlan>();   // รอบ 264 P4 (Helpers/PartnerPaymentPlanMigration)
     public DbSet<PartnerPaymentNotice> PartnerPaymentNotices => Set<PartnerPaymentNotice>();   // รอบ 258-3 F-H3 (Helpers/PartnerPaymentNoticeMigration)
     public DbSet<PartnerAutomationConsent> PartnerAutomationConsents => Set<PartnerAutomationConsent>();   // รอบ 264 P1 (Helpers/PartnerConsentMigration)
@@ -3851,6 +3852,18 @@ public class AccountingDbContext : DbContext
             e.Property(x => x.PartnerBranchCode).HasMaxLength(5);
             e.Property(x => x.Message).HasMaxLength(500);
             e.HasIndex(x => new { x.CompanyId, x.CreatedAt }).HasDatabaseName("IX_PartnerLinkRequests_Company_Created");
+            e.HasIndex(x => x.PartnerTaxId).HasFilter("\"AcceptedAt\" IS NULL").HasDatabaseName("IX_PartnerLinkRequests_PartnerTax_Open");   // รอบ 280
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
+        // รอบ 280 — ชื่อ index/คอลัมน์ต้องตรงกับ Helpers/Round280Migration
+        modelBuilder.Entity<PartnerLinkRequestNotice>(e =>
+        {
+            e.Property(x => x.Channel).HasMaxLength(16);
+            e.Property(x => x.Status).HasMaxLength(16);
+            e.Property(x => x.RecipientLabel).HasMaxLength(200);
+            e.Property(x => x.Reason).HasMaxLength(1000);
+            e.Property(x => x.RuleCode).HasMaxLength(64);
+            e.HasIndex(x => new { x.CompanyId, x.LinkRequestId, x.Channel }).HasDatabaseName("IX_PartnerLinkRequestNotices_Company_Request");
             e.HasQueryFilter(x => !x.IsDeleted);
         });
         // รอบ 272 — ชื่อ index/คอลัมน์ต้องตรงกับ Helpers/Round272Migration
