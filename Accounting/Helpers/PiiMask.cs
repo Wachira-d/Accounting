@@ -19,6 +19,8 @@ public static class PiiMask
     public static string? CitizenId(string? value)
     {
         if (string.IsNullOrWhiteSpace(value)) return value;
+        // รอบ 275 แพ็ก E (T4 L-5): ciphertext ที่ถอดไม่ออก — ตัวเลขใน base64 อาจครบ 13 ตัวพอดี ⇒ หน้ากากรูปเลขบัตรปลอม · ไม่ใช่เลข ⇒ ไม่มีรูปเลขบัตร
+        if (EncryptedColumnConverter.IsUnreadable(value)) return "XXXXXXXXXXXXX";
         var digits = ThaiTaxId.Normalize(value);
         if (digits.Length != 13) return "XXXXXXXXXXXXX";
         return $"{digits[0]}-XXXX-XXXXX-XX-{digits[12]}";

@@ -15,7 +15,7 @@ namespace Accounting.Helpers;
 ///   ถอดไม่ออกทุกคีย์ (กู้ไม่ได้ ⇒ ตั้ง <c>ENCRYPTION_KEY_PREVIOUS</c> หรือกรอกใหม่) · เข้ารหัสซ้อนที่แกะไม่ได้ (รอบ 274-10: ซ้อนที่แกะได้ = รอย้ายคีย์) · อยู่บนคีย์เดิม (อ่านได้แล้ว รองานย้ายคีย์) ·
 ///   ถอดได้แต่ไม่ใช่เลข 13 หลักที่ถูกต้อง</item>
 /// <item><b>ผู้รับใน 50 ทวิ ที่ยังไม่ยกเลิก</b> ที่เลขใน <c>Contact.TaxId</c> ใช้ไม่ได้ — ส่วนใหญ่คือ Contact ที่ระบบเคยสร้างจากเลขที่ตัดจาก ciphertext
-///   ตอนออก 50 ทวิ รายเดือน (ทางแก้: "สร้างเอกสารใหม่" ที่รอบเงินเดือน — ยกเลิกใบเดิมและออกใหม่ด้วยเลขที่ถูก)</item>
+///   ตอนออก 50 ทวิ รายเดือน · รอบ 275 แพ็ก E: ตรวจเลขบนใบ (สำเนา ณ วันออก) · เฉพาะแบบที่ต้องมีเลขไทย (M-3) · ทางไปต่อแยกงวดที่ยื่นแล้ว (H-2 (ก) — <see cref="PayeeAction"/>)</item>
 /// </list>
 /// <b>ไม่แก้อะไรและไม่แต่งค่า</b> · เลขปิดบังเสมอ (จำนวนหลัก/หลักแรก-ท้าย) · ทุก query กรอง <c>CompanyId</c> (กฎ M)</para>
 /// </summary>
@@ -30,15 +30,19 @@ public static class EmployeeIdentityHealth
         NestedCipher,
         /// <summary>ถอดได้ด้วยคีย์เดิม หรือเข้ารหัสซ้อนที่แกะได้ (รอบ 274-10) — อ่านถูกแล้ว · งานย้ายคีย์จะเข้ารหัสใหม่เป็นชั้นเดียว (ไม่ต้องทำอะไร)</summary>
         PendingRekey,
-        /// <summary>ค่าที่ถอดแล้ว/ผู้รับใน 50 ทวิ ไม่ใช่เลข 13 หลักที่ถูกต้อง</summary>
+        /// <summary>ค่าที่ถอดแล้วของพนักงาน ไม่ใช่เลข 13 หลักที่ถูกต้อง</summary>
         Invalid,
+        /// <summary>รอบ 275 แพ็ก E (T4 M-3): ผู้รับใน 50 ทวิ (สำเนา ณ วันออก) ไม่ใช่เลข 13 หลักที่ถูกต้อง — แยกจาก <see cref="Invalid"/> ของพนักงาน ·
+        /// เฉพาะ ภ.ง.ด.1 และ ภ.ง.ด.3/53 ที่ผู้รับอยู่ในไทย (ภ.ง.ด.54/ผู้รับต่างประเทศไม่ต้องมีเลขไทย)</summary>
+        PayeeContactInvalid,
     }
 
     public sealed record Row(string Source, string Ref, string? Name, string Field, Issue Issue, string Masked, string Action, bool BlocksFiling);
 
     /// <param name="RekeyJob">ผลรันล่าสุดของ <c>PiiReprotectJob</c> จาก JobRunLog (ฝ่ายค้าน MED-2: ข้อความ "ระบบกำลังเข้ารหัสใหม่" ต้องมาจากผลจริง) ·
     /// null = ยังไม่เคยรัน</param>
-    public sealed record Report(IReadOnlyList<Row> Rows, RekeyJobStatus? RekeyJob = null)
+    /// <param name="Truncated">รอบ 275 แพ็ก E (T4 L-2): คอลัมน์ใดคอลัมน์หนึ่งถึงเพดาน <see cref="RowCap"/> แถว ⇒ รายการไม่ครบ (บอกผู้ใช้ ไม่ตัดเงียบ)</param>
+    public sealed record Report(IReadOnlyList<Row> Rows, RekeyJobStatus? RekeyJob = null, bool Truncated = false)
     {
         public int Blocking => Rows.Count(r => r.BlocksFiling);
     }
@@ -59,12 +63,16 @@ public static class EmployeeIdentityHealth
     /// <summary>คอลัมน์ที่เป็นเลขประจำตัวผู้เสียภาษี (ตรวจ 13 หลัก + mod-11 และกันการยื่นแบบ)</summary>
     private static bool IsTaxIdColumn(string property) => property is nameof(Employee.CitizenId) or nameof(Employee.TaxId);
 
+    /// <summary>เพดานแถวต่อคอลัมน์ของรายงาน (ถึงเพดาน ⇒ <see cref="Report.Truncated"/>)</summary>
+    public const int RowCap = 2000;
+
     public static async Task<Report> BuildAsync(AccountingDbContext db, Guid companyId, CancellationToken ct = default,
         string? currentKey = null, IReadOnlyList<string>? previousKeys = null)
     {
         var current = currentKey ?? EncryptedColumnConverter.Keys.Current;
         var previous = previousKeys ?? EncryptedColumnConverter.Keys.Previous;
         var rows = new List<Row>();
+        var truncated = false;
 
         var job = await db.Set<JobRunLog>().AsNoTracking()
             .Where(j => j.JobName == Accounting.Services.Background.PiiReprotectJob.JobName)
@@ -91,11 +99,13 @@ public static class EmployeeIdentityHealth
                 var filter = IsTaxIdColumn(col.Property) && isEmp
                     ? $"\"{col.Column}\" IS NOT NULL" : Accounting.Services.Background.PiiReprotectPass.CandidateSql(col.Column);
                 cmd.CommandText = $"SELECT {refCols}, \"{col.Column}\" FROM \"{col.Table}\" WHERE \"CompanyId\" = @cid AND {filter}"
-                    + (isEmp ? " AND \"IsDeleted\" = false" : "") + " ORDER BY 1 LIMIT 2000";
+                    + (isEmp ? " AND \"IsDeleted\" = false" : "") + $" ORDER BY 1 LIMIT {RowCap}";
                 var p = cmd.CreateParameter(); p.ParameterName = "cid"; p.Value = companyId; cmd.Parameters.Add(p);
                 await using var rd = await cmd.ExecuteReaderAsync(ct);
+                var read = 0;
                 while (await rd.ReadAsync(ct))
                 {
+                    if (++read >= RowCap) truncated = true;
                     var code = rd.IsDBNull(0) ? "" : rd.GetString(0);
                     var name = $"{(rd.IsDBNull(1) ? "" : rd.GetString(1))} {(rd.IsDBNull(2) ? "" : rd.GetString(2))}".Trim();
                     var raw = rd.IsDBNull(3) ? null : rd.GetString(3);
@@ -113,27 +123,33 @@ public static class EmployeeIdentityHealth
         }
 
         // ── 2. ผู้รับใน 50 ทวิ ที่ยังไม่ยกเลิก ──
+        // รอบ 275 แพ็ก E (T4 M-3): เฉพาะแบบที่ต้องมีเลขไทย — ภ.ง.ด.1 ทุกใบ · ภ.ง.ด.3/53 เมื่อผู้รับอยู่ในไทย (ประเทศ TH/ว่าง) · ภ.ง.ด.54/2/อื่นไม่ฟ้อง ·
+        // ตรวจเลข "บนใบ" (สำเนา ณ วันออก — WhtPayeeSnapshot.Of · รอบ 275 แพ็ก B) ไม่ใช่ผู้ติดต่อสด ·
+        // (T4 H-2 (ก)): ทางไปต่อตรงกับสิ่งที่ระบบทำได้จริง — ใบเงินเดือนในงวดที่ยื่นแล้ว "สร้างเอกสารใหม่" ถูกปฏิเสธ ⇒ ชี้เครื่องมือซ่อม + ยื่นเพิ่มเติม
         var certs = await db.WithholdingTaxCerts.AsNoTracking()
-            .Where(c => c.CompanyId == companyId && c.Status != WithholdingTaxCertStatus.Voided)
-            .Select(c => new { c.CertificateNumber, c.SourcePayrollRunId, c.PayeeContactId })
+            .Where(c => c.CompanyId == companyId && c.Status != WithholdingTaxCertStatus.Voided
+                && (c.TaxFormType == TaxType.WithholdingTax1 || c.TaxFormType == TaxType.WithholdingTax3 || c.TaxFormType == TaxType.WithholdingTax53))
+            .Select(c => new { c.Id, c.CertificateNumber, c.SourcePayrollRunId, c.PayeeContactId, c.TaxFormType, c.PayeeSnapshotJson, c.CompanyId })
             .ToListAsync(ct);
         var contactIds = certs.Select(c => c.PayeeContactId).Distinct().ToList();
         var contacts = await db.Contacts.AsNoTracking().IgnoreQueryFilters()
             .Where(c => c.CompanyId == companyId && contactIds.Contains(c.Id))
-            .Select(c => new { c.Id, c.Name, c.TaxId })
             .ToDictionaryAsync(c => c.Id, ct);
         foreach (var c in certs.OrderBy(c => c.CertificateNumber, StringComparer.Ordinal))
         {
             if (!contacts.TryGetValue(c.PayeeContactId, out var k)) continue;
-            var id = EmployeeTaxIdentity.InspectValue(k.TaxId);
+            if (!PayeeNeedsThaiId(c.TaxFormType, k.CountryCode)) continue;
+            var onCert = WhtPayeeSnapshot.Of(new WithholdingTaxCert
+            {
+                CompanyId = c.CompanyId, PayeeContactId = c.PayeeContactId, PayeeContact = k, PayeeSnapshotJson = c.PayeeSnapshotJson,
+            });
+            var id = EmployeeTaxIdentity.InspectValue(onCert?.TaxId);
             if (id.Problem is not (TaxIdProblem.Undecryptable or TaxIdProblem.Invalid)) continue;
-            rows.Add(new Row("หนังสือรับรอง 50 ทวิ", c.CertificateNumber, k.Name, "เลขผู้ถูกหักภาษี", Issue.Invalid, id.Masked ?? "",
-                c.SourcePayrollRunId != null
-                    ? "แก้เลขที่ทะเบียนพนักงาน (หรือตั้งคีย์เดิม) แล้วกด “สร้างเอกสารใหม่” ที่รอบเงินเดือน — ระบบยกเลิกใบเดิมและออกใหม่"
-                    : "แก้เลขที่ผู้ติดต่อ แล้วพิมพ์ใบใหม่",
-                true));
+            var filed = await WhtCertVoidGuard.CheckAsync(db, companyId, new[] { c.Id }, ct) != null;
+            rows.Add(new Row("หนังสือรับรอง 50 ทวิ", c.CertificateNumber, onCert?.Name ?? k.Name, "เลขผู้ถูกหักภาษี", Issue.PayeeContactInvalid, id.Masked ?? "",
+                PayeeAction(c.SourcePayrollRunId != null, filed), true));
         }
-        return new Report(rows, job);
+        return new Report(rows, job, truncated);
     }
 
     /// <summary>pure — ตัดสินค่าดิบหนึ่งค่า (null = ไม่มีปัญหา/ว่าง)</summary>
@@ -159,6 +175,26 @@ public static class EmployeeIdentityHealth
         if (pending) return (Issue.PendingRekey, id.Masked ?? "");
         return null;
     }
+
+    /// <summary>รอบ 275 แพ็ก E (T4 M-3): แบบนี้ต้องมีเลขผู้ถูกหักไทย 13 หลักไหม — ภ.ง.ด.1 เสมอ · ภ.ง.ด.3/53 เมื่อผู้รับอยู่ในไทย · อื่นไม่ต้อง (pure)</summary>
+    internal static bool PayeeNeedsThaiId(TaxType form, string? countryCode)
+    {
+        if (form == TaxType.WithholdingTax1) return true;
+        if (form is not (TaxType.WithholdingTax3 or TaxType.WithholdingTax53)) return false;
+        var cc = (countryCode ?? "").Trim();
+        return cc.Length == 0 || string.Equals(cc, "TH", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>รอบ 275 แพ็ก E (T4 H-2 (ก)): ทางไปต่อของใบ 50 ทวิ ที่เลขผู้ถูกหักใช้ไม่ได้ — ตรงกับสิ่งที่ระบบทำได้จริง (pure)</summary>
+    internal static string PayeeAction(bool fromPayroll, bool periodFiled) => (fromPayroll, periodFiled) switch
+    {
+        (true, true) => "ใบนี้อยู่ใน ภ.ง.ด.1 ที่ยื่นแล้ว — ระบบไม่ยกเลิก/ไม่ออกใบใหม่ (“สร้างเอกสารใหม่” จะถูกปฏิเสธ) · แก้เลขที่ทะเบียนพนักงาน แล้วซ่อมผู้ติดต่อที่ "
+            + PayrollJunkPayee.ToolName + " (ยืนยันว่าจะยื่น ภ.ง.ด.1 เพิ่มเติม) ⇒ ใบเดิมพิมพ์ใหม่ได้เลขที่ถูก (เลขที่ใบ/ยอดเดิม) แล้วยื่น ภ.ง.ด.1 เพิ่มเติมของเดือนนั้นด้วยไฟล์ที่ดาวน์โหลดใหม่",
+        (true, false) => "แก้เลขที่ทะเบียนพนักงาน (หรือตั้งคีย์เดิม) แล้วกด “สร้างเอกสารใหม่” ที่รอบเงินเดือน — ระบบยกเลิกใบเดิมและออกใหม่ · "
+            + "ผู้ติดต่อเลขผิดที่เหลือ ซ่อมที่ " + PayrollJunkPayee.ToolName,
+        (false, true) => "ใบนี้อยู่ในแบบที่ยื่นแล้ว ยกเลิกไม่ได้ — แก้เลขที่ผู้ติดต่อ แล้วยื่นแบบเพิ่มเติมของเดือนนั้นพร้อมออกใบใหม่ให้ผู้ถูกหัก (ใบเดิมเก็บเลข ณ วันออก)",
+        _ => "แก้เลขที่ผู้ติดต่อ แล้วยกเลิกใบนี้และออกใบใหม่ (ใบที่ออกแล้วเก็บเลข ณ วันออก — แก้ผู้ติดต่ออย่างเดียวใบเดิมไม่เปลี่ยน)",
+    };
 
     private static string ActionFor(Issue issue, RekeyJobStatus? job) => issue switch
     {

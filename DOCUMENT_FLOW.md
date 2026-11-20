@@ -6047,6 +6047,16 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
   ข้อความถึงผู้ใช้บริษัทไม่ชี้ URL ดิบ/ชื่อ env (`EncryptionHealthText`)
   **ฝ่ายค้านแพ็ก A:** heartbeat ลายนิ้วมือต่อเครื่องทุก 5 นาที (`EncryptionKeyHeartbeats`) · หมุนคีย์ = `RotationPending` (ไม่ย้าย) จนทุกเครื่องใน 15 นาทีล่าสุดรายงานคีย์ใหม่หรือผู้ดูแลยืนยันลายนิ้วมือที่ระบุ ·
   เครื่องคีย์ไม่ตรงหยุดเข้ารหัสค่าใหม่ (`EncryptionWriteGuard` · 503) · กุญแจ HMAC สลิปภาษี/OTP จากเมล็ดถาวร (`HmacSeedBootstrap` · สลิปเดิมหลังหมุนยังถูกกันซ้ำ) · คำตัดสิน 275-A-8…12
+- **รอบ 275 แพ็ก E — เก็บกวาดหลังรอบ 274** (T4 H-2/H-3/M-3/M-6/L-7/L-8 · คำตัดสิน 4.2 · 275-E-1…6 · `erp-review/2026-11-20/dev-275-E.md`):
+  **ผู้ไม่มีเลข 13 หลัก — รับทราบรายคน** (`Employee.TaxIdWaiverAcknowledgedAt/By/Reason` · `Round275EMigration` · ทางเขียนเดียว `Helpers/EmployeeTaxIdWaiver` · audit chain) ·
+  ตัวตัดสินเดียว `EmployeeTaxIdentity.ForFiling` (Ok · WaivedNoId · NeedsAcknowledgement · Unusable) ใช้ที่ 50 ทวิ รายเดือน (`IssueMonthlyPnd1CertsAsync` — ผู้ติดต่อไม่มีเลขผูกกับ `Employee.ContactId`) ·
+  50 ทวิ รายปี · ไฟล์ ภ.ง.ด.1/1ก (`Pnd1FilingData.Build`: ไม่มีเลข + ภาษี > 0 + ยังไม่รับทราบ ⇒ กันแถว · รับทราบ ⇒ เลข 0 + ℹ️ · ภาษี 0 เส้นเดิม) · ด่านนำส่งผ่านเพราะใบครบ ·
+  เลข checksum ผิด/ถอดรหัสไม่ได้รับทราบไม่ได้ · ข้อความประกอบ "ไม่มีเลข 13 หลัก · เลขหนังสือเดินทาง …" บน 50 ทวิ จากตัวโหลดเดียว `Helpers/WhtCertPayeeNote` (HTML + QuestPDF + `wht.html` ผ่าน `PayeeReferenceNote`) ·
+  ไฟล์ สปส. กันเลขบัตรผิดเฉพาะคนที่ไม่มีเลข ปกส. (F3) · ใบมือ ภ.ง.ด.1 ผู้รับไม่อยู่ในไทยเลขต่างประเทศไม่กันทั้งไฟล์ (F12) · ชื่อผู้ติดต่อพนักงานต่างชาติ = ชื่ออังกฤษ (`PayrollPnd1Certs.PayeeName` · L-7)
+  **ผู้ติดต่อเลขขยะจากเงินเดือน** (`Helpers/PayrollJunkPayee`): รายงาน `GET payroll/junk-payee-contacts` → ซ่อมเฉพาะแถวที่เลือก `POST …/repair` (แผนจากเซิร์ฟเวอร์: แก้เลข / ย้ายใบไปผู้ติดต่อเลขถูก + ปิดใช้ตัวขยะ ·
+  ประทับสำเนาผู้ถูกหักใหม่ · งวดที่ยื่น ภ.ง.ด.1 แล้วต้องยืนยันยื่นเพิ่มเติม · audit) · ระหว่างรอซ่อมห้ามเป็นผู้ถูกหัก ภ.ง.ด.3/53 (`AccountingDbContext.GuardPayrollJunkPayees` · `RD-50TWI-PAYROLL-JUNK-PAYEE`) ·
+  รายงานสุขภาพ: ผู้รับ 50 ทวิ ตรวจเลขบนใบ (สำเนา ณ วันออก) เฉพาะ ภ.ง.ด.1 + ภ.ง.ด.3/53 ผู้รับในไทย (M-3 · `Issue.PayeeContactInvalid`) · ทางไปต่อตามงวด (`PayeeAction` — งวดที่ยื่นแล้วไม่สั่ง "สร้างเอกสารใหม่") ·
+  แถวพักนำเข้าถอดไม่ได้ ⇒ `IMPORT-ROW-UNREADABLE` ข้อความไทย · ย้อนการนำเข้าปฏิเสธเฉพาะแถวนั้น (M-6) · หน้าจอ: `/pages/encryption-health.html` ส่วนที่ 3–4
 - **รอบ 200 ทีม R (กวาดค้างรอบ 189)**: ฐานภาษีสะสม (YTD) ของงวดก่อน = `PayrollIncomeBase.PriorTaxBase(TaxableGross, GrossIncome)` (D-09 — เดิม gross
   รวมสวัสดิการยกเว้น ⇒ หักเกินงวดหลัง · แถวเก่าที่ TaxableGross = 0 ใช้ gross เหมือนเดิม) · PVD = `PayrollIncomeBase.PvdContribution(proratedBaseSalary, %)`
   (D-10 — เดิมเต็มเดือน + ไม่ปัด) · เพดานสมทบปัด AwayFromZero (D-08) · กำหนดนำส่ง สปส. + เงินเพิ่ม §49 = `Helpers/SsoLateFee` ตัวเดียว
@@ -9977,3 +9987,8 @@ _Last verified against codebase: 2026-11-20 (รอบ 276 ชุดแก้ฝ
 
 _Last verified against codebase: 2026-11-20 (รอบ 277 — §6.277 เมนูตามสิทธิ์จากเซิร์ฟเวอร์ (`MenuPermissionMap` · `landingUrl` · หน้าต้อนรับ) + คำเชิญเข้าบริษัท
 (ทุกอีเมลได้คำเชิญ · แถวรอตอบรับ/ส่งซ้ำ/ยกเลิก · token hash · ตอบรับตัวเดียว · ไม่สร้างบริษัท · ยังไม่มีสิทธิ์จนเจ้าของตั้ง) — commit a1ae70d2 + d93800f2)_
+
+
+_Last verified against codebase: 2026-11-20 (รอบ 275 แพ็ก E — รับทราบรายคนผู้ไม่มีเลข 13 หลัก (ตัวตัดสินเดียว ForFiling: 50 ทวิ · ไฟล์ ภ.ง.ด.1/1ก · ด่านนำส่ง) ·
+พาสปอร์ตประกอบบน 50 ทวิ · ไฟล์ สปส. ตามเลข ปกส. · เครื่องมือรายงาน+ซ่อมผู้ติดต่อเลขขยะจากเงินเดือน + ด่าน ภ.ง.ด.3/53 · รายงานสุขภาพกรองแบบ/ประเทศ ·
+แถวนำเข้าถอดไม่ได้ข้อความไทย · คำตัดสิน 275-E-1…6 — commit 09a52c66)_

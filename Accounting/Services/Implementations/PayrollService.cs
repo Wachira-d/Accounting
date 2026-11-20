@@ -3465,8 +3465,11 @@ public class PayrollService : IPayrollService
             {
                 var emp = g.First().Employee;
                 // รอบ 274: 50 ทวิ ภ.ง.ด.1ก ห้ามพิมพ์เลขที่ผิด — เลขถอดรหัสไม่ได้/ไม่ถูกต้อง ⇒ ใบเดียว: ปฏิเสธพร้อมเหตุ · หลายใบ: ข้ามคนนั้นและใส่เหตุใน zip
-                var identity = Accounting.Helpers.EmployeeTaxIdentity.Inspect(emp.TaxId, emp.CitizenId);
-                if (identity.Problem is Accounting.Helpers.TaxIdProblem.Undecryptable or Accounting.Helpers.TaxIdProblem.Invalid)
+                // รอบ 275 แพ็ก E (คำตัดสิน 4.2): ตัวตัดสินเดียวกับใบรายเดือน/ไฟล์ ภ.ง.ด.1ก — ไม่มีเลข + มีภาษีหัก + ยังไม่รับทราบ ⇒ กันเหมือนเลขผิด ·
+                // รับทราบแล้ว ⇒ ออกได้ (กล่องเลขว่าง + เลขพาสปอร์ตประกอบ) · ภาษี 0 ไม่มีเลข ⇒ ออกได้เหมือนเดิม (ไม่มีภาษีให้ยื่นแทน)
+                var identity = Accounting.Helpers.EmployeeTaxIdentity.ForFiling(emp);
+                if (identity.Kind == Accounting.Helpers.EmployeeTaxIdentity.FilingKind.Unusable
+                    || (identity.Kind == Accounting.Helpers.EmployeeTaxIdentity.FilingKind.NeedsAcknowledgement && g.Sum(d => d.WithholdingTax) > 0))
                 {
                     var why = $"{emp.EmployeeCode} {emp.FirstNameTh} {emp.LastNameTh}".Trim() + " — " + identity.Reason;
                     if (grouped.Count == 1)
@@ -3518,7 +3521,9 @@ public class PayrollService : IPayrollService
                     });
                 }
 
-                var pdfBytes = await pdf.BuildEmployeeAnnualCertPdfAsync(companyId, cert, funds);
+                var pdfBytes = await pdf.BuildEmployeeAnnualCertPdfAsync(companyId, cert, funds,
+                    Accounting.Helpers.EmployeeTaxIdentity.WaiverCertNote(
+                        identity.Kind == Accounting.Helpers.EmployeeTaxIdentity.FilingKind.WaivedNoId, emp.PassportNumber));
                 // Audit trail: record every 50ทวิ generation so a dispute
                 // ("ผมไม่เคยได้ใบรับรอง") has an answer (when + who + which
                 // employee + amounts).
@@ -3578,7 +3583,8 @@ public class PayrollService : IPayrollService
         var taxId = Accounting.Helpers.EmployeeTaxIdentity.Resolve(e.TaxId, e.CitizenId);   // ใช้ไม่ได้ = null (ผู้เรียกกันไว้ก่อนแล้ว)
         return new()
         {
-            Name = $"{e.TitleTh}{e.FirstNameTh} {e.LastNameTh}".Trim(),
+            // รอบ 275 แพ็ก E (T4 L-7): ไม่มีชื่อไทย (ต่างชาติ) ⇒ ชื่ออังกฤษ (เดิมชื่อว่าง) · มีชื่อไทยคงรูปเดิมทุกตัวอักษร
+            Name = string.IsNullOrWhiteSpace(e.FirstNameTh) ? Accounting.Helpers.PayrollPnd1Certs.PayeeName(e) : $"{e.TitleTh}{e.FirstNameTh} {e.LastNameTh}".Trim(),
             TaxId = taxId,
             // ContactType heuristic mirrors what BuildContactInfo does elsewhere —
             // เลขเริ่มต้นด้วย 0 = นิติบุคคล (rare for an employee), else บุคคล.
@@ -4039,9 +4045,10 @@ public class PayrollService : IPayrollService
                 // ที่ออกมือ ค้น/สร้าง Contact — ค่าเดียวกันทั้งสี่จุด
                 // รอบ 274: ตรวจก่อนใช้ — ค่า enc1:… ที่ถอดไม่ออก (คีย์ถูกเปลี่ยน) / ไม่ใช่ 13 หลัก / checksum ไม่ผ่าน ⇒ ไม่ออกใบ + บอกเหตุ ·
                 // เดิมตัดเอาตัวเลขจาก ciphertext ⇒ สร้าง Contact ด้วยเลข 5–14 หลักแล้วพิมพ์ลง 50 ทวิ
-                var payeeIdentity = Accounting.Helpers.EmployeeTaxIdentity.Inspect(emp.TaxId, emp.CitizenId);
-                var payeeTaxId = payeeIdentity.Value;
-                if (payeeTaxId == null)
+                // รอบ 275 แพ็ก E (T4 H-3 · คำตัดสิน 4.2): ตัวตัดสินเดียวกับไฟล์ ภ.ง.ด.1/1ก — ไม่มีเลขเลย + ผู้ทำบัญชีรับทราบรายคนแล้ว ⇒ ออกใบได้
+                // (กล่องเลขว่าง + เลขพาสปอร์ตประกอบ) · ยังไม่รับทราบ/เลขผิด/ถอดรหัสไม่ได้ ⇒ ข้ามพร้อมเหตุเหมือนเดิม (ด่านนำส่งบล็อกจากใบที่ขาด)
+                var payeeIdentity = Accounting.Helpers.EmployeeTaxIdentity.ForFiling(emp);
+                if (!payeeIdentity.CanIssueCert)
                 {
                     // ⚠️ ห้าม log เลขบัตร/เลขผู้เสียภาษีเต็ม (PDPA ม.26) — ใช้
                     // รหัสพนักงาน + ชื่อ ซึ่งเป็นสิ่งที่ HR ใช้ค้นในระบบอยู่แล้ว (Reason ใช้เลขปิดบัง/จำนวนหลักเท่านั้น)
@@ -4049,6 +4056,12 @@ public class PayrollService : IPayrollService
                         + $" ({payeeIdentity.Reason})");
                     continue;
                 }
+                var payeeTaxId = payeeIdentity.Value;   // null = รับทราบแล้วว่าไม่มีเลข
+
+                // ค้น/สร้าง contact ของพนักงาน (employee-as-contact) — ผู้ไม่มีเลข: ผู้ติดต่อที่ผูกกับพนักงาน (ไม่มีเลข) หรือสร้างใหม่แล้วผูก
+                var contact = payeeTaxId != null
+                    ? await _db.Set<Contact>().FirstOrDefaultAsync(c => c.CompanyId == companyId && c.TaxId == payeeTaxId)
+                    : await WaivedPayeeContactAsync(companyId, emp);
 
                 // Skip ถ้ามี cert เดือนนี้อยู่แล้วและไม่ใช่จาก run นี้
                 // (กรณี HR ออกเองด้วยมือก่อน) — ไม่ override manual cert
@@ -4058,18 +4071,15 @@ public class PayrollService : IPayrollService
                         && c.TaxFormType == TaxType.WithholdingTax1
                         && c.SourcePayrollRunId == null
                         && c.Status != WithholdingTaxCertStatus.Voided
-                        && c.PayeeContact.TaxId == payeeTaxId);
+                        && (payeeTaxId != null ? c.PayeeContact.TaxId == payeeTaxId : c.PayeeContactId == contact!.Id));
                 if (manualExists) continue;
 
-                // ค้น/สร้าง contact ของพนักงาน (employee-as-contact)
-                var contact = await _db.Set<Contact>()
-                    .FirstOrDefaultAsync(c => c.CompanyId == companyId && c.TaxId == payeeTaxId);
                 if (contact == null)
                 {
                     contact = new Contact
                     {
                         CompanyId = companyId,
-                        Name = $"{emp.TitleTh} {emp.FirstNameTh} {emp.LastNameTh}".Trim(),
+                        Name = Accounting.Helpers.PayrollPnd1Certs.PayeeName(emp),   // รอบ 275 แพ็ก E (T4 L-7): ไม่มีชื่อไทย ⇒ ชื่ออังกฤษ (คู่สมมาตรกับไฟล์ ภ.ง.ด.1)
                         TaxId = payeeTaxId,
                         ContactType = ContactType.Individual,
                         IsSupplier = true
@@ -4138,7 +4148,8 @@ public class PayrollService : IPayrollService
                     message: $"พนักงาน {skipped.Count} คนยังไม่มีหนังสือรับรองหัก ณ ที่จ่าย: {who} · "
                         + "ยอด ภ.ง.ด.1 ของงวดนี้จึงยังนำส่งไม่ได้จนกว่าจะออกใบครบ "
                         + "— กรอกเลขบัตรประชาชน (หรือเลขประจำตัวผู้เสียภาษีสำหรับผู้ที่ไม่มีบัตรไทย) "
-                        + "ที่หน้าพนักงาน แล้วกด “สร้างเอกสารใหม่” ที่รอบเงินเดือน",
+                        + "ที่หน้าพนักงาน หรือผู้ที่ไม่มีเลข 13 หลักจริงให้กด “รับทราบไม่มีเลข 13 หลัก” ที่ " + Accounting.Helpers.EncryptionHealthText.PageName
+                        + " แล้วกด “สร้างเอกสารใหม่” ที่รอบเงินเดือน",
                     entityId: run.Id);
             }
         }
@@ -4188,6 +4199,35 @@ public class PayrollService : IPayrollService
                     + "— กด “สร้างเอกสารใหม่” ที่รอบเงินเดือน หรือแจ้งผู้ดูแลระบบ",
                 entityId: run.Id);
         }
+    }
+
+    /// <summary>รอบ 275 แพ็ก E (คำตัดสิน 4.2): ผู้ติดต่อของพนักงานที่รับทราบแล้วว่าไม่มีเลข 13 หลัก — ผู้ติดต่อที่ผูกไว้ (<c>Employee.ContactId</c>)
+    /// ถ้า<b>ไม่มีเลข</b> · ไม่มี/ผูกกับผู้ติดต่อที่มีเลข (เช่น เลขขยะก่อนรอบ 274) ⇒ สร้างใหม่ (ไม่มีเลข · ชื่อไทยหรืออังกฤษ) แล้วผูกกับพนักงาน ·
+    /// ห้ามค้นด้วยชื่อ (ชื่อซ้ำได้ — เลือกผิดคน = 50 ทวิ ผิดคน)</summary>
+    private async Task<Contact> WaivedPayeeContactAsync(Guid companyId, Employee emp)
+    {
+        if (emp.ContactId is Guid linked)
+        {
+            var c = await _db.Set<Contact>().FirstOrDefaultAsync(x => x.Id == linked && x.CompanyId == companyId);
+            if (c != null && Accounting.Helpers.EmployeeTaxIdentity.InspectValue(c.TaxId).Problem == Accounting.Helpers.TaxIdProblem.Missing)
+                return c;
+        }
+        var created = new Contact
+        {
+            CompanyId = companyId,
+            Name = Accounting.Helpers.PayrollPnd1Certs.PayeeName(emp),
+            TaxId = null,
+            ContactType = ContactType.Individual,
+            IsSupplier = true,
+            CountryCode = "TH",   // ผู้มีเงินได้ 40(1) ของนายจ้างในไทย — ภ.ง.ด.1 ประเภท (1)
+            CreatedBy = "system:payroll-no-taxid",
+        };
+        _db.Set<Contact>().Add(created);
+        await _db.SaveChangesAsync();
+        await _db.Set<Employee>().Where(e => e.Id == emp.Id && e.CompanyId == companyId)
+            .ExecuteUpdateAsync(u => u.SetProperty(e => e.ContactId, created.Id));
+        emp.ContactId = created.Id;
+        return created;
     }
 
     /// <summary>ยิงงานสร้างเอกสารหลังจ่าย — ถ้ามี IServiceScopeFactory ทำใน

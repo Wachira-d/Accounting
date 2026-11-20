@@ -101,7 +101,10 @@ public record WithholdingTaxCertResponse(
     string? NoSourceDocumentReason = null,
     /// <summary>ป้ายแดง "อาจนับซ้ำกับ …" (อ่านอย่างเดียว — ไม่ประทับสถานะใด) · null = ไม่พบคู่</summary>
     string? DuplicateSuspectLabel = null,
-    Guid? DuplicateSuspectDocumentId = null);
+    Guid? DuplicateSuspectDocumentId = null,
+    /// <summary>รอบ 275 แพ็ก E (คำตัดสิน 4.2): ข้อความประกอบใต้ที่อยู่ผู้ถูกหัก — ผู้ไม่มีเลข 13 หลักที่รับทราบแล้ว + เลขพาสปอร์ต
+    /// (<c>Helpers/WhtCertPayeeNote</c> ตัวเดียวกับ PDF ทั้งสอง) · null = ไม่แสดง (หรือไม่ได้คำนวณ — ทางรายการ)</summary>
+    string? PayeeReferenceNote = null);
 
 public record WithholdingTaxCertLineResponse(
     Guid Id,

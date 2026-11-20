@@ -86,6 +86,83 @@ public static class EmployeeTaxIdentity
         _ => null,
     };
 
+    // ═══ รอบ 275 แพ็ก E (T4 H-3 · คำตัดสิน 4.2) — ผู้ไม่มีเลข 13 หลักที่ผู้ทำบัญชีรับทราบรายคน ═══
+    // เดิมไฟล์ ภ.ง.ด.1 "ยอมเลขว่าง" (เติม 0) แต่ 50 ทวิ ไม่ออก ⇒ ด่านนำส่ง WHT-CERT-UNISSUED บล็อกทั้งบริษัท และไม่มีทางรับทราบ — สามทางตัดสินคนละแบบ ·
+    // ตอนนี้ 50 ทวิ รายเดือน/รายปี · ไฟล์ ภ.ง.ด.1/1ก · ด่านนำส่ง (ผ่านใบที่ออก) ใช้ตัวนี้ตัวเดียว
+
+    public const string NeedsAcknowledgementText = "ยังไม่มีเลขบัตรประชาชน/เลขประจำตัวผู้เสียภาษี 13 หลัก และยังไม่ได้รับทราบ — "
+        + "กรอกเลขที่ทะเบียนพนักงาน หรือ (ผู้ที่ไม่มีเลข 13 หลักจริง เช่น ต่างชาติ) กด “รับทราบไม่มีเลข 13 หลัก” ที่ " + EncryptionHealthText.PageName;
+
+    /// <summary>ผลตัดสินสำหรับ "ยื่นแบบ/ออก 50 ทวิ" ของพนักงานหนึ่งคน</summary>
+    public enum FilingKind
+    {
+        /// <summary>เลข 13 หลักที่ถูกต้อง</summary>
+        Ok,
+        /// <summary>ไม่มีเลขเลย + ผู้ทำบัญชีรับทราบแล้ว ⇒ 50 ทวิ ออกได้ (กล่องเลขว่าง + เลขพาสปอร์ตประกอบ) · ไฟล์ ภ.ง.ด.1 เติม 0 ตามสเปก</summary>
+        WaivedNoId,
+        /// <summary>ไม่มีเลขเลย + ยังไม่รับทราบ ⇒ บล็อก (เมื่อมีภาษีหัก) เหมือนเดิม</summary>
+        NeedsAcknowledgement,
+        /// <summary>ถอดรหัสไม่ได้ / ผิดรูป / checksum ไม่ผ่าน ⇒ บล็อกเสมอ · <b>การรับทราบไม่มีผล</b> (ต้องแก้เลข)</summary>
+        Unusable,
+    }
+
+    public sealed record FilingIdentity(FilingKind Kind, Result Inspected)
+    {
+        /// <summary>เลข 13 หลักที่ลงแบบได้ (null เมื่อไม่ใช่ <see cref="FilingKind.Ok"/>)</summary>
+        public string? Value => Kind == FilingKind.Ok ? Inspected.Value : null;
+        /// <summary>ออก 50 ทวิ ได้ไหม (Ok หรือรับทราบแล้ว)</summary>
+        public bool CanIssueCert => Kind is FilingKind.Ok or FilingKind.WaivedNoId;
+        /// <summary>บล็อกแถวที่มีภาษีหักไหม — ผู้เรียกที่ไม่มีภาษีหัก (ภาษี 0) ใช้ <see cref="FilingKind.Unusable"/> อย่างเดียว</summary>
+        public bool BlocksWhenTaxed => Kind is FilingKind.NeedsAcknowledgement or FilingKind.Unusable;
+        /// <summary>เหตุ + ทางไปต่อ (null เมื่อไม่บล็อก)</summary>
+        public string? Reason => Kind switch
+        {
+            FilingKind.NeedsAcknowledgement => NeedsAcknowledgementText,
+            FilingKind.Unusable => Inspected.Reason,
+            _ => null,
+        };
+    }
+
+    /// <summary><b>ตัวตัดสินเดียว</b> ของ 50 ทวิ ภ.ง.ด.1 (รายเดือน/รายปี) · ไฟล์ ภ.ง.ด.1/1ก — การรับทราบมีผล<b>เฉพาะเมื่อไม่มีเลขเลย</b> (คำตัดสิน 4.2:
+    /// เลข checksum ผิดไม่ได้รับสิทธิ์นี้) · มีเลขที่ถูกต้องแล้ว ⇒ Ok (การรับทราบเดิมไม่มีผล)</summary>
+    public static FilingIdentity ForFiling(string? taxId, string? citizenId, DateTime? waiverAcknowledgedAt)
+    {
+        var r = Inspect(taxId, citizenId);
+        var kind = r.Problem switch
+        {
+            TaxIdProblem.None => FilingKind.Ok,
+            TaxIdProblem.Missing => waiverAcknowledgedAt != null ? FilingKind.WaivedNoId : FilingKind.NeedsAcknowledgement,
+            _ => FilingKind.Unusable,
+        };
+        return new FilingIdentity(kind, r);
+    }
+
+    public static FilingIdentity ForFiling(Accounting.Models.Entities.Employee e)
+        => ForFiling(e.TaxId, e.CitizenId, e.TaxIdWaiverAcknowledgedAt);
+
+    /// <summary>รับทราบได้ไหม — null = ได้ · ข้อความ = เหตุที่ปฏิเสธ (มีเลขแล้ว/เลขผิดต้องแก้/ถอดรหัสไม่ได้)</summary>
+    public static string? WaiverRefusal(string? taxId, string? citizenId)
+    {
+        var r = Inspect(taxId, citizenId);
+        return r.Problem switch
+        {
+            TaxIdProblem.Missing => null,
+            TaxIdProblem.None => "พนักงานคนนี้มีเลขประจำตัว 13 หลักที่ถูกต้องแล้ว — ไม่ต้องรับทราบ",
+            TaxIdProblem.Invalid => "รับทราบไม่ได้: " + r.Reason + " · เลขที่ checksum ไม่ผ่านต้องแก้ให้ถูก (ถ้าเป็นเลขพาสปอร์ต ให้ย้ายไปช่องเลขหนังสือเดินทางแล้วล้างช่องเลขบัตร)",
+            _ => "รับทราบไม่ได้: " + r.Reason,
+        };
+    }
+
+    /// <summary>ข้อความประกอบบน 50 ทวิ ของผู้ไม่มีเลข 13 หลักที่รับทราบแล้ว (เลขพาสปอร์ตเป็นข้อมูลประกอบ — คำตัดสิน 4.2) · null = ไม่แสดง ·
+    /// ตัวเดียวของ HTML + QuestPDF + หน้าพิมพ์ (ผ่าน DTO) · พาสปอร์ตที่ถอดรหัสไม่ได้ ⇒ ไม่พิมพ์ตัวเลข (ไม่เผย ciphertext)</summary>
+    public static string? WaiverCertNote(bool waived, string? passportNumber)
+    {
+        if (!waived) return null;
+        var p = (passportNumber ?? "").Trim();
+        var usable = p.Length > 0 && !EncryptedColumnConverter.IsUnreadable(p);
+        return "ผู้มีเงินได้ไม่มีเลขประจำตัวผู้เสียภาษี 13 หลัก" + (usable ? $" · เลขหนังสือเดินทาง {p}" : "");
+    }
+
     /// <summary>เลขที่ใช้ได้ (13 หลัก + checksum) หรือ null — ผู้เรียกที่ต้องรู้เหตุใช้ <see cref="Inspect"/></summary>
     public static string? Resolve(string? taxId, string? citizenId) => Inspect(taxId, citizenId).Value;
 

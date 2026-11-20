@@ -97,9 +97,10 @@ RULES = [
          forbid_lit=['"SsoSps110"'],
          why="หลักฐาน 'ยื่นแล้ว' ต้องอ่านปฏิทินภาษี (ทางเดียวบนจอ · C1) · 'นำส่งแล้ว' ผูกกับรอบ ไม่ใช่แถวนำส่งรายเดือน (C2)"),
     dict(file=PAYROLL, method="IssueMonthlyPnd1CertsAsync",
-         must=["EmployeeTaxIdentity.Inspect(emp.TaxId, emp.CitizenId)", "payeeIdentity.Value", "payeeTaxId == null"],
+         # รอบ 275 แพ็ก E (คำตัดสิน 4.2): ตัวตรวจกลางเปลี่ยนเป็น ForFiling (Inspect + ธงรับทราบรายคน) — ตัวเดียวกับไฟล์ ภ.ง.ด.1/1ก
+         must=["EmployeeTaxIdentity.ForFiling(emp)", "payeeIdentity.Value", "!payeeIdentity.CanIssueCert"],
          must_lit=["{payeeIdentity.Reason}"],
-         before=[("EmployeeTaxIdentity.Inspect(", "payeeTaxId == null")],
+         before=[("EmployeeTaxIdentity.ForFiling(", "!payeeIdentity.CanIssueCert"), ("!payeeIdentity.CanIssueCert", "WaivedPayeeContactAsync(")],
          forbid=["string.IsNullOrWhiteSpace(emp.TaxId)", "string.IsNullOrEmpty(emp.TaxId)", "emp.TaxId == null",
                  "ThaiTaxId.Normalize(emp.", "EmployeeTaxIdentity.Resolve("],
          why="D-01 + รอบ 274: ด่าน 50 ทวิรายเดือนต้องใช้ตัวตรวจกลาง (TaxId → เลขบัตร · 13 หลัก + mod-11 · enc1 ที่ถอดไม่ออก = ข้ามพร้อมเหตุ) "
@@ -8153,13 +8154,13 @@ _TEAMC_1013 = "กระดาน 2026-10-13 ทีม C: "
 RULES += [
     dict(file="Services/Implementations/PayrollService.cs", method="GenerateAnnualEmployeeWhtCertsAsync",
          must=["WhtCertFormText.EmployeeAnnualFunds(ssoEmployeeTotal, pvdEmployeeTotal)",
-               "BuildEmployeeAnnualCertPdfAsync(companyId, cert, funds)"],
+               "BuildEmployeeAnnualCertPdfAsync(companyId, cert, funds,"],
          must_re=[r"ssoEmployeeTotal\s*=\s*g\.Sum\(d\s*=>\s*d\.SocialSecurityEmployee\)",
                   r"pvdEmployeeTotal\s*=\s*g\.Sum\(d\s*=>\s*d\.ProvidentFundEmployee\)"],
          before=[("WhtCertFormText.EmployeeAnnualFunds(", "BuildEmployeeAnnualCertPdfAsync(")],
          why=_TEAMC_1013 + "A9 ใบรายปีของพนักงานส่งยอดกองทุนส่วนลูกจ้างทั้งปีให้ renderer (เดิมช่องว่างเสมอ) — ตัดสินผ่าน EmployeeAnnualFunds ที่เดียว"),
     dict(file="Services/Implementations/PdfGenerationService.cs", method="BuildEmployeeAnnualCertPdfAsync",
-         must=["BuildWhtCertPdf(inMemoryCert, company, sigBytes, sigName, funds, stamp)"],
+         must=["BuildWhtCertPdf(inMemoryCert, company, sigBytes, sigName, funds, stamp, payeeNote)"],
          why=_TEAMC_1013 + "A9 ยอดกองทุนไหลถึง QuestPDF (ไม่ทิ้งพารามิเตอร์กลางทาง)"),
     dict(file="Services/Implementations/PdfGenerationService.WhtCert.cs", method="BuildWhtCertPdf",
          must=["BuildFundLine(form, funds)"],
@@ -9585,8 +9586,8 @@ RULES += [
          why=_STAMP + "ลายเซ็นเอกสารผ่านด่าน \"ขั้นที่พิมพ์ลายเซ็น/ผู้ลงนามที่มีสิทธิ์\" ก่อนคืนให้ทั้งสอง renderer"),
     dict(file="Services/Implementations/PdfGenerationService.cs", method="GenerateWithholdingTaxCertPdfAsync",
          must=["ResolveWhtCertStamp(cert, settings)", "ResolveWhtPayerSignatureAsync(companyId, cert.CreatedBy, stampDecision)",
-               "BuildWithholdingTaxCertHtml(cert, company, sigB64, sigName, stamp: stamp)",
-               "BuildWhtCertPdf(cert, company, sigBytes, sigName, stamp: stamp)"],
+               "BuildWithholdingTaxCertHtml(cert, company, sigB64, sigName, stamp: stamp, payeeNote: payeeNote)",
+               "BuildWhtCertPdf(cert, company, sigBytes, sigName, stamp: stamp, payeeNote: payeeNote)"],
          why=_STAMP + "50 ทวิ ส่งตราที่ตัดสินแล้วถึงทั้ง HTML (Chromium) และ QuestPDF (บั๊กผู้ใช้: ไม่มีตรา)"),
     dict(file="Services/Implementations/PdfGenerationService.cs", method="BuildEmployeeAnnualCertPdfAsync",
          must=["ResolveWhtCertStamp(inMemoryCert, settings)", "ResolveCertSignatoryAsync(companyId, inMemoryCert.CreatedBy, decision)"],
@@ -21451,6 +21452,56 @@ REVIEWER_CASES += [
     ("R275B-9", "VoidDocumentAsync", "Accounting.Helpers.WhtCertVoidCascade.UnlinkInsteadOfVoid(lc.LinkedAt)", "false", True),
 ]
 
+
+# ═══ รอบ 275 แพ็ก E (erp-review/2026-11-20/audit-T4-pii-payroll-files.md · H-2 · H-3 · M-3 · M-6 · L-7 · L-8 · คำตัดสิน 4.2 · 275-E-1…6) ═══
+_R275E_WHY = "รอบ 275 แพ็ก E (T4 เก็บกวาดหลังรอบ 274 · commit 09a52c66): "
+RULES += [
+    dict(file="Helpers/EmployeeTaxIdentity.cs", method="ForFiling",
+         must=["TaxIdProblem.Missing => waiverAcknowledgedAt != null ? FilingKind.WaivedNoId : FilingKind.NeedsAcknowledgement",
+               "_ => FilingKind.Unusable"],
+         why=_R275E_WHY + "H-3 ตัวตัดสินเดียว: รับทราบมีผลเฉพาะ 'ไม่มีเลขเลย' — เลข checksum ผิด/ถอดรหัสไม่ได้ไม่ได้รับสิทธิ์ (คำตัดสิน 4.2)"),
+    dict(file="Helpers/Pnd1FilingData.cs", method="Build",
+         must=["f.Kind == EmployeeTaxIdentity.FilingKind.NeedsAcknowledgement && tax > 0", "f.Kind == EmployeeTaxIdentity.FilingKind.Unusable",
+               "!IsThaiResident(contact?.CountryCode)"],
+         why=_R275E_WHY + "H-3 ไฟล์ ภ.ง.ด.1/1ก ตัดสินแบบเดียวกับ 50 ทวิ (ไม่มีเลข+ภาษี+ยังไม่รับทราบ = กัน · รับทราบ = เลข 0) · F12 ผู้รับไม่อยู่ในไทยไม่กันทั้งไฟล์"),
+    dict(file="Helpers/SsoInsuredNumber.cs", method="ThrowIfUnusable", must=["!p.HasSsn", "TaxIdProblem.Undecryptable"],
+         why=_R275E_WHY + "H-3/F3 ไฟล์ สปส.: เลขบัตรผิดกันเฉพาะคนที่ไม่มีเลข ปกส. ใช้ได้ · ถอดรหัสไม่ได้ยังกัน"),
+    dict(file="Helpers/EmployeeTaxIdWaiver.cs", method="AcknowledgeAsync",
+         must=["EmployeeTaxIdentity.WaiverRefusal(", "Audit(db, companyId, e, userId", "TaxIdWaiverAcknowledgedBy = userId"],
+         must_re=[r"why\.Length\s*<\s*5\)\s*throw\b"],
+         before=[("EmployeeTaxIdentity.WaiverRefusal(", "e.TaxIdWaiverAcknowledgedAt = DateTime.UtcNow")],
+         why=_R275E_WHY + "H-3 รับทราบรายคน: เหตุบังคับ · ผู้กด · เวลา · audit chain · เลขผิดปฏิเสธก่อนประทับ"),
+    dict(file="Helpers/EmployeeTaxIdWaiver.cs", method="Audit", must=["db.AddChainedAuditLog("],
+         why=_R275E_WHY + "H-3 การรับทราบ/ถอนเขียน audit ผ่าน hash chain เท่านั้น"),
+    dict(file="Helpers/EmployeeTaxIdWaiver.cs", method="RevokeAsync", must=["Audit(db, companyId, e, userId"],
+         why=_R275E_WHY + "H-3 ถอนการรับทราบต้องมี audit"),
+    dict(file="Services/Implementations/PdfGenerationService.cs", method="GenerateWithholdingTaxCertPdfAsync",
+         must=["WhtCertPayeeNote.LoadAsync(", "payeeNote: payeeNote"],
+         why=_R275E_WHY + "L-8/คำตัดสิน 4.2: พาสปอร์ตประกอบบน 50 ทวิ — HTML + QuestPDF จากตัวโหลดเดียว"),
+    dict(file="Services/Implementations/WithholdingTaxCertService.cs", method="GetByIdAsync", must=["WhtCertPayeeNote.LoadAsync("],
+         why=_R275E_WHY + "หน้าพิมพ์ wht.html แสดงข้อความประกอบเดียวกับ PDF (server computes)"),
+    dict(file="Data/AccountingDbContext.cs", method="SaveChangesAsync",
+         must=["GuardPayrollJunkPayees();"], before=[("GuardPayrollJunkPayees();", "StampWhtPayeeSnapshots();")],
+         why=_R275E_WHY + "H-2 (ข) ผู้ติดต่อเลขขยะจากเงินเดือนห้ามเป็นผู้ถูกหัก ภ.ง.ด.3/53 — จุดเดียวที่ทุกทางสร้าง/ออกใบผ่าน"),
+    dict(file="Data/AccountingDbContext.cs", method="SaveChanges",
+         must=["GuardPayrollJunkPayees();"], before=[("GuardPayrollJunkPayees();", "StampWhtPayeeSnapshots();")],
+         why=_R275E_WHY + "H-2 (ข) — คู่สมมาตรของ SaveChangesAsync"),
+    dict(file="Data/AccountingDbContext.cs", method="GuardPayrollJunkPayees",
+         must=["PayrollJunkPayee.IsJunkTaxId(c.TaxId)", "PayrollJunkPayee.IsPayrollOrigin(this, w.CompanyId, c.Id)",
+               "TaxType.WithholdingTax3 or TaxType.WithholdingTax53"],
+         why=_R275E_WHY + "H-2 (ข) ตัดสินด้วยเลขไม่ผ่าน 13 หลัก/mod-11 + ที่มาจากเงินเดือน (ผู้ขายจริงไม่ถูกแตะ)"),
+    dict(file="Helpers/PayrollJunkPayee.cs", method="RepairAsync",
+         must=["FindAsync(db, companyId, ct)", "!confirmFiledAmendment", "AddChainedAuditLog(", "w.PayeeSnapshotJson = null", "contact.IsActive = false"],
+         before=[("!confirmFiledAmendment", "contact.TaxId = r.TargetTaxId")],
+         why=_R275E_WHY + "H-2 ซ่อมเฉพาะแถวที่เลือก · แผนคำนวณใหม่ฝั่งเซิร์ฟเวอร์ · งวดที่ยื่นแล้วต้องยืนยันยื่นเพิ่มเติมก่อนแตะ · audit"),
+    dict(file="Helpers/EmployeeIdentityHealth.cs", method="BuildAsync",
+         must=["WhtPayeeSnapshot.Of(", "PayeeNeedsThaiId(c.TaxFormType, k.CountryCode)", "Issue.PayeeContactInvalid", "PayeeAction(c.SourcePayrollRunId != null, filed)"],
+         why=_R275E_WHY + "M-3 กรองแบบ/ประเทศ + แยก Issue · H-2 (ก) ทางไปต่อตามงวดที่ยื่นแล้ว · ตรวจเลขบนใบ (สำเนา ณ วันออก)"),
+    dict(file="Services/Import/ImportJson.cs", method="Deserialize", must=["EncryptedColumnConverter.IsUnreadable(json)", "UnreadableRuleCode"],
+         before=[("EncryptedColumnConverter.IsUnreadable(json)", "JsonSerializer.Deserialize<T>(json, Options)")],
+         why=_R275E_WHY + "M-6 แถวพักที่ถอดไม่ได้ล้มด้วยข้อความไทย ไม่ใช่ JsonException ดิบ"),
+]
+
 def main() -> int:
     errs = []
     # 2026-10-08: กติกาที่สะกดคีย์ผิด (เช่น forbid_re) เคยถูกข้ามเงียบ = ด่านที่ไม่มีอยู่จริง — คีย์ที่ไม่รู้จักต้องฟ้อง
@@ -21505,7 +21556,7 @@ RULES += [
          forbid=["EncryptionHelper.Decrypt(value, _key)"],
          why=_R274_WHY + "ฝั่งอ่านของ EF ลองคีย์ปัจจุบันแล้วคีย์เดิม ผ่านตัวตัดสินเดียว (Inspect) — เดิมคีย์เดียว ⇒ แถวคีย์เดิมคืน ciphertext"),
     dict(file="Helpers/Pnd1FilingData.cs", method="Build",
-         must=["EmployeeTaxIdentity.Inspect(e.TaxId, e.CitizenId)", "EmployeeTaxIdentity.InspectValue(contact?.TaxId)", "blocked.Add("],
+         must=["EmployeeTaxIdentity.ForFiling(e)", "EmployeeTaxIdentity.InspectValue(contact?.TaxId)", "blocked.Add("],   # รอบ 275 แพ็ก E: ForFiling = Inspect + รับทราบ
          before=[("BlockEmployee(d.Employee", "PayrollRow(d.Employee"), ("BlockEmployee(g.Emp", "PayrollRow(g.Emp")],
          forbid=["ThaiTaxId.Normalize(contact?.TaxId)"],
          why=_R274_WHY + "ตัวโหลดเดียวของไฟล์ ภ.ง.ด.1/1ก กันแถวที่เลขใช้ไม่ได้พร้อมเหตุก่อนประกอบแถว"),
@@ -21522,8 +21573,8 @@ RULES += [
          forbid=["EmployeeTaxIdentity.Resolve("],
          why=_R274_WHY + "รายงาน ภ.ง.ด.91 ไม่เก็บเลขที่ใช้ไม่ได้ + Notes บอกรายคน"),
     dict(file=PAYROLL, method="GenerateAnnualEmployeeWhtCertsAsync",
-         must=["EmployeeTaxIdentity.Inspect(emp.TaxId, emp.CitizenId)", "annualBlocked.Add("],
-         before=[("EmployeeTaxIdentity.Inspect(", "BuildEmployeeAnnualCertPdfAsync(")],
+         must=["EmployeeTaxIdentity.ForFiling(emp)", "annualBlocked.Add("],   # รอบ 275 แพ็ก E: ForFiling = Inspect + รับทราบ
+         before=[("EmployeeTaxIdentity.ForFiling(", "BuildEmployeeAnnualCertPdfAsync(")],
          why=_R274_WHY + "50 ทวิ ภ.ง.ด.1ก ตรวจเลขก่อนพิมพ์ — ใบเดียว: ปฏิเสธพร้อมเหตุ · หลายใบ: ข้าม + ไฟล์เหตุใน zip"),
     dict(file="Services/Implementations/PdfGenerationService.cs", method="GenerateWithholdingTaxCertPdfAsync",
          must=["WhtCertFormText.PayeeTaxIdProblem("],
@@ -21889,7 +21940,13 @@ RULES += [
          why=_R276_WHY + "ฝ่ายค้าน MED-3: รายการแจ้งเตือนเก่ากรองตามค่าจำกัด"),
     dict(file="Services/Implementations/NotificationService.cs", method="GetCountAsync", must=["VisibleAsync("],
          why=_R276_WHY + "ฝ่ายค้าน MED-3: ตัวนับเท่ารายการ"),
-    dict(file=DOC, method="CheckDuplicateAsync", must=["IgnoreQueryFilters()", "DocumentRestrictionPolicy.RedactDuplicate("],
+    dict(file=_R276_FILTER, method="RedactAsync",
+         must=["RestrictedResponseRedactor.SafeMessageAsync(", "RestrictedResponseRedactor.RedactValueAsync(", "executed.ExceptionHandled = true"],
+         why=_R276_WHY + "ฝ่ายค้าน (ข้อความตอบกลับ): ทางเขียนที่ยกตัวกรองแถว — เหตุ/ผลที่ตอบผ่านตัวช่วยกลางตัวเดียว (ไม่มีเลข/ลูกค้า/ยอดของใบที่มองไม่เห็น)"),
+    dict(file=_R276_FILTER, method="OnActionExecutionAsync", must=["await RedactAsync(executed,"],
+         before=[("DocumentRestrictionGuard.LiftRowFilterForWrite(", "await RedactAsync(executed,")],
+         why=_R276_WHY + "ทุกทางเขียนที่ยกตัวกรองแถวผ่านตัวช่วยกลาง"),
+    dict(file=DOC, method="CheckDuplicateAsync", must=["IgnoreQueryFilters()", "RestrictedResponseRedactor.RedactDuplicate("],
          why=_R276_WHY + "ฝ่ายค้าน MED-4: ตรวจใบซ้ำทั้งบริษัท คืนแค่ผลตัดสินของใบที่มองไม่เห็น"),
     dict(file="Helpers/DocumentRestrictionGuard.cs", method="EnsureMayFinalizeAsync",
          must=["db.DocumentDraftOnlyRequest", "ForActorAsync(", "DocumentRestrictionPolicy.DraftOnlyRuleCode"],
@@ -22023,8 +22080,6 @@ REVIEWER_CASES += [
     ("R277-6", "Active", "rows.Where(cu => !cu.AccessPending)", "rows", True),
 ]
 
-if __name__ == "__main__":
-    sys.exit(main())
 
 
 # ── รอบ 275 แพ็ก C (ใบเสร็จ/ใบกำกับภาษี ณ วันรับเงิน · คำตัดสิน 275-C-1 · erp-review/2026-11-20/dev-275-C.md) ──
@@ -22120,3 +22175,7 @@ REVIEWER_CASES += [
      "$\"รับชำระเงินตามใบแจ้งหนี้เลขที่ {invoice.DocumentNumber}\"", True),
     ("R275C-5", "UndoInstallmentReclassOnPaymentVoidAsync", "DocumentVoidPreconditions.ReceiptHoldsTaxPointFor(", "false && Equals(", True),
 ]
+
+
+if __name__ == "__main__":
+    sys.exit(main())

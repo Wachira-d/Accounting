@@ -161,3 +161,8 @@
 | `Auth/*` · `me/permissions` · `company` (GET) · `signatures` (ลายเซ็นของตัวเอง) · `mobile/devices` · `invitations` | เปิด (ข้อมูลของผู้ใช้เอง) |
 | `gov/*` · `dbd/*` · `reference/*` · `subscription/plans|feature-catalog` · `integration/link-patterns` | เปิด GET (ข้อมูลอ้างอิงสาธารณะ) |
 | `Public*` · `Legal` · `HelpCenter` · `ContactInquiry` · `Cms*` (resolve) | นิรนาม — ไม่ใช่ข้อมูลภายในบริษัท |
+
+### 7b. ข้อความตอบกลับ (ผู้ประสานงานสั่งปิดเพิ่ม · คำตัดสิน 276-17 · commit 401add83)
+ตัวช่วยกลางตัวเดียว `Helpers/RestrictedResponseRedactor` ใช้ทุกจุดที่ยกตัวกรองแถว (ท้ายทางเขียนใน `DocumentRestrictionFilter.RedactAsync`) + ใบซ้ำ (`CheckDuplicateAsync`):
+เหตุที่อ้างเลขเอกสารของคนอื่น หรือมาจากด่านข้ามเอกสาร (`CONVERT-*` · `R276-OVER-CONVERT` · ใบซ้ำ) ⇒ ข้อความกลาง "มีเอกสารอื่นในบริษัทที่…" + รหัสกติกา (ไม่มีเลข/ลูกค้า/ยอด) ·
+ผลสำเร็จ (DTO) แทนเลขของคนอื่นในทุกสตริงและล้าง id เอกสาร/สแกนของคนอื่น · Db test แปลงซ้ำ (เดิมรั่ว "แปลงเป็น Invoice (เลขใบของคนอื่น) ไปแล้ว" — reproduce แล้วแก้) + ใบซ้ำ

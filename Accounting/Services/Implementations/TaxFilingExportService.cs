@@ -500,7 +500,7 @@ public class TaxFilingExportService : ITaxFilingExportService
 
         int seq = 1;
         var missingSsn = 0;
-        Accounting.Helpers.SsoInsuredNumber.ThrowIfUnusable("สปส.1-10", allDetails.Select(d => d.Employee).Select(e => (e.EmployeeCode, (string?)$"{e.FirstNameTh} {e.LastNameTh}".Trim(), e.CitizenId)));   // รอบ 274 LOW-5
+        Accounting.Helpers.SsoInsuredNumber.ThrowIfUnusable("สปส.1-10", allDetails.Select(d => d.Employee).Select(e => (e.EmployeeCode, (string?)$"{e.FirstNameTh} {e.LastNameTh}".Trim(), e.CitizenId, e.SocialSecurityNumber)));   // รอบ 274 LOW-5
         foreach (var detail in allDetails)
         {
             var emp = detail.Employee;
@@ -592,7 +592,7 @@ public class TaxFilingExportService : ITaxFilingExportService
         var issues = new List<string>();
         var rows = new List<Dictionary<string, object?>>();
         var rowNo = 1; // แถวข้อมูลใน Excel เริ่มที่ 2 (แถว 1 = หัวตาราง)
-        Accounting.Helpers.SsoInsuredNumber.ThrowIfUnusable("สปส.1-10 (Excel)", allDetails.Select(d => d.Employee).Select(e => (e.EmployeeCode, (string?)$"{e.FirstNameTh} {e.LastNameTh}".Trim(), e.CitizenId)));   // รอบ 274 LOW-5
+        Accounting.Helpers.SsoInsuredNumber.ThrowIfUnusable("สปส.1-10 (Excel)", allDetails.Select(d => d.Employee).Select(e => (e.EmployeeCode, (string?)$"{e.FirstNameTh} {e.LastNameTh}".Trim(), e.CitizenId, e.SocialSecurityNumber)));   // รอบ 274 LOW-5
         foreach (var d in allDetails)
         {
             rowNo++;
@@ -679,7 +679,7 @@ public class TaxFilingExportService : ITaxFilingExportService
         var branchSeq = company.BranchCode ?? "00000";
         sb.AppendLine($"H|{company.TaxId}|{branchSeq}|{company.Name}|{period}|{newEmployees.Count}");
         int seq = 1;
-        Accounting.Helpers.SsoInsuredNumber.ThrowIfUnusable("สปส.1-03", newEmployees.Select(e => (e.EmployeeCode, (string?)$"{e.FirstNameTh} {e.LastNameTh}".Trim(), e.CitizenId)));   // รอบ 274 LOW-5
+        Accounting.Helpers.SsoInsuredNumber.ThrowIfUnusable("สปส.1-03", newEmployees.Select(e => (e.EmployeeCode, (string?)$"{e.FirstNameTh} {e.LastNameTh}".Trim(), e.CitizenId, e.SocialSecurityNumber)));   // รอบ 274 LOW-5
         foreach (var emp in newEmployees)
         {
             sb.AppendLine($"D|{seq++}|{Accounting.Helpers.SsoInsuredNumber.CitizenIdForFile(emp.CitizenId)}|{TitleCode(emp.TitleTh)}|{emp.FirstNameTh}|{emp.LastNameTh}" +
@@ -724,7 +724,7 @@ public class TaxFilingExportService : ITaxFilingExportService
         sb.AppendLine($"H|{company.TaxId}|{branchSeq}|{company.Name}|{period}|{leavers.Count}");
         int seq = 1;
         var missingSsn = 0;
-        Accounting.Helpers.SsoInsuredNumber.ThrowIfUnusable("สปส.6-09", leavers.Select(e => (e.EmployeeCode, (string?)$"{e.FirstNameTh} {e.LastNameTh}".Trim(), e.CitizenId)));   // รอบ 274 LOW-5
+        Accounting.Helpers.SsoInsuredNumber.ThrowIfUnusable("สปส.6-09", leavers.Select(e => (e.EmployeeCode, (string?)$"{e.FirstNameTh} {e.LastNameTh}".Trim(), e.CitizenId, e.SocialSecurityNumber)));   // รอบ 274 LOW-5
         foreach (var emp in leavers)
         {
             var (ssn, _) = Accounting.Helpers.SsoInsuredNumber.Resolve(emp.SocialSecurityNumber, emp.CitizenId);
