@@ -1626,7 +1626,7 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
             }
 
             // รอบ 275 แพ็ก D (M7): งวดนี้นำส่งแล้ว ⇒ ใบขอชำระที่ยังเปิดของงวดนั้นปิดเป็นชำระแล้ว (ทุกเส้น: มือ · สลิป) — ตัวตั้งเดียวกับการผูกสลิป
-            await TaxPaymentRequestService.CloseOnRemitAsync(_db, companyId, type, req.PeriodYear, req.PeriodMonth, rec.Id, null);
+            await TaxPaymentRequestService.CloseOnRemitAsync(_db, companyId, type, req.PeriodYear, req.PeriodMonth, rec.Id, null, amount + applied.Total, null);
 
             await _db.SaveChangesAsync();
             if (tx != null) await tx.CommitAsync();

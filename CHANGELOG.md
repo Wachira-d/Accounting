@@ -7354,6 +7354,9 @@ _รอบ 275 แพ็ก A (2026-11-20 · คีย์และความ�
 `SecretReprotectJob` เป็นระยะ + ล้ม = JobRunLog + watermark · ลายนิ้วมือคีย์ใน `SiteSettings` (งานย้ายคีย์ทั้งสองหยุดเมื่อไม่ตรง · ยืนยันคีย์โดยผู้ดูแล + audit) ·
 `Helpers/SecretUse` ที่ webhook ขาออก/CMS ขาเข้า/e-Tax/อีเมล/login ภายนอก/Omise/ธนาคาร/LINE OA/ลงนาม callback (ห้ามใช้ค่าว่างเงียบ · ห้ามส่งไม่เซ็น · ห้ามตรวจด้วยกุญแจว่าง) ·
 DTO พนักงานส่งป้าย ⛔ แทน ciphertext + ฟอร์มบอกชัด (ฝ่ายค้าน 274-10 MED-2) · หน้า `/pages/encryption-health.html` + มุมผู้ดูแล · runbook `docs/runbooks/encryption-key-rotation.md` ·
+คำตัดสิน 275-A-1…7 · pure + Db `KeysSecretsRound275A*` · กติกา `_R275A_` — commit (เติมในคอมมิตตามหลัง)_
+
+_รอบ 275 แพ็ก D ชุดแก้ฝ่ายค้าน (ไม่พบ HIGH): MED-1 ผูก/บันทึกเองตรวจเลขผู้เสียภาษี + หน่วยงานกับแบบ (`AgencyTypeProblem` · `GovPaymentSlip.AgencyHint`) · MED-2 งานเบื้องหลัง/ยกเลิกใบเขียนแบบมีเงื่อนไขทีละแถว + Db test แข่งเวลา · MED-3 `ReleasedAt` · LOW-1 การ์ดสรุปต่อกลุ่ม + เพดาน 20 · LOW-2 ใบที่มีสลิปเปิดอ้างไม่หมดอายุ · LOW-3 `PaidBy` + การ์ดใบกลับเปิด (`ReopenedAt`/`ReopenNoticeAt`) · LOW-4 `MoveToStaffIfOpenAsync` — คอลัมน์ใหม่ 3 (Round272Migration)_
 คำตัดสิน 275-A-1…7 · pure + Db `KeysSecretsRound275A*` · กติกา `_R275A_` — commit 2e7199e0 + bc9b6d73_
 
 _Last verified against codebase: 2026-11-20 (รอบ 275 แพ็ก C — ใบเสร็จ/ใบกำกับภาษี ณ วันรับเงิน: ตัวตัดสินเดียว `Helpers/SettlementTaxInvoiceRole` ยุบสูตร "งวดเดียว" 4 สำเนา

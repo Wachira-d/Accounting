@@ -48,10 +48,11 @@ public static class TaxSlipDeskRule
     /// <param name="todayThai">วันนี้ตามปฏิทินไทย</param>
     /// <param name="slipTaxIdOtherCompany">เลขผู้เสียภาษีบนสลิป (แบบปิดบัง) อ่านได้และไม่ตรงบริษัทที่เลือก</param>
     public static string? ManualProblem(string type, decimal tax, decimal surcharge, decimal penalty, decimal? slipAmount, decimal? staffSlipAmount,
-        DateTime? payDate, DateTime todayThai, bool slipTaxIdOtherCompany = false)
+        DateTime? payDate, DateTime todayThai, bool slipTaxIdOtherCompany = false, string? slipAgency = null)
     {
         if (!ProviderConsent.TaxTypes.Any(t => t.Type == type)) return "แบบนำส่งนี้ไม่อยู่ในรายการที่โต๊ะสลิปบันทึกได้";
         if (slipTaxIdOtherCompany) return "เลขผู้เสียภาษีบนสลิปไม่ตรงบริษัทที่เลือก — สลิปนี้อาจเป็นของบริษัทอื่น";
+        if (AgencyTypeProblem(slipAgency, type) is { } ap) return ap + " — ไม่บันทึก";
         if (tax <= 0m) return "ยอดภาษีต้องมากกว่า 0";
         if (surcharge < 0m || penalty < 0m) return "เงินเพิ่ม/เบี้ยปรับติดลบไม่ได้";
         var paid = slipAmount ?? staffSlipAmount;
@@ -64,13 +65,39 @@ public static class TaxSlipDeskRule
         return null;
     }
 
+    /// <summary>รอบ 275 แพ็ก D (ฝ่ายค้าน MED-1): หน่วยงานบนสลิปกับแบบนำส่งต้องเข้ากัน — สลิปกรมสรรพากรลงเป็นแบบของกรมสรรพากรเท่านั้น ·
+    /// สลิป สปส. ลงเป็น สปส.1-10 เท่านั้น · ไม่รู้หน่วยงาน (null/ค่าที่ไม่รู้จัก) ⇒ ไม่ใช่เหตุบล็อก (พนักงานตรวจรูปเอง)</summary>
+    /// <param name="slipAgency">ชื่อ <see cref="GovPaymentSlip.Agency"/> ที่ประทับบนแถวสลิป</param>
+    public static string? AgencyTypeProblem(string? slipAgency, string type)
+    {
+        if (!Enum.TryParse<GovPaymentSlip.Agency>(slipAgency, out var agency)) return null;
+        return agency switch
+        {
+            GovPaymentSlip.Agency.RevenueDepartment when !GovPaymentSlip.RdTaxTypes.Contains(type)
+                => "สลิปนี้ชำระกรมสรรพากร แต่แบบที่เลือก (" + ProviderConsent.LabelOf(type) + ") ไม่ได้ชำระกับกรมสรรพากร",
+            GovPaymentSlip.Agency.SocialSecurityOffice when type != "SsoSps110"
+                => "สลิปนี้ชำระสำนักงานประกันสังคม แต่แบบที่เลือก (" + ProviderConsent.LabelOf(type) + ") ไม่ใช่ สปส.1-10",
+            _ => null,
+        };
+    }
+
+    /// <summary>รอบ 275 แพ็ก D (ฝ่ายค้าน MED-1): เลขผู้เสียภาษีบนสลิป (เก็บแบบปิดบัง) อ่านได้และไม่ตรงบริษัทนี้ — ตัวเดียวของบันทึกเอง/ผูก/ตัวเลือกบนโต๊ะ ·
+    /// สลิปไม่มีเลข/บริษัทไม่มีเลข 13 หลัก ⇒ false (ไม่รู้ ไม่ใช่ขัดกัน)</summary>
+    public static bool SlipTaxIdOther(string? slipTaxIdMasked, string? companyTaxId)
+        => slipTaxIdMasked != null && ThaiTaxId.Normalize(companyTaxId).Length == 13 && TaxSlipReplyCard.MaskTaxId(companyTaxId) != slipTaxIdMasked;
+
     /// <summary>ปิดสลิปด้วยรายการนำส่งที่มีอยู่ได้ไหม · null = ได้</summary>
     /// <param name="remittanceTotal">ภาษี + เงินเพิ่ม + เบี้ยปรับ + ค่าปรับ ของรายการนำส่ง</param>
     /// <param name="linkedSlipId">รายการนำส่งผูกสลิปอื่นอยู่แล้ว</param>
-    public static string? LinkProblem(decimal? slipAmount, decimal remittanceTotal, bool remittanceDeleted, Guid? linkedSlipId)
+    /// <param name="slipTaxIdOtherCompany">เลขผู้เสียภาษีบนสลิปไม่ตรงบริษัทของรายการนำส่ง (<see cref="SlipTaxIdOther"/>)</param>
+    /// <param name="slipAgency">หน่วยงานบนสลิป · <paramref name="remittanceType"/> แบบของรายการนำส่ง (<see cref="AgencyTypeProblem"/>)</param>
+    public static string? LinkProblem(decimal? slipAmount, decimal remittanceTotal, bool remittanceDeleted, Guid? linkedSlipId,
+        bool slipTaxIdOtherCompany = false, string? slipAgency = null, string? remittanceType = null)
     {
         if (remittanceDeleted) return "รายการนำส่งนี้ถูกยกเลิกแล้ว";
         if (linkedSlipId != null) return "รายการนำส่งนี้ผูกกับสลิปอื่นแล้ว";
+        if (slipTaxIdOtherCompany) return "เลขผู้เสียภาษีบนสลิปไม่ตรงบริษัทของรายการนำส่งนี้";
+        if (remittanceType != null && AgencyTypeProblem(slipAgency, remittanceType) is { } ap) return ap;
         if (slipAmount is not decimal p) return "ระบบอ่านยอดบนสลิปไม่ได้ — ผูกได้เมื่อรู้ยอดบนสลิป (ใช้ “บันทึกเอง” แล้วกรอกยอดที่อ่าน)";
         if (R(p) != R(remittanceTotal)) return $"ยอดบนสลิป {p:N2} ไม่ตรงยอดรายการนำส่ง {remittanceTotal:N2}";
         return null;
@@ -102,6 +129,12 @@ public static class TaxPaymentRequestLifecycle
     /// <summary>นำส่งงวดนี้แล้ว (เส้นใดก็ได้) ⇒ ใบที่เปิดของงวดนั้นปิดเป็น Paid · แบบที่นำส่งหลายครั้งต่องวดไม่ปิดเอง</summary>
     public static bool ClosesOnRemit(string type) => !TaxSlipDeskRule.MultiPerPeriod(type);
 
+    /// <summary>รอบ 275 แพ็ก D (ฝ่ายค้าน LOW-3): การนำส่งนี้ "ชำระตามใบขอชำระ" จริงไหม — ยอดรวม (ภาษี+เงินเพิ่ม+เบี้ยปรับ) ต้องเท่าใบทุกสตางค์ ·
+    /// รู้ Control Code ของสลิป ⇒ ต้องตรงแฮชของใบด้วย · บันทึกบางส่วน/ยอดอื่น ⇒ ใบยังเปิด (ไม่ประทับชำระแล้ว)</summary>
+    public static bool PaidBy(decimal requestTotal, string requestControlHash, decimal remittedTotal, string? slipControlHash)
+        => Math.Round(requestTotal, 2, MidpointRounding.AwayFromZero) == Math.Round(remittedTotal, 2, MidpointRounding.AwayFromZero)
+           && (slipControlHash == null || string.Equals(slipControlHash, requestControlHash, StringComparison.Ordinal));
+
     /// <summary>Control Code หมดอายุแล้วหรือยัง — วันหมดอายุ (ปฏิทินไทย) ผ่านไปแล้ว · null = ไม่มีวันหมดอายุ</summary>
     public static bool IsExpired(DateTime? expiresAt, DateTime nowUtc) => expiresAt is DateTime e && ThaiDate.CalendarDateUtc(nowUtc).Date > e.Date;
 
@@ -129,6 +162,8 @@ public static class TaxSlipOpenAge
     public const int RemindEveryHours = 24;
     public const int ExpireAfterDays = 90;
     public const string ExpiredRuleCode = "TAX-SLIP-OPEN-EXPIRED";
+    /// <summary>ฝ่ายค้าน LOW-1: ปิดได้กี่แถวต่อกลุ่ม/อีเมลต่อรอบ (การ์ดสรุปใบเดียวต่อกลุ่ม) — รอบแรกหลัง deploy ไม่ระดมการ์ด</summary>
+    public const int ExpireCapPerChannelPerRun = 20;
 
     public enum AgeAction { None, Remind, Expire }
 
