@@ -26,6 +26,11 @@ public static class ThaiDate
     /// <summary>คืนวันที่ตามปฏิทินไทยของ dt (ไม่ว่า dt จะ Kind ไหน) ในรูป
     /// DateTime ณ 00:00:00 Kind=Utc → เก็บลง timestamptz แล้ว round-trip
     /// กลับมาเป็นวันเดิมเสมอ + format/compare ตรงทุก layer.</summary>
+    /// <summary>รอบ 275 แพ็ก C (ฝ่ายค้าน MED-5): วันที่ของการรับชำระ — <b>แปลงเฉพาะ instant ที่ระบุว่าเป็น UTC จริง</b> (gateway · <c>timestamptz</c> จากฐาน) เป็นวันที่ปฏิทินไทย ·
+    /// ค่าที่ไม่ระบุ Kind (ฟอร์ม · นำเข้าไฟล์ · bank feed ที่เป็นเวลาไทยอยู่แล้ว) และ Local = คงเดิมทุกตัวอักษร (เดิม <see cref="CalendarDateUtc"/> ตีความเป็น UTC ⇒ เลื่อนวัน)</summary>
+    public static DateTime PaymentCalendarDate(DateTime dt)
+        => dt.Kind == DateTimeKind.Utc ? CalendarDateUtc(dt) : dt;
+
     public static DateTime CalendarDateUtc(DateTime dt)
     {
         // Era guard — storage ต้องเป็น ค.ศ. เสมอ (ช่วงสมเหตุผล ~1900–2400).

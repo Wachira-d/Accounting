@@ -1169,8 +1169,10 @@ public class AuthService : IAuthService, ILineSignerLoginVerifier
     /// <summary>ใช้คำเชิญเข้าบริษัท (ถ้ามีและยังใช้ได้) — ทั้ง <c>RegisterAsync</c> และ <c>SsoLoginAsync</c> (บัญชีใหม่ + บัญชีเดิม) เรียกตัวนี้ ·
     /// รอบ 277: ตรรกะทั้งหมดย้ายไป <see cref="ICompanyInvitationService.TryAcceptOnSignupAsync"/> (ตัวเดียวกับกดตอบรับจากหน้าคำเชิญ —
     /// hash token · ใช้ครั้งเดียว · อีเมลตรง · ที่นั่ง · บทบาท/ยังไม่มีสิทธิ์ · audit · แจ้งเจ้าของ) · คืน true = เข้าบริษัทผู้เชิญแล้ว ผู้เรียกต้อง<b>ไม่</b>สร้างบริษัท</summary>
-    private Task<bool> ConsumeInvitationAsync(User user, string? invitationToken)
-        => _invitations.TryAcceptOnSignupAsync(user, invitationToken);
+    private async Task<bool> ConsumeInvitationAsync(User user, string? invitationToken)
+    {
+        return await _invitations.TryAcceptOnSignupAsync(user, invitationToken);
+    }
 
     /// <summary>ด่าน "ผู้ให้บริการนี้เปิดใช้แล้วหรือยัง" — **ตัวเดียว**ของทุกเส้น
     /// ที่แตะ SSO (ล็อกอิน · ผูกบัญชีเพิ่ม · ยืนยันการผูก)

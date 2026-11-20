@@ -227,7 +227,7 @@ public class SettlementTaxInvoiceRoleDbTests
     }
 
     [Fact]
-    public async Task คิว_ใบเก่าภาษีย้ายทั้งก้อน_รับยังไม่ครบ_ให้คนตัดสิน_รับครบแล้ว_ออกทุกงวดพร้อมกัน_งวดรายงานเดิม()
+    public async Task คิว_ใบเก่าภาษีย้ายทั้งก้อน_ออกใบกำกับเป็นหลักฐานกระดาษ_แถวภพ30คงอยู่ที่ใบแจ้งหนี้()
     {
         using var db = DbTestDatabase.TryCreateContext();
         if (db == null) { _out.WriteLine(Skip); return; }
@@ -237,44 +237,109 @@ public class SettlementTaxInvoiceRoleDbTests
         var (p1, plain1) = await LegacyPaymentAsync(db, s, inv.Id, 374_500m, d1);
         await ReclassWholesaleAsync(db, s, inv.Id, d1);
 
-        // รับยังไม่ครบ ⇒ ออกใบกำกับรายงวดตอนนี้ = ภาษีขายเดือนนั้นลดลง (ยื่นแล้ว) ⇒ ไม่มีปุ่ม · บอกเหตุ
         using (var q = DbTestDatabase.TryCreateContext()!)
         {
             var row = Assert.Single(await Docs(q).ReceivedWithoutTaxInvoiceAsync(s.CompanyId), r => r.DocumentId == inv.Id);
-            Assert.Equal((false, nameof(SettlementTaxInvoiceRole.Why.WholesaleVatNotFullyPaid)), (row.CanIssue, row.Reason));
-            Assert.NotNull(row.HumanReason);
-            await Assert.ThrowsAsync<BusinessRuleException>(() => Docs(q).IssueTaxInvoiceForPaymentAsync(s.CompanyId, p1.Id, inv.Id, "accountant"));
+            Assert.Equal((true, "Installment", (decimal?)24_500m, plain1.DocumentNumber), (row.CanIssue, row.Mode, row.VatAmount, row.PlainReceiptNumber));
             Assert.Empty(await Docs(q).ReceivedWithoutTaxInvoiceAsync(Guid.NewGuid()));   // tenant
-        }
-
-        // งวดสอง (ทางอัตโนมัติแบบเก่า) ⇒ รับครบ ⇒ ทั้งสองงวดออกได้พร้อมกัน
-        var d2 = Today.AddDays(-30);
-        var (p2, plain2) = await LegacyPaymentAsync(db, s, inv.Id, 374_500m, d2);
-        using (var q = DbTestDatabase.TryCreateContext()!)
-        {
-            var rows = (await Docs(q).ReceivedWithoutTaxInvoiceAsync(s.CompanyId)).Where(r => r.DocumentId == inv.Id).ToList();
-            Assert.Equal(2, rows.Count);
-            Assert.All(rows, r => Assert.True(r.CanIssue));
-            Assert.Equal(49_000m, rows.Sum(r => r.VatAmount ?? 0m));
         }
         IssuedReceiptResult issued;
         using (var act = DbTestDatabase.TryCreateContext()!)
-            issued = await Docs(act).IssueTaxInvoiceForPaymentAsync(s.CompanyId, p2.Id, inv.Id, "accountant");
+            issued = await Docs(act).IssueTaxInvoiceForPaymentAsync(s.CompanyId, p1.Id, inv.Id, "accountant");
         using var check = DbTestDatabase.TryCreateContext()!;
-        var vatReceipts = await check.Documents.AsNoTracking()
-            .Where(d => d.CompanyId == s.CompanyId && d.RelatedDocumentId == inv.Id && d.VatAmount > 0m && d.Status != DocumentStatus.Voided).ToListAsync();
-        Assert.Equal(2, vatReceipts.Count);
-        Assert.Equal(49_000m, vatReceipts.Sum(r => r.VatAmount));
-        // ภาษีถูกรายงานแล้วเดือนของงวดแรก ⇒ ทุกใบกำกับลงงวดนั้น (ภ.พ.30 ที่ยื่นแล้วไม่เปลี่ยน) · ไม่มีการย้ายภาษีซ้ำ
-        Assert.All(vatReceipts, r => Assert.Equal(d1, r.TaxPointDate));
+        var nr = await check.Documents.AsNoTracking().SingleAsync(d => d.Id == issued.ReceiptId);
+        // คำตัดสิน 275-C-10: หลักฐานกระดาษ — ไม่ย้ายภาษีซ้ำ · ไม่เป็นเจ้าของแถว ภ.พ.30 (ใบแจ้งหนี้ยังเป็นเจ้าของตามที่ยื่น)
+        Assert.Equal((true, 24_500m, true, (Guid?)plain1.Id), (nr.IsTaxInvoiceByLaw == true, nr.VatAmount, nr.VatReportedOnSource, nr.ReplacesDocumentId));
         Assert.Equal(0m, await Undue21913Async(s, inv.Id));
-        Assert.Contains(vatReceipts, r => r.ReplacesDocumentId == plain1.Id);
-        Assert.Contains(vatReceipts, r => r.ReplacesDocumentId == plain2.Id && r.Id == issued.ReceiptId);
+        var invDoc = await check.Documents.AsNoTracking().SingleAsync(d => d.Id == inv.Id);
+        Assert.True(OutputVatOwnership.Decide(OutputVatOwnership.FactsOf(invDoc, false, ownedByVatReceipt: false, 0m, null, null)).Owns);
+        Assert.False(OutputVatOwnership.Decide(OutputVatOwnership.FactsOf(nr, false, false, 0m, DocumentType.Invoice, invDoc.OutputVatDueAt)).Owns);
         Assert.Equal(DocumentStatus.Voided, (await check.Documents.AsNoTracking().SingleAsync(d => d.Id == plain1.Id)).Status);
-        Assert.DoesNotContain(await Docs(check).ReceivedWithoutTaxInvoiceAsync(s.CompanyId), r => r.DocumentId == inv.Id);
-        // กดซ้ำ = ใบเดิม (ไม่ออกใบกำกับใบที่สอง)
+        Assert.DoesNotContain(await Docs(check).ReceivedWithoutTaxInvoiceAsync(s.CompanyId), r => r.PaymentId == p1.Id);
         using var again = DbTestDatabase.TryCreateContext()!;
         Assert.True((await Docs(again).IssueTaxInvoiceForPaymentAsync(s.CompanyId, p1.Id, inv.Id, "accountant")).AlreadyExisted);
+    }
+
+    /// <summary>ใบลดหนี้ 107,000 (VAT 7,000 ลด 21913) อ้างใบแจ้งหนี้ + ลดยอดค้าง</summary>
+    private static async Task CreditNoteAsync(Accounting.Data.AccountingDbContext db, Seed s, Guid invoiceId, DateTime date)
+    {
+        var cn = new Document
+        {
+            CompanyId = s.CompanyId, ContactId = s.CustomerId, DocumentType = DocumentType.CreditNote, DocumentNumber = "CN-275C-" + Guid.NewGuid().ToString("N")[..6],
+            Status = DocumentStatus.Approved, DocumentDate = date, RelatedDocumentId = invoiceId, SubTotal = 100_000m, VatAmount = 7_000m, TotalAmount = 107_000m,
+            Currency = "THB", ExchangeRate = 1m,
+        };
+        db.Documents.Add(cn);
+        await db.SaveChangesAsync();
+        var je = new JournalEntry
+        {
+            CompanyId = s.CompanyId, EntryNumber = "CN-JE-" + Guid.NewGuid().ToString("N")[..6], EntryDate = date, Status = JournalEntryStatus.Posted,
+            JournalType = JournalType.Sales, TotalDebit = 107_000m, TotalCredit = 107_000m, SourceDocumentId = cn.Id, IsAutoGenerated = true, CreatedBy = "tester",
+        };
+        je.Lines.Add(new JournalEntryLine { AccountId = s.RevenueId, DebitAmount = 100_000m, LineOrder = 1 });
+        je.Lines.Add(new JournalEntryLine { AccountId = s.VatUndueId, DebitAmount = 7_000m, LineOrder = 2 });
+        je.Lines.Add(new JournalEntryLine { AccountId = s.ArId, CreditAmount = 107_000m, LineOrder = 3 });
+        db.JournalEntries.Add(je);
+        await db.SaveChangesAsync();
+        using var fresh = DbTestDatabase.TryCreateContext()!;   // ยอดล่าสุดหลังการรับงวดก่อน (context อื่น)
+        var inv = await fresh.Documents.SingleAsync(d => d.Id == invoiceId);
+        inv.PaidAmount += 107_000m; inv.BalanceDue = inv.TotalAmount - inv.PaidAmount;
+        await fresh.SaveChangesAsync();
+    }
+
+    [Fact]
+    public async Task ฝ่ายค้านHIGH1_ใบลดหนี้หลังงวด1_งวดปิดเป็นใบกำกับ17500_ปิดยอดแล้ว21913เป็นศูนย์()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var s = await SeedAsync(db);
+        var inv = await InvoiceAsync(db, s, Today.AddDays(-40));
+        var (_, r1) = await PayAsync(s, inv.Id, 374_500m, Today.AddDays(-30));
+        Assert.Equal(24_500m, r1!.VatAmount);
+        await CreditNoteAsync(db, s, inv.Id, Today.AddDays(-20));
+        using (var c0 = DbTestDatabase.TryCreateContext()!)
+        {
+            var cn0 = await c0.Documents.AsNoTracking().Where(d => d.RelatedDocumentId == inv.Id && d.DocumentType == DocumentType.CreditNote).Select(d => d.Id).SingleAsync();
+            Assert.Equal(17_500m, await Undue21913Async(s, inv.Id) + await Undue21913Async(s, cn0));   // ใบแจ้งหนี้ 24,500 ยังพัก · ใบลดหนี้ −7,000
+        }
+        var (_, r2) = await PayAsync(s, inv.Id, 267_500m, Today);
+        Assert.Equal((true, 17_500m, 250_000m), (r2!.IsTaxInvoiceByLaw == true, r2.VatAmount, r2.SubTotal));
+        // invariant: ปิดยอดแล้ว 21913 ของใบ (+ ใบลดหนี้ลูก) = 0
+        using var c = DbTestDatabase.TryCreateContext()!;
+        var cnId = await c.Documents.AsNoTracking().Where(d => d.RelatedDocumentId == inv.Id && d.DocumentType == DocumentType.CreditNote).Select(d => d.Id).SingleAsync();
+        Assert.Equal(0m, await Undue21913Async(s, inv.Id) + await Undue21913Async(s, cnId));
+        var line = await c.DocumentLines.AsNoTracking().SingleAsync(l => l.DocumentId == r2.Id && !l.IsDeleted);
+        Assert.DoesNotContain("(บางส่วน)", line.Description);   // LOW: งวดปิด
+    }
+
+    [Fact]
+    public async Task ฝ่ายค้านMED1_รับหลายใบในโอนเดียว_งวดบริการย้ายภาษีตามส่วน_ยกเลิกถอยเฉพาะของการรับนั้น()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var s = await SeedAsync(db);
+        var inv = await InvoiceAsync(db, s, Today.AddDays(-40));
+        var other = await InvoiceAsync(db, s, Today.AddDays(-40));
+        // ทางอัตโนมัติ (integration) งวดแรกของ inv 374,500 + ปิด other 749,000 ในการโอนเดียว
+        Guid payId;
+        using (var req = DbTestDatabase.TryCreateContext()!)
+        {
+            await Docs(req).CreatePaymentAsync(s.CompanyId, new CreatePaymentRequest(inv.Id, Today.AddDays(-30), 374_500m, PaymentMethod.BankTransfer,
+                "AUTO-1", null, null, OverrideBankAccountId: s.BankId, IssueReceiptDocument: true), "integration", PaymentEntrySource.Manual);
+        }
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            payId = (await Docs(req).CreateMultiDocPaymentAsync(s.CompanyId, new CreatePaymentRequest(Guid.Empty, Today, 1_123_500m, PaymentMethod.BankTransfer,
+                "MULTI", null, null, OverrideBankAccountId: s.BankId, IssueReceiptDocument: true,
+                Allocations: new List<PaymentAllocationRequest> { new(inv.Id, 374_500m), new(other.Id, 749_000m) }), "tester")).Id;
+        Assert.Equal(0m, await Undue21913Async(s, inv.Id));
+        Assert.Equal(0m, await Undue21913Async(s, other.Id));
+        using (var c = DbTestDatabase.TryCreateContext()!)
+            Assert.True(await c.JournalEntries.AnyAsync(j => j.SourceDocumentId == inv.Id && j.Note == SettlementTaxInvoiceLoader.InstallmentReclassTag(payId)));
+        using (var v = DbTestDatabase.TryCreateContext()!)
+            await Docs(v).VoidPaymentAsync(s.CompanyId, payId);
+        // inv ยังเหลืองวดแรก ⇒ ถอยเฉพาะ 24,500 ของการรับนี้ · other ไม่เหลือการรับ ⇒ ถอยทั้งก้อน
+        Assert.Equal(24_500m, await Undue21913Async(s, inv.Id));
+        Assert.Equal(49_000m, await Undue21913Async(s, other.Id));
     }
 
     [Fact]

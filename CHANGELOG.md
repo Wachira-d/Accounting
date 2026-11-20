@@ -7374,10 +7374,14 @@ _รอบ 275 แพ็ก A ผลตรวจฝ่ายค้าน (2026-1
 MED-2 `EncryptionWriteGuard` — เครื่องคีย์ไม่ตรงหยุดเข้ารหัสค่าใหม่ (ความลับ + PII · 503 ข้อความไทย · อ่านไม่กระทบ) · MED-3 `RotationPending` จนทุกเครื่องรายงานคีย์ใหม่/ผู้ดูแลยืนยัน ·
 MED-4 กุญแจ HMAC สลิปภาษี/OTP จากเมล็ดถาวร `SiteSettings.HmacSeedProtected` (`HmacSeedBootstrap`) · LOW ลายนิ้วมือจากกุญแจ PBKDF2 · ยืนยันแบบมีเงื่อนไขค่าเดิม · รอบข้ามสแกนลงชื่อ `…Skipped` ·
 คำตัดสิน 275-A-8…12 · เทสต์ P275A-11…14 · runbook ขั้น 4 — commit 17305b6a_
-(ข) สำเนาผู้ถูกหัก ณ วันออก `WithholdingTaxCerts.PayeeSnapshotJson` (`WhtPayeeSnapshot` · ประทับที่ SaveChanges · backfill) — renderer ×2 · หน้าใบ · รายงาน/ไฟล์ — commit (เติมในคอมมิตตามหลัง)_
+(ข) สำเนาผู้ถูกหัก ณ วันออก `WithholdingTaxCerts.PayeeSnapshotJson` (`WhtPayeeSnapshot` · ประทับที่ SaveChanges · backfill) — renderer ×2 · หน้าใบ · รายงาน/ไฟล์ — commit 24aad79a_
 _รอบ 276 (2026-11-20 · ความต้องการเจ้าของ "เห็นเฉพาะเอกสารที่ตัวเองสร้าง + เฉพาะร่าง + กดแจ้งให้บัญชีอนุมัติ · แจ้ง LINE กลุ่ม/ส่วนตัว/อีเมล/ในระบบ"):
 ค่าตั้งต่อผู้ใช้/บทบาท (`CompanyUser`/`CompanyRole.OwnDocumentsOnly/DraftDocumentsOnly` · Round276Migration) · ตัวตัดสิน `Helpers/DocumentRestrictionPolicy` ·
 ด่าน `Filters/DocumentRestrictionFilter` + ตัวกรองแถว EF ของ Documents · ด่าน Approve/Void ชั้น service (`DocumentRestrictionGuard`) ·
 ส่งขออนุมัติพื้นฐาน `DocumentApprovalRequests` + `DocumentApprovalRequestService` (กฎที่ตรง ⇒ workflow เดิม) · คีย์แจ้งเตือน `document.approval_requested/returned/granted` +
 บทบาทผู้รับ `DocumentApprover` · UI ทีม/บทบาท/เอกสาร/คิวอนุมัติ/เมนู · คำตัดสิน 276-1…8 · เทสต์ `DocumentRestrictionPolicyTests` + Db `DocumentRestrictionDbTests` ·
 กติกา `_R276_` — commit 69740aef + 4456de7a_
+
+_Last verified against codebase: 2026-11-20 (รอบ 275 แพ็ก C ชุดแก้ฝ่ายค้าน — HIGH-1 invariant ปิดยอดแล้ว 21913 = 0 ทุกเส้น (งวดปิดถือภาษีที่ยังพัก · ใบลดหนี้ที่แตะภาษีพักไม่นับซ้ำใน ภ.พ.30) ·
+MED-1 รับหลายใบ/ยกเลิกเดินตัวตัดสินเดียว · MED-2 ใบกำกับรายงวดแยกบรรทัดตามอัตรา · MED-3 ใบเก่าที่ภาษีรายงานแล้ว = ใบกำกับหลักฐานกระดาษ `VatReportedOnSource` (แทนการออกทุกงวดพร้อมกัน) ·
+MED-4 เส้นหลังยกเลิกทาง e-Tax · MED-5 วันที่ UTC เท่านั้น · LOW รายงานวันที่ข้ามเดือน/ภาษีหักตามสัดส่วนใบ/งวดปิดไม่พิมพ์ "(บางส่วน)" · คำตัดสิน 275-C-3/4/6/7 ปรับ + 275-C-10…13)_

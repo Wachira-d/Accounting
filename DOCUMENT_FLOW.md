@@ -5259,6 +5259,15 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
   ใบที่ออกแล้วไม่แก้ · e-Tax XML/สอง renderer อ่านบรรทัด/ยอดของใบตัวเดียวกัน (ใบกำกับรายงวด = แถวยอดปกติ "ยอดรวมก่อน VAT / VAT")
 - **อื่น**: ตัวโหลดรายการตัดยอดไม่นับการรับที่ถูกยกเลิก (`Payment.IsDeleted` — ตาราง Payments ไม่มี query filter · เดิมพิมพ์เป็น "รับชำระก่อนหน้า") · การ์ด LINE ของใบเสร็จรับชำระใช้ป้าย/ยอด
   "ยอดรับชำระ" จากตัวโหลดเดียวกับกระดาษ (LOW-1) · ข้อความ `WhyCannotIssue` ของการรับหลายใบชี้ปุ่มออกใบเสร็จรายใบ (LOW-3)
+- **ชุดแก้ฝ่ายค้าน (สถานะปัจจุบัน — แทนข้อความที่ขัดกันข้างบน)**:
+  - **invariant ปิดยอดแล้ว 21913 ของใบ (+ ใบลดหนี้/เพิ่มหนี้ลูก) = 0 ทุกเส้น** — `TryReclassifyUndueOutputVatAsync` ย้ายที่เหลือทั้งหมดเมื่อใบปิดยอด (รับชำระ · รับหลายใบ · หักมัดจำ · จัดสรร) ·
+    งวดปิดของงานบริการถือ "ภาษีที่ยังพัก" (`UndueVatRemaining` — สุทธิหลังใบลดหนี้/มัดจำ) ⇒ ใบลดหนี้ก่อน/ระหว่างงวดไม่เป็นทางตันอีก · ใบลดหนี้/เพิ่มหนี้ที่แตะ 21913 ของใบที่ภาษีถูกถือโดยใบกำกับ ณ วันรับเงิน
+    ไม่นับใน ภ.พ.30 ซ้ำ (`TaxService.AdjustmentsNettedInTaxInvoiceReceiptsAsync` — แถวเตือน excluded)
+  - **ใบผสมอัตรา**: ใบกำกับรายงวดหนึ่งบรรทัดต่ออัตรา (`SplitByRate`) · มูลค่า × อัตรา = VAT · งวดปิดไม่พิมพ์ "(บางส่วน)" · ไม่ได้บันทึกภาษีหักของงวด ⇒ ถอดด้วยสัดส่วนของใบ
+  - **ใบเก่าที่ภาษีรายงานทั้งใบแล้ว** (คำตัดสิน 275-C-10): ใบกำกับที่ออก (คิว/รับงวดถัดไป) = หลักฐานกระดาษ `Document.VatReportedOnSource` — ไม่เป็นเจ้าของแถว ภ.พ.30/§87
+    (`OutputVatOwnership.RuleReportedOnSource` · ใบแจ้งหนี้ยังเป็นเจ้าของตามที่ยื่น) · ไม่ย้ายภาษีซ้ำ · ออกทีละรายการ — แทนทาง "ออกทุกงวดพร้อมกัน" เดิม · migration `ADD COLUMN IF NOT EXISTS "VatReportedOnSource"`
+  - **รับหลายใบ**: ตัดสินต่อใบ ย้ายภาษีตามส่วนผูกการรับ · ยกเลิกถอยเฉพาะ JE ของการรับนั้น · **หลังยกเลิกทาง e-Tax** ใช้ผลตัวตัดสินของการรับแรก (`EtaxCancelFollowUpFacts.FirstPaymentPlan`)
+  - **วันที่**: แปลงเป็นวันที่ไทยเฉพาะค่าที่ระบุว่าเป็น UTC (`ThaiDate.PaymentCalendarDate`) · การรับเดิมที่ข้ามเดือน ⇒ `GET document/payment-date-review` (อ่านอย่างเดียว)
 - เทสต์ `SettlementTaxInvoiceRoleTests` · `Db/SettlementTaxInvoiceRoleDbTests` · Last verified `commit 96bb5262`
 
 ### 3.4c ผูกใบเสร็จ/เงินที่รับไว้แล้วกับใบแจ้งหนี้ — เจ้าเดียวกัน (รอบ 266 แพ็ก A · `erp-review/2026-11-12/team-266-manual-doc-link.md` · DECISIONS 266-1-x)
@@ -9940,7 +9949,7 @@ _Last verified against codebase: 2026-11-20 (รอบ 275 แพ็ก C — §
 
 _Last verified against codebase: 2026-11-20 (รอบ 275 แพ็ก A ผลตรวจฝ่ายค้าน MED-1…4 + LOW — heartbeat/ยืนยันลายนิ้วมือที่ระบุ · ประตูเขียนค่าเข้ารหัส · หมุนรอทุกเครื่อง · เมล็ด HMAC ถาวร ·
 เทสต์ `EncryptionWriteGuardRound275ATests` + Db `KeysSecretsRound275ADbTests` — commit 17305b6a)_
-`SecretUse` ด่านเดียวของผู้อ่านความลับ · DTO พนักงานไม่ส่ง ciphertext · หน้า "สุขภาพข้อมูลเข้ารหัส" · เทสต์ `KeysSecretsRound275ATests` + Db `KeysSecretsRound275ADbTests` · กติกา `_R275A_` — commit (เติมในคอมมิตตามหลัง))_
+`SecretUse` ด่านเดียวของผู้อ่านความลับ · DTO พนักงานไม่ส่ง ciphertext · หน้า "สุขภาพข้อมูลเข้ารหัส" · เทสต์ `KeysSecretsRound275ATests` + Db `KeysSecretsRound275ADbTests` · กติกา `_R275A_` — commit 2e7199e0 + bc9b6d73)_
 _Last verified against codebase: 2026-11-20 (รอบ 276 — ผู้ใช้เห็นเฉพาะเอกสารที่ตัวเองสร้าง/สร้าง-แก้ได้เฉพาะร่าง: ตัวกรองแถว EF ของ Documents ·
 `DocumentRestrictionFilter` รายการอนุญาต + 404 · ด่าน Approve/Void ชั้น service · ส่งขออนุมัติพื้นฐาน/ถอน/ตีกลับ + แจ้งผ่านเครื่องแจ้งเตือนกลาง ·
 คำตัดสิน 276-1…8 — commit 69740aef + 4456de7a)_

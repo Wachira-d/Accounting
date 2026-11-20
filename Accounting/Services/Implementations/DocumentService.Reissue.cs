@@ -768,6 +768,7 @@ public partial class DocumentService
                 var reference = request.RdCancellationReference?.Trim();
                 var evidenceLabel = DocumentVoidPreconditions.EvidenceLabel(verdict.Evidence);
                 EtaxCancelFollowUpPlan? plan = null;
+                SettlementTaxInvoiceRole.Decision? firstPlan = null;   // รอบ 275 แพ็ก C (ฝ่ายค้าน MED-4)
                 sourceId = src?.Id;
 
                 if (path == EtaxCancellationPath.OriginalStillValid)
@@ -846,12 +847,25 @@ public partial class DocumentService
                                 hasReceipt && DocumentVoidPreconditions.EtaxReachedRd(payReceiptEtax.GetValueOrDefault(p.ReceiptDocumentId!.Value)));
                         }).ToList();
                         var firstPaymentDate = liveFacts.Count == 0 ? (DateTime?)null : liveFacts.Min(p => p.PaymentDate);
+                        // รอบ 275 แพ็ก C (ฝ่ายค้าน MED-4): บทบาทใบกำกับของการรับครั้งแรกที่ยังมีผลจากตัวตัดสินเดียว — ไม่นับใบที่กำลังยกเลิก + ใบรับเปล่าของการรับนั้น
+                        var firstLive = liveFacts.OrderBy(p => p.PaymentDate).ThenBy(p => p.PaymentId).FirstOrDefault();
+                        if (firstLive != null && await _db.Payments.AsNoTracking().FirstOrDefaultAsync(p => p.Id == firstLive.PaymentId && p.CompanyId == companyId) is Payment fp)
+                        {
+                            var (fpMe, fpAllocIds) = await SettlementTaxInvoiceLoader.ThisForDocumentAsync(_db, companyId, fp, src.Id, CancellationToken.None);
+                            var fpFacts = await SettlementTaxInvoiceLoader.FactsAsync(_db, companyId, src, fpMe, fp.Id, fpAllocIds, exceptReceiptId: firstLive.ReceiptId);
+                            var cancelledCounted = rcpt.VatAmount > 0.005m && rcpt.SettlementPaymentId != fp.Id && rcpt.Id != firstLive.ReceiptId;
+                            firstPlan = SettlementTaxInvoiceRole.Decide(fpFacts with
+                            {
+                                OtherLiveReceiptVat = Math.Max(0m, fpFacts.OtherLiveReceiptVat - (cancelledCounted ? rcpt.VatAmount : 0m)),
+                            });
+                        }
                         plan = DocumentVoidPreconditions.EtaxCancellationFollowUp(new EtaxCancelFollowUpFacts(
                             src.DocumentType, src.VatAmount, src.BalanceDue <= 0.005m, src.OutputVatDueAt,
                             await LiveVatReceiptExistsAsync(companyId, src.Id, exceptReceiptId: rcpt.Id),
                             liveFacts,
                             src.OutputVatDueAt != null ? await ReclassLockReasonAsync(companyId, src.Id) : null,
-                            firstPaymentDate is DateTime fpd ? await OutputVatPeriodLockReasonAsync(companyId, fpd) : null));
+                            firstPaymentDate is DateTime fpd ? await OutputVatPeriodLockReasonAsync(companyId, fpd) : null,
+                            FirstPaymentPlan: firstPlan));
                         if (!plan.Allowed)
                             throw new BusinessRuleException(plan.Reason ?? "บันทึกการยกเลิกทาง e-Tax ไม่ได้ — ภาษีขายของใบต้นทางถอย/ย้ายไม่ได้",
                                 "ETAX-CANCEL-FOLLOWUP-BLOCKED", 409);
@@ -892,7 +906,8 @@ public partial class DocumentService
                         if (plan.IssueVatReceiptForPaymentId is Guid payId)
                         {
                             var pay = await _db.Payments.FirstAsync(p => p.Id == payId && p.CompanyId == companyId);
-                            var nr = await CreateSettlementReceiptAsync(companyId, src, pay, actor, issueApproved: true, carryVatFromSource: true);
+                            var nr = await CreateSettlementReceiptAsync(companyId, src, pay, actor, issueApproved: true, carryVatFromSource: true,
+                                taxInvoicePlan: firstPlan, installmentTaxPointDate: pay.PaymentDate);
                             pay.ReceiptDocumentId = nr.Id;
                             pay.UpdatedAt = now;
                             issuedReceipt = nr;
@@ -901,7 +916,9 @@ public partial class DocumentService
                         if (plan.ReclassAt is DateTime reclassAt)
                         {
                             await _db.SaveChangesAsync();   // ตัวกลับ + ใบเสร็จใหม่ต้องอยู่ในฐานก่อนคำนวณยอด 21913 ที่ต้องย้าย
-                            await TryReclassifyUndueOutputVatAsync(companyId, src.Id, reclassAt, actor, throwOnFailure: true);
+                            var firstInstallment = firstPlan is { Mode: SettlementTaxInvoiceRole.Mode.Installment, VatReportedOnSource: false } && plan.IssueVatReceiptForPaymentId != null;
+                            await TryReclassifyUndueOutputVatAsync(companyId, src.Id, reclassAt, actor, throwOnFailure: true,
+                                vatDueNow: firstInstallment ? firstPlan!.VatAmount : null, forPaymentId: firstInstallment ? plan.IssueVatReceiptForPaymentId : null);
                             parts.Add($"ภาษีขายของ {src.DocumentNumber} ถึงกำหนด ณ วันรับเงินจริง {reclassAt:dd/MM/yyyy}"
                                 + (plan.IssueVatReceiptForPaymentId == null ? " (รับชำระหลายงวด/บางส่วน — รายงานที่ใบต้นทางตามกติกาเดิม)" : ""));
                         }
