@@ -21995,8 +21995,6 @@ REVIEWER_CASES += [
     ("R277-4", "AddUserAsync", "await EnsureSeatAsync(companyId, adding);", "_ = adding;", True),
 ]
 
-if __name__ == "__main__":
-    sys.exit(main())
 
 
 # ── รอบ 275 แพ็ก C (ใบเสร็จ/ใบกำกับภาษี ณ วันรับเงิน · คำตัดสิน 275-C-1 · erp-review/2026-11-20/dev-275-C.md) ──
@@ -22092,3 +22090,7 @@ REVIEWER_CASES += [
      "$\"รับชำระเงินตามใบแจ้งหนี้เลขที่ {invoice.DocumentNumber}\"", True),
     ("R275C-5", "UndoInstallmentReclassOnPaymentVoidAsync", "DocumentVoidPreconditions.ReceiptHoldsTaxPointFor(", "false && Equals(", True),
 ]
+
+
+if __name__ == "__main__":
+    sys.exit(main())
