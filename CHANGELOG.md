@@ -7374,4 +7374,4 @@ _รอบ 276 (2026-11-20 · ความต้องการเจ้าข�
 ด่าน `Filters/DocumentRestrictionFilter` + ตัวกรองแถว EF ของ Documents · ด่าน Approve/Void ชั้น service (`DocumentRestrictionGuard`) ·
 ส่งขออนุมัติพื้นฐาน `DocumentApprovalRequests` + `DocumentApprovalRequestService` (กฎที่ตรง ⇒ workflow เดิม) · คีย์แจ้งเตือน `document.approval_requested/returned/granted` +
 บทบาทผู้รับ `DocumentApprover` · UI ทีม/บทบาท/เอกสาร/คิวอนุมัติ/เมนู · คำตัดสิน 276-1…8 · เทสต์ `DocumentRestrictionPolicyTests` + Db `DocumentRestrictionDbTests` ·
-กติกา `_R276_` — commit (เติมในคอมมิตตามหลัง)_
+กติกา `_R276_` — commit 69740aef + 4456de7a_
