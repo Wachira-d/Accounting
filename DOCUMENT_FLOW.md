@@ -6016,6 +6016,8 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
   **DTO พนักงาน** ไม่ส่ง ciphertext: ป้าย `⛔ ถอดรหัสไม่ได้` + `IdentityProblem`/`BankAccountProblem`/`PiiProblemText` · ฟอร์มส่งป้ายกลับ = คงค่าเดิม · ฟอร์มแสดงกล่องเหตุ + ขอบแดงที่ช่อง ·
   **หน้า "สุขภาพข้อมูลเข้ารหัส"** `/pages/encryption-health.html` (ความลับ `GET encryption-health/secrets` · สิทธิ์ตั้งค่าบริษัท + PII `GET payroll/tax-identity-health` เดิม) · มุมผู้ดูแลใน admin › งานเบื้องหลัง (`GET api/admin/encryption-health`) ·
   ข้อความถึงผู้ใช้บริษัทไม่ชี้ URL ดิบ/ชื่อ env (`EncryptionHealthText`)
+  **ฝ่ายค้านแพ็ก A:** heartbeat ลายนิ้วมือต่อเครื่องทุก 5 นาที (`EncryptionKeyHeartbeats`) · หมุนคีย์ = `RotationPending` (ไม่ย้าย) จนทุกเครื่องใน 15 นาทีล่าสุดรายงานคีย์ใหม่หรือผู้ดูแลยืนยันลายนิ้วมือที่ระบุ ·
+  เครื่องคีย์ไม่ตรงหยุดเข้ารหัสค่าใหม่ (`EncryptionWriteGuard` · 503) · กุญแจ HMAC สลิปภาษี/OTP จากเมล็ดถาวร (`HmacSeedBootstrap` · สลิปเดิมหลังหมุนยังถูกกันซ้ำ) · คำตัดสิน 275-A-8…12
 - **รอบ 200 ทีม R (กวาดค้างรอบ 189)**: ฐานภาษีสะสม (YTD) ของงวดก่อน = `PayrollIncomeBase.PriorTaxBase(TaxableGross, GrossIncome)` (D-09 — เดิม gross
   รวมสวัสดิการยกเว้น ⇒ หักเกินงวดหลัง · แถวเก่าที่ TaxableGross = 0 ใช้ gross เหมือนเดิม) · PVD = `PayrollIncomeBase.PvdContribution(proratedBaseSalary, %)`
   (D-10 — เดิมเต็มเดือน + ไม่ปัด) · เพดานสมทบปัด AwayFromZero (D-08) · กำหนดนำส่ง สปส. + เงินเพิ่ม §49 = `Helpers/SsoLateFee` ตัวเดียว
@@ -9918,3 +9920,6 @@ _Last verified against codebase: 2026-11-20 (รอบ 275 แพ็ก A — �
 _Last verified against codebase: 2026-11-20 (รอบ 275 แพ็ก C — §3.4b-275: ใบเสร็จ = ใบกำกับภาษี ณ วันรับเงินจากตัวตัดสินเดียว `SettlementTaxInvoiceRole`
 (ยุบสูตรงวดเดียว 4 สำเนา · ค่าธรรมเนียม/บรรทัดปรับ/ภาษีหัก/ใบลดหนี้) · งานบริการรับเป็นงวด = ใบกำกับรายงวด VAT ตามส่วน + ย้าย 21913 ตามส่วนผูกการรับ · คิว "รับเงินแล้วยังไม่มีใบกำกับ" ·
 วันที่ปฏิทินไทยที่ต้นทางการรับชำระ · ข้อความใบเสร็จผ่าน DocumentLabels · คำตัดสิน 275-C-1…9) — commit 96bb5262_
+
+_Last verified against codebase: 2026-11-20 (รอบ 275 แพ็ก A ผลตรวจฝ่ายค้าน MED-1…4 + LOW — heartbeat/ยืนยันลายนิ้วมือที่ระบุ · ประตูเขียนค่าเข้ารหัส · หมุนรอทุกเครื่อง · เมล็ด HMAC ถาวร ·
+เทสต์ `EncryptionWriteGuardRound275ATests` + Db `KeysSecretsRound275ADbTests` — commit 17305b6a)_

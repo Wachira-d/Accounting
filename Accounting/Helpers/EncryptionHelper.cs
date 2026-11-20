@@ -137,6 +137,10 @@ public static class EncryptionHelper
         return derived;
     }
 
+    /// <summary>รอบ 275 แพ็ก A (ฝ่ายค้าน LOW): กุญแจ 256 บิตที่ derive แล้ว (PBKDF2 ตัวเดียวกับที่ใช้เข้ารหัสจริง) — ใช้ทำลายนิ้วมือคีย์ (<c>EncryptionKeyResolver.Fingerprint</c>) ·
+    /// ห้ามส่งออกนอก process</summary>
+    internal static byte[] DerivedKeyFor(string passphrase) => DeriveKey(passphrase);
+
     private static byte[] DeriveKeyUncached(string passphrase)
     {
         // Use a fixed salt derived from the passphrase itself for deterministic key derivation

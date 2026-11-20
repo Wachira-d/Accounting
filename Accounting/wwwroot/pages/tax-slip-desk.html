@@ -147,7 +147,7 @@
         const o = this.manual[id], e = Layout.esc, c = (o.clients || [])[Number(document.getElementById('mc_' + id).value)];
         const box = document.getElementById('mb_' + id);
         if (!c) { box.innerHTML = '<div class="ts-muted">ไม่มีบริษัทที่ช่องทางนี้ผูก</div>'; return; }
-        const pend = c.pending.map((p, i) => `<option value="${i}">${e(p.label)} · ค้าง ${e(Layout.money(p.amount))}</option>`).join('');
+        const pend = c.pending.map((p, i) => `<option value="${i}" ${p.blocked ? 'disabled' : ''}>${e(p.label)} · ค้าง ${e(Layout.money(p.amount))}${p.blocked ? ' — ' + e(p.blocked) : ''}</option>`).join('');
         const accs = c.accounts.map(a => `<option value="${e(a.id)}">${e(a.label)}</option>`).join('');
         const recs = c.remittances.map(r => `<option value="${e(r.id)}" ${r.blocked ? 'disabled' : ''}>${e(r.label)} · ${e(Layout.money(r.total))} · จ่าย ${e(Layout.date(r.payDate))}${r.blocked ? ' — ' + e(r.blocked) : ''}</option>`).join('');
         box.innerHTML = `<div style="margin-top:6px"><b>บันทึกเอง</b> <span class="ts-muted">(ภาษี + เงินเพิ่ม + เบี้ยปรับ ต้องเท่ายอดบนสลิป${o.slipAmount != null ? ' ' + e(Layout.money(o.slipAmount)) : ''} ทุกสตางค์)</span></div>`

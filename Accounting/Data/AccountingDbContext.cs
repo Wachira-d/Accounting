@@ -102,6 +102,8 @@ public class AccountingDbContext : DbContext
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
     /// <summary>watermark งานตรวจ audit chain ต่อบริษัท (รอบ 201 ทีม PL · A-PL3)</summary>
     public DbSet<AuditChainCheckpoint> AuditChainCheckpoints => Set<AuditChainCheckpoint>();
+    /// <summary>รอบ 275 แพ็ก A (ฝ่ายค้าน MED-1/MED-3): ลายนิ้วมือคีย์ต่อเครื่อง</summary>
+    public DbSet<EncryptionKeyHeartbeat> EncryptionKeyHeartbeats => Set<EncryptionKeyHeartbeat>();
     /// <summary>วันหยุดราชการระดับแพลตฟอร์ม (รอบ 201 ทีม PL · B-9) — เลื่อนกำหนดยื่น/นับวันทำการ · ว่าง = เสาร์/อาทิตย์อย่างเดียว</summary>
     public DbSet<PlatformHoliday> PlatformHolidays => Set<PlatformHoliday>();
     public DbSet<LegalDocumentVersion> LegalDocumentVersions => Set<LegalDocumentVersion>();   // รอบ 214 — นโยบาย/ข้อกำหนดของแพลตฟอร์มที่แอดมินแก้ได้
@@ -1244,6 +1246,13 @@ public class AccountingDbContext : DbContext
             e.Property(h => h.Kind).HasMaxLength(20);
             e.Property(h => h.SourceReference).HasMaxLength(500);
             e.HasQueryFilter(h => !h.IsDeleted);
+        });
+
+        // ===== EncryptionKeyHeartbeat (รอบ 275 แพ็ก A) — แถวเดียวต่อ process =====
+        modelBuilder.Entity<EncryptionKeyHeartbeat>(e =>
+        {
+            e.HasKey(h => h.InstanceId);
+            e.Property(h => h.InstanceId).HasMaxLength(200);
         });
 
         // ===== AuditChainCheckpoint (รอบ 201 ทีม PL · A-PL3) — แถวเดียวต่อบริษัท =====

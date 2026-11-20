@@ -335,4 +335,8 @@ public class SiteSettings : BaseEntity
     public string? EncryptionKeyFingerprintPrevious { get; set; }
     /// <summary>รอบ 275 แพ็ก A: เวลาที่บันทึกลายนิ้วมือล่าสุด (UTC)</summary>
     public DateTime? EncryptionKeyFingerprintAt { get; set; }
+    /// <summary>รอบ 275 แพ็ก A ฝ่ายค้าน MED-4: เมล็ดกุญแจ HMAC <b>ถาวร</b> ของแฮชเลขอ้างอิงสลิปภาษี (<c>TaxSlipRefHash</c>) และรหัส OTP ผู้ลงนาม (<c>CustomerSignRule</c>) —
+    /// เข้ารหัสด้วย <c>SecretProtector</c> (อยู่ในทะเบียน <c>SecretReprotectPass</c> ⇒ ห่อใหม่เมื่อหมุนคีย์ แต่<b>ค่าข้างในไม่เปลี่ยน</b>) · ครั้งแรก = ENCRYPTION_KEY ที่ใช้อยู่
+    /// (แฮชที่เก็บไว้ก่อนรอบนี้ยังเทียบได้) · ผู้อ่าน/ผู้เขียนเดียว <c>Helpers/HmacSeedBootstrap</c></summary>
+    public string? HmacSeedProtected { get; set; }
 }
