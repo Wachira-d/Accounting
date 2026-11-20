@@ -7388,4 +7388,4 @@ MED-4 เส้นหลังยกเลิกทาง e-Tax · MED-5 วั�
 
 _รอบ 276 ชุดแก้ฝ่ายค้าน (2026-11-20 · HIGH 2 · MED 4 · LOW 6): ด่านผูกผู้ใช้+บริษัททุกทางเข้า (รวมไม่มี companyId · accountant-workspace ปิด) · LINE ดูยอด/ถาม/อนุมัติตาม policy เว็บ ·
 แจ้งเตือน/รายการแจ้งเตือนกรองผู้ถูกจำกัด · หมายเหตุผู้ขอไม่เข้ากลุ่ม LINE · ทางเขียนยกตัวกรองแถว (ด่านระดับบริษัทเห็นทั้งบริษัท) + บล็อกอนุมัติใบเกินของผู้ถูกจำกัด ·
-id ใน body 404 · แก้ผู้ติดต่อเดิมไม่ได้ · `Document.CreatedByUserId` + migration · OCR ร่างของตัวเอง · `DocumentRestrictionRouteInventoryTests` · คำตัดสิน 276-9…16 — commit 8a2514f3_
+id ใน body 404 · แก้ผู้ติดต่อเดิมไม่ได้ · `Document.CreatedByUserId` + migration · OCR ร่างของตัวเอง · `DocumentRestrictionRouteInventoryTests` · คำตัดสิน 276-9…16 — commit 8a2514f3 + 9ca871bb_

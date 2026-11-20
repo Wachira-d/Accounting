@@ -9957,4 +9957,4 @@ _Last verified against codebase: 2026-11-20 (รอบ 276 — ผู้ใช�
 `DocumentRestrictionFilter` รายการอนุญาต + 404 · ด่าน Approve/Void ชั้น service · ส่งขออนุมัติพื้นฐาน/ถอน/ตีกลับ + แจ้งผ่านเครื่องแจ้งเตือนกลาง ·
 คำตัดสิน 276-1…8 — commit 69740aef + 4456de7a)_
 _Last verified against codebase: 2026-11-20 (รอบ 276 ชุดแก้ฝ่ายค้าน — ด่านผูกผู้ใช้+บริษัท · LINE · แจ้งเตือน · ด่านระดับบริษัทในทางเขียน · id ใน body ·
-ผู้ติดต่อ · CreatedByUserId · OCR — คำตัดสิน 276-9…16 — commit 8a2514f3)_
+ผู้ติดต่อ · CreatedByUserId · OCR — คำตัดสิน 276-9…16 — commit 8a2514f3 + 9ca871bb)_
