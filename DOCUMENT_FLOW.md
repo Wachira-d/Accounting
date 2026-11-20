@@ -9912,7 +9912,7 @@ _Last verified against codebase: 2026-11-16 (รอบ 271 ชุดแก้ฝ
   การ์ดสรุปใบเดียวต่อกลุ่ม/บริษัทต่อรอบ + เพดาน 20 · สลิปที่ปล่อยหลัง void นับอายุจาก `ReleasedAt` · ใบขอชำระปิดเฉพาะเมื่อยอด/Control Code ตรง (`PaidBy`) · void ⇒ ใบกลับเปิด + การ์ด `PaymentRequestReopened` ·
   ใบที่มีสลิปเปิดอ้างไม่หมดอายุ
 - **เลขผู้เสียภาษีเต็ม (ผู้ประสานงาน)** — แถวสลิปเก็บค่าเทียบ `TaxIdHash` (`TaxSlipRefHash.TaxId` · HMAC กุญแจเมล็ดถาวรของแพ็ก A MED-4) เพราะเลขปิดบังเปิดแค่ 7 หลักแรก ·
-  `TaxSlipDeskRule.TaxIdVerdict` → Match/Mismatch/Undecided/NoTaxId · แถวเก่าไม่มีค่าเทียบและ 7 หลักแรกตรง ⇒ Undecided = พนักงานต้องติ๊ก "ตรวจเลขบนรูปแล้ว" (audit `TaxSlipTaxIdConfirmedByStaff`) ห้ามปล่อยผ่านเงียบ
+  `TaxSlipDeskRule.TaxIdVerdict` → Match/Mismatch/Undecided/NoTaxId · แถวเก่าไม่มีค่าเทียบและ 7 หลักแรกตรง ⇒ Undecided = พนักงานต้องติ๊ก "ตรวจเลขบนรูปแล้ว" (audit `TaxSlipTaxIdConfirmedByStaff`) ห้ามปล่อยผ่านเงียบ — commit f32c38ed
 
 _Last verified against codebase: 2026-11-20 (รอบ 275 แพ็ก D — §TAX272 โต๊ะสลิปครบวงจร: บันทึกเอง/ผูกรายการ/ไม่บันทึกตามจริง · สถานะใต้ล็อก · ยกเลิกแล้วปล่อยสลิป · retention จริง · วงจรใบขอชำระ — build + Db test ในเครื่องนี้ — commit 2c247bd4)_
 
