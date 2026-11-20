@@ -2069,6 +2069,13 @@ public class DocumentController : ControllerBase
         return Ok(new ApiResponse<IReadOnlyList<ReceivedWithoutTaxInvoiceRow>>(true, rows, null));
     }
 
+    /// <summary>รอบ 275 แพ็ก C (ฝ่ายค้าน LOW) — อ่านอย่างเดียว: การรับชำระเดิมที่วันที่เก็บเป็นเวลา UTC และวันที่ไทยข้ามเดือน (ให้ผู้ทำบัญชีตรวจ · ไม่แก้เอง)</summary>
+    [HttpGet("payment-date-review")]
+    public async Task<ActionResult<ApiResponse<List<SettlementTaxInvoiceLoader.PaymentDateReviewRow>>>> PaymentDateReview(Guid companyId,
+        [FromServices] AccountingDbContext db, CancellationToken ct)
+        => Ok(new ApiResponse<List<SettlementTaxInvoiceLoader.PaymentDateReviewRow>>(true,
+            await SettlementTaxInvoiceLoader.PaymentDateCrossMonthAsync(db, companyId, ct), null));
+
     /// <summary>รอบ 275 แพ็ก C — ปุ่ม "ออกใบกำกับภาษี ณ วันรับเงิน" ของคิว: ยกเลิกใบรับเปล่าของการรับนี้ (ถ้ามี) + ออกใบเสร็จที่ถือ VAT ตามตัวตัดสินเดียว ·
     /// สิทธิ์ = สร้าง + อนุมัติ + ยกเลิกใบเสร็จ (ใบที่ระบบออกเป็นเลขจริงทันที)</summary>
     [HttpPost("payments/{paymentId:guid}/tax-invoice/{documentId:guid}")]

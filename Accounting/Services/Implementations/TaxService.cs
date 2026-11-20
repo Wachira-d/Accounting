@@ -433,9 +433,12 @@ public partial class TaxService : ITaxService
         var salesBoxParts = legacyTrace?.Parts ?? new Dictionary<Guid, Accounting.Helpers.Pp30SalesBoxSummary.Part>();   // รอบ 269 ชุดสอง M1
         var lineOrder = 1;
 
+        // รอบ 275 แพ็ก C (ฝ่ายค้าน HIGH-1): ใบลดหนี้/เพิ่มหนี้ที่ลด/เพิ่ม "ภาษีที่ยังพัก 21913" ของใบแจ้งหนี้ ซึ่งภาษีถูกถือโดยใบกำกับ ณ วันรับเงิน (ใบเสร็จถือ VAT) —
+        // ใบกำกับงวดปิดถือภาษีที่พักอยู่หลังใบลดหนี้แล้ว (สุทธิผ่าน GL) ⇒ นับใบลดหนี้อีก = ลดซ้ำ · ตัวเดียวกับเส้นใบเดิมยังพัก (แถวเตือน excluded)
+        var adjustmentsNettedInReceipts = await AdjustmentsNettedInTaxInvoiceReceiptsAsync(companyId, docs);
         // ใบเดิมของใบลดหนี้/เพิ่มหนี้ยังไม่ถึง tax point (VAT พัก 21913/11640) — ด่านเดียวของแถว CN/DN และช่องยอดขาย/ซื้อ (รอบ 269 L3)
         bool RelatedPendingTaxPoint(Document d)
-            => d.RelatedDocumentId.HasValue
+            => adjustmentsNettedInReceipts.Contains(d.Id) || d.RelatedDocumentId.HasValue
                && relatedDocInfos.TryGetValue(d.RelatedDocumentId.Value, out var ri)
                && (ri.InputVatPendingUndue
                    || (ri.Type == DocumentType.Invoice && ri.OutputVatDueAt == null
@@ -3942,6 +3945,19 @@ public partial class TaxService : ITaxService
                 .ToDictionary(x => x.Id, x => x.Exempt);
 
     /// <summary>ใบแจ้งหนี้ที่ใบเสร็จ "ถือ VAT" (กระดาษพิมพ์ใบกำกับ/ใบเสร็จ) อ้างอยู่ — ใบเสร็จเป็นเจ้าของแถว ภ.พ.30 แทน</summary>
+    /// <summary>รอบ 275 แพ็ก C — ใบลดหนี้/เพิ่มหนี้ฝั่งขายที่ JE ของตัวเองแตะ 21913 (ลด/เพิ่มภาษีที่ยังพักของใบแจ้งหนี้) และใบแจ้งหนี้นั้นมีใบเสร็จถือ VAT (ใบกำกับ ณ วันรับเงิน)
+    /// ⇒ ผลของใบนี้อยู่ในยอด VAT ของใบกำกับงวดปิดแล้ว (ย้าย 21913 ที่เหลือทั้งหมด) — ไม่นับซ้ำ · tenant</summary>
+    private async Task<HashSet<Guid>> AdjustmentsNettedInTaxInvoiceReceiptsAsync(Guid companyId, IEnumerable<Document> docs)
+    {
+        var adj = docs.Where(d => d.DocumentType is DocumentType.CreditNote or DocumentType.DebitNote && d.RelatedDocumentId.HasValue).ToList();
+        if (adj.Count == 0) return new HashSet<Guid>();
+        var net = await Load21913NetBySourceAsync(companyId, adj.Select(d => d.Id).ToList());
+        var touched = adj.Where(d => net.ContainsKey(d.Id)).ToList();
+        if (touched.Count == 0) return new HashSet<Guid>();
+        var owned = await LoadInvoiceIdsOwnedByVatReceiptAsync(companyId, touched.Select(d => d.RelatedDocumentId!.Value).Distinct().ToList());
+        return touched.Where(d => owned.Contains(d.RelatedDocumentId!.Value)).Select(d => d.Id).ToHashSet();
+    }
+
     private async Task<HashSet<Guid>> LoadInvoiceIdsOwnedByVatReceiptAsync(Guid companyId, List<Guid> invoiceIds)
         => invoiceIds.Count == 0
             ? new HashSet<Guid>()
@@ -3952,6 +3968,7 @@ public partial class TaxService : ITaxService
                     && (r.DocumentType == DocumentType.Receipt
                         || r.DocumentType == DocumentType.ReceiptVoucher)
                     && r.VatAmount > 0.005m
+                    && !r.VatReportedOnSource   // รอบ 275 แพ็ก C (275-C-10): ใบกำกับกระดาษของใบที่รายงานภาษีที่ใบแจ้งหนี้แล้ว — ใบแจ้งหนี้ยังเป็นเจ้าของ
                     && !Accounting.Helpers.DocumentStatusRules.NotIssued.Contains(r.Status)
                     && r.Status != DocumentStatus.Voided
                     && !r.IsDeleted)

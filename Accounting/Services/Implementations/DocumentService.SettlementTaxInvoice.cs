@@ -25,49 +25,10 @@ public partial class DocumentService
 
     /// <summary>ปุ่ม "ออกใบกำกับภาษี ณ วันรับเงิน" ของคิว — ยกเลิกใบรับเปล่าของการรับนี้ (ถ้ามี) แล้วออกใบเสร็จที่ถือ VAT ตามตัวตัดสินเดียว ในธุรกรรมเดียว ·
     /// ตัวตัดสินไม่ออก (ใบลดหนี้ก่อนรับ ฯลฯ) ⇒ 409 พร้อมเหตุ ไม่แตะอะไร · ใบรับเปล่าที่ถึงกรมสรรพากรแล้ว ⇒ 409</summary>
-    /// <para>ใบเก่าที่ภาษีขายทั้งใบรายงานแล้วตอนรับงวดแรก (<see cref="SettlementTaxInvoiceLoader.VatReportedWholesaleAsync"/>) ⇒ ออกใบกำกับให้<b>ทุกงวดที่ยังไม่มี</b>
-    /// ตามลำดับวันรับเงินในธุรกรรมเดียว (งวดรายงาน = เดือนที่ภาษีถูกรายงานแล้ว — ภ.พ.30 ไม่เปลี่ยน · ออกทีละงวด = เดือนนั้นลดลงระหว่างทาง) · งวดใดตัดสินไม่ได้ = ทั้งชุดไม่ออก</para></summary>
-    public async Task<IssuedReceiptResult> IssueTaxInvoiceForPaymentAsync(Guid companyId, Guid paymentId, Guid documentId, string createdBy)
-    {
-        var invoice = await _db.Documents.AsNoTracking()
-            .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId && !d.IsDeleted)
-            ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
-        if (!await SettlementTaxInvoiceLoader.VatReportedWholesaleAsync(_db, companyId, invoice))
-            return await IssueReceiptForPaymentCoreAsync(companyId, paymentId, createdBy, documentId, replacePlainWithTaxInvoice: true);
-
-        var batch = (await SettlementTaxInvoiceLoader.QueueAsync(_db, companyId, invoice.Id, CancellationToken.None))
-            .Where(r => r.DocumentId == invoice.Id).ToList();
-        if (batch.All(r => r.PaymentId != paymentId))
-            return await IssueReceiptForPaymentCoreAsync(companyId, paymentId, createdBy, documentId, replacePlainWithTaxInvoice: true);
-        if (batch.FirstOrDefault(r => !r.Decision.CarriesRole) is { } blocked)
-            throw new BusinessRuleException(
-                $"การรับ {blocked.PaymentNumber} ของใบแจ้งหนี้ {invoice.DocumentNumber}: "
-                + (SettlementTaxInvoiceRole.ReasonText(blocked.Decision.Reason) ?? "ออกใบกำกับให้ไม่ได้")
-                + " · ใบนี้ต้องออกใบกำกับทุกงวดพร้อมกัน — ระบบยังไม่ได้แตะอะไร", SettlementTaxInvoiceRole.RuleCode, 409);
-
-        var issued = new List<Document>();
-        var strategy = _db.Database.CreateExecutionStrategy();
-        var result = await strategy.ExecuteAsync(async () =>
-        {
-            issued.Clear();
-            await using var tx = await _db.Database.BeginTransactionAsync();
-            IssuedReceiptResult? mine = null;
-            foreach (var row in batch.OrderBy(r => r.PaymentDate))
-            {
-                var r = await IssueReceiptForPaymentCoreAsync(companyId, row.PaymentId, createdBy, documentId, replacePlainWithTaxInvoice: true,
-                    inOuterTransaction: true, issuedOut: issued);
-                if (row.PaymentId == paymentId) mine = r;
-            }
-            await tx.CommitAsync();
-            return mine!;
-        });
-        foreach (var receipt in issued)
-        {
-            await _issuedHooks.RunAsync(companyId, receipt);
-            await AfterSettlementReceiptIssuedAsync(companyId, receipt);
-        }
-        return result;
-    }
+    /// <para>ใบเก่าที่ภาษีขายทั้งใบรายงานแล้ว (คำตัดสิน 275-C-10): ใบกำกับที่ออกเป็นหลักฐานกระดาษ (<c>Document.VatReportedOnSource</c>) — แถว ภ.พ.30/§87 คงอยู่ที่ใบแจ้งหนี้
+    /// ตามที่ยื่นไปแล้ว ไม่มีแถวใหม่ลงวันที่ย้อนหลังในรายงาน · ออกทีละรายการได้ (ไม่กระทบตัวเลขที่ยื่น)</para></summary>
+    public Task<IssuedReceiptResult> IssueTaxInvoiceForPaymentAsync(Guid companyId, Guid paymentId, Guid documentId, string createdBy)
+        => IssueReceiptForPaymentCoreAsync(companyId, paymentId, createdBy, documentId, replacePlainWithTaxInvoice: true);
 
     /// <summary>งวดรายงาน (TaxPointDate) ของใบกำกับรายงวดที่ออก<b>หลัง</b>วันรับเงิน: วันที่ของ JE ย้ายภาษีตามส่วนที่ผูกการรับนี้ (เส้นใหม่) ·
     /// ไม่มี (ใบเก่าที่ภาษีย้ายทั้งก้อนตอนรับงวดแรก) ⇒ <c>OutputVatDueAt</c> ของใบแจ้งหนี้ (ภ.พ.30 ที่ยื่นไปแล้วไม่เปลี่ยน — ไม่แก้ย้อนหลัง) · ยังไม่ย้าย ⇒ วันรับเงิน</summary>

@@ -12792,7 +12792,8 @@ public partial class DocumentService : IDocumentService
             var docDecision = receiptDecision;
             Document? docReceipt = receiptDoc;
             if (allocationReceipts.TryGetValue(undoDocId, out var ownReceipt)) { docDecision = ownReceipt.Decision; docReceipt = ownReceipt.Receipt; }
-            if (await UndoOutputVatOnPaymentVoidAsync(companyId, undoDoc, docDecision, docReceipt, cause, reason, pn) is string notice)
+            if (await UndoOutputVatOnPaymentVoidAsync(companyId, undoDoc, docDecision, docReceipt, cause, reason, pn,
+                    voidedPaymentId: payment.Id) is string notice)   // รอบ 275 แพ็ก C (ฝ่ายค้าน MED-1): ถอย JE ตามส่วนของการรับนี้ต่อใบ
                 vatNotices.Add(notice);
             // รอบ 200 ทีม V1I (ฝ่ายค้าน V1H-O1): ตัวเดียวกับเส้นใบเดียว — ใบกำกับทาง (ค) ของใบนี้ที่เสียยอดครอบ ⇒ ติดธงกลับ
             etaxCancellationFlag = CombineNotices(etaxCancellationFlag,
@@ -15374,6 +15375,13 @@ public partial class DocumentService : IDocumentService
             receipt.TaxPointDate = instTp.Date;
         if (installment)
             AppendInternalNote(receipt, Accounting.Helpers.SettlementTaxInvoiceRole.InstallmentAuditNote(taxInvoicePlan!, invoice.VatAmount, invoice.DocumentNumber));
+        // คำตัดสิน 275-C-10: ใบแจ้งหนี้รุ่นเก่าที่ภาษีขายทั้งใบรายงานแล้ว ⇒ ใบกำกับนี้เป็นหลักฐานกระดาษ (แถว ภ.พ.30/§87 คงอยู่ที่ใบแจ้งหนี้ตามที่ยื่น)
+        if (carriesTaxInvoiceRole && taxInvoicePlan?.VatReportedOnSource == true)
+        {
+            receipt.VatReportedOnSource = true;
+            AppendInternalNote(receipt, $"[{Accounting.Helpers.OutputVatOwnership.RuleReportedOnSource}] ภาษีขายของการขายนี้รายงานที่ใบแจ้งหนี้ {invoice.DocumentNumber} "
+                + "ตั้งแต่ก่อนรอบ 275 — ใบนี้เป็นหลักฐานใบกำกับภาษีของการรับเงิน ไม่นับใน ภ.พ.30/รายงานภาษีขายซ้ำ (คำตัดสิน 275-C-10)");
+        }
         // คำตัดสิน 260-5-1 — รับเงินก่อนวันที่ใบที่อ้าง ⇒ วันที่ใบคงเป็นวันรับเงิน (ม.105) · ใบที่ถือ VAT ออกช้ากว่า ม.86 ⇒ หมายเหตุภายใน (งวดจาก OutputVatDueAt · M1)
         var issuedLateNote = Accounting.Helpers.LateReceiptTaxPoint.IssuedAfterMoneyNote(
             payment.PaymentDate, invoice.DocumentDate, carriesTaxInvoiceRole, receipt.VatAmount, invoice.OutputVatDueAt);
@@ -15405,23 +15413,25 @@ public partial class DocumentService : IDocumentService
         }
         else if (installment)
         {
-            // ใบกำกับรายงวด: บรรทัดเดียว มูลค่า/VAT ของงวดนี้ · อัตรา = อัตราของบรรทัดที่ถือ VAT มากที่สุดบนใบแจ้งหนี้ (ทั้งใบ 7% = 7)
-            var rate = await _db.DocumentLines.AsNoTracking()
-                .Where(l => l.DocumentId == invoice.Id && !l.IsDeleted && l.VatAmount > 0m)
-                .OrderByDescending(l => l.VatAmount).Select(l => (decimal?)l.VatRate).FirstOrDefaultAsync() ?? 7m;
-            _db.DocumentLines.Add(new DocumentLine
-            {
-                DocumentId = receipt.Id,
-                LineOrder = 1,
-                Description = labels.SettlementReceiptLine(invoice.DocumentType, invoice.DocumentNumber, installment: true),
-                Quantity = 1m,
-                Unit = labels.SettlementUnitItem,
-                UnitPrice = taxInvoicePlan!.SubTotal,
-                Amount = taxInvoicePlan.SubTotal,
-                VatRate = rate,
-                VatAmount = taxInvoicePlan.VatAmount,
-                ProjectId = invoice.ProjectId,
-            });
+            // ใบกำกับรายงวด: หนึ่งบรรทัดต่ออัตรา VAT ของใบแจ้งหนี้ (ฝ่ายค้าน 275-C MED-2 — ใบผสม 7% + 0% + ยกเว้น) · มูลค่า × อัตรา = VAT ต่อบรรทัด
+            // · งวดปิดไม่พิมพ์ "(บางส่วน)" (LOW)
+            var ln = 1;
+            var planLines = taxInvoicePlan!.Lines is { Count: > 0 } pl ? pl
+                : new[] { new Accounting.Helpers.SettlementTaxInvoiceRole.RateLine(7m, taxInvoicePlan.SubTotal, taxInvoicePlan.VatAmount) };
+            foreach (var rl in planLines.Where(x => x.Base != 0m || x.Vat != 0m))
+                _db.DocumentLines.Add(new DocumentLine
+                {
+                    DocumentId = receipt.Id,
+                    LineOrder = ln++,
+                    Description = labels.SettlementReceiptLine(invoice.DocumentType, invoice.DocumentNumber, installment: !taxInvoicePlan.ClosesSource),
+                    Quantity = 1m,
+                    Unit = labels.SettlementUnitItem,
+                    UnitPrice = rl.Base,
+                    Amount = rl.Base,
+                    VatRate = rl.VatRate,
+                    VatAmount = rl.Vat,
+                    ProjectId = invoice.ProjectId,
+                });
         }
         else
         {
@@ -15628,7 +15638,7 @@ public partial class DocumentService : IDocumentService
                 await VoidPlainReceiptForTaxInvoiceAsync(companyId, plainToReplace, doc);
             // ใบกำกับรายงวดที่ออกหลังวันรับเงิน (ใบเสร็จตอนรับล้ม · คิว) ของใบที่ภาษียังพักส่วนของงวดนี้ ⇒ ย้ายส่วนของงวดนี้ ณ วันรับเงิน (ผูกการรับ) ก่อนออกใบ ·
             // ปุ่มคิว = ล้มดัง (งวดปิด ⇒ 409 ไม่ออกใบ) · ใบเก่าที่ย้ายทั้งก้อนแล้ว = ไม่มีอะไรให้ย้าย
-            if (tiDecision.Mode == Accounting.Helpers.SettlementTaxInvoiceRole.Mode.Installment
+            if (tiDecision.Mode == Accounting.Helpers.SettlementTaxInvoiceRole.Mode.Installment && !tiDecision.VatReportedOnSource
                 && await SettlementTaxInvoiceLoader.UndueVatRemainingAsync(_db, companyId, doc.Id) > 0.005m
                 && !await _db.JournalEntries.AnyAsync(j => j.CompanyId == companyId && j.SourceDocumentId == doc.Id && !j.IsDeleted
                     && j.Note == SettlementTaxInvoiceLoader.InstallmentReclassTag(payment.Id) && j.ReversedByEntryId == null))
@@ -15696,8 +15706,8 @@ public partial class DocumentService : IDocumentService
                 "จำนวนเงินชำระต้องมากกว่า 0 — ถ้าต้องการปิดยอดค้างด้วยส่วนลด/คูปองโดยไม่มีเงินออก ให้ใส่บรรทัดปรับส่วนต่าง (จำนวนเงิน 0)");
 
         // รอบ 275 แพ็ก C (T3 MED-4 — ยืนยันจากโค้ด): ทางเข้า gateway/สลิปส่ง instant UTC (PaidAt) ⇒ เงินเข้า 00:00–06:59 น. วันที่ 1 (เวลาไทย) เดิมลงวันที่ใบเสร็จ/
-        // เลขที่/วันย้ายภาษีขายเป็นวันสุดท้ายของเดือนก่อน · normalize เป็นวันที่ปฏิทินไทยที่ต้นทางตัวเดียว (ทุกทางเข้า — ค่าวันที่จากฟอร์ม 00:00 คงวันเดิม)
-        request = request with { PaymentDate = Accounting.Helpers.ThaiDate.CalendarDateUtc(request.PaymentDate) };
+        // เลขที่/วันย้ายภาษีขายเป็นวันสุดท้ายของเดือนก่อน · normalize เป็นวันที่ปฏิทินไทยที่ต้นทางตัวเดียว — เฉพาะค่าที่ระบุว่าเป็น UTC (ฝ่ายค้าน MED-5: ค่าไม่ระบุ Kind จากฟอร์ม/นำเข้า/bank feed = เวลาไทย คงเดิม)
+        request = request with { PaymentDate = Accounting.Helpers.ThaiDate.PaymentCalendarDate(request.PaymentDate) };
 
         // Validate PaymentDate is not in the future
         if (request.PaymentDate > DateTime.UtcNow.Date.AddDays(1))
@@ -16142,8 +16152,8 @@ public partial class DocumentService : IDocumentService
             // รับครบงวดเดียว/ไม่ออกใบกำกับ ⇒ ย้ายทั้งก้อนตามเดิม
             if (doc.DocumentType == DocumentType.Invoice)
                 await TryReclassifyUndueOutputVatAsync(companyId, doc.Id, payment.PaymentDate, createdBy,
-                    vatDueNow: tiDecision.Mode == Accounting.Helpers.SettlementTaxInvoiceRole.Mode.Installment ? tiDecision.VatAmount : null,
-                    forPaymentId: tiDecision.Mode == Accounting.Helpers.SettlementTaxInvoiceRole.Mode.Installment ? payment.Id : null);
+                    vatDueNow: tiDecision.Mode == Accounting.Helpers.SettlementTaxInvoiceRole.Mode.Installment && !tiDecision.VatReportedOnSource ? tiDecision.VatAmount : null,
+                    forPaymentId: tiDecision.Mode == Accounting.Helpers.SettlementTaxInvoiceRole.Mode.Installment && !tiDecision.VatReportedOnSource ? payment.Id : null);
 
             await transaction.CommitAsync();
 
@@ -16369,7 +16379,7 @@ public partial class DocumentService : IDocumentService
         if (request.ExchangeRate is <= 0)
             throw new InvalidOperationException("อัตราแลกเปลี่ยน ณ วันชำระต้องมากกว่า 0");
         // รอบ 275 แพ็ก C (T3 MED-4): วันที่ปฏิทินไทยตัวเดียวกับเส้นรับชำระใบเดียว
-        request = request with { PaymentDate = Accounting.Helpers.ThaiDate.CalendarDateUtc(request.PaymentDate) };
+        request = request with { PaymentDate = Accounting.Helpers.ThaiDate.PaymentCalendarDate(request.PaymentDate) };
         if (request.PaymentDate > DateTime.UtcNow.Date.AddDays(1))
             throw new InvalidOperationException("วันที่ชำระเงินต้องไม่เป็นวันที่ในอนาคต");
 
@@ -16664,8 +16674,14 @@ public partial class DocumentService : IDocumentService
                 {
                     try
                     {
+                        // รอบ 275 แพ็ก C (ฝ่ายค้าน MED-1): ตัวตัดสินเดียวกับเส้นใบเดียว — งวดงานบริการย้ายเฉพาะส่วนของงวด (ผูกการรับ · ใบเสร็จรายใบข้างล่างถือเท่าที่ย้าย) ·
+                        // ปิดยอด ⇒ ย้ายที่เหลือทั้งหมด (invariant ในตัวย้าย)
+                        var (allocMe, allocIds) = await SettlementTaxInvoiceLoader.ThisForDocumentAsync(_db, companyId, payment, allocDocId, CancellationToken.None);
+                        var allocPlan = await SettlementTaxInvoiceLoader.DecideAsync(_db, companyId, docMap[allocDocId], allocMe, payment.Id, allocIds, exceptReceiptId: null);
+                        var allocInstallment = allocPlan.Mode == Accounting.Helpers.SettlementTaxInvoiceRole.Mode.Installment && !allocPlan.VatReportedOnSource;
                         await TryReclassifyUndueOutputVatAsync(
-                            companyId, allocDocId, payment.PaymentDate, createdBy);
+                            companyId, allocDocId, payment.PaymentDate, createdBy,
+                            vatDueNow: allocInstallment ? allocPlan.VatAmount : null, forPaymentId: allocInstallment ? payment.Id : null);
                         await SyncWhtCreditReceivedAsync(companyId, docMap[allocDocId]);
                         // รอบ 250 ฝ่ายค้าน H1: ธงสลิปพอร์ทัลที่ถูกแทน — แยก try ของตัวเอง (ห้ามทำให้ 50 ทวิ ข้างล่างถูกข้าม)
                         try { await Accounting.Helpers.DocumentSlipIntents.FlagSupersededAsync(_db, companyId, allocDocId); }
@@ -18294,8 +18310,11 @@ public partial class DocumentService : IDocumentService
                         || (d.DocumentType == DocumentType.Receipt && d.CreditReceiptVatDueAt != null))
                     && !d.IsDeleted);
             if (inv == null) return;
-            if (inv.OutputVatDueAt != null && vatDueNow == null) return;   // reclass ไปแล้ว (งวดงานบริการ: ย้ายส่วนของงวดนี้จากยอดพักที่เหลือ)
-            if (vatDueNow is <= 0.005m) return;
+            // รอบ 275 แพ็ก C (ฝ่ายค้าน HIGH-1 · invariant): ใบแจ้งหนี้ปิดยอดแล้ว ⇒ ย้ายภาษีที่ยังพักทั้งหมด (ใบ + ใบลดหนี้/เพิ่มหนี้ลูก) เสมอ — ทุกเส้น
+            // (รับชำระ · รับหลายใบ · หักมัดจำ · จัดสรร) · ปิดยอดแล้ว 21913 ของใบ = 0 · ยังไม่ปิด: งวดบริการย้ายส่วนของงวด / เส้นเดิมย้ายทั้งก้อนครั้งเดียว
+            var closesSource = inv.DocumentType == DocumentType.Invoice && inv.BalanceDue <= 0.005m;
+            if (inv.OutputVatDueAt != null && vatDueNow == null && !closesSource) return;   // reclass ไปแล้ว (งวดงานบริการ: ย้ายส่วนของงวดนี้จากยอดพักที่เหลือ)
+            if (vatDueNow is <= 0.005m && !closesSource) return;
             if (inv.Status is DocumentStatus.Voided or DocumentStatus.Rejected) return;
 
             // CN/DN ที่อ้างใบแจ้งหนี้บริการใบนี้ ลง VAT ไว้ที่ 21913 ด้วย (AutoPost เลือก
@@ -18303,29 +18322,15 @@ public partial class DocumentService : IDocumentService
             // reclass รวมแค่ JE ของใบแจ้งหนี้ ⇒ VAT ของ DN ค้าง 21913 ถาวร และ ภ.พ.30
             // ไม่เห็น DN เลย (ถูก IsExcluded ตอนใบเดิมยังพัก · เดือนถัดไปหลุด query เพราะ
             // OutputVatDueAt ของ DN เป็น null) · CN ทำให้ยอดที่ย้ายเกินจริง (ERP_REVIEW C-01)
-            var childAdjustments = await _db.Documents
-                .Where(d => d.CompanyId == companyId && d.RelatedDocumentId == invoiceId && !d.IsDeleted
-                    && (d.DocumentType == DocumentType.CreditNote || d.DocumentType == DocumentType.DebitNote)
-                    && d.OutputVatDueAt == null
-                    && !DocumentStatusRules.NotIssued.Contains(d.Status)
-                    && d.Status != DocumentStatus.Voided)
-                .ToListAsync();
+            // ชุดใบที่ภาษีพัก + ตัวนับ — ตัวเดียวกับตัวตัดสินใบกำกับ (SettlementTaxInvoiceLoader — งวดปิดถือเท่าที่ย้ายจริง)
+            var childAdjustments = await SettlementTaxInvoiceLoader.UndueChildAdjustmentsAsync(_db, companyId, invoiceId, track: true);
             var undueSourceIds = new List<Guid> { invoiceId };
             undueSourceIds.AddRange(childAdjustments.Select(c => c.Id));
 
-            var net21913 = await _db.JournalEntryLines
-                .Where(l => !l.IsDeleted
-                    && l.JournalEntry.CompanyId == companyId
-                    && l.JournalEntry.SourceDocumentId != null
-                    && undueSourceIds.Contains(l.JournalEntry.SourceDocumentId.Value)
-                    && !l.JournalEntry.IsDeleted
-                    && (l.JournalEntry.Status == JournalEntryStatus.Posted
-                        || l.JournalEntry.Status == JournalEntryStatus.Reversed)
-                    && l.Account.AccountCode == "21913")
-                .SumAsync(l => (decimal?)(l.CreditAmount - l.DebitAmount)) ?? 0m;
+            var net21913 = await SettlementTaxInvoiceLoader.Undue21913NetAsync(_db, companyId, undueSourceIds);
             if (net21913 <= 0.005m) return;   // ไม่มี VAT พักค้าง (ใบเก่า/ลง 21911 ตรง)
-            // งวดงานบริการ: ย้ายเฉพาะส่วนของงวดนี้ (ไม่เกินยอดพักที่เหลือ — งวดที่ปิดยอดถือ VAT ที่เหลือทั้งหมดอยู่แล้ว)
-            if (vatDueNow is decimal dueNow)
+            // งวดงานบริการ: ย้ายเฉพาะส่วนของงวดนี้ (ไม่เกินยอดพักที่เหลือ) · งวดปิด = ย้ายที่เหลือทั้งหมด
+            if (vatDueNow is decimal dueNow && !closesSource)
                 net21913 = Math.Min(net21913, Math.Round(dueNow, 2, MidpointRounding.AwayFromZero));
 
             var undueAcc = await FindAccountAsync(companyId, "21913");

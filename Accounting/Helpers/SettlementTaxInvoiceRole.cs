@@ -52,16 +52,13 @@ public static class SettlementTaxInvoiceRole
         SupersededByTaxInvoice,
         FullVatAlreadyIssued,
         NothingSettled,
-        CreditNoteBeforeReceipt,
-        UnexplainedPriorSettlement,
         SingleShotFull,
         Installment,
         VatNotParked,
-        /// <summary>ใบเก่า: ภาษีขายทั้งใบย้ายเข้า ภ.พ.30 ไปแล้วตอนรับงวดแรก และยังรับไม่ครบ — ออกใบกำกับรายงวดตอนนี้ = ภาษีขายของเดือนนั้นลดลง (ยื่นแล้ว)</summary>
-        WholesaleVatNotFullyPaid,
-        /// <summary>มีการรับงวดก่อนหน้าที่ยังไม่มีใบกำกับถือ VAT ของงวดนั้น — งวดนี้ (โดยเฉพาะงวดปิด) จะถือ VAT ผิดส่วน</summary>
-        PriorInstallmentWithoutTaxInvoice,
     }
+
+    /// <summary>บรรทัดตามอัตรา VAT (ใบผสม 7% + 0% + ยกเว้น — ฝ่ายค้าน 275-C MED-2): <paramref name="VatRate"/> = อัตราของบรรทัด (−1 = ยกเว้น)</summary>
+    public sealed record RateLine(decimal VatRate, decimal Base, decimal Vat);
 
     /// <summary>ข้อเท็จจริงของใบต้นทาง + การรับครั้งนี้ (ผู้เรียกโหลด — ตัวตัดสินไม่รับ DbContext)</summary>
     /// <param name="SourceTotalAmount">ยอดที่ลูกค้าต้องจ่ายตามใบ (สุทธิหลังภาษีหัก ณ ที่จ่าย)</param>
@@ -70,6 +67,10 @@ public static class SettlementTaxInvoiceRole
     /// <param name="OtherLiveReceiptVat">VAT ที่ใบเสร็จอื่นของใบนี้ (ยังมีผล · ไม่ใช่ใบของการรับครั้งนี้) ถือไปแล้ว</param>
     /// <param name="Events">รายการตัดยอดอื่นของใบต้นทาง (ไม่รวมครั้งนี้ · ตัวโหลดเดียวกับแถวยอดใบเสร็จ)</param>
     /// <param name="SourcesOutstandingNow">ยอดค้างปัจจุบันของใบต้นทาง (หลังรับครั้งนี้) · null = ไม่รู้ (ไม่ตรวจการตัดยอดที่ไล่ไม่ได้)</param>
+    /// <param name="UndueVatRemaining">ภาษีขายของใบ (+ ใบลดหนี้/เพิ่มหนี้ลูก) ที่ยังพัก 21913 <b>ก่อน</b>ย้ายของการรับครั้งนี้ — งวดปิดถือเท่านี้ (ปิดยอดแล้ว 21913 ของใบ = 0 เสมอ)</param>
+    /// <param name="TaggedVatThisPayment">VAT ที่ JE ย้ายภาษีตามส่วนของการรับครั้งนี้ย้ายไปแล้ว (ออกใบกำกับทีหลัง — ใบถือเท่าที่ย้ายจริง)</param>
+    /// <param name="RateGroups">ยอดของใบแจ้งหนี้แยกตามอัตรา VAT (มูลค่า · VAT) — ใบกำกับรายงวดแยกบรรทัดตามอัตราตามสัดส่วน</param>
+    /// <param name="SourceWithholdingTaxAmount">ภาษีหัก ณ ที่จ่ายทั้งใบ — การรับที่ไม่ได้บันทึกภาษีหักของงวด ⇒ ถอดยอดรวมภาษีหักด้วยสัดส่วนของใบ</param>
     /// <param name="VatReportedWholesale">ใบเก่า (ก่อนรอบ 275): ภาษีขายทั้งใบย้าย 21913 → 21911 ครั้งเดียวไปแล้ว (ไม่มี JE ย้ายตามส่วนของงวด) — ใบแจ้งหนี้เป็นเจ้าของภาษีใน ภ.พ.30</param>
     public sealed record Facts(
         DocumentType SourceType,
@@ -82,15 +83,22 @@ public static class SettlementTaxInvoiceRole
         SettlementReceiptTotals.ThisSettlement This,
         IReadOnlyList<SettlementReceiptTotals.LedgerEvent> Events,
         decimal? SourcesOutstandingNow,
-        bool VatReportedWholesale = false);
+        bool VatReportedWholesale = false,
+        decimal UndueVatRemaining = 0m,
+        decimal TaggedVatThisPayment = 0m,
+        IReadOnlyList<RateLine>? RateGroups = null,
+        decimal SourceWithholdingTaxAmount = 0m);
 
     /// <param name="SubTotal">มูลค่าก่อน VAT ที่ใบเสร็จถือ (Installment) · FullCopy = ของใบแจ้งหนี้</param>
     /// <param name="VatAmount">VAT ที่ใบเสร็จถือ = ภาษีขายที่ถึงกำหนดจากการรับครั้งนี้ (ใช้ย้าย 21913 → 21911 ตามส่วน)</param>
     /// <param name="WithholdingTaxAmount">ภาษีหัก ณ ที่จ่ายบนใบเสร็จ</param>
     /// <param name="TotalAmount">ยอดสุทธิบนใบเสร็จ (= มูลค่า + VAT − ภาษีหัก)</param>
     /// <param name="NeedsHumanDecision">การรับครั้งนี้ควรมีใบกำกับแต่ระบบไม่เดา (ใบลดหนี้ก่อนรับ · การตัดยอดที่ไล่ไม่ได้ · ไม่รู้ว่าภาษีพักหรือไม่) ⇒ คิว</param>
+    /// <param name="ClosesSource">การรับครั้งนี้ปิดยอดใบ (ข้อความบรรทัดไม่พิมพ์ "(บางส่วน)")</param>
+    /// <param name="VatReportedOnSource">ใบเก่าที่ภาษีขายทั้งใบรายงานแล้วที่ใบแจ้งหนี้ — ใบกำกับนี้เป็นหลักฐานกระดาษ ไม่เป็นเจ้าของแถว ภ.พ.30/§87 (คำตัดสิน 275-C-10)</param>
+    /// <param name="Lines">บรรทัดตามอัตรา (Installment) — มูลค่า × อัตรา = VAT ต่อบรรทัด</param>
     public sealed record Decision(Mode Mode, Why Reason, decimal SubTotal, decimal VatAmount, decimal WithholdingTaxAmount, decimal TotalAmount,
-        bool NeedsHumanDecision)
+        bool NeedsHumanDecision, bool ClosesSource = false, bool VatReportedOnSource = false, IReadOnlyList<RateLine>? Lines = null)
     {
         public bool CarriesRole => Mode != Mode.None;
     }
@@ -104,40 +112,74 @@ public static class SettlementTaxInvoiceRole
         if (f.SourceType != DocumentType.Invoice || f.SourceVatAmount <= Eps) return NotRole(Why.NotInvoiceWithVat);
         if (f.SupersededByTaxInvoice) return NotRole(Why.SupersededByTaxInvoice);
         var remainingVat = f.SourceVatAmount - Math.Max(0m, f.OtherLiveReceiptVat);
-        if (remainingVat <= Eps) return NotRole(Why.FullVatAlreadyIssued);
+        if (remainingVat <= Eps && f.TaggedVatThisPayment <= Eps) return NotRole(Why.FullVatAlreadyIssued);
         var me = f.This;
-        var grossThis = me.Settled + me.WithholdingTaxAmount;
+        var gross = f.SourceSubTotal + f.SourceVatAmount;
+        // ยอดที่ตัดหนี้รวมภาษีหัก: บันทึกภาษีหักของงวด ⇒ เงิน + ค่าธรรมเนียม + บรรทัดปรับ + ภาษีหัก · ไม่ได้บันทึกแต่ใบมีภาษีหัก ⇒ ถอดด้วยสัดส่วนยอดรวม/ยอดสุทธิของใบ
+        var grossThis = me.WithholdingTaxAmount <= Eps && f.SourceWithholdingTaxAmount > Eps && f.SourceTotalAmount > Eps
+            ? R2(me.Settled * gross / f.SourceTotalAmount)
+            : me.Settled + me.WithholdingTaxAmount;
         if (grossThis <= Eps) return NotRole(Why.NothingSettled);
 
         var events = f.Events ?? Array.Empty<SettlementReceiptTotals.LedgerEvent>();
         var w = SettlementReceiptTotals.Walk(f.SourceTotalAmount, events, me, f.SourcesOutstandingNow);
-        // MED-2: ใบลดหนี้ก่อนรับ — ใบกำกับ ณ วันรับเงินต้องสะท้อนยอดหลังลดหนี้ ขณะที่ใบลดหนี้ก็ถูกนับใน ภ.พ.30 แยก ⇒ ระบบไม่เดา (ผู้ทำบัญชีตัดสิน)
-        if (w.PriorCreditNotes.Count > 0) return NotRole(Why.CreditNoteBeforeReceipt, human: true);
-        // การตัดยอดที่ตัวไล่ไม่รู้จัก (หักมัดจำ ฯลฯ): ยอดที่ลดจริง − ยอดที่ไล่ได้ (ทุกรายการ + ครั้งนี้) > เศษ ⇒ ไม่เดา
-        if (f.SourcesOutstandingNow is decimal now)
-        {
-            var reduced = f.SourceTotalAmount - now;
-            var known = events.Sum(e => e.Amount) + me.Settled;
-            if (reduced - known > PriorTolerance) return NotRole(Why.UnexplainedPriorSettlement, human: true);
-        }
-
         var closes = w.BalanceAfterRaw <= Eps;
-        if (NothingBefore(f, w) && f.OtherLiveReceiptVat <= Eps && closes)
-            return new Decision(Mode.FullCopy, Why.SingleShotFull, f.SourceSubTotal, f.SourceVatAmount, 0m, f.SourceTotalAmount, false);
+        if (w.PriorCreditNotes.Count == 0 && NothingBefore(f, w) && f.OtherLiveReceiptVat <= Eps && closes)
+            return new Decision(Mode.FullCopy, Why.SingleShotFull, f.SourceSubTotal, f.SourceVatAmount, 0m, f.SourceTotalAmount, false,
+                ClosesSource: true, VatReportedOnSource: f.VatReportedWholesale);
 
-        // งวดของการขายสินค้า (ภาษีขายลง 21911 ตั้งแต่ส่งมอบ) ⇒ คงเดิม · ผู้เรียกที่ไม่รู้ว่าภาษีพัก (ผังไม่มี 21913) ส่ง false ⇒ คิวจาก caller
-        if (!f.VatParkedUntilPayment) return NotRole(Why.VatNotParked);
+        // งวดของการขายสินค้า (ภาษีขายลง 21911 ตั้งแต่ส่งมอบ) ⇒ คงเดิม · ไม่รู้ว่าพัก (ผังไม่มี 21913) ⇒ คิว (ผู้เรียกตัดสินจากบรรทัดสินค้า)
+        if (!f.VatParkedUntilPayment) return NotRole(Why.VatNotParked, human: true);
 
-        var ratio = f.SourceSubTotal + f.SourceVatAmount <= Eps ? 0m : f.SourceVatAmount / (f.SourceSubTotal + f.SourceVatAmount);
-        // ใบเก่าที่ภาษีทั้งใบรายงานแล้วตอนรับงวดแรก: ออกใบกำกับรายงวดได้เมื่อรับครบทุกงวดแล้วเท่านั้น (ออกพร้อมกันทุกงวด — ภ.พ.30 ของเดือนนั้นไม่เปลี่ยน)
-        if (f.VatReportedWholesale && (f.SourcesOutstandingNow ?? 0m) > Eps) return NotRole(Why.WholesaleVatNotFullyPaid, human: true);
-        // งวดก่อนหน้าไม่มีใบกำกับถือ VAT ของมัน (ประมาณขั้นต่ำ: ภาษีหักของงวดก่อน = 0) ⇒ ไม่เดาส่วนของงวดนี้
-        if (w.PriorSettled > PriorTolerance && f.OtherLiveReceiptVat < R2(w.PriorSettled * ratio) - 1.00m)
-            return NotRole(Why.PriorInstallmentWithoutTaxInvoice, human: true);
-        var vat = closes ? remainingVat : Math.Min(remainingVat, R2(grossThis * ratio));
+        var ratio = gross <= Eps ? 0m : f.SourceVatAmount / gross;
+        var proRata = R2(grossThis * ratio);
+        decimal vat;
+        if (f.VatReportedWholesale)
+            // ใบเก่า: ภาษีรายงานที่ใบแจ้งหนี้แล้ว — ใบกำกับเป็นหลักฐานกระดาษ VAT ตามส่วน · งวดปิดถือ VAT ที่ใบอื่นยังไม่ถือ
+            vat = closes ? remainingVat : Math.Min(remainingVat, proRata);
+        else if (f.TaggedVatThisPayment > Eps)
+            vat = f.TaggedVatThisPayment;                     // ออกทีหลัง: ถือเท่าที่ย้ายจริงของการรับนี้
+        else if (closes && f.UndueVatRemaining > Eps)
+            vat = f.UndueVatRemaining;                        // งวดปิด: ภาษีที่ยังพักทั้งหมด (หลังใบลดหนี้/มัดจำ) — ปิดยอดแล้ว 21913 = 0
+        else
+            vat = Math.Min(proRata, f.UndueVatRemaining > Eps ? f.UndueVatRemaining : remainingVat);
         vat = R2(Math.Max(0m, vat));
-        var sub = R2(grossThis - vat);
-        return new Decision(Mode.Installment, Why.Installment, sub, vat, R2(me.WithholdingTaxAmount), R2(sub + vat - me.WithholdingTaxAmount), false);
+        var lines = SplitByRate(f.RateGroups, grossThis, vat);
+        var sub = R2(lines.Sum(l => l.Base));
+        var wht = me.WithholdingTaxAmount <= Eps && f.SourceWithholdingTaxAmount > Eps ? R2(grossThis - me.Settled) : R2(me.WithholdingTaxAmount);
+        return new Decision(Mode.Installment, Why.Installment, sub, vat, wht, R2(sub + vat - wht), false,
+            ClosesSource: closes, VatReportedOnSource: f.VatReportedWholesale, Lines: lines);
+    }
+
+    /// <summary>แบ่งยอดรวม VAT ของงวด (<paramref name="grossThis"/>) เป็นบรรทัดตามอัตราของใบตามสัดส่วนยอดรวมของแต่ละอัตรา · VAT ต่อบรรทัด = มูลค่า × อัตรา (ปัด 2 ตำแหน่ง) ·
+    /// ผลต่างเศษสตางค์/ยอดงวดปิดไปที่บรรทัดที่ถือ VAT มากที่สุด (มูลค่าบรรทัดนั้นปรับให้ยอดรวมเท่าเดิม) · ไม่มีกลุ่ม ⇒ บรรทัดเดียว 7%</summary>
+    private static IReadOnlyList<RateLine> SplitByRate(IReadOnlyList<RateLine>? groups, decimal grossThis, decimal vatTotal)
+    {
+        var g = (groups ?? Array.Empty<RateLine>()).Where(x => x.Base + x.Vat > Eps).ToList();
+        if (g.Count == 0) g = new List<RateLine> { new(7m, 100m, 7m) };
+        var totalGross = g.Sum(x => x.Base + x.Vat);
+        var outLines = new List<RateLine>();
+        var allocated = 0m;
+        for (var i = 0; i < g.Count; i++)
+        {
+            var share = i == g.Count - 1 ? grossThis - allocated : R2(grossThis * (g[i].Base + g[i].Vat) / totalGross);
+            allocated += share;
+            var rate = g[i].VatRate;
+            if (rate > 0m)
+            {
+                var b = R2(share / (1m + rate / 100m));
+                outLines.Add(new RateLine(rate, b, R2(share - b)));
+            }
+            else outLines.Add(new RateLine(rate, share, 0m));
+        }
+        var diff = vatTotal - outLines.Sum(l => l.Vat);
+        if (Math.Abs(diff) >= Eps)
+        {
+            var idx = outLines.FindIndex(l => l.Vat == outLines.Max(x => x.Vat));
+            var t = outLines[idx];
+            if (t.VatRate > 0m) outLines[idx] = t with { Vat = R2(t.Vat + diff), Base = R2(t.Base - diff) };
+        }
+        return outLines;
     }
 
     private static bool NothingBefore(Facts f, SettlementReceiptTotals.LedgerWalk w)
@@ -169,14 +211,8 @@ public static class SettlementTaxInvoiceRole
     /// <summary>ข้อความไทยของเหตุ (โชว์บนคิว/คำตอบ API) · null = ไม่มีอะไรต้องอธิบาย</summary>
     public static string? ReasonText(Why why) => why switch
     {
-        Why.CreditNoteBeforeReceipt => "มีใบลดหนี้ลดยอดใบแจ้งหนี้ก่อนรับเงินครั้งนี้ — ระบบไม่ออกใบกำกับภาษี ณ วันรับเงินเอง (ยอดบนใบกำกับต้องสะท้อนยอดหลังลดหนี้) · "
-            + "ผู้ทำบัญชีตัดสิน: ออกใบกำกับภาษีจากใบแจ้งหนี้ตามยอดที่ถูก หรือบันทึกว่าไม่ต้องออก",
-        Why.UnexplainedPriorSettlement => "ยอดค้างของใบแจ้งหนี้ลดลงด้วยรายการที่ระบบไล่ลำดับไม่ได้ (เช่น หักมัดจำ) — ระบบไม่เดายอด VAT ของการรับครั้งนี้ · ผู้ทำบัญชีตัดสิน",
-        Why.VatNotParked => "ภาษีขายของใบแจ้งหนี้นี้ไม่ได้พักไว้จนรับเงิน (ขายสินค้า หรือผังบัญชีไม่มี 21913) — ระบบไม่ออกใบกำกับรายงวดเอง · ผู้ทำบัญชีตัดสิน",
-        Why.WholesaleVatNotFullyPaid => "ใบแจ้งหนี้นี้ (ก่อนรอบ 275) รายงานภาษีขายทั้งใบไปแล้วตอนรับเงินงวดแรก — ออกใบกำกับรายงวดตอนนี้จะลดภาษีขายของเดือนนั้นที่ยื่นแล้ว · "
-            + "ระบบออกใบกำกับให้ทุกงวดพร้อมกันเมื่อรับครบ หรือผู้ทำบัญชีตัดสิน (เช่น ออกใบกำกับภาษีเต็มใบอ้างใบแจ้งหนี้)",
-        Why.PriorInstallmentWithoutTaxInvoice => "การรับงวดก่อนหน้าของใบแจ้งหนี้นี้ยังไม่มีใบกำกับภาษี ณ วันรับเงิน — ออกใบกำกับของงวดก่อนให้ครบก่อน (คิว \"รับเงินแล้วยังไม่มีใบกำกับ\") "
-            + "ระบบจึงจะคิดส่วน VAT ของงวดนี้ได้ถูก",
+        Why.VatNotParked => "ภาษีขายของใบแจ้งหนี้นี้ไม่ได้พักไว้จนรับเงิน (ผังบัญชีไม่มี 21913 ตอนอนุมัติ) — ระบบไม่ออกใบกำกับรายงวดเอง · ผู้ทำบัญชีตัดสิน "
+            + "(ออกใบกำกับภาษีอ้างใบแจ้งหนี้ตามยอดที่รับ)",
         Why.FullVatAlreadyIssued => "ใบเสร็จที่ทำหน้าที่ใบกำกับภาษีของใบแจ้งหนี้นี้ถือ VAT ครบแล้ว",
         Why.SupersededByTaxInvoice => "ออกใบกำกับภาษีอ้างใบแจ้งหนี้นี้แล้ว",
         _ => null,
