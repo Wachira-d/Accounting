@@ -9,7 +9,8 @@ public interface ITaxService
     Task<TaxReportResponse> GetTaxReportAsync(Guid companyId, Guid reportId);
     Task<List<TaxReportResponse>> GetTaxReportsAsync(Guid companyId, TaxType? taxType = null, int? year = null);
     Task<TaxReportResponse> FileTaxReportAsync(Guid companyId, Guid reportId);
-    Task<TaxReportResponse> UpdateTaxReportAsync(Guid companyId, Guid reportId, UpdateTaxReportRequest request);
+    Task<TaxReportResponse> UpdateTaxReportAsync(Guid companyId, Guid reportId, UpdateTaxReportRequest request,
+        Guid? actorId = null, string? actorEmail = null);
     Task<TaxReportResponse> RegenerateTaxReportAsync(Guid companyId, Guid reportId, Guid? actorId = null, string? actorEmail = null);
     /// <summary>ทบทวนรายงาน ภ.ง.ด.50 ที่บันทึกไว้ทุกปีเทียบยอดสด (อ่านอย่างเดียว · ทีม O 2026-10-22) — เฉพาะปีที่ยอดต่าง เมื่อ <paramref name="onlyDiffering"/></summary>
     Task<List<CitRecomputeReviewRow>> GetCitRecomputeReviewAsync(Guid companyId, bool onlyDiffering = true);

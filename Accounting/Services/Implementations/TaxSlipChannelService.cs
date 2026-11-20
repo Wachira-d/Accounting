@@ -142,8 +142,10 @@ public class TaxSlipChannelService
             .Where(e => e.CompanyId == row.CompanyId && e.Kind == NotifyEndpointKind.LineGroup && e.LineIdHash == row.SourceKey && e.UnlinkedAt == null
                 && e.OaScope == NotifyEndpointKind.ScopeNextAcc)
             .OrderByDescending(e => e.LinkedAt).FirstOrDefaultAsync(ct);
-        var gid = ep == null ? null : _secrets.Unprotect(ep.LineGroupId);
-        if (string.IsNullOrWhiteSpace(gid)) return (false, "LINE push: กลุ่มไม่ได้ผูกแล้ว");
+        if (ep == null) return (false, "LINE push: กลุ่มไม่ได้ผูกแล้ว");
+        var gid = _secrets.Unprotect(ep.LineGroupId);
+        // รอบ 275 แพ็ก A: ผูกอยู่แต่ถอด group id ไม่ได้ ⇒ บอกเหตุจริง (เดิมบอก "ไม่ได้ผูกแล้ว")
+        if (string.IsNullOrWhiteSpace(gid)) return (false, "LINE push: " + LineFailureAlert.DecryptAdvice);
         var r = await _line.TryPushContactTextAsync(row.CompanyId, NotifyEndpointKind.ScopeNextAcc, LineTargetKind.ContactGroup, gid, text, Guid.NewGuid());
         return (r.Ok, r.Ok ? "LINE push: ส่งแล้ว" : "LINE push: ส่งไม่สำเร็จ (" + r.Error + ")");
     }

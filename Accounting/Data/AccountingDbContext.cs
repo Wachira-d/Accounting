@@ -1822,16 +1822,17 @@ public class AccountingDbContext : DbContext
                 .HasConversion(new Accounting.Helpers.EncryptedColumnConverter(Accounting.Helpers.PiiValueKind.ThaiTaxId));
             e.Property(emp => emp.TaxId).HasMaxLength(200)
                 .HasConversion(new Accounting.Helpers.EncryptedColumnConverter(Accounting.Helpers.PiiValueKind.ThaiTaxId));
+            // ฝ่ายค้าน 274-10 MED-1: allow-list การแกะชั้นซ้อน = 5 คอลัมน์ของพนักงาน (เขียนได้เฉพาะ HR/HRIS/นำเข้า ที่ผ่าน EmployeeRecordEdit.CipherInputProblem)
             e.Property(emp => emp.PassportNumber).HasMaxLength(200)
-                .HasConversion(new Accounting.Helpers.EncryptedColumnConverter());
+                .HasConversion(new Accounting.Helpers.EncryptedColumnConverter(Accounting.Helpers.PiiValueKind.Text));
             // เพิ่ม PDPA ม.26: เลขบัญชีธนาคาร + เลขประกันสังคม (sensitive PII).
             // ปลอดภัยต่อการ encrypt เพราะไม่ถูกใช้ใน equality query ที่ไหน
             // (ต่างจาก Contact.TaxId ที่ใช้ matching → ห้าม encrypt). Legacy
             // plaintext อ่านได้ปกติ + re-save migrate เป็น ciphertext อัตโนมัติ.
             e.Property(emp => emp.BankAccountNumber).HasMaxLength(200)
-                .HasConversion(new Accounting.Helpers.EncryptedColumnConverter());
+                .HasConversion(new Accounting.Helpers.EncryptedColumnConverter(Accounting.Helpers.PiiValueKind.Text));
             e.Property(emp => emp.SocialSecurityNumber).HasMaxLength(200)
-                .HasConversion(new Accounting.Helpers.EncryptedColumnConverter());
+                .HasConversion(new Accounting.Helpers.EncryptedColumnConverter(Accounting.Helpers.PiiValueKind.Text));
             e.Property(emp => emp.BaseSalary).HasPrecision(18, 2);
             e.Property(emp => emp.ProvidentFundEmployeePercent).HasPrecision(5, 2);
             e.Property(emp => emp.ProvidentFundEmployerPercent).HasPrecision(5, 2);

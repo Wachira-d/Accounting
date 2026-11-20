@@ -220,7 +220,7 @@ public class LineRound260DbTests
         db.ChangeTracker.Clear();
         var second = await db.LineQueues.AsNoTracking().SingleAsync(q => q.Id == row.Id);
         Assert.Equal((ContactLineChannel.StatusFailed, LineFailureAlert.DecryptAdvice), (second.Status, second.ErrorMessage));
-        Assert.Contains("ENCRYPTION_KEY", second.ErrorMessage);
+        Assert.Contains("คีย์เข้ารหัสเดียวกัน", second.ErrorMessage);   // รอบ 275 แพ็ก A (M-1): ไม่ชี้ชื่อ env ในข้อความถึงผู้ใช้
         Assert.Equal(1, await db.Notifications.CountAsync(n => n.CompanyId == s.CompanyId && n.EntityType == LineFailureAlert.EntityType
             && n.EntityId == LineFailureAlert.KindId(LineFailureAlert.Kind.Decrypt)));
         Assert.DoesNotContain(s.LineUserId, pushed);   // ไม่เคยยิง LINE

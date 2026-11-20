@@ -497,8 +497,9 @@
           const r = await API.get(`/api/companies/${Layout.getCompanyId()}/tax/stale-drafts?months=2`);
           const rows = r?.data || [];
           if (!rows.length) { box.style.display = 'none'; box.innerHTML = ''; return; }
+          // รอบ 275 แพ็ก B: ปุ่มสร้างใหม่เฉพาะงวดที่เซิร์ฟเวอร์บอกว่าสร้างใหม่ได้ (ภ.ง.ด.1 รุ่นเก่า = ข้อความทางไปต่อแทน)
           const items = rows.map(x => `<div style="margin-top:6px">${esc(x.message || '')}
-              <button class="btn btn-sm btn-warning" onclick="Page.regenerateReport('${Layout.jsArg(x.reportId)}')">สร้างใหม่</button></div>`).join('');
+              ${x.canRegenerate === false ? '' : `<button class="btn btn-sm btn-warning" onclick="Page.regenerateReport('${Layout.jsArg(x.reportId)}')">สร้างใหม่</button>`}</div>`).join('');
           box.innerHTML = `<div class="card" style="font-size:13px;line-height:1.7;border-left:4px solid #d97706;background:#fffbeb">
             <div>⚠️ ร่างล้าสมัย ${rows.length} รายการ — ระบบไม่คำนวณร่างใหม่ทับให้เอง (กันบรรทัดที่ดึงเข้า/ติ๊กไว้หาย)</div>${items}</div>`;
           box.style.display = '';
@@ -853,15 +854,19 @@
               // รอบ 273: แถว [สรุป] ของ ภ.ง.ด. (มี linesTaxTotal จากเซิร์ฟเวอร์) = ยอดที่เซิร์ฟเวอร์คำนวณใหม่ทุกครั้งที่บันทึก ⇒ ล็อกช่องยอด + บอกเหตุผล
               // (ห้าม silent no-op — เดิมแก้ได้แต่ถูกคำนวณทับเงียบ ๆ)
               const derived = ln.side === 'summary' && d.linesTaxTotal != null;
-              const ro = derived ? ' readonly tabindex="-1" title="ยอดรวมของผู้ถูกหักรายนี้ — ระบบคำนวณจากบรรทัดรายการ (แก้ที่บรรทัดรายการแทน)" style="background:var(--bg-secondary);' : ' style="';
+              // รอบ 275 แพ็ก B (T2 M5 · H2): ช่องที่เซิร์ฟเวอร์ล็อก (ยอดจาก 50 ทวิ · คำนำหน้าแถวระบบ) — ล็อก + บอกเหตุผลจากเซิร์ฟเวอร์ (ห้าม silent no-op)
+              const lockTip = esc(ln.lockReason || '');
+              const ro = derived ? ' readonly tabindex="-1" title="ยอดรวมของผู้ถูกหักรายนี้ — ระบบคำนวณจากบรรทัดรายการ (แก้ที่บรรทัดรายการแทน)" style="background:var(--bg-secondary);'
+                : ln.amountsLocked ? ` readonly tabindex="-1" title="${lockTip}" style="background:var(--bg-secondary);` : ' style="';
+              const descRo = ln.descriptionLocked ? ` readonly tabindex="-1" title="${lockTip}" style="min-width:160px;background:var(--bg-secondary)"` : ' style="min-width:160px"';
               const rowStyle = ex ? 'opacity:.45;text-decoration:line-through' : '';
               const chk = editable
-                ? `<input type="checkbox" data-line="${ln.id}" data-field="include" ${ex ? '' : 'checked'} title="ใช้รายการนี้ในรายงาน">`
+                ? `<input type="checkbox" data-line="${ln.id}" data-field="include" ${ex ? '' : 'checked'}${ln.includeNeedsReason && ex ? ` data-needs-reason="1" data-was-excluded="1"` : ''} title="${ln.includeNeedsReason ? 'ระบบตัดรายการนี้ออก — ติ๊กใช้ต้องระบุเหตุผล' : 'ใช้รายการนี้ในรายงาน'}">`
                 : (ex ? '✗' : '✓');
               return `<tr style="${rowStyle}">
                 <td class="text-center">${chk}</td>
                 <td>${ln.lineOrder}</td>
-                <td>${editable ? `<input class="form-input form-input-sm" data-line="${ln.id}" data-field="description" value="${esc(ln.description)}" style="min-width:160px">` : (ln.description || '-')}</td>
+                <td>${editable ? `<input class="form-input form-input-sm" data-line="${ln.id}" data-field="description" value="${esc(ln.description)}"${descRo}>` : esc(ln.description || '-')}</td>
                 <td class="text-xs">${esc(ln.taxPayerName) || '-'}</td>
                 <td class="text-right">${editable ? `<input type="number" class="form-input form-input-sm text-right" data-line="${ln.id}" data-field="incomeAmount" value="${ln.incomeAmount}" step="0.01"${ro}width:100px">` : Layout.money(ln.incomeAmount)}</td>
                 <td class="text-right">${editable ? `<input type="number" class="form-input form-input-sm text-right" data-line="${ln.id}" data-field="taxRate" value="${ln.taxRate}" step="0.01"${ro}width:64px">` : ln.taxRate}</td>
@@ -1022,7 +1027,10 @@
           const lid = inp.dataset.line;
           if (!lineMap[lid]) lineMap[lid] = { id: lid };
           const field = inp.dataset.field;
-          if (field === 'include') lineMap[lid].excluded = !inp.checked;
+          if (field === 'include') {
+            lineMap[lid].excluded = !inp.checked;
+            if (inp.checked && inp.dataset.wasExcluded === '1' && inp.dataset.includeReason) lineMap[lid].includeReason = inp.dataset.includeReason;
+          }
           else if (field === 'description') lineMap[lid][field] = inp.value;
           else lineMap[lid][field] = parseFloat(inp.value) || 0;
         });
@@ -1100,6 +1108,16 @@
 
       async saveReport(id) {
         const api = Layout.api(); if (!api) return;
+        // รอบ 275 แพ็ก B (T2 M5): ติ๊กแถวที่ระบบตัดออก (เซิร์ฟเวอร์บอกด้วย includeNeedsReason) กลับเข้ายอด ⇒ ถามเหตุผลครั้งเดียว (เซิร์ฟเวอร์บังคับ + ลง audit)
+        const needReason = [...document.querySelectorAll('#detailContent input[data-field="include"][data-needs-reason="1"]')]
+          .filter(c => c.checked && !c.dataset.includeReason);
+        if (needReason.length) {
+          const form = await Layout.formDialog({ title: `ติ๊กใช้ ${needReason.length} รายการที่ระบบตัดออก`, okText: 'บันทึก', fields: [
+            { key: 'reason', label: 'เหตุผล (เช่น นำส่งก่อนออก 50 ทวิ เพราะ…) — บันทึกใน audit', type: 'text', required: true },
+          ] });
+          if (!form || !String(form.reason || '').trim()) return;
+          needReason.forEach(c => { c.dataset.includeReason = String(form.reason).trim(); });
+        }
         const notes = document.getElementById('taxNotes')?.value || '';
         try {
           await api.updateTaxReport(id, { notes, lines: this._collectVatLines() });

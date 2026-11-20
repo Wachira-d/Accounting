@@ -328,4 +328,11 @@ public class SiteSettings : BaseEntity
     /// null = ค่าตั้งต้นทั้งชุด · ตัวอ่าน/ตัวตรวจเดียว <c>Helpers/EtaxByEmailFormat.ParseSubjectCodes</c> (ผู้อ่าน: <c>DocumentEmailService.SubjectForAsync</c>) ·
     /// แก้ที่ <c>api/admin/etax-email-subject-codes</c> (audit chain)</summary>
     public string? EtaxByEmailSubjectCodesJson { get; set; }
+    /// <summary>รอบ 275 แพ็ก A (T4 M-4): ลายนิ้วมือคีย์เข้ารหัสที่ระบบใช้อยู่ (<c>EncryptionKeyResolver.Fingerprint</c> — ย้อนหาคีย์ไม่ได้) ·
+    /// ผู้เขียน/ผู้อ่านเดียว <c>Services/Implementations/Security/EncryptionKeyFingerprintService</c> (ตัวตัดสิน <c>Helpers/EncryptionKeyFingerprintRule</c>) · null = ยังไม่เคยตรวจ</summary>
+    public string? EncryptionKeyFingerprint { get; set; }
+    /// <summary>รอบ 275 แพ็ก A: ลายนิ้วมือก่อนการหมุนครั้งล่าสุด — กันเครื่องที่ยังใช้คีย์เก่าย้ายข้อมูลกลับ (<c>KeyFingerprintVerdict.RotatedBack</c>)</summary>
+    public string? EncryptionKeyFingerprintPrevious { get; set; }
+    /// <summary>รอบ 275 แพ็ก A: เวลาที่บันทึกลายนิ้วมือล่าสุด (UTC)</summary>
+    public DateTime? EncryptionKeyFingerprintAt { get; set; }
 }

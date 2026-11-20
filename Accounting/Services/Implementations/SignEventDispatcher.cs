@@ -262,7 +262,11 @@ public class SignEventDispatcher
 
         var secretProtected = await _db.CompanySettings.AsNoTracking()
             .Where(s => s.CompanyId == row.CompanyId).Select(s => s.SignCallbackSecret).FirstOrDefaultAsync(ct);
-        var secret = _secrets.Unprotect(secretProtected);
+        // รอบ 275 แพ็ก A (T4 M-5): แยก "ไม่มีรหัส" กับ "มีแต่ถอดไม่ได้ (คีย์ถูกหมุน)" — เดิมบอก "ถูกลบ/ยังไม่ออก" ทั้งสองกรณี
+        var opened = SecretUse.Open(_secrets, "รหัสลับลงนาม webhook", secretProtected);
+        if (opened.Unusable)
+            return (false, null, opened.Problem + " — ออกรหัสใหม่ที่ ตั้งค่า → ลิงก์ให้ลูกค้าเซ็น แล้วกดส่งซ้ำ");
+        var secret = opened.Value;
         if (string.IsNullOrWhiteSpace(secret))
             return (false, null, "บริษัทไม่มีรหัสลับลงนาม webhook (ถูกลบ/ยังไม่ออก) — ออกรหัสใหม่ที่ ตั้งค่า → ลิงก์ให้ลูกค้าเซ็น แล้วกดส่งซ้ำ");
 

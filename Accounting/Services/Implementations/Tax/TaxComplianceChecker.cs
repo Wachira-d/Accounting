@@ -103,6 +103,9 @@ public class TaxComplianceChecker : ITaxComplianceChecker
             case TaxType.WithholdingTax2:   // รอบ 204 — ภ.ง.ด.2 ใช้ invariant เดียวกัน (ยอดหัว = Σ บรรทัด · เลขผู้เสียภาษีครบ)
             case TaxType.WithholdingTax3:
             case TaxType.WithholdingTax53: CheckPnd3_53(report, findings); break;
+            // รอบ 275 แพ็ก B (T2 M2): ภ.ง.ด.54 invariant เดียวกัน (ยอดหัว = Σ บรรทัด) — ยกเว้นเลขผู้เสียภาษีไทย (ผู้รับต่างประเทศ · L4)
+            case TaxType.WithholdingTax54: CheckPnd3_53(report, findings, foreignPayees: true); break;
+            case TaxType.VatPp36: CheckPp36(report, findings); break;
             case TaxType.WithholdingTax1: CheckPnd1(report, findings); break;
         }
 
@@ -136,7 +139,11 @@ public class TaxComplianceChecker : ITaxComplianceChecker
                 "ตรวจสอบว่าครอบคลุมทุกใบกำกับภาษีขายของเดือนนี้."));
     }
 
-    private static void CheckPnd3_53(TaxReport r, List<TaxComplianceFinding> f)
+    /// <summary>ผลต่างที่ยอมให้ระหว่างยอดหัวกับ Σ บรรทัด — รอบ 275 แพ็ก B (T2 L1): ทุกทางเขียนยอดหัวผ่านตัวตั้งเดียว (WhtReportTotals.Apply) แล้ว
+    /// ⇒ ผลต่างที่ถูกต้องคือ 0.00 (เดิม 0.50 — 0.49 บาทที่ผ่านได้คือสัญญาณว่ามีทางเขียนยอดหัวที่ไม่ผ่านตัวตั้ง)</summary>
+    internal const decimal HeaderTolerance = 0m;
+
+    private static void CheckPnd3_53(TaxReport r, List<TaxComplianceFinding> f, bool foreignPayees = false)
     {
         // PND.3 = individual recipients; PND.53 = juristic recipients.
         // The forms differ by recipient type but share the structural
@@ -150,10 +157,10 @@ public class TaxComplianceChecker : ITaxComplianceChecker
         // + แถวที่ติ๊กออก ถูกบวกซ้ำ · ตอนนี้ใช้ตัวตั้งเดียวกับยอดหัว (Helpers/WhtReportTotals) — ด่านยังจับยอดหัวที่ค้าง/ถูกแก้มือ
         var (_, sumWht) = Accounting.Helpers.WhtReportTotals.Of(r.Lines);
         // รอบ 273 ฝ่ายค้านข้อ 2: ฟ้องไม่ว่า Σ จะเป็นเท่าไร — เดิม `sumWht > 0 &&` ⇒ ติ๊กออกครบทุกแถวแต่ยอดหัวค้างค่าเก่า = ผ่านเงียบ
-        if (Math.Abs(sumWht - r.TotalTaxWithheld) > 0.50m)
+        if (Math.Abs(sumWht - r.TotalTaxWithheld) > HeaderTolerance)
             f.Add(new("RD-WHT-002", "Error",
                 $"ผลรวมภาษีหัก ณ ที่จ่ายในรายการย่อย ({sumWht:N2}) ไม่เท่ากับ TotalTaxWithheld ({r.TotalTaxWithheld:N2}).",
-                "กดคำนวณใหม่หรือเพิ่ม/ลบบรรทัดให้ครบ."));
+                "กด \"บันทึก\" ที่รายงาน (ระบบคำนวณยอดหัวจากบรรทัดใหม่) หรือกด \"สร้างใหม่\"."));
 
         // Effective rate sanity — typical PND.3/53 codes range 1-15%.
         // Anything outside that band is almost certainly miskeyed.
@@ -175,11 +182,30 @@ public class TaxComplianceChecker : ITaxComplianceChecker
         // Per-line tax-ID format checks live in RdComplianceValidator;
         // here we just count "no tax ID" lines.
         // เฉพาะแถวที่ยื่นจริง — แถวติ๊กออก/แถว [สรุป] ไม่ลงไฟล์ยื่น (ตัวกรองเดียวกับ PndDetailLines)
-        var missingTaxId = Accounting.Helpers.WhtReportTotals.CountedLines(r.Lines).Count(l => string.IsNullOrWhiteSpace(l.TaxPayerId));
+        // รอบ 275 แพ็ก B (T2 L4): ภ.ง.ด.54 ผู้รับอยู่ต่างประเทศ — ไม่มีเลขผู้เสียภาษีไทยโดยธรรมชาติ (ตัวเดียวกับ WhtCertIssuePlan ที่ไม่บังคับเลขของผู้รับ ตปท.)
+        //   ถ้าฟ้องข้อนี้ = ฟ้องใบถูกทุกใบ (F2 ข้อ 8)
+        var missingTaxId = foreignPayees ? 0
+            : Accounting.Helpers.WhtReportTotals.CountedLines(r.Lines).Count(l => string.IsNullOrWhiteSpace(l.TaxPayerId));
         if (missingTaxId > 0)
+            // รอบ 275 แพ็ก B (T2 M4): เดิมบอก "เปิดบรรทัดและเติมเลข" — บรรทัดแก้เลขไม่ได้ (รับแค่ ยอด/อัตรา/คำอธิบาย/ติ๊ก) ⇒ ทางแก้ที่ทำได้จริง
             f.Add(new("RD-WHT-005", "Error",
                 $"{missingTaxId} บรรทัดไม่มีเลขประจำตัวผู้เสียภาษีของผู้รับ.",
-                "เปิดบรรทัดและเติมเลข 13 หลักทุกรายการก่อนยื่น."));
+                "เติมเลขผู้เสียภาษี 13 หลักที่ผู้ติดต่อ (ผู้ถูกหัก) แล้วกด \"สร้างใหม่\" · บรรทัดรายการบัญชี (JE ล้วน) ที่ไม่มีผู้ถูกหัก: "
+                + "ออก 50 ทวิ ให้ผู้รับ (ผูกผู้ติดต่อ) แล้วสร้างใหม่ หรือติ๊กบรรทัดนั้นออกถ้าไม่ใช่การจ่ายของงวดนี้."));
+    }
+
+    /// <summary>รอบ 275 แพ็ก B (T2 M2): ภ.พ.36 — ยอดหัว (OutputVat/NetVat/TotalIncome) ต้องเท่า Σ บรรทัดที่นับ (ตัวตั้งเดียว WhtReportTotals ·
+    /// สูตรเดียวกับ TaxService.RecalcPp36Totals) · เดิมไม่มีการเทียบเลย</summary>
+    private static void CheckPp36(TaxReport r, List<TaxComplianceFinding> f)
+    {
+        var (sumBase, sumVat) = Accounting.Helpers.WhtReportTotals.Of(r.Lines);
+        if (Math.Abs(sumVat - r.OutputVat) > HeaderTolerance || Math.Abs(r.NetVat - r.OutputVat) > HeaderTolerance
+            || Math.Abs(sumBase - r.TotalIncome) > HeaderTolerance)
+            f.Add(new("RD-PP36-001", "Error",
+                $"ยอด ภ.พ.36 ในรายการย่อย (ฐาน {sumBase:N2} · VAT {sumVat:N2}) ไม่เท่ากับยอดหัว (ฐาน {r.TotalIncome:N2} · VAT {r.OutputVat:N2} · นำส่ง {r.NetVat:N2}).",
+                "กด \"บันทึก\" ที่รายงาน (ระบบคำนวณยอดหัวจากบรรทัดใหม่) หรือกด \"สร้างใหม่\"."));
+        if (r.OutputVat < 0)
+            f.Add(new("RD-PP36-002", "Error", "VAT ที่ต้องนำส่ง (ภ.พ.36) ติดลบไม่ได้.", "ตรวจใบลดหนี้ของบริการต่างประเทศในงวด แล้วกด \"สร้างใหม่\"."));
     }
 
     private static void CheckPnd1(TaxReport r, List<TaxComplianceFinding> f)
@@ -191,7 +217,7 @@ public class TaxComplianceChecker : ITaxComplianceChecker
                 "TotalIncome = 0 — ตรวจสอบว่ามี payroll record เดือนนี้.", null));
 
         var (_, sumWht) = Accounting.Helpers.WhtReportTotals.Of(r.Lines);   // รอบ 273: ตัวตั้งเดียวกับยอดหัว
-        if (Math.Abs(sumWht - r.TotalTaxWithheld) > 0.50m)
+        if (Math.Abs(sumWht - r.TotalTaxWithheld) > HeaderTolerance)
             f.Add(new("RD-PND1-002", "Error",
                 $"ผลรวมภาษีหัก ({sumWht:N2}) ไม่เท่ากับ TotalTaxWithheld ({r.TotalTaxWithheld:N2}).",
                 null));
