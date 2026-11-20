@@ -55,7 +55,7 @@ public partial class PdfGenerationService
     /// พารามิเตอร์เดียวกับ HTML <c>BuildWithholdingTaxCertHtml</c> (ทีม J 2026-10-22 — เดิมไม่มีทางรับตราเลย ⇒ 50 ทวิ ไม่มีตรา)</param>
     internal static byte[] BuildWhtCertPdf(WithholdingTaxCert cert, Company company,
         byte[]? signatureBytes = null, string? signerName = null, WhtCertFundAmounts? funds = null,
-        WhtCertStamp? stamp = null)
+        WhtCertStamp? stamp = null, string? payeeNote = null)
     {
         // รอบ 275 แพ็ก B (คำตัดสิน 275-B-6 (ข)): ผู้ถูกหัก = สำเนา ณ วันออก (ตัวเดียว Helpers/WhtPayeeSnapshot · คู่กับ HTML)
         var payee = Accounting.Helpers.WhtPayeeSnapshot.Of(cert)!;
@@ -116,7 +116,7 @@ public partial class PdfGenerationService
                             BuildPartyBlock(form, WhtCertFormText.PayeeHeading, payee.TaxId,
                                 WhtCertFormText.PartyName(payee.TitleTh, payee.Name, payee.TaxId,
                                     payee.BranchCode, payee.BranchName), payeeAddr,
-                                formTypeOf: cert, payee: true);
+                                formTypeOf: cert, payee: true, note: payeeNote);
                             BuildIncomeTable(form, lines, cert.TotalIncomeAmount, cert.TotalTaxAmount);
                             BuildTotalInWords(form, cert.TotalTaxAmount);
                             BuildFundLine(form, funds);
@@ -220,7 +220,7 @@ public partial class PdfGenerationService
 
     // ── Party block (ผู้หัก/ผู้ถูกหัก) — .sec-cell { padding:2px 8px 3px } ──────────────
     private static void BuildPartyBlock(QuestPDF.Fluent.ColumnDescriptor col, string heading,
-        string? taxId, string name, string fullAddress, WithholdingTaxCert? formTypeOf = null, bool payee = false)
+        string? taxId, string name, string fullAddress, WithholdingTaxCert? formTypeOf = null, bool payee = false, string? note = null)
     {
         col.Item().BorderBottom(Px(1.5f)).BorderColor(WhtInk).PaddingTop(Px(2)).PaddingBottom(Px(3)).PaddingHorizontal(Px(8)).Column(c =>
         {
@@ -255,6 +255,9 @@ public partial class PdfGenerationService
             });
             c.Item().PaddingLeft(Px(42)).Text(W(WhtCertFormText.AddressHint))
                 .FontSize(Px(10)).Italic().FontColor(WhtHint).LineHeight(1.25f);
+            // รอบ 275 แพ็ก E (คำตัดสิน 4.2): ผู้ไม่มีเลข 13 หลักที่รับทราบแล้ว + เลขพาสปอร์ต — คู่กับ HTML (บรรทัดเดียวกันใต้คำแนะนำที่อยู่)
+            if (!string.IsNullOrWhiteSpace(note))
+                c.Item().PaddingLeft(Px(42)).Text(note).FontSize(Px(10)).FontColor(WhtInk).LineHeight(1.25f);
             if (formTypeOf is { } ftCert)
                 c.Item().PaddingTop(Px(3)).Element(e => BuildFormTypeRow(e, ftCert));
         });

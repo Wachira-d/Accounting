@@ -357,12 +357,12 @@ public class PiiKeyRotationRound274Tests
     {
         var cipher = EncryptionHelper.Encrypt(ValidId, "lost-key");
         var ex = Assert.Throws<BusinessRuleException>(() => SsoInsuredNumber.ThrowIfUnusable("สปส.1-10",
-            new[] { ("E001", (string?)"ถูก", (string?)ValidId), ("E002", "หาย", cipher), ("E003", "ผิด", BadChecksum) }));
+            new[] { ("E001", (string?)"ถูก", (string?)ValidId, (string?)null), ("E002", "หาย", cipher, null), ("E003", "ผิด", BadChecksum, null) }));
         Assert.Equal(SsoInsuredNumber.UnusableRuleCode, ex.RuleCode);
         Assert.Contains("E002", ex.Message);
         Assert.Contains("E003", ex.Message);
         Assert.DoesNotContain("E001", ex.Message);
         Assert.DoesNotContain(cipher, ex.Message);
-        SsoInsuredNumber.ThrowIfUnusable("สปส.1-10", new[] { ("E001", (string?)"ถูก", (string?)ValidId), ("E004", "ว่าง", (string?)null) });
+        SsoInsuredNumber.ThrowIfUnusable("สปส.1-10", new[] { ("E001", (string?)"ถูก", (string?)ValidId, (string?)null), ("E004", "ว่าง", (string?)null, (string?)null) });
     }
 }

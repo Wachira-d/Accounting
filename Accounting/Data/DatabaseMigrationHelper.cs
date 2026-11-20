@@ -311,6 +311,7 @@ public static class DatabaseMigrationHelper
         list.AddRange(Accounting.Helpers.Round272Migration.Statements());   // รอบ 272 — สลิปชำระภาษีจากกลุ่ม LINE/อีเมล: ความยินยอมผู้ให้บริการ (append-only) · ใบขอชำระ · แถวสลิป · ที่มาของการนำส่ง
         list.AddRange(Accounting.Helpers.Round275AMigration.Statements());
         list.AddRange(Accounting.Helpers.Round275BMigration.Statements());   // รอบ 275 แพ็ก B — บรรทัดรายงาน ภ.ง.ด. อ้างใบ 50 ทวิ (+ เติมย้อนหลังที่จับคู่ได้แน่นอน) · สำเนาผู้ถูกหัก ณ วันออก   // รอบ 275 แพ็ก A — ลายนิ้วมือคีย์เข้ารหัสบน SiteSettings (กันหลายเครื่องคนละคีย์ · T4 M-4)
+        list.AddRange(Accounting.Helpers.Round275EMigration.Statements());   // รอบ 275 แพ็ก E — รับทราบรายคน: พนักงานไม่มีเลขประจำตัว 13 หลัก (คำตัดสิน 4.2)
         list.AddRange(Accounting.Helpers.Round276Migration.Statements());   // รอบ 276 — ผู้ใช้เห็นเฉพาะเอกสารของตัวเอง/เฉพาะร่าง + คำขออนุมัติพื้นฐาน
         return list;
     }

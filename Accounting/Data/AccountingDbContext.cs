@@ -1859,6 +1859,7 @@ public class AccountingDbContext : DbContext
             // ฝ่ายค้าน 274-10 MED-1: allow-list การแกะชั้นซ้อน = 5 คอลัมน์ของพนักงาน (เขียนได้เฉพาะ HR/HRIS/นำเข้า ที่ผ่าน EmployeeRecordEdit.CipherInputProblem)
             e.Property(emp => emp.PassportNumber).HasMaxLength(200)
                 .HasConversion(new Accounting.Helpers.EncryptedColumnConverter(Accounting.Helpers.PiiValueKind.Text));
+            e.Property(emp => emp.TaxIdWaiverReason).HasMaxLength(500);   // รอบ 275 แพ็ก E (คำตัดสิน 4.2) — ตรงกับ Round275EMigration
             // เพิ่ม PDPA ม.26: เลขบัญชีธนาคาร + เลขประกันสังคม (sensitive PII).
             // ปลอดภัยต่อการ encrypt เพราะไม่ถูกใช้ใน equality query ที่ไหน
             // (ต่างจาก Contact.TaxId ที่ใช้ matching → ห้าม encrypt). Legacy
@@ -4754,8 +4755,34 @@ public class AccountingDbContext : DbContext
         }
     }
 
+    /// <summary>รอบ 275 แพ็ก E (T4 H-2 (ข)): ผู้ติดต่อที่เส้นเงินเดือนเคยสร้างด้วยเลขขยะ (<see cref="Accounting.Helpers.PayrollJunkPayee"/>) ห้ามเป็นผู้ถูกหักของ
+    /// 50 ทวิ ภ.ง.ด.3/53 ระหว่างรอซ่อม — จุดเดียวที่ทุกทางสร้าง/ออก/เปลี่ยนผู้ถูกหักผ่าน (มือ · จากใบสำคัญจ่าย · อัตโนมัติ · ออกใหม่) ·
+    /// ตัดสินด้วย "เลขไม่ผ่าน 13 หลัก + mod-11" <b>และ</b> "มาจากเงินเดือน" (ผู้ขายจริงที่เลขไม่ครบไม่ถูกกันที่นี่ — ด่านเดิมของ 50 ทวิ ตัดสิน) ·
+    /// ใบที่ยกเลิก/ใบเงินเดือนเอง/แก้ช่องอื่นของใบเดิม ไม่ถูกตรวจ</summary>
+    private void GuardPayrollJunkPayees()
+    {
+        foreach (var e in ChangeTracker.Entries<Models.Entities.WithholdingTaxCert>())
+        {
+            var w = e.Entity;
+            if (w.TaxFormType is not (TaxType.WithholdingTax3 or TaxType.WithholdingTax53)) continue;
+            if (w.SourcePayrollRunId != null || w.Status == Models.DTOs.Tax.WithholdingTaxCertStatus.Voided) continue;
+            var touched = e.State == EntityState.Added
+                || (e.State == EntityState.Modified && (e.Property(x => x.PayeeContactId).IsModified || e.Property(x => x.Status).IsModified
+                    || e.Property(x => x.TaxFormType).IsModified));
+            if (!touched) continue;
+            var c = ChangeTracker.Entries<Models.Entities.Contact>().Select(x => x.Entity).FirstOrDefault(x => x.Id == w.PayeeContactId)
+                ?? Set<Models.Entities.Contact>().IgnoreQueryFilters().AsNoTracking()
+                    .FirstOrDefault(x => x.Id == w.PayeeContactId && x.CompanyId == w.CompanyId);
+            if (c == null || !Accounting.Helpers.PayrollJunkPayee.IsJunkTaxId(c.TaxId)) continue;
+            if (!Accounting.Helpers.PayrollJunkPayee.IsPayrollOrigin(this, w.CompanyId, c.Id)) continue;
+            throw new Accounting.Helpers.BusinessRuleException(Accounting.Helpers.PayrollJunkPayee.QuarantineMessage(c.Name, c.TaxId),
+                Accounting.Helpers.PayrollJunkPayee.QuarantineRuleCode, 422);
+        }
+    }
+
     public override int SaveChanges()
     {
+        GuardPayrollJunkPayees();
         StampWhtPayeeSnapshots();
         UpdateTimestamps();
         if (Accounting.Helpers.PolicyAcceptanceAppendOnly.Violation(ChangeTracker) is string evidenceBad)   // รอบ 219 ส่วน B ฝ่ายค้าน S4
@@ -4807,6 +4834,7 @@ public class AccountingDbContext : DbContext
 
     public override async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
     {
+        GuardPayrollJunkPayees();
         StampWhtPayeeSnapshots();
         UpdateTimestamps();
         if (Accounting.Helpers.PolicyAcceptanceAppendOnly.Violation(ChangeTracker) is string evidenceBad)   // รอบ 219 ส่วน B ฝ่ายค้าน S4

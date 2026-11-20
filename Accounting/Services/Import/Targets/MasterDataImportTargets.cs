@@ -178,6 +178,12 @@ public abstract class MasterDataImportTarget : IImportTarget
         {
             if (r.BeforeJson != null)
             {
+                // รอบ 275 แพ็ก E (T4 M-6): ค่าเดิมที่ถอดไม่ออก ⇒ ปฏิเสธเฉพาะแถวนั้นพร้อมเหตุ (แถวอื่นย้อนต่อได้) — ไม่ใช่ exception ดิบทั้งรอบ
+                if (Accounting.Helpers.EncryptedColumnConverter.IsUnreadable(r.BeforeJson))
+                {
+                    results.Add(new ImportRowUndoResult(r.RowId, false, ImportJson.UnreadableText));
+                    continue;
+                }
                 var before = ImportJson.Deserialize<Dictionary<string, string?>>(r.BeforeJson) ?? new Dictionary<string, string?>();
                 var restoreBlock = CanRestore ? await RestoreBlockAsync(ctx.CompanyId, r.EntityId, ct) : null;
                 if (restoreBlock is { } rb) { results.Add(new ImportRowUndoResult(r.RowId, false, $"{rb.Reason} — {rb.WayForward}")); continue; }

@@ -755,13 +755,85 @@ public class PayrollController : ControllerBase
     {
         var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
         var report = await EmployeeIdentityHealth.BuildAsync(db, companyId, ct);
+        // รอบ 275 แพ็ก E (T4 L-3): รายงานอ่านเลขประจำตัวทั้งทะเบียน (แสดงแบบปิดบัง) — จด PiiAccessLog
+        await _pdpa.LogPiiAccessAsync(companyId, JwtHelper.GetUserIdFromClaims(User), ActorEmail() ?? "",
+            subjectType: "Company", subjectId: companyId, fieldName: $"IdentityHealth ({report.Rows.Count} แถว)", operation: "Read",
+            purpose: "ตรวจเลขประจำตัวที่ต้องแก้ (หน้าสุขภาพข้อมูลเข้ารหัส)",
+            ipAddress: HttpContext.Connection.RemoteIpAddress?.ToString(), userAgent: Request.Headers.UserAgent.ToString(), ct: ct);
         return Ok(new ApiResponse<object>(true, new
         {
             Blocking = report.Blocking,
-            RekeyJob = report.RekeyJob == null ? null : new { report.RekeyJob.FinishedAt, report.RekeyJob.Success, report.RekeyJob.Message },
-            RekeyJobStatusText = EmployeeIdentityHealth.RekeyAction(report.RekeyJob),   // ฝ่ายค้าน MED-2: สถานะงานย้ายคีย์ตามผลรันจริง (บรรทัดสรุปของรายงาน)
+            Truncated = report.Truncated,   // รอบ 275 แพ็ก E (T4 L-2): คอลัมน์ใดถึงเพดาน 2,000 แถว = รายการไม่ครบ
+            // รอบ 275 แพ็ก E (T4 L-4): งานย้ายคีย์เป็นงานทั้งแพลตฟอร์ม — ส่งให้บริษัทเฉพาะเวลา + สำเร็จ/ล้ม (ข้อความดิบ/จำนวนแถวทุก tenant อยู่หน้าผู้ดูแล)
+            RekeyJob = report.RekeyJob == null ? null : new { report.RekeyJob.FinishedAt, report.RekeyJob.Success },
+            RekeyJobStatusText = EmployeeIdentityHealth.RekeyAction(report.RekeyJob is { } rj ? rj with { Message = null } : null),   // ฝ่ายค้าน MED-2: สถานะงานย้ายคีย์ตามผลรันจริง (บรรทัดสรุปของรายงาน)
             Rows = report.Rows.Select(r => new { r.Source, r.Ref, r.Name, r.Field, Issue = r.Issue.ToString(), r.Masked, r.Action, r.BlocksFiling }),
         }));
+    }
+
+    // ── รอบ 275 แพ็ก E (T4 H-3 · คำตัดสิน 4.2): รับทราบรายคน — พนักงานไม่มีเลขประจำตัว 13 หลัก ──
+    public sealed record TaxIdWaiverRequest(string? Reason);
+
+    /// <summary>พนักงานที่ไม่มีเลข 13 หลัก (ยังไม่รับทราบ/รับทราบแล้ว) · พาสปอร์ตปิดบังเสมอ · ด่านเงินเดือนเดียวกับ ภ.ง.ด.1</summary>
+    [HttpGet("tax-id-waivers")]
+    public async Task<ActionResult<ApiResponse<object>>> GetTaxIdWaivers(Guid companyId,
+        [FromServices] Accounting.Data.AccountingDbContext db, CancellationToken ct)
+    {
+        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        return Ok(new ApiResponse<object>(true, await EmployeeTaxIdWaiver.ListAsync(db, companyId, ct)));
+    }
+
+    /// <summary>รับทราบ (เหตุบังคับ · audit) — คนที่มีเลขผิด/ถอดรหัสไม่ได้ถูกปฏิเสธพร้อมเหตุ (ต้องแก้เลข)</summary>
+    [HttpPost("employees/{employeeId:guid}/tax-id-waiver")]
+    public async Task<ActionResult<ApiResponse<object>>> AcknowledgeTaxIdWaiver(Guid companyId, Guid employeeId, [FromBody] TaxIdWaiverRequest req,
+        [FromServices] Accounting.Data.AccountingDbContext db, CancellationToken ct)
+    {
+        // ผู้ทำบัญชี/ผู้มีสิทธิ์ยื่นภาษีหรืออนุมัติเงินเดือน (การรับทราบมีผลต่อ 50 ทวิ และไฟล์ยื่น)
+        var block = await RequirePayrollWriteAsync(companyId, "รับทราบพนักงานไม่มีเลข 13 หลัก",
+            Models.Constants.PermissionKeys.TaxFile, Models.Constants.PermissionKeys.PayrollApprove); if (block != null) return block;
+        await EmployeeTaxIdWaiver.AcknowledgeAsync(db, companyId, employeeId, req?.Reason, JwtHelper.GetUserIdFromClaims(User), ct);
+        return Ok(new ApiResponse<object>(true, null, "รับทราบแล้ว — 50 ทวิ ของคนนี้ออกได้ (กด “สร้างเอกสารใหม่” ที่รอบเงินเดือนที่จ่ายไปแล้วเพื่อออกใบที่ขาด)"));
+    }
+
+    /// <summary>ถอนการรับทราบ (audit) — ใบที่ออกแล้วไม่ถูกแตะ</summary>
+    [HttpDelete("employees/{employeeId:guid}/tax-id-waiver")]
+    public async Task<ActionResult<ApiResponse<object>>> RevokeTaxIdWaiver(Guid companyId, Guid employeeId, [FromQuery] string? reason,
+        [FromServices] Accounting.Data.AccountingDbContext db, CancellationToken ct)
+    {
+        var block = await RequirePayrollWriteAsync(companyId, "ถอนการรับทราบพนักงานไม่มีเลข 13 หลัก",
+            Models.Constants.PermissionKeys.TaxFile, Models.Constants.PermissionKeys.PayrollApprove); if (block != null) return block;
+        await EmployeeTaxIdWaiver.RevokeAsync(db, companyId, employeeId, reason, JwtHelper.GetUserIdFromClaims(User), ct);
+        return Ok(new ApiResponse<object>(true, null, "ถอนการรับทราบแล้ว — งวดถัดไป 50 ทวิ ของคนนี้จะไม่ออกจนกว่าจะกรอกเลขหรือรับทราบใหม่"));
+    }
+
+    // ── รอบ 275 แพ็ก E (T4 H-2): ผู้ติดต่อเลขผิดที่เส้นเงินเดือนสร้างไว้ — รายงาน + ซ่อมเฉพาะแถวที่เลือก ──
+    public sealed record JunkPayeeRepairRequest(List<Guid>? ContactIds, bool ConfirmFiledAmendment);
+
+    [HttpGet("junk-payee-contacts")]
+    public async Task<ActionResult<ApiResponse<object>>> GetJunkPayeeContacts(Guid companyId,
+        [FromServices] Accounting.Data.AccountingDbContext db, CancellationToken ct)
+    {
+        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        var rows = await PayrollJunkPayee.FindAsync(db, companyId, ct);
+        // ไม่ส่งเลขเต็ม (TargetTaxId) ขึ้นจอ — เลขปิดบังอย่างเดียว · แผนเป็นชื่อ enum
+        return Ok(new ApiResponse<object>(true, rows.Select(r => new
+        {
+            r.ContactId, r.Name, r.Masked, r.Problem, r.EmployeeCode, r.EmployeeName, Plan = r.Plan.ToString(), r.Action,
+            r.CertCount, r.FiledPeriods, r.Repairable,
+        })));
+    }
+
+    [HttpPost("junk-payee-contacts/repair")]
+    public async Task<ActionResult<ApiResponse<object>>> RepairJunkPayeeContacts(Guid companyId, [FromBody] JunkPayeeRepairRequest req,
+        [FromServices] Accounting.Data.AccountingDbContext db, CancellationToken ct)
+    {
+        var block = await RequirePayrollWriteAsync(companyId, "ซ่อมผู้ติดต่อเลขผิดจากเงินเดือน",
+            Models.Constants.PermissionKeys.TaxFile, Models.Constants.PermissionKeys.PayrollApprove); if (block != null) return block;
+        var ids = req?.ContactIds ?? new List<Guid>();
+        if (ids.Count == 0) return BadRequest(new ApiResponse<object>(false, null, "เลือกแถวที่จะซ่อมอย่างน้อยหนึ่งแถว"));
+        var outcomes = await PayrollJunkPayee.RepairAsync(db, companyId, ids, req!.ConfirmFiledAmendment, JwtHelper.GetUserIdFromClaims(User), ct);
+        var done = outcomes.Count(o => o.Repaired);
+        return Ok(new ApiResponse<object>(done > 0, outcomes, $"ซ่อมแล้ว {done} จาก {outcomes.Count} แถว"));
     }
 
     // `pnd3/{year}/{month}` ถูกลบรอบ 170 — เป็นสูตรที่ 3 ของยอด ภ.ง.ด.3 (นับจาก Documents ไม่กรองฝั่งซื้อ ·

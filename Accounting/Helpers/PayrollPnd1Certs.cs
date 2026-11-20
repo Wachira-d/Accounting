@@ -30,6 +30,18 @@ public static class PayrollPnd1Certs
         }
     }
 
+    /// <summary>รอบ 275 แพ็ก E (T4 L-7): ชื่อผู้ติดต่อที่เส้นเงินเดือนสร้างให้พนักงาน — ชื่อไทยก่อน · ไม่มีชื่อไทย (ต่างชาติ) ⇒ ชื่อ/สกุลอังกฤษ
+    /// (คู่สมมาตรกับไฟล์ ภ.ง.ด.1 <c>Pnd1FilingData.PayrollRow</c> · เดิมได้ชื่อว่าง) · ไม่มีทั้งคู่ ⇒ รหัสพนักงาน (ไม่แต่งชื่อ)</summary>
+    public static string PayeeName(Accounting.Models.Entities.Employee emp)
+    {
+        var thai = !string.IsNullOrWhiteSpace(emp.FirstNameTh);
+        var name = thai
+            ? $"{emp.TitleTh} {emp.FirstNameTh} {emp.LastNameTh}"
+            : $"{emp.FirstNameEn} {emp.LastNameEn}";
+        name = string.Join(" ", name.Split(' ', StringSplitOptions.RemoveEmptyEntries));
+        return name.Length > 0 ? name : (emp.EmployeeCode ?? "").Trim();
+    }
+
     /// <summary>รอบมีพนักงาน (<paramref name="employeeCount"/> &gt; 0) แต่ไม่มีแถวรายคนที่โหลดมาเลย ⇒ ผู้เรียกไม่ได้โหลด (ไม่ใช่ "ไม่มีใครถูกหัก")</summary>
     public static bool DetailsNotLoaded(int loadedDetails, int employeeCount) => loadedDetails == 0 && employeeCount > 0;
 }

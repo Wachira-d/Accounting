@@ -715,6 +715,7 @@
                   <td><u class="ul">&nbsp;${Layout.esc(d.payeeAddress || '')}&nbsp;</u></td>
                 </tr></table>
                 <div class="hint-text">(ให้ระบุ ชื่ออาคาร/หมู่บ้าน ห้องเลขที่ ชั้นที่ เลขที่ ตรอก/ซอย หมู่ที่ ถนน ตำบล/แขวง อำเภอ/เขต จังหวัด)</div>
+                ${d.payeeReferenceNote ? '<div class="hint-text" style="font-style:normal;color:#000">' + Layout.esc(d.payeeReferenceNote) + '</div>' : ''}
 
               <!-- ===== FORM TYPE (ลำดับที่ ในแบบ) — อยู่ในกรอบผู้ถูกหัก ตามแบบทางการ (รอบ 204 · เดิมกรอบแยก) ===== -->
               <div class="ftype-cell" style="padding:3px 0 0">

@@ -320,7 +320,9 @@ public partial class WithholdingTaxCertService : IWithholdingTaxCertService
             ?? throw new KeyNotFoundException("ไม่พบบริษัท");
 
         // รอบ 271: ช่องการผูก (ผูกกับ · ลบ/ยกเลิกได้ไหม · อาจนับซ้ำ) — ตัวเดียวกับรายการ
-        return (await DecorateLinkAsync(companyId, new List<WithholdingTaxCert> { cert }, new List<WithholdingTaxCertResponse> { MapToResponse(cert, company) }))[0];
+        var decorated = (await DecorateLinkAsync(companyId, new List<WithholdingTaxCert> { cert }, new List<WithholdingTaxCertResponse> { MapToResponse(cert, company) }))[0];
+        // รอบ 275 แพ็ก E (คำตัดสิน 4.2): หน้าพิมพ์ wht.html แสดงข้อความเดียวกับ PDF (ผู้ไม่มีเลข 13 หลัก + เลขพาสปอร์ต)
+        return decorated with { PayeeReferenceNote = await Accounting.Helpers.WhtCertPayeeNote.LoadAsync(_db, companyId, cert) };
     }
 
     /// <summary>ทางเดิม (แบบ/ปี/เดือน) — รอบ 271 เดินทางเดียวกับ <see cref="GetListAsync"/> (ตัวกรองฝั่งเซิร์ฟเวอร์ + ช่องการผูก)</summary>

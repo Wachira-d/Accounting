@@ -12,6 +12,8 @@
     รอบ 275 แพ็ก A (T4 M-1): หน้าจอของผู้ใช้บริษัทแทนข้อความเดิมที่ชี้ไป "GET payroll/tax-identity-health" / ENCRYPTION_KEY_PREVIOUS
     ส่วนที่ 1 = ความลับของบริษัท (GET encryption-health/secrets · สิทธิ์ตั้งค่าบริษัท) · ส่วนที่ 2 = เลขประจำตัวพนักงาน/ผู้รับ 50 ทวิ (GET payroll/tax-identity-health เดิม · สิทธิ์เงินเดือน)
     หน้านี้แสดงผลอย่างเดียว — ป้าย/เหตุ/ทางไปต่อ/สถานะมาจากเซิร์ฟเวอร์ทั้งหมด (F2 ข้อ 5) · ไม่มีค่าความลับหรือ ciphertext ในคำตอบ
+    รอบ 275 แพ็ก E: ส่วนที่ 3 = พนักงานไม่มีเลข 13 หลัก — รับทราบรายคน (คำตัดสิน 4.2 · GET payroll/tax-id-waivers) ·
+    ส่วนที่ 4 = ผู้ติดต่อเลขผิดจากเงินเดือน — รายงาน + ซ่อมเฉพาะแถวที่เลือก (T4 H-2 · GET/POST payroll/junk-payee-contacts) · แผนซ่อมเซิร์ฟเวอร์คำนวณเอง
   -->
   <div id="pageContent" class="page-content fade-in">
     <div class="page-header">
@@ -24,6 +26,8 @@
     <div id="keyBox"></div>
     <div id="secretBox"></div>
     <div id="piiBox"></div>
+    <div id="waiverBox"></div>
+    <div id="junkBox"></div>
   </div>
 
   <script src="/js/api.js"></script>
@@ -65,6 +69,89 @@
         } catch (e) {
           document.getElementById('piiBox').innerHTML = this.card('เลขประจำตัวพนักงาน / ผู้รับ 50 ทวิ', this.note('ตรวจไม่ได้: ' + e.message + ' (ส่วนนี้ต้องมีสิทธิ์งานเงินเดือน)', '#b91c1c'));
         }
+        await this.loadWaivers();
+        await this.loadJunk();
+      },
+      // ── ส่วนที่ 3: พนักงานไม่มีเลข 13 หลัก (คำตัดสิน 4.2) ──
+      async loadWaivers() {
+        const cid = encodeURIComponent(Layout.getCompanyId());
+        const box = document.getElementById('waiverBox');
+        const title = 'พนักงานที่ไม่มีเลขประจำตัว 13 หลัก — รับทราบรายคน';
+        try {
+          const res = await API.get(`/api/companies/${cid}/payroll/tax-id-waivers`);
+          const rows = Array.isArray(res && res.data) ? res.data : null;
+          if (rows == null) { box.innerHTML = this.card(title, this.note('ไม่ได้รับผลตรวจจากเซิร์ฟเวอร์', '#b91c1c')); return; }
+          const body = rows.length === 0 ? this.note('✓ พนักงานทุกคนมีเลขประจำตัว 13 หลัก', '#15803d')
+            : `<div style="padding:0 18px 18px;overflow-x:auto"><table class="data-table" style="font-size:13px;min-width:640px">
+                <thead><tr><th>รหัส</th><th>ชื่อ</th><th>สัญชาติ</th><th>หนังสือเดินทาง</th><th>สถานะ</th><th></th></tr></thead>
+                <tbody>${rows.map(r => `<tr><td>${this.esc(r.employeeCode)}</td><td>${this.esc(r.name)}</td><td>${this.esc(r.nationality)}</td>
+                  <td>${this.esc(r.passportMasked || '-')}</td>
+                  <td style="font-size:12px;color:${r.canRevoke ? '#15803d' : '#b91c1c'}">${this.esc(r.status)}${r.reason ? ' · เหตุ: ' + this.esc(r.reason) : ''}${r.acknowledgedAt ? ' · ' + this.esc(Layout.date(r.acknowledgedAt)) : ''}</td>
+                  <td style="white-space:nowrap">${r.canAcknowledge ? `<button class="btn btn-sm btn-primary" data-ack="${this.esc(r.employeeId)}">รับทราบไม่มีเลข 13 หลัก</button>` : ''}
+                    ${r.canRevoke ? `<button class="btn btn-sm btn-secondary" data-revoke="${this.esc(r.employeeId)}">ถอนการรับทราบ</button>` : ''}</td></tr>`).join('')}</tbody></table></div>`;
+          box.innerHTML = this.card(title, body + this.note('ผู้ที่มีเลขแต่เลขผิด/ถอดรหัสไม่ได้ ไม่อยู่ในรายการนี้ — ต้องแก้เลขที่ทะเบียนพนักงาน (รับทราบแทนไม่ได้)'));
+          box.querySelectorAll('[data-ack]').forEach(b => b.addEventListener('click', () => this.ack(b.dataset.ack)));
+          box.querySelectorAll('[data-revoke]').forEach(b => b.addEventListener('click', () => this.revoke(b.dataset.revoke)));
+        } catch (e) {
+          box.innerHTML = this.card(title, this.note('ตรวจไม่ได้: ' + e.message + ' (ส่วนนี้ต้องมีสิทธิ์งานเงินเดือน)', '#b91c1c'));
+        }
+      },
+      async ack(id) {
+        const reason = prompt('เหตุที่พนักงานคนนี้ไม่มีเลขประจำตัว 13 หลัก (เช่น ต่างชาติ รอเลขจากกรมสรรพากร)');
+        if (reason == null) return;
+        const cid = encodeURIComponent(Layout.getCompanyId());
+        try {
+          const res = await API.post(`/api/companies/${cid}/payroll/employees/${encodeURIComponent(id)}/tax-id-waiver`, { reason });
+          Layout.toast ? Layout.toast(res.message || 'รับทราบแล้ว', 'success') : alert(res.message || 'รับทราบแล้ว');
+        } catch (e) { alert(e.message); }
+        await this.loadWaivers();
+      },
+      async revoke(id) {
+        const reason = prompt('เหตุที่ถอนการรับทราบ');
+        if (reason == null) return;
+        const cid = encodeURIComponent(Layout.getCompanyId());
+        try {
+          const res = await API.delete(`/api/companies/${cid}/payroll/employees/${encodeURIComponent(id)}/tax-id-waiver?reason=${encodeURIComponent(reason)}`);
+          Layout.toast ? Layout.toast(res.message || 'ถอนแล้ว', 'success') : alert(res.message || 'ถอนแล้ว');
+        } catch (e) { alert(e.message); }
+        await this.loadWaivers();
+      },
+      // ── ส่วนที่ 4: ผู้ติดต่อเลขผิดจากเงินเดือน (T4 H-2) ──
+      async loadJunk() {
+        const cid = encodeURIComponent(Layout.getCompanyId());
+        const box = document.getElementById('junkBox');
+        const title = 'ผู้ติดต่อเลขผิดจากเงินเดือน';
+        try {
+          const res = await API.get(`/api/companies/${cid}/payroll/junk-payee-contacts`);
+          const rows = Array.isArray(res && res.data) ? res.data : null;
+          if (rows == null) { box.innerHTML = this.card(title, this.note('ไม่ได้รับผลตรวจจากเซิร์ฟเวอร์', '#b91c1c')); return; }
+          if (rows.length === 0) { box.innerHTML = this.card(title, this.note('✓ ไม่พบผู้ติดต่อเลขผิดที่ระบบเงินเดือนสร้างไว้', '#15803d')); return; }
+          const anyFiled = rows.some(r => Array.isArray(r.filedPeriods) && r.filedPeriods.length > 0);
+          box.innerHTML = this.card(`${title} (${rows.length})`, `<div style="padding:0 18px 18px;overflow-x:auto"><table class="data-table" style="font-size:13px;min-width:720px">
+              <thead><tr><th></th><th>ผู้ติดต่อ</th><th>เลข (ปิดบัง)</th><th>ปัญหา</th><th>พนักงาน</th><th>ใบ 50 ทวิ</th><th>สิ่งที่ระบบจะทำ</th></tr></thead>
+              <tbody>${rows.map(r => `<tr><td>${r.repairable ? `<input type="checkbox" data-junk="${this.esc(r.contactId)}">` : ''}</td>
+                <td>${this.esc(r.name)}</td><td>${this.esc(r.masked)}</td><td style="font-size:12px">${this.esc(r.problem)}</td>
+                <td>${this.esc(r.employeeCode || '-')} ${this.esc(r.employeeName || '')}</td><td>${this.esc(r.certCount)}</td>
+                <td style="font-size:12px;color:${r.repairable ? '#334155' : '#b91c1c'}">${this.esc(r.action)}</td></tr>`).join('')}</tbody></table>
+              ${anyFiled ? '<label style="display:block;margin-top:8px;font-size:13px;color:#92400e"><input type="checkbox" id="junkConfirmFiled"> ยืนยันว่าจะยื่น ภ.ง.ด.1 เพิ่มเติมของงวดที่ยื่นแล้ว (ใบเดิมพิมพ์ใหม่ได้เลขที่ถูก · เลขที่ใบ/ยอดเดิม)</label>' : ''}
+              <button class="btn btn-primary" id="btnJunkRepair" style="margin-top:8px">ซ่อมแถวที่เลือก</button></div>`
+            + this.note('ระหว่างรอซ่อม ระบบไม่ให้ใช้ผู้ติดต่อเหล่านี้เป็นผู้ถูกหักใน ภ.ง.ด.3/53'));
+          document.getElementById('btnJunkRepair').addEventListener('click', () => this.repairJunk());
+        } catch (e) {
+          box.innerHTML = this.card(title, this.note('ตรวจไม่ได้: ' + e.message + ' (ส่วนนี้ต้องมีสิทธิ์งานเงินเดือน)', '#b91c1c'));
+        }
+      },
+      async repairJunk() {
+        const ids = Array.from(document.querySelectorAll('[data-junk]:checked')).map(x => x.dataset.junk);
+        if (ids.length === 0) { alert('เลือกแถวที่จะซ่อมก่อน'); return; }
+        const confirmFiled = !!(document.getElementById('junkConfirmFiled') || {}).checked;
+        const cid = encodeURIComponent(Layout.getCompanyId());
+        try {
+          const res = await API.post(`/api/companies/${cid}/payroll/junk-payee-contacts/repair`, { contactIds: ids, confirmFiledAmendment: confirmFiled });
+          const lines = Array.isArray(res && res.data) ? res.data.map(o => (o.repaired ? '✓ ' : '⛔ ') + o.message) : [];
+          alert((res.message || '') + (lines.length ? '\n' + lines.join('\n') : ''));
+        } catch (e) { alert(e.message); }
+        await this.run();
       },
       renderSecrets(d) {
         const box = document.getElementById('secretBox');
