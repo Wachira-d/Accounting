@@ -21371,7 +21371,7 @@ REVIEWER_CASES += [
 
 
 # ═══ รอบ 275 แพ็ก B (erp-review/2026-11-20/audit-T2-wht-pnd-vat.md · H1 H2 M1–M5 L1 L2 L4 · คำตัดสิน 275-B-1…4) ═══
-_R275B_WHY = "รอบ 275 แพ็ก B (T2): "
+_R275B_WHY = "รอบ 275 แพ็ก B (T2 · commit 33b2c7de): "
 _R275B_TAX = "Services/Implementations/TaxService.cs"
 _R275B_GATE = "Services/Implementations/TaxService.FilingGate.cs"
 RULES += [
