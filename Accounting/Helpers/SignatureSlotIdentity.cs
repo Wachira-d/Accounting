@@ -16,8 +16,8 @@ namespace Accounting.Helpers;
 /// <c>PreparerName</c> · กุญแจถูก <b>แช่แข็งตอนเอกสารออก</b> (<see cref="Snapshot"/> ใน <c>Document.SignerSnapshotJson</c>) — เปลี่ยนชื่อเล่น/โปรไฟล์ทีหลัง
 /// ไม่แก้เอกสารที่ออกแล้ว · ไม่มี snapshot (ใบร่าง · ใบที่ออกก่อนรอบนี้) ⇒ ไม่รวม</para>
 ///
-/// <para><b>ทิศของรูป (ฝ่ายค้าน HIGH-1)</b>: ช่องผู้มีอำนาจลงนามใช้ได้เฉพาะรูปในโปรไฟล์ของผู้ใช้ที่ระบบยืนยันตัว — <b>ไม่รับรูปจาก payload เด็ดขาด</b> ·
-/// ช่องผู้จัดทำรับรูปโปรไฟล์ของผู้ใช้ที่ผูกด้วยกุญแจได้ (เมื่อตัวเองไม่มีรูป)</para>
+/// <para><b>รูป (คำตัดสิน 278-9 — คำสั่งเจ้าของ · แทน 278-5)</b>: รวมได้เฉพาะเมื่อผูกด้วยกุญแจที่ยืนยันแล้ว (ผูกไม่ได้ = ไม่แตะเลย) ·
+/// ทั้งสองช่องใช้รูปเดียวกัน — รูปในโปรไฟล์เป็นหลัก · โปรไฟล์ไม่มีรูป ⇒ รูปที่ระบบภายนอกส่งมา · แหล่งรูปแช่แข็งใน snapshot</para>
 /// </summary>
 public static class SignatureSlotIdentity
 {
@@ -30,13 +30,17 @@ public static class SignatureSlotIdentity
 
     // ===================== snapshot (แช่แข็งตอนออกเอกสาร) =====================
 
-    /// <summary>ผู้ใช้ที่ช่อง 0 ผูกด้วยกุญแจ ณ วันออกเอกสาร + ชื่อ/ตำแหน่งตามโปรไฟล์วันนั้น (ชื่อที่พิมพ์ทั้งสองช่องเมื่อรวม)</summary>
-    public sealed record Candidate(Guid UserId, string Kind, string? Name, string? Title);
+    /// <summary>ผู้ใช้ที่ช่อง 0 ผูกด้วยกุญแจ ณ วันออกเอกสาร + ชื่อ/ตำแหน่งตามโปรไฟล์วันนั้น (ชื่อที่พิมพ์ทั้งสองช่องเมื่อรวม) + แหล่งรูปที่ใช้ทั้งสองช่อง
+    /// (<see cref="ImageProfile"/> · <see cref="ImagePayload"/> · <see cref="ImageNone"/> · null = snapshot รุ่นก่อนคำตัดสิน 278-9 ⇒ ตัดสินด้วยกติกาเดียวกันตอนพิมพ์)</summary>
+    public sealed record Candidate(Guid UserId, string Kind, string? Name, string? Title, string? ImageSource = null);
 
     /// <summary><c>C</c> ว่าง = แช่แข็งแบบ "ไม่รวม" (เช่น ใบที่ออกก่อนรอบ 278 — Round278Migration)</summary>
     public sealed record Snapshot(int V, List<Candidate> C, string Rule = RuleCode);
 
     public const string EmptySnapshotJson = "{\"V\":1,\"C\":[],\"Rule\":\"SIGNER-SAME-PERSON\"}";
+    public const string ImageProfile = "profile";
+    public const string ImagePayload = "payload";
+    public const string ImageNone = "none";
 
     public static string Serialize(Snapshot s) => JsonSerializer.Serialize(s);
 
@@ -47,15 +51,23 @@ public static class SignatureSlotIdentity
         catch (JsonException) { return null; }
     }
 
+    /// <summary><b>คำตัดสิน 278-9 (คำสั่งเจ้าของ · แทน 278-5 เรื่องรูป)</b>: เมื่อผูกด้วยกุญแจที่ยืนยันแล้ว ทั้งสองช่องใช้<b>รูปเดียวกัน</b> —
+    /// รูปในโปรไฟล์ของเรา (ยืนยันแล้ว) เป็นหลัก · โปรไฟล์ไม่มีรูป ⇒ รูปที่ระบบภายนอกส่งมา · ไม่มีทั้งคู่ ⇒ ไม่มีรูป</summary>
+    private static string ChooseImageSource(bool profileHasImage, bool payloadHasImage)
+        => profileHasImage ? ImageProfile : payloadHasImage ? ImagePayload : ImageNone;
+
     /// <summary>ผู้สมัครตอนออกเอกสาร: PreparerUserId ⇒ คนนั้นคนเดียว (ชื่อเล่นไม่ถูกใช้) · ไม่มี ⇒ เจ้าของชื่อเล่นที่อนุมัติแล้วซึ่งตรง <c>PreparerName</c>
-    /// ทั้งคำ — <b>ตรงมากกว่าหนึ่งคน = กำกวม ⇒ ไม่มีผู้สมัคร</b> (ไม่เดา)</summary>
-    public static Snapshot BuildSnapshot(Guid? preparerUserId, (string? Name, string? Title)? preparerProfile,
-        IEnumerable<(Guid UserId, string? Name, string? Title)> approvedAliasOwners)
+    /// ทั้งคำ — <b>ตรงมากกว่าหนึ่งคน = กำกวม ⇒ ไม่มีผู้สมัคร</b> (ไม่เดา) · แหล่งรูปแช่แข็งด้วย <see cref="ChooseImageSource"/></summary>
+    public static Snapshot BuildSnapshot(Guid? preparerUserId, (string? Name, string? Title, bool ProfileHasImage)? preparerProfile,
+        IEnumerable<(Guid UserId, string? Name, string? Title, bool ProfileHasImage)> approvedAliasOwners, bool payloadHasImage = false)
     {
         if (preparerUserId is { } p && p != Guid.Empty)
-            return new Snapshot(1, preparerProfile is { } pp ? new() { new Candidate(p, KindPreparerUserId, pp.Name, pp.Title) } : new());
+            return new Snapshot(1, preparerProfile is { } pp
+                ? new() { new Candidate(p, KindPreparerUserId, pp.Name, pp.Title, ChooseImageSource(pp.ProfileHasImage, payloadHasImage)) } : new());
         var owners = approvedAliasOwners.GroupBy(o => o.UserId).Select(g => g.First()).ToList();
-        return new Snapshot(1, owners.Count == 1 ? new() { new Candidate(owners[0].UserId, KindApprovedAlias, owners[0].Name, owners[0].Title) } : new());
+        return new Snapshot(1, owners.Count == 1
+            ? new() { new Candidate(owners[0].UserId, KindApprovedAlias, owners[0].Name, owners[0].Title, ChooseImageSource(owners[0].ProfileHasImage, payloadHasImage)) }
+            : new());
     }
 
     // ===================== ตัดสินตอนพิมพ์ =====================
@@ -69,22 +81,24 @@ public static class SignatureSlotIdentity
 
     public readonly record struct SlotFace(string? Name, string? Title, bool HasImage);
 
-    /// <summary>ผลรวม — ชื่อ/ตำแหน่งของแต่ละช่อง + ช่อง 0 ใช้รูปโปรไฟล์ของผู้ใช้ที่ผูกไหม · <b>ไม่มีทางคัดลอกรูปเข้าช่อง 1</b></summary>
-    public readonly record struct MergePlan(string? Name0, string? Name1, string? Title0, string? Title1, bool Slot0UsesProfileImage);
+    /// <summary>ผลรวม — ชื่อ/ตำแหน่งของแต่ละช่อง + แหล่งรูปเดียวที่ใช้ทั้งสองช่อง</summary>
+    public readonly record struct MergePlan(string? Name0, string? Name1, string? Title0, string? Title1, string ImageSource);
 
     /// <summary>ชื่อแสดงตามโปรไฟล์ (ตัวเดียวกับที่ช่องลายเซ็นใช้มาตลอด): ชื่อใต้ลายเซ็น → ชื่อ-สกุลบัญชี</summary>
     public static string? ProfileDisplayName(string? signatureName, string? fullName)
         => !string.IsNullOrWhiteSpace(signatureName) ? signatureName!.Trim()
          : !string.IsNullOrWhiteSpace(fullName) ? fullName!.Trim() : null;
 
-    /// <summary>คำตัดสิน 278-2: ชื่อ "ครบกว่า" = ชื่อตามโปรไฟล์ที่แช่แข็งไว้ (ไม่ใช่ความยาวสตริง) ทั้งสองช่อง · ไม่มี ⇒ คงชื่อเดิมของแต่ละช่อง ·
-    /// ตำแหน่งคงของช่องตัวเอง (ว่าง ⇒ ตำแหน่งในโปรไฟล์) · ช่อง 0 ที่ไม่มีรูปใช้รูปโปรไฟล์ของผู้ใช้ที่ผูก (ทิศที่อนุญาต)</summary>
-    public static MergePlan Merge(SlotFace s0, SlotFace s1, string? frozenName, string? frozenTitle)
+    /// <summary>คำตัดสิน 278-2/278-9: ชื่อ "ครบกว่า" = ชื่อตามโปรไฟล์ที่แช่แข็งไว้ (ไม่ใช่ความยาวสตริง) ทั้งสองช่อง · ไม่มี ⇒ คงชื่อเดิมของแต่ละช่อง ·
+    /// ตำแหน่งคงของช่องตัวเอง (ว่าง ⇒ ตำแหน่งในโปรไฟล์) · รูป: แหล่งที่แช่แข็งไว้ (<paramref name="frozenImageSource"/>) · snapshot รุ่นก่อน (null) ⇒
+    /// ตัดสินด้วย <see cref="ChooseImageSource"/> จากสิ่งที่มีตอนพิมพ์ (<paramref name="profileHasImageNow"/> · รูปช่อง 0 = payload)</summary>
+    public static MergePlan Merge(SlotFace s0, SlotFace s1, string? frozenName, string? frozenTitle, string? frozenImageSource, bool profileHasImageNow)
     {
         var p = Blank(frozenName);
         var t = Blank(frozenTitle);
+        var src = frozenImageSource is ImageProfile or ImagePayload or ImageNone ? frozenImageSource : ChooseImageSource(profileHasImageNow, s0.HasImage);
         return new MergePlan(p ?? Blank(s0.Name) ?? Blank(s1.Name), p ?? Blank(s1.Name) ?? Blank(s0.Name),
-            Blank(s0.Title) ?? t, Blank(s1.Title) ?? t, Slot0UsesProfileImage: !s0.HasImage);
+            Blank(s0.Title) ?? t, Blank(s1.Title) ?? t, src);
     }
 
     // ===================== ชื่อเล่นต่อบริษัท (ต้องเจ้าของอนุมัติ) =====================

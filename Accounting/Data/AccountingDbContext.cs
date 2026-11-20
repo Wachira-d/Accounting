@@ -4925,31 +4925,35 @@ public class AccountingDbContext : DbContext
                 && Accounting.Helpers.DocumentStatusRules.IsIssued((Models.Enums.DocumentStatus)entry.Property(nameof(Document.Status)).OriginalValue!);
             if (entry.State is not (EntityState.Added or EntityState.Modified) || wasIssued) continue;
             d.SignersFrozenAt = DateTime.UtcNow;
-            d.SignerSnapshotJson = Accounting.Helpers.SignatureSlotIdentity.Serialize(ComputeSignerSnapshot(d.CompanyId, d.PreparerUserId, d.PreparerName));
+            d.SignerSnapshotJson = Accounting.Helpers.SignatureSlotIdentity.Serialize(ComputeSignerSnapshot(d.CompanyId, d.PreparerUserId, d.PreparerName, d.PreparerSignatureBase64));
         }
     }
 
     /// <summary>รอบ 278: ผู้สมัคร "คนเดียวกับผู้จัดทำ" ณ ตอนนี้ (ใช้ตอนแช่แข็ง + ปุ่มปรับผู้ลงนาม) — PreparerUserId ⇒ โปรไฟล์คนนั้น ·
-    /// ไม่มี ⇒ เจ้าของชื่อเล่นที่<b>อนุมัติแล้ว ยังไม่ยกเลิก</b> ในบริษัทนี้ซึ่งตรง PreparerName ทั้งคำ (และยังเป็นสมาชิก)</summary>
-    internal Accounting.Helpers.SignatureSlotIdentity.Snapshot ComputeSignerSnapshot(Guid companyId, Guid? preparerUserId, string? preparerName)
+    /// ไม่มี ⇒ เจ้าของชื่อเล่นที่<b>อนุมัติแล้ว ยังไม่ยกเลิก</b> ในบริษัทนี้ซึ่งตรง PreparerName ทั้งคำ (และยังเป็นสมาชิก) ·
+    /// แหล่งรูป (278-9): โปรไฟล์มีรูป ⇒ profile · ไม่มีแต่ payload มี ⇒ payload</summary>
+    internal Accounting.Helpers.SignatureSlotIdentity.Snapshot ComputeSignerSnapshot(Guid companyId, Guid? preparerUserId, string? preparerName, string? preparerSignature)
     {
+        var payloadHasImage = !string.IsNullOrWhiteSpace(preparerSignature);
+        var none = Array.Empty<(Guid, string?, string?, bool)>();
         if (preparerUserId is { } pu && pu != Guid.Empty)
         {
             var prof = Users.AsNoTracking().Where(u => u.Id == pu)
-                .Select(u => new { u.SignatureName, u.FullName, u.SignatureTitle }).FirstOrDefault();
+                .Select(u => new { u.SignatureName, u.FullName, u.SignatureTitle, HasImg = u.SignatureImageBase64 != null && u.SignatureImageBase64 != "" }).FirstOrDefault();
             return Accounting.Helpers.SignatureSlotIdentity.BuildSnapshot(pu,
-                prof == null ? null : (Accounting.Helpers.SignatureSlotIdentity.ProfileDisplayName(prof.SignatureName, prof.FullName), prof.SignatureTitle),
-                Array.Empty<(Guid, string?, string?)>());
+                prof == null ? null : (Accounting.Helpers.SignatureSlotIdentity.ProfileDisplayName(prof.SignatureName, prof.FullName), prof.SignatureTitle, prof.HasImg),
+                none, payloadHasImage);
         }
         var n = Accounting.Helpers.SignatureSlotIdentity.NormalizeName(preparerName);
-        if (n == null) return Accounting.Helpers.SignatureSlotIdentity.BuildSnapshot(null, null, Array.Empty<(Guid, string?, string?)>());
+        if (n == null) return Accounting.Helpers.SignatureSlotIdentity.BuildSnapshot(null, null, none, payloadHasImage);
         var owners = (from a in Set<SignerAlias>().AsNoTracking()
                       join cu in Set<CompanyUser>().AsNoTracking() on new { a.CompanyId, a.UserId } equals new { cu.CompanyId, cu.UserId }
                       join u in Users.AsNoTracking() on a.UserId equals u.Id
                       where a.CompanyId == companyId && a.NormalizedAlias == n && a.ApprovedAt != null && a.RevokedAt == null
-                      select new { a.UserId, u.SignatureName, u.FullName, u.SignatureTitle }).ToList();
+                      select new { a.UserId, u.SignatureName, u.FullName, u.SignatureTitle, HasImg = u.SignatureImageBase64 != null && u.SignatureImageBase64 != "" }).ToList();
         return Accounting.Helpers.SignatureSlotIdentity.BuildSnapshot(null, null,
-            owners.Select(o => (o.UserId, Accounting.Helpers.SignatureSlotIdentity.ProfileDisplayName(o.SignatureName, o.FullName), o.SignatureTitle)));
+            owners.Select(o => (o.UserId, Accounting.Helpers.SignatureSlotIdentity.ProfileDisplayName(o.SignatureName, o.FullName), o.SignatureTitle, o.HasImg)),
+            payloadHasImage);
     }
 
     public override async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)

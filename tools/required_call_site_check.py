@@ -22257,9 +22257,11 @@ RULES += [
          why=_R278_WHY + "รวมก่อนกฎผู้ลงนาม · HTML/QuestPDF/พรีวิว/หน้าลูกค้า รับ signers จากเมธอดนี้ตัวเดียว"),
     dict(file="Services/Implementations/PdfGenerationService.cs", method="MergeSameSignerSlotsAsync",
          must=["SignatureSlotIdentity.Parse(doc.SignerSnapshotJson)", "if (cand == null) return;", "SignatureSlotIdentity.Merge(",
-               "signers[1] = s1 with { Name = plan.Name1, Title = plan.Title1 };", "slotUsers[0] = cand.UserId;"],
-         before=[("if (cand == null) return;", "SignatureSlotIdentity.Merge(")],
-         why=_R278_WHY + "ฝ่ายค้าน HIGH-1/3: ตัดสินจาก snapshot ที่แช่แข็งตอนออก · ช่อง 1 เปลี่ยนแค่ชื่อ/ตำแหน่ง (ไม่รับรูปจากแหล่งอื่น)"),
+               "cand.ImageSource", "SignatureSlotIdentity.ImageProfile && !string.IsNullOrWhiteSpace(profileRaw)",
+               "SignatureSlotIdentity.ImagePayload && HasImage(s0)", "slotUsers[0] = cand.UserId;"],
+         before=[("if (cand == null) return;", "SignatureSlotIdentity.Merge("),
+                 ("SignatureSlotIdentity.ImageProfile && !string.IsNullOrWhiteSpace(profileRaw)", "SignatureSlotIdentity.ImagePayload && HasImage(s0)")],
+         why=_R278_WHY + "HIGH-3: ตัดสินจาก snapshot ที่แช่แข็งตอนออก (ผูกไม่ได้ = ไม่แตะ) · 278-9 คำสั่งเจ้าของ: รูปเดียวกันสองช่อง โปรไฟล์เป็นหลัก ไม่มี ⇒ payload"),
     dict(file="Data/AccountingDbContext.cs", method="SaveChangesAsync", must=["StampSignerFreeze();"],
          before=[("StampSignerFreeze();", "DetachPendingAuditRows()")],
          why=_R278_WHY + "ฝ่ายค้าน HIGH-3: แช่แข็งผู้ลงนามทุกทางเข้าที่ออกเอกสาร ก่อนเก็บ audit (snapshot อยู่ใน audit ของเอกสาร)"),
@@ -22290,8 +22292,8 @@ RULES += [
          why=_R278_WHY + "ฝ่ายค้าน HIGH-3: ปุ่มปรับ — เจ้าของ · เหตุผล · ไม่ใช่หลักฐานภาษี/เงิน · ลูกค้ายังไม่เซ็น · audit"),
 ]
 REVIEWER_CASES += [
-    ("R278-1", "MergeSameSignerSlotsAsync", "signers[1] = s1 with { Name = plan.Name1, Title = plan.Title1 };",
-     "signers[1] = s1 with { Name = plan.Name1, Title = plan.Title1, SignatureImageBytes = img0Bytes };", True),
+    ("R278-1", "MergeSameSignerSlotsAsync", "if (cand == null) return;", "if (cand == null) { }", True),
+    ("R278-4", "MergeSameSignerSlotsAsync", "SignatureSlotIdentity.ImageProfile && !string.IsNullOrWhiteSpace(profileRaw)", "false", True),
     ("R278-2", "ResolvePreparerUserIdAsync", "cu.AllowExternalPreparerBinding", "true", True),
     ("R278-3", "ComputeSignerSnapshot", "a.ApprovedAt != null && a.RevokedAt == null", "a.RevokedAt == null", True),
 ]

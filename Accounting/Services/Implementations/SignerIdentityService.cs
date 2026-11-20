@@ -153,7 +153,7 @@ public class SignerIdentityService
         if (customerSigned)
             throw new BusinessRuleException("ลูกค้าเซ็นใบนี้แล้ว — คงผู้ลงนามตามที่ลูกค้าเห็นตอนเซ็น", SignatureSlotIdentity.RuleCodeRefresh);
         var before = doc.SignerSnapshotJson;
-        var snap = _db.ComputeSignerSnapshot(companyId, doc.PreparerUserId, doc.PreparerName);
+        var snap = _db.ComputeSignerSnapshot(companyId, doc.PreparerUserId, doc.PreparerName, doc.PreparerSignatureBase64);
         doc.SignerSnapshotJson = SignatureSlotIdentity.Serialize(snap);
         doc.SignersFrozenAt = DateTime.UtcNow;
         _db.AddChainedAuditLog(new AuditLog

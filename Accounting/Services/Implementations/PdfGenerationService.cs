@@ -1373,7 +1373,7 @@ public partial class PdfGenerationService : IPdfGenerationService
         }
 
         // รอบ 278 (คำตัดสิน 278-1…278-8): ช่อง 0 (ผู้จัดทำ/ผู้เสนอราคา) กับช่อง 1 (ผู้มีอำนาจลงนาม) เป็นคนเดียวกันตามผลที่แช่แข็งตอนออกเอกสาร ⇒
-        // ชื่อตามโปรไฟล์วันนั้นทั้งสองช่อง · ช่อง 0 ที่ไม่มีรูปใช้รูปโปรไฟล์ของผู้ใช้ที่ผูก · ช่อง 1 ไม่รับรูปจาก payload · ก่อนกฎผู้ลงนาม ·
+        // ชื่อตามโปรไฟล์วันนั้นทั้งสองช่อง · รูปเดียวกันทั้งสองช่อง (โปรไฟล์เป็นหลัก · ไม่มี ⇒ รูปที่ระบบภายนอกส่งมา · 278-9) · ก่อนกฎผู้ลงนาม ·
         // ทั้ง HTML + QuestPDF + พรีวิว + หน้าลูกค้า (PDF) รับ signers จากที่นี่
         await MergeSameSignerSlotsAsync(doc, signers, slotUsers, customerSlots);
 
@@ -1401,8 +1401,8 @@ public partial class PdfGenerationService : IPdfGenerationService
     }
 
     /// <summary>รอบ 278: รวมช่อง 0/1 ตามผลที่<b>แช่แข็งตอนออกเอกสาร</b> (<c>Document.SignerSnapshotJson</c> · ตัวตัดสิน <see cref="Accounting.Helpers.SignatureSlotIdentity.Link"/>) ·
-    /// ไม่มี snapshot (ใบร่าง/ใบเก่า) หรือผู้ใช้ช่อง 1 ไม่ใช่ผู้สมัคร ⇒ ไม่แตะ · ช่องลูกค้าไม่แตะ ·
-    /// <b>ช่อง 1 ไม่รับรูปจากที่ใดนอกจากโปรไฟล์ของตัวเอง</b> (ฝ่ายค้าน HIGH-1 — รูปจาก payload อยู่ช่องผู้จัดทำเท่านั้น) · ช่อง 0 ที่ไม่มีรูปใช้รูปโปรไฟล์ของผู้ใช้ที่ผูก</summary>
+    /// ไม่มี snapshot (ใบร่าง/ใบเก่า) หรือผู้ใช้ช่อง 1 ไม่ใช่ผู้สมัคร ⇒ <b>ไม่แตะเลย</b> · ช่องลูกค้าไม่แตะ ·
+    /// คำตัดสิน 278-9 (คำสั่งเจ้าของ): ทั้งสองช่องใช้<b>รูปเดียวกัน</b> ตามแหล่งที่แช่แข็ง — รูปในโปรไฟล์เป็นหลัก · โปรไฟล์ไม่มีรูป ⇒ รูปที่ระบบภายนอกส่งมา</summary>
     internal async Task MergeSameSignerSlotsAsync(Document doc, List<DocumentSigner> signers, Guid?[] slotUsers, bool[] customerSlots)
     {
         if (signers.Count < 2 || slotUsers.Length < 2) return;
@@ -1411,22 +1411,27 @@ public partial class PdfGenerationService : IPdfGenerationService
         if (cand == null) return;
         var s0 = signers[0]; var s1 = signers[1];
         static bool HasImage(DocumentSigner s) => s.SignatureImageBytes is { Length: > 0 } || !string.IsNullOrWhiteSpace(s.SignatureImageDataUri);
+        // รูปในโปรไฟล์ของผู้ใช้ที่ผูก (ยืนยันตัวแล้ว) — อ่านจากโปรไฟล์ตรง ไม่ใช่รูปช่อง 1 ที่อาจมาจากแหล่งอื่น
+        var profileRaw = (await _db.Users.AsNoTracking().Where(u => u.Id == cand.UserId).Select(u => u.SignatureImageBase64).FirstOrDefaultAsync())?.Trim();
         var plan = Accounting.Helpers.SignatureSlotIdentity.Merge(new(s0.Name, s0.Title, HasImage(s0)), new(s1.Name, s1.Title, HasImage(s1)),
-            cand.Name, cand.Title);
-        string? img0Uri = s0.SignatureImageDataUri; byte[]? img0Bytes = s0.SignatureImageBytes;
-        if (plan.Slot0UsesProfileImage)
+            cand.Name, cand.Title, cand.ImageSource, profileHasImageNow: !string.IsNullOrWhiteSpace(profileRaw));
+        string? imgUri = null; byte[]? imgBytes = null;
+        if (plan.ImageSource == Accounting.Helpers.SignatureSlotIdentity.ImageProfile && !string.IsNullOrWhiteSpace(profileRaw))
         {
-            // รูปในโปรไฟล์ของผู้ใช้ที่ผูก (ไม่ใช่รูปของช่อง 1 ที่อาจมาจากแหล่งอื่น)
-            var raw = (await _db.Users.AsNoTracking().Where(u => u.Id == cand.UserId).Select(u => u.SignatureImageBase64).FirstOrDefaultAsync())?.Trim();
-            if (!string.IsNullOrWhiteSpace(raw))
-            {
-                img0Uri = raw.StartsWith("data:", StringComparison.OrdinalIgnoreCase) ? raw : "data:image/png;base64," + raw;
-                img0Bytes = TryDecodeBase64Image(raw);
-            }
+            imgUri = profileRaw.StartsWith("data:", StringComparison.OrdinalIgnoreCase) ? profileRaw : "data:image/png;base64," + profileRaw;
+            imgBytes = TryDecodeBase64Image(profileRaw);
         }
-        signers[0] = s0 with { Name = plan.Name0, Title = plan.Title0, SignatureImageDataUri = img0Uri, SignatureImageBytes = img0Bytes };
-        signers[1] = s1 with { Name = plan.Name1, Title = plan.Title1 };   // รูปช่อง 1 คงเดิม (โปรไฟล์ของผู้ใช้ช่อง 1 เท่านั้น)
-        slotUsers[0] = cand.UserId;   // ช่อง 0 เป็นของผู้ใช้คนนี้ ⇒ กฎผู้ลงนาม (DocumentStampPolicy/DepartedSignerRule) ตัดสินด้วยตัวตนนี้
+        else if (plan.ImageSource == Accounting.Helpers.SignatureSlotIdentity.ImagePayload && HasImage(s0))
+        {
+            imgUri = s0.SignatureImageDataUri; imgBytes = s0.SignatureImageBytes;   // รูปที่ระบบภายนอกส่งมา (ช่องผู้จัดทำ)
+        }
+        // ไม่มีรูปจากแหล่งที่แช่แข็ง (none · หรือแหล่งนั้นหายไปแล้ว เช่น ผู้ใช้ลบรูปโปรไฟล์) ⇒ คงรูปเดิมของแต่ละช่อง ไม่ข้ามไปแหล่งอื่น
+        var keepOwn = imgUri == null && imgBytes == null;
+        signers[0] = s0 with { Name = plan.Name0, Title = plan.Title0,
+            SignatureImageDataUri = keepOwn ? s0.SignatureImageDataUri : imgUri, SignatureImageBytes = keepOwn ? s0.SignatureImageBytes : imgBytes };
+        signers[1] = s1 with { Name = plan.Name1, Title = plan.Title1,
+            SignatureImageDataUri = keepOwn ? s1.SignatureImageDataUri : imgUri, SignatureImageBytes = keepOwn ? s1.SignatureImageBytes : imgBytes };
+        slotUsers[0] = cand.UserId;   // ทั้งสองช่องเป็นของผู้ใช้คนนี้ ⇒ กฎผู้ลงนาม (DocumentStampPolicy/DepartedSignerRule) ตัดสินด้วยตัวตนนี้
     }
 
     /// <summary>Decode a (possibly data-URI-prefixed) base64 PNG/JPG to raw

@@ -70,7 +70,7 @@ public class SignatureSlotsR278DbTests
     private static PdfGenerationService Pdf(Accounting.Data.AccountingDbContext db) => new(db, new DocumentTemplateService(db));
 
     [Fact]
-    public async Task ชื่อเล่นอนุมัติแล้ว_ชื่อเต็มทั้งสองช่อง_กรรมการไม่มีรูป_payloadมีรูป_ช่องกรรมการยังไม่มีรูป()
+    public async Task ผูกได้_กรรมการไม่มีรูป_payloadมีรูป_ใช้รูปpayloadทั้งสองช่อง_ชื่อเต็ม_ทั้งHTMLและQuestPDF()
     {
         using var db = DbTestDatabase.TryCreateContext();
         if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL (ACCOUNTING_TEST_PG) — ข้าม · หลักฐานอยู่ที่ job db-test"); return; }
@@ -79,18 +79,18 @@ public class SignatureSlotsR278DbTests
         var doc = await QtAsync(db, s);
         Assert.NotNull(doc.SignersFrozenAt);
         Assert.Contains(SignatureSlotIdentity.KindApprovedAlias, doc.SignerSnapshotJson);
+        Assert.Contains("\"ImageSource\":\"payload\"", doc.SignerSnapshotJson);   // แหล่งรูปอยู่ใน snapshot (+ audit ของเอกสาร)
 
         var signers = await Pdf(db).ResolveSignersAsync(doc);
         Assert.Equal("ณัฐพล ทรัพย์บวรโรจน์", signers[0].Name);
         Assert.Equal("ณัฐพล ทรัพย์บวรโรจน์", signers[1].Name);
-        Assert.NotNull(signers[0].SignatureImageBytes);   // รูป payload อยู่ช่องผู้จัดทำได้
-        Assert.Null(signers[1].SignatureImageBytes);      // HIGH-1: ไม่คัดลอกรูป payload เข้าช่องผู้มีอำนาจลงนาม
-        Assert.Null(signers[1].SignatureImageDataUri);
+        Assert.NotNull(signers[1].SignatureImageBytes);   // 278-9 คำสั่งเจ้าของ: ผูกได้ + โปรไฟล์ไม่มีรูป ⇒ รูปที่ระบบภายนอกส่งมาทั้งสองช่อง
+        Assert.Equal(signers[0].SignatureImageBytes, signers[1].SignatureImageBytes);
 
         db.ChangeTracker.Clear();
         var html = await Pdf(db).GenerateDocumentHtmlAsync(s.Cid, new GeneratePdfRequest(doc.Id, null, null, null, null));
         Assert.DoesNotContain("K.นัท", html);
-        Assert.Equal(1, CountOf(html, Sig()["data:image/png;base64,".Length..]));   // รูป payload ที่เดียว
+        Assert.True(CountOf(html, Sig()["data:image/png;base64,".Length..]) >= 2, "รูปเดียวกันทั้งช่องผู้เสนอราคาและผู้มีอำนาจลงนาม");
         QuestPDF.Settings.License = QuestPDF.Infrastructure.LicenseType.Community;
         db.ChangeTracker.Clear();
         var pdf = await Pdf(db).GenerateDocumentPdfAsync(s.Cid, new GeneratePdfRequest(doc.Id, null, null, null, null));
@@ -98,17 +98,31 @@ public class SignatureSlotsR278DbTests
     }
 
     [Fact]
-    public async Task ทิศกลับ_ช่องผู้จัดทำไม่มีรูป_ใช้รูปโปรไฟล์ของผู้ใช้ที่ผูก()
+    public async Task ผูกไม่ได้_กรรมการไม่มีรูป_payloadมีรูป_ช่องกรรมการไม่มีรูป()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var s = await SeedCompanyAsync(db);   // ไม่มีชื่อเล่น · ไม่มี PreparerUserId
+        var doc = await QtAsync(db, s);
+        var signers = await Pdf(db).ResolveSignersAsync(doc);
+        Assert.Equal("K.นัท", signers[0].Name);
+        Assert.NotNull(signers[0].SignatureImageBytes);
+        Assert.Null(signers[1].SignatureImageBytes);   // ห้ามใส่ลายเซ็นของคนหนึ่งลงช่องของอีกคน
+    }
+
+    [Fact]
+    public async Task มีรูปทั้งสองฝั่ง_ทั้งสองช่องใช้รูปโปรไฟล์()
     {
         using var db = DbTestDatabase.TryCreateContext();
         if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
         var s = await SeedCompanyAsync(db, natProfileSig: Sig2());
         await ApprovedAliasAsync(db, s, "K.นัท");
-        var doc = await QtAsync(db, s, payloadSig: null);
+        var doc = await QtAsync(db, s);   // payload ก็มีรูป (Sig)
+        Assert.Contains("\"ImageSource\":\"profile\"", doc.SignerSnapshotJson);
         var signers = await Pdf(db).ResolveSignersAsync(doc);
-        Assert.NotNull(signers[0].SignatureImageBytes);
-        Assert.Equal(signers[1].SignatureImageBytes, signers[0].SignatureImageBytes);   // รูปโปรไฟล์ของคนเดียวกัน
-        Assert.Equal("ณัฐพล ทรัพย์บวรโรจน์", signers[0].Name);
+        var profile = Convert.FromBase64String(Sig2()["data:image/png;base64,".Length..]);
+        Assert.Equal(profile, signers[0].SignatureImageBytes);
+        Assert.Equal(profile, signers[1].SignatureImageBytes);
     }
 
     [Fact]
