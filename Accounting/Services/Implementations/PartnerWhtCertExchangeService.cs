@@ -220,7 +220,12 @@ public class PartnerWhtCertExchangeService
                         .SetProperty(w => w.PartnerIntakeId, (Guid?)r.IntakeId)
                         .SetProperty(w => w.PartnerDeliveryError, (string?)null), ct);
                 await tx.CommitAsync(ct);
-                if (n > 0) sent++;
+                if (n > 0)
+                {
+                    sent++;
+                    // รอบ 281 (คำตัดสิน 281-2): ผู้จ่ายรู้ว่า 50 ทวิ ถึงผู้ขายแล้ว — หลังกล่องรับตอบจริง + commit เท่านั้น (ไม่ประทับเอง)
+                    await NotifyDeliveredAsync(payerId, cert.Id, cert.CertificateNumber, cert.TotalTaxAmount, r.Status, ct);
+                }
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -287,6 +292,30 @@ public class PartnerWhtCertExchangeService
     }
 
     /// <summary>ผู้จ่ายยกเลิกใบที่ส่งเข้ากล่องรับของผู้ขายแล้ว ⇒ แจ้งผู้ขายครั้งเดียว (ประทับก่อนแจ้ง · ไม่แก้รายการของผู้ขายเอง)</summary>
+    /// <summary>รอบ 281: แจ้งผู้จ่ายว่า 50 ทวิ เข้ากล่องรับของผู้ขายคู่ค้าแล้ว (คีย์ <c>partner.wht_cert_delivered</c>) · สถานะตามที่กล่องรับตอบ · แจ้งล้ม = LogError</summary>
+    private async Task NotifyDeliveredAsync(Guid payerId, Guid certId, string? certNumber, decimal tax, string? intakeStatus, CancellationToken ct)
+    {
+        if (_notify == null) return;
+        try
+        {
+            var payeeConfirmed = intakeStatus == nameof(WhtCertIntakeRecordStatus.Confirmed);
+            await _notify.DispatchAsync(payerId, Accounting.Models.Constants.NotificationEvents.PartnerWhtCertDelivered, new NotificationContext
+            {
+                Title = $"📤 ส่ง 50 ทวิ {certNumber} (ภาษีหัก {tax:N2} บาท) เข้าระบบผู้ขายคู่ค้าแล้ว",
+                Message = payeeConfirmed
+                    ? "ระบบของผู้ขายรับและยืนยันเครดิตภาษีถูกหักแล้ว — ไม่ต้องส่งกระดาษซ้ำ"
+                    : "ระบบของผู้ขายรับแล้ว — รอผู้ขายตรวจยืนยัน",
+                ActionUrl = "/pages/partners.html#partner-journey",
+                EntityType = "WithholdingTaxCert", EntityId = certId,
+            });
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _ = ct;
+            _logger.LogError(ex, "แจ้งบริษัท {Payer} ว่าส่ง 50 ทวิ {Cert} ถึงคู่ค้าแล้ว ไม่สำเร็จ", payerId, certId);
+        }
+    }
+
     public async Task<int> NotifyVoidedAsync(Guid payerId, CancellationToken ct = default)
     {
         var voided = await _db.WithholdingTaxCerts.AsNoTracking()

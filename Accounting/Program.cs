@@ -940,6 +940,7 @@ builder.Services.AddScoped<IEmailScheduleService, EmailScheduleService>();
 // รอบ 241 — ส่งเอกสารอัตโนมัติ: ลิงก์ชำระเงินต่อเอกสาร (ไม่พึ่ง IDocumentService — EmailScheduleService ใช้ได้) + งานหลังรับชำระ (ออก/ส่งใบเสร็จ)
 builder.Services.AddScoped<IDocumentPayLinkService, DocumentPayLinkService>();
 builder.Services.AddScoped<IPostPaymentAutomationService, PostPaymentAutomationService>();
+builder.Services.AddScoped<PartnerJourneyService>();   // รอบ 281 — "เส้นทางของใบนี้" ระหว่างคู่ค้า (อ่านอย่างเดียว · หน้า partners.html §partner-journey)
 builder.Services.AddScoped<PartnerPaymentNoticeService>();   // รอบ 258-3 F-H3 — แจ้งผู้ซื้อคู่ค้าว่าผู้ขายรับเงินแล้ว (ผู้ซื้อกดบันทึกจ่ายเอง)
 builder.Services.AddScoped<PartnerConsentService>();   // รอบ 264 P1 — ความยินยอม "งานอัตโนมัติกับคู่ค้า" (ผู้เขียนเดียว + CheckAsync ที่ท่อ P3/P5 เรียก)
 // รอบ 272 — สลิปชำระภาษีจากกลุ่ม LINE/อีเมล ⇒ บันทึกนำส่งในบัญชีลูกค้า (ไม่มี AI · ความยินยอมผู้ให้บริการ · ผู้เขียนเดียว RemitAsync)

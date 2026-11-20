@@ -23,9 +23,25 @@ public class PartnerExchangeController : ControllerBase
     private readonly IDocumentService _docs;
     private readonly AccountingDbContext _db;
 
-    public PartnerExchangeController(CrossTenantWorkflowService service, IPermissionService perms, IDocumentService docs, AccountingDbContext db)
+    private readonly PartnerJourneyService? _journey;
+
+    public PartnerExchangeController(CrossTenantWorkflowService service, IPermissionService perms, IDocumentService docs, AccountingDbContext db,
+        PartnerJourneyService? journey = null)
     {
-        _service = service; _perms = perms; _docs = docs; _db = db;
+        _service = service; _perms = perms; _docs = docs; _db = db; _journey = journey;
+    }
+
+    /// <summary>รอบ 281 (คำตัดสิน 281-3): "เส้นทางของใบนี้" ระหว่างคู่ค้า (ใบแจ้งหนี้ → ใบซื้อร่าง → ชำระ → ใบเสร็จ/ใบกำกับ → ใบสำคัญจ่าย → 50 ทวิ ส่ง/รับ) ·
+    /// ทิศขายเฉพาะผู้ที่เห็นเอกสารขาย · ทิศซื้อเฉพาะผู้ที่เห็นเอกสารซื้อ (ตัวตัดสินเดียว DocumentPermissionHelper) · อ่านอย่างเดียว · สถานะ/ป้ายจากเซิร์ฟเวอร์</summary>
+    [HttpGet("partner-journey")]
+    public async Task<ActionResult<ApiResponse<List<PartnerJourneyService.JourneyView>>>> Journey(Guid companyId, [FromQuery] Guid? documentId, [FromQuery] int? limit,
+        CancellationToken ct)
+    {
+        var vis = await DocumentPermissionHelper.VisibleDirectionsAsync(_perms, companyId, JwtHelper.GetUserIdFromClaims(User));
+        if (!vis.Revenue && !vis.Purchase) return Denied(PermissionKeys.DocumentPurchaseView);
+        var svc = _journey ?? new PartnerJourneyService(_db);
+        return Ok(new ApiResponse<List<PartnerJourneyService.JourneyView>>(true,
+            await svc.ListAsync(companyId, vis.Revenue, vis.Purchase, documentId, limit ?? 20, ct)));
     }
 
     private ObjectResult Denied(string key)

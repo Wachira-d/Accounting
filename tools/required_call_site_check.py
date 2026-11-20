@@ -22291,6 +22291,53 @@ RULES += [
          must=["SignatureSlotIdentity.RefreshBlockedReason(doc)", "customerSigned", "reason.Trim()", "_db.AddChainedAuditLog("],
          why=_R278_WHY + "ฝ่ายค้าน HIGH-3: ปุ่มปรับ — เจ้าของ · เหตุผล · ไม่ใช่หลักฐานภาษี/เงิน · ลูกค้ายังไม่เซ็น · audit"),
 ]
+# รอบ 281 — เส้นคู่ค้า A↔B ครบเส้น (คำขอเจ้าของ: ใบแจ้งหนี้ → จ่าย → ใบเสร็จ/ใบกำกับ → ใบสำคัญจ่าย + 50 ทวิ → 50 ทวิ กลับ · แจ้งทุกขั้น) ·
+# ตัวคิดยอดก่อนหักตัวเดียว (DocumentPayLinkPolicy.AmountsFor) · คีย์แจ้งเตือนต่อขั้น (PartnerFlowNotificationSplit.Keys) · เส้นทางของใบ (PartnerJourney)
+_R281_WHY = "รอบ 281 (เส้นคู่ค้า A↔B — คำตัดสิน 281-1…281-5 · erp-review/2026-11-20/dev-281-partner-e2e.md): "
+RULES += [
+    dict(file="Services/Implementations/PartnerPaymentNoticeService.cs", method="PlanForAsync",
+         must=["DocumentPayLinkPolicy.AmountsFor(doc.BalanceDue, wht.NetCap, 0m).Gross", "PartnerPaymentNoticeRule.For(doc.Status, grossDue,"],
+         forbid=["PartnerPaymentNoticeRule.For(doc.Status, doc.BalanceDue,"],
+         why=_R281_WHY + "281-1 บั๊กจริง: ยอดค้างของใบซื้อเก็บหลังหัก ⇒ ผู้ขายรับ 10,400 ของใบ 10,700 หัก 300 เคยได้แผน 'หัก 0 + คำเตือน' (ไม่มี 50 ทวิ · ท่อไม่บันทึก)"),
+    dict(file="Services/Implementations/PartnerOutboundPaymentService.cs", method="OptionsAsync",
+         must=["TransientNotice(c, c.Purchase.BalanceDue, DateTime.UtcNow)"], forbid=["TransientNotice(c, cap.NetCap"],
+         why=_R281_WHY + "281-1: เงินที่โอน = ยอดค้างหลังหัก (เดิมส่งภาษีหักที่เหลือเป็นยอดเงิน)"),
+    dict(file="Services/Implementations/CrossTenantWorkflowService.cs", method="OnDocumentSentAsync",
+         must=["SetProperty(c => c.ExternalSystem,", "_db.AddChainedAuditLog("],
+         before=[("Accounting.Helpers.PartnerCompanyMatch.Pick(candidates, contact.BranchCode)", "SetProperty(c => c.ExternalSystem,")],
+         why=_R281_WHY + "281-4: ผูกผู้ติดต่อด้วยกุญแจเลขภาษี+สาขาหลังตัวจับคู่ — ไม่ผูก ⇒ 50 ทวิ จากผู้ซื้อพิสูจน์ที่มาไม่ได้ ค้างรอยืนยันทุกใบ"),
+    dict(file="Services/Implementations/CrossTenantWorkflowService.Partners.cs", method="TryCreatePurchaseDraftAsync",
+         must=["NotificationEvents.PartnerPurchaseDraftReceived", "NotificationEvents.PartnerTaxInvoiceReceived", "NotificationEvents.PartnerReceiptDelivered"],
+         before=[("if (ownTx != null) await ownTx.CommitAsync();", "NotificationEvents.PartnerPurchaseDraftReceived")],
+         why=_R281_WHY + "281-2: แจ้งต่อขั้นทั้งสองฝั่ง (ใบซื้อร่างใหม่เดิมไม่แจ้งเลย) · หลัง commit"),
+    dict(file="Services/Implementations/PartnerPaymentNoticeService.cs", method="NotifyBuyerAsync",
+         must=["NotificationEvents.PartnerSellerPaid"], forbid=["NotificationEvents.AutopilotPartnerExchange"],
+         why=_R281_WHY + "281-2: คีย์ของขั้น 'ผู้ขายรับเงินแล้ว'"),
+    dict(file="Services/Implementations/PartnerPayablePipeline.cs", method="NotifyAutoRecordedAsync",
+         must=["NotificationEvents.PartnerPaymentAutoRecorded"], forbid=["NotificationEvents.AutopilotPartnerExchange"],
+         why=_R281_WHY + "281-2: คีย์ของขั้น 'ระบบบันทึกจ่ายเอง'"),
+    dict(file="Services/Implementations/WhtCertIntakeService.cs", method="SubmitAsync",
+         must=["s.Channel == WhtCertIntakeChannel.NextAccLink && outcome != WhtCertIntakeVerdict.Outcome.Reject", "await NotifyPartnerCertAsync("],
+         why=_R281_WHY + "281-2: ผู้ขายรู้ว่าได้ 50 ทวิ จากคู่ค้า ทั้งยืนยันเองและรอยืนยัน"),
+    dict(file="Services/Implementations/PartnerWhtCertExchangeService.cs", method="DeliverForPayerAsync",
+         must=["await NotifyDeliveredAsync(payerId, cert.Id,"],
+         before=[(".SetProperty(w => w.PartnerDeliveredAt, nowUtc)", "await NotifyDeliveredAsync(payerId, cert.Id,")],
+         why=_R281_WHY + "281-2: แจ้งผู้จ่ายเฉพาะหลังกล่องรับตอบจริงและประทับส่งแล้ว (ไม่ประทับเอง)"),
+    dict(file="Controllers/PartnerExchangeController.cs", method="Journey",
+         must=["DocumentPermissionHelper.VisibleDirectionsAsync(", "vis.Revenue, vis.Purchase"],
+         why=_R281_WHY + "281-3: ทิศขาย/ซื้อตามสิทธิ์เห็นเอกสาร"),
+    dict(file="Services/Implementations/PartnerJourneyService.cs", method="ListAsync",
+         must=["(seeSale && l.SourceCompanyId == companyId) || (seePurchase && l.TargetCompanyId == companyId)"],
+         why=_R281_WHY + "281-3: link ต้องมีบริษัทผู้เรียกเป็นฝั่งหนึ่ง (tenant isolation) · ทิศตามสิทธิ์"),
+    dict(file="Services/Implementations/PartnerJourneyService.cs", method="BuildAsync",
+         must=["PartnerJourney.Build(facts)", "d.CompanyId == sellerId", "d.CompanyId == buyerId", "i.CompanyId == sellerId"],
+         why=_R281_WHY + "281-3: ทุก query ผูก CompanyId ของฝั่งที่อ่าน · สถานะจากตัวตัดสินเดียว"),
+]
+
+REVIEWER_CASES += [
+    ("R281-1", "PlanForAsync", "PartnerPaymentNoticeRule.For(doc.Status, grossDue,", "PartnerPaymentNoticeRule.For(doc.Status, doc.BalanceDue,", True),
+    ("R281-2", "NotifyBuyerAsync", "NotificationEvents.PartnerSellerPaid", "NotificationEvents.AutopilotPartnerExchange", True),
+]
 REVIEWER_CASES += [
     ("R278-1", "MergeSameSignerSlotsAsync", "if (cand == null) return;", "if (cand == null) { }", True),
     ("R278-4", "MergeSameSignerSlotsAsync", "SignatureSlotIdentity.ImageProfile && !string.IsNullOrWhiteSpace(profileRaw)", "false", True),

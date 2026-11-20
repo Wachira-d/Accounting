@@ -14,6 +14,9 @@
     .pt-badge { display:inline-block; font-size:12px; padding:2px 8px; border-radius:999px; background:#f1f5f9; color:#334155; }
     .pt-warn { background:#fef3c7; color:#92400e; }
     .pt-ok { background:#dcfce7; color:#166534; }
+    .pt-bad { background:#fee2e2; color:#991b1b; }
+    .pt-steps { list-style:none; margin:6px 0 0; padding:0; }
+    .pt-steps li { display:flex; gap:8px; align-items:flex-start; padding:3px 0; font-size:13px; }
   </style>
 </head>
 <body>
@@ -87,6 +90,14 @@
       </div>
     </div>
 
+    <!-- รอบ 281 (คำตัดสิน 281-3): เส้นทางของใบนี้ — ใบแจ้งหนี้ → ใบซื้อร่าง → ชำระ → ใบเสร็จ/ใบกำกับ → ใบสำคัญจ่าย → 50 ทวิ ส่ง/รับ (ทั้งสองฝั่ง · สถานะ/ป้ายจากเซิร์ฟเวอร์) -->
+    <div class="pt-card" id="partner-journey">
+      <h3>🧭 เส้นทางของใบ (ระหว่างคู่ค้า)</h3>
+      <p class="pt-muted">ใบแจ้งหนี้ที่ส่งถึงกันผ่าน NextAcc ล่าสุด — แต่ละใบแสดงทุกขั้นจนถึง 50 ทวิ กลับถึงผู้ขาย · "หยุด" = ระบบทำต่อเองไม่ได้ (บอกเหตุ + ทางไปต่อ) ·
+        ของอีกบริษัทเห็นเฉพาะสถานะและวันที่ · การแจ้งเตือนทีละขั้นตั้งช่องได้ที่หน้า <a href="/pages/notifications.html">แจ้งเตือน</a> (รายการที่ขึ้นต้น "คู่ค้า NextAcc:")</p>
+      <div id="ptJourney" class="pt-muted">กำลังโหลด...</div>
+    </div>
+
     <div class="pt-card">
       <h3>⚙️ ค่าตั้งของเรา</h3>
       <div class="pt-grid2">
@@ -112,6 +123,25 @@ const Page = {
     if (!Layout.init('partners')) return;
     Layout.setTitle('คู่ค้าที่ใช้ NextAcc');
     await this.load();
+    await this.loadJourney();
+  },
+
+  // รอบ 281: เส้นทางของใบ — เซิร์ฟเวอร์ตัดสินสถานะ/ป้าย/เหตุทุกแถว (PartnerJourney) · หน้าแสดงอย่างเดียว · ทุกค่าผ่าน Layout.esc
+  async loadJourney() {
+    const box = document.getElementById('ptJourney');
+    const api = Layout.api(); if (!api || !box) return;
+    let list;
+    try { list = (await api.getPartnerJourney()).data || []; }
+    catch (e) { box.textContent = 'โหลดเส้นทางของใบไม่สำเร็จ: ' + (e.message || 'ไม่ทราบสาเหตุ'); return; }
+    if (!list.length) { box.textContent = 'ยังไม่มีใบแจ้งหนี้ที่ส่งถึงกันผ่าน NextAcc'; return; }
+    const cls = { Done: 'pt-ok', Waiting: 'pt-warn', Blocked: 'pt-bad' };
+    const when = t => t ? ' · ' + new Date(t).toLocaleDateString('th-TH') : '';
+    box.innerHTML = list.map(j => `<details style="margin:6px 0" ${j.currentStep && j.steps.some(s => s.state === 'Blocked') ? 'open' : ''}>
+        <summary style="cursor:pointer">${j.direction === 'Seller' ? '📤 เราขายให้' : '📥 เราซื้อจาก'} ${Layout.esc(j.partnerName)} · ${Layout.esc(j.ownDocumentNumber || '-')} · ${Layout.esc(Layout.money(j.total))} บาท
+          — ${j.currentStep ? Layout.esc((j.steps.find(s => s.step === j.currentStep) || {}).label || '') : '✅ ครบทั้งเส้น'}</summary>
+        <ol class="pt-steps">${j.steps.map(s => `<li><span class="pt-badge ${cls[s.state] || ''}">${Layout.esc(s.stateLabel)}</span>
+          <div><div>${Layout.esc(s.label)}${Layout.esc(when(s.at))}</div>${s.detail ? `<div class="pt-muted">${Layout.esc(s.detail)}</div>` : ''}</div></li>`).join('')}</ol>
+      </details>`).join('');
   },
 
   async load() {

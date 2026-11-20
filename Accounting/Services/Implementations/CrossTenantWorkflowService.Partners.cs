@@ -287,9 +287,17 @@ public partial class CrossTenantWorkflowService
                     : approvedD1
                         ? "ใบซื้อเดิมอนุมัติแล้ว — เมื่อได้ต้นฉบับใบกำกับ กด \"ได้รับต้นฉบับแล้ว\" ที่หน้าคู่ค้า ระบบจะเติมเลข/วันที่ใบกำกับและย้ายภาษีซื้อเข้างวดที่เคลมได้"
                         : "ใบซื้อยังเป็นร่าง — เมื่อได้ต้นฉบับใบกำกับ กด \"ได้รับต้นฉบับแล้ว\" แล้วอนุมัติตามปกติ";
+                // รอบ 281 (คำตัดสิน 281-2): คีย์ต่อขั้น — ผู้ซื้อ "ได้ใบเสร็จ/ใบกำกับ" · ผู้ขาย "ใบของเราเข้าระบบผู้ซื้อแล้ว" (เดิมยืม partner_exchange ฝั่งผู้ซื้ออย่างเดียว)
                 await NotifyReceiverAsync(link.TargetCompanyId, d1.Id,
                     $"คู่ค้าส่งใบ {src.DocumentNumber} ของการขายเดิม — แนบเข้าใบซื้อเดิมแล้ว",
-                    "ไม่ได้สร้างใบซื้อใหม่ (การขายครั้งเดียวกัน) · " + next);
+                    "ไม่ได้สร้างใบซื้อใหม่ (การขายครั้งเดียวกัน) · " + next,
+                    Accounting.Models.Constants.NotificationEvents.PartnerTaxInvoiceReceived);
+                await NotifyReceiverAsync(link.SourceCompanyId, src.Id,
+                    $"ใบ {src.DocumentNumber} เข้าระบบผู้ซื้อคู่ค้าแล้ว",
+                    vatMatches
+                        ? "แนบเข้าใบซื้อของผู้ซื้อแล้ว — ผู้ซื้อใช้เป็นหลักฐานภาษีซื้อเมื่อยืนยันต้นฉบับ"
+                        : "แนบเข้าใบซื้อของผู้ซื้อแล้ว แต่ VAT ไม่ตรงกับใบซื้อของผู้ซื้อ — ผู้ซื้ออาจติดต่อมาเพื่อตรวจ",
+                    Accounting.Models.Constants.NotificationEvents.PartnerReceiptDelivered, "/pages/documents.html?id=" + src.Id);
                 return;
             }
 
@@ -379,6 +387,11 @@ public partial class CrossTenantWorkflowService
             });
             await _db.SaveChangesAsync();
             if (ownTx != null) await ownTx.CommitAsync();
+            // รอบ 281 (คำตัดสิน 281-2): ใบซื้อร่างใหม่จากคู่ค้า — เดิมไม่แจ้งเลย (ผู้ซื้อต้องเปิดหน้าคู่ค้าเองถึงรู้) · หลัง commit · แจ้งล้มไม่ย้อนใบร่าง
+            await NotifyReceiverAsync(link.TargetCompanyId, draft.Id,
+                $"📥 ใบซื้อร่างจาก {seller.Name} — ใบ {src.DocumentNumber} ยอด {src.TotalAmount:N2} บาท",
+                "สร้างเป็นร่างแล้ว (ไม่อนุมัติ/ไม่ลงภาษีซื้อเอง) — ตรวจผังบัญชีและภาษีหัก ณ ที่จ่าย แล้วอนุมัติ · " + PartnerInputVatEvidence.Label(evidence),
+                Accounting.Models.Constants.NotificationEvents.PartnerPurchaseDraftReceived, "/pages/documents.html?id=" + draft.Id);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -539,14 +552,22 @@ public partial class CrossTenantWorkflowService
             && a.NewValues != null && a.NewValues.Contains(PartnerInputVatEvidence.ExternalConfirmedEvent));
     }
 
-    /// <summary>แจ้งผู้รับ (บริษัทคู่ค้า) — คีย์ autopilot.partner_exchange · ไม่มีเครื่องแจ้งเตือน (สร้างนอก DI) = ข้าม</summary>
-    private async Task NotifyReceiverAsync(Guid companyId, Guid documentId, string title, string message)
+    /// <summary>แจ้งบริษัทหนึ่งในเส้นคู่ค้า — คีย์ตั้งต้น autopilot.partner_exchange (เรื่องยกเลิก/ข้อยกเว้น) · รอบ 281: ขั้นปกติส่งคีย์ต่อขั้น (<c>PartnerFlowNotificationSplit.Keys</c>) ·
+    /// ไม่มีเครื่องแจ้งเตือน (สร้างนอก DI) = ข้าม · แจ้งล้ม = LogError (งานที่ commit แล้วไม่ย้อน)</summary>
+    private async Task NotifyReceiverAsync(Guid companyId, Guid documentId, string title, string message, string? eventKey = null, string? actionUrl = null)
     {
         if (_notify == null) return;
-        await _notify.DispatchAsync(companyId, Accounting.Models.Constants.NotificationEvents.AutopilotPartnerExchange, new Accounting.Services.Interfaces.NotificationContext
+        try
         {
-            Title = title, Message = message, ActionUrl = "/pages/partners.html", EntityType = "Document", EntityId = documentId,
-        });
+            await _notify.DispatchAsync(companyId, eventKey ?? Accounting.Models.Constants.NotificationEvents.AutopilotPartnerExchange, new Accounting.Services.Interfaces.NotificationContext
+            {
+                Title = title, Message = message, ActionUrl = actionUrl ?? "/pages/partners.html", EntityType = "Document", EntityId = documentId,
+            });
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogError(ex, "แจ้งบริษัท {Company} เรื่องเอกสาร {Doc} ({Key}) ไม่สำเร็จ", companyId, documentId, eventKey);
+        }
     }
 
     /// <summary>ส่งไฟล์ XML ที่ลงลายมือชื่อของต้นทางเป็นไฟล์แนบของใบร่าง (ของบริษัทผู้รับ · ผ่านที่เก็บกลาง) · ไม่มีที่เก็บ/ล้ม = false (หลักฐานคง PaperRequired — ไม่แต่ง) ·

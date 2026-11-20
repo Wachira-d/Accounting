@@ -132,7 +132,7 @@ public class PartnerOutboundRound264P4DbTests
             };
             other.Payments.Add(pay);
             await other.SaveChangesAsync();
-            await other.Documents.Where(d => d.Id == req.DocumentId).ExecuteUpdateAsync(x => x.SetProperty(d => d.BalanceDue, d => d.BalanceDue - req.Amount - (req.WithholdingTaxAmount ?? 0m)));
+            await other.Documents.Where(d => d.Id == req.DocumentId).ExecuteUpdateAsync(x => x.SetProperty(d => d.BalanceDue, d => d.BalanceDue - req.Amount));   // รอบ 281: เฉพาะเงิน
             return new PaymentResponse(pay.Id, pay.PaymentNumber, req.DocumentId, req.PaymentDate, req.Amount, req.PaymentMethod, req.Reference, null, req.OverrideBankAccountId, req.Notes, DateTime.UtcNow);
         }
         return Run();
@@ -499,7 +499,9 @@ public class PartnerOutboundRound264P4DbTests
         var s = await SeedAsync(db);
         var (_, purchaseId) = await RoutedAsync(db, s);
         using (var c = DbTestDatabase.TryCreateContext()!)   // ใบซื้อมีภาษีหัก ณ ที่จ่าย 3% ของ 1,000 (ตามกติกาของเรา)
-            await c.Documents.Where(d => d.Id == purchaseId).ExecuteUpdateAsync(x => x.SetProperty(d => d.WithholdingTaxAmount, 30m));
+            // รอบ 281 (281-1): ยอดค้างหลังหัก 1,040 (TotalAmount = ฐาน + VAT − WHT แบบใบจริง)
+            await c.Documents.Where(d => d.Id == purchaseId).ExecuteUpdateAsync(x => x.SetProperty(d => d.WithholdingTaxAmount, 30m)
+                .SetProperty(d => d.TotalAmount, 1_040m).SetProperty(d => d.BalanceDue, 1_040m));
         var started = 0;
         var gateway = Gateway(() => Interlocked.Increment(ref started));
         var calls = new List<CreatePaymentRequest>();

@@ -111,6 +111,22 @@ public static class NotificationEvents
     /// <summary>รอบ 264 (คำตัดสิน 264-1-4): บริษัทที่ใช้ NextAcc ส่งคำขอเชื่อมระบบถึงเรา — ผู้ส่งเดียว <c>CrossTenantWorkflowService.DispatchPendingLinkRequestNoticesAsync</c>
     /// (งานเบื้องหลัง · ไม่ส่งในคำขอของผู้ขอ — เวลาตอบต้องเท่ากันทุกกรณี) · ค่าตั้งต้น = กระดิ่ง + อีเมล + LINE ถึงเจ้าของ และผู้มีสิทธิ์ตั้งค่าบริษัท
     /// (<c>NotificationAudiencePolicy.DefaultMatrix</c>) · ลิงก์ = การ์ดยอมรับ <c>partners.html?request=</c></summary>
+    // ===== รอบ 281 (คำตัดสิน 281-2): เส้น A↔B ทีละขั้น — เดิมทุกขั้นยืมคีย์ AutopilotPartnerExchange (ความหมาย "ยกเลิก 50 ทวิ") ⇒ ตั้งช่องแยกขั้นไม่ได้ ·
+    // ค่าตั้งเดิมของ autopilot.partner_exchange ถูกคัดลอกมาครั้งเดียว (Helpers/PartnerFlowNotificationSplit) · ค่าตั้งต้น = กระดิ่ง + อีเมลเจ้าของ (+ กลุ่ม LINE ถ้าผูก) =====
+    /// <summary>รอบ 281: (ผู้ซื้อ) ใบแจ้งหนี้/ใบกำกับของคู่ค้า ⇒ ใบซื้อร่างใหม่ในระบบเรา — ผู้ส่งเดียว <c>CrossTenantWorkflowService.TryCreatePurchaseDraftAsync</c></summary>
+    public const string PartnerPurchaseDraftReceived = "partner.purchase_draft_received";
+    /// <summary>รอบ 281: (ผู้ซื้อ) ใบเสร็จ/ใบกำกับของการขายเดิมจากคู่ค้า แนบเข้าใบซื้อเดิมแล้ว (หลักฐานภาษีซื้อ) — ผู้ส่งเดียว <c>TryCreatePurchaseDraftAsync</c> (ทางแนบใบเดิม)</summary>
+    public const string PartnerTaxInvoiceReceived = "partner.tax_invoice_received";
+    /// <summary>รอบ 281: (ผู้ขาย) ใบเสร็จ/ใบกำกับของเราเข้าระบบผู้ซื้อคู่ค้าแล้ว — ผู้ส่งเดียว <c>TryCreatePurchaseDraftAsync</c> (ทางแนบใบเดิม · แจ้งบริษัทต้นทาง)</summary>
+    public const string PartnerReceiptDelivered = "partner.receipt_delivered";
+    /// <summary>รอบ 281: (ผู้ซื้อ) ผู้ขายคู่ค้ารับเงินของใบแล้ว ⇒ รอบันทึกจ่าย — ผู้ส่งเดียว <c>PartnerPaymentNoticeService</c> (เดิมยืม AutopilotPartnerExchange)</summary>
+    public const string PartnerSellerPaid = "partner.seller_paid";
+    /// <summary>รอบ 281: (ผู้ซื้อ) ระบบของเราบันทึกจ่ายใบซื้อเองตามความยินยอม (ใบสำคัญจ่าย + ภาษีหัก/50 ทวิ ตามเส้นเดิม) — ผู้ส่งเดียว <c>PartnerPayablePipeline</c></summary>
+    public const string PartnerPaymentAutoRecorded = "partner.payment_auto_recorded";
+    /// <summary>รอบ 281: (ผู้จ่าย) หนังสือรับรอง 50 ทวิ ของเราเข้ากล่องรับของผู้ขายคู่ค้าแล้ว — ผู้ส่งเดียว <c>PartnerWhtCertExchangeService</c> (หลังกล่องรับตอบจริง)</summary>
+    public const string PartnerWhtCertDelivered = "partner.wht_cert_delivered";
+    /// <summary>รอบ 281: (ผู้ขาย) ได้รับ 50 ทวิ จากคู่ค้า NextAcc — ยืนยันเองด้วยที่มาแล้ว หรือรอคนยืนยัน — ผู้ส่งเดียว <c>WhtCertIntakeService.SubmitAsync</c> (ช่องทาง NextAccLink)</summary>
+    public const string PartnerWhtCertReceived = "partner.wht_cert_received";
     public const string PartnerLinkRequested = "partner.link_requested";
     /// <summary>รอบ 264 ฝ่ายค้าน L4 (คำตัดสิน 264-1-11): ปลายทางตอบรับคำขอเชื่อมที่เราส่ง — ผู้ส่งเดียว <c>NotifyRequesterAcceptedAsync</c> ·
     /// เดิมยืม <see cref="AutopilotPartnerExchange"/> (ความหมาย "ยกเลิก 50 ทวิ") ⇒ ปิดคีย์นั้นแล้วไม่รู้ว่าใครรับคำขอ · ค่าตั้งต้นเหมือน <see cref="PartnerLinkRequested"/> (ไม่เข้ากลุ่ม LINE)</summary>
@@ -235,7 +251,14 @@ public static class NotificationEvents
         ("Accounting", AutopilotSlipSubmitted, "Autopilot: ลูกค้าแจ้งโอน/แนบสลิปผ่านพอร์ทัลหรือหน้าชำระ (รอตรวจ)"),
         ("Accounting", AutopilotBankSettleFailed, "Autopilot: เงินโอนเข้าตรงใบค้างแต่บันทึกรับชำระอัตโนมัติไม่สำเร็จ"),
         ("Accounting", AutopilotDailyDigest, "Autopilot: สรุปประจำวัน (สำเร็จ · รอยืนยัน · เรื่องที่ระบบทำต่อไม่ได้)"),
-        ("Accounting", AutopilotPartnerExchange, "Autopilot: คู่ค้า NextAcc ยกเลิกหนังสือรับรอง 50 ทวิ ที่ส่งเข้ามาแล้ว (ตรวจก่อนใช้เครดิต)"),
+        ("Accounting", AutopilotPartnerExchange, "Autopilot: คู่ค้า NextAcc ยกเลิกเอกสาร/การรับเงิน/50 ทวิ ที่ส่งเข้ามาแล้ว · คำขอความยินยอม (ตรวจก่อนใช้)"),
+        ("Accounting", PartnerPurchaseDraftReceived, "คู่ค้า NextAcc: ใบแจ้งหนี้/ใบกำกับของคู่ค้า ⇒ ใบซื้อร่างใหม่ในระบบเรา"),
+        ("Accounting", PartnerTaxInvoiceReceived, "คู่ค้า NextAcc: ได้ใบเสร็จ/ใบกำกับภาษีจากผู้ขาย แนบเข้าใบซื้อเดิมแล้ว"),
+        ("Accounting", PartnerSellerPaid, "คู่ค้า NextAcc: ผู้ขายรับเงินของเราแล้ว (รอบันทึกจ่าย)"),
+        ("Accounting", PartnerPaymentAutoRecorded, "คู่ค้า NextAcc: ระบบบันทึกจ่ายใบซื้อเองแล้ว (ใบสำคัญจ่าย + ภาษีหัก ณ ที่จ่าย)"),
+        ("Accounting", PartnerWhtCertDelivered, "คู่ค้า NextAcc: ส่งหนังสือรับรอง 50 ทวิ เข้าระบบผู้ขายแล้ว"),
+        ("Accounting", PartnerReceiptDelivered, "คู่ค้า NextAcc: ใบเสร็จ/ใบกำกับของเราเข้าระบบผู้ซื้อแล้ว"),
+        ("Accounting", PartnerWhtCertReceived, "คู่ค้า NextAcc: ได้รับหนังสือรับรอง 50 ทวิ จากผู้ซื้อ (ยืนยันแล้ว/รอยืนยัน)"),
         ("Accounting", ProviderConsentRequested, "สำนักงานบัญชี NextAcc ขออนุญาตบันทึกการนำส่งภาษีจากสลิปแทนบริษัทนี้ (อนุญาตที่ศูนย์บิล)"),
         ("Accounting", TaxSlipRemitted, "บันทึกการนำส่งภาษีจากสลิปที่ส่งในกลุ่ม LINE/อีเมล โดย NextAcc แล้ว"),
         ("Accounting", TaxSlipNeedsStaff, "สลิปภาษีของลูกค้ารอพนักงานตรวจ (ระบบตัดสินเองไม่ได้/ตรวจทานไม่พบรายการเดินบัญชี)"),

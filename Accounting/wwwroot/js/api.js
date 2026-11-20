@@ -1638,6 +1638,8 @@ const API = {
       getPartnerPurchaseDrafts: () => API.get(`${base}/partner-purchase-drafts`),
       // รอบ 258-3 F-H3: ผู้ขายคู่ค้ารับเงินผ่านลิงก์แล้ว ⇒ ผู้ซื้อกดบันทึกจ่ายเอง
       getPartnerPaymentNotices: () => API.get(`${base}/partner-payment-notices`),
+      // รอบ 281: "เส้นทางของใบนี้" ระหว่างคู่ค้า (ทั้งสองทิศตามสิทธิ์ · สถานะจากเซิร์ฟเวอร์)
+      getPartnerJourney: (documentId) => API.get(`${base}/partner-journey${documentId ? `?documentId=${encodeURIComponent(documentId)}` : ''}`),
       recordPartnerPaymentNotice: (id, d) => API.post(`${base}/partner-payment-notices/${encodeURIComponent(id)}/record`, d || {}),
       dismissPartnerPaymentNotice: (id, reason) => API.post(`${base}/partner-payment-notices/${encodeURIComponent(id)}/dismiss`, { reason: reason || null }),
       confirmPartnerOriginal: (id, kind) => API.post(`${base}/partner-purchase-drafts/${encodeURIComponent(id)}/confirm-original`, { kind: kind || 'Paper' }),
