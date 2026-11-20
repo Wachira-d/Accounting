@@ -9812,4 +9812,4 @@ _Last verified against codebase: 2026-11-19 (รอบ 274 ผลตรวจฝ
 _Last verified against codebase: 2026-11-20 (รอบ 274-10 — เลขที่ถูกเข้ารหัสซ้อนกลับมาอ่านได้โดยไม่ต้องกรอกใหม่: `EncryptedColumnConverter.Inspect` แกะชั้นซ้อน ≤ 3 ชั้น
 (เลขบัตร/ผู้เสียภาษีรับเฉพาะ 13 หลัก mod-11 · อื่น ๆ ต้องไม่ใช่ ciphertext) · `PiiReprotectPass` เขียนชั้นเดียว + audit `PiiNestedUnwrapped` · รายงานไม่บอกกรอกใหม่สำหรับแถวที่แกะได้ ·
 ทุกทางเข้าพนักงาน (แก้ไข/สร้าง/HRIS sync/นำเข้า) ปฏิเสธ ciphertext ด้วย `EmployeeRecordEdit.CipherInputProblem` · ciphertext ของแถวนั้นเองส่งกลับมา = คงค่าเดิม ·
-คำตัดสิน 274-10 — commit (เติมในคอมมิตตามหลัง))_
+คำตัดสิน 274-10 — commit 7c75b438)_

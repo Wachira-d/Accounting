@@ -7328,4 +7328,4 @@ _รอบ 274-10 (2026-11-20 · เจ้าของ: เลขบัตร/�
 HRIS sync (เลขบัตร/เลขบัญชี) · นำเข้าไฟล์ (เลขบัญชี — เช่นไฟล์ที่ส่งออกก่อนรอบ 274 ซึ่งมี ciphertext ดิบ) ⇒ ด่านเดียว `EmployeeRecordEdit.CipherInputProblem` ทุกทางเข้า ·
 ciphertext ของแถวนั้นเองส่งกลับมา = คงค่าเดิม · converter ห่อค่าที่หลุดด่านพร้อมเครื่องหมาย (ไม่แกะ) · `Inspect` แกะแถวซ้อนรุ่นเก่า ≤ 3 ชั้นด้วยชุดคีย์เดียวกัน ·
 `PiiValueKind` ต่อคอลัมน์ (เลขบัตร/ผู้เสียภาษี = 13 หลัก mod-11) · `PiiReprotectPass` เขียนชั้นเดียว + audit `PiiNestedUnwrapped` (ไม่ตัดจบเมื่อไม่มีคีย์เดิม) ·
-รายงาน: แกะได้ = รอย้ายคีย์ · แกะไม่ได้ = `NestedCipher` · คำตัดสิน 274-10 · เทสต์ `PiiNestedCipherRound274_10Tests` (pure ×8) · Db `PiiNestedCipherDbTests` · กติกา `_R274_10_WHY` ×15 — commit (เติมในคอมมิตตามหลัง)_
+รายงาน: แกะได้ = รอย้ายคีย์ · แกะไม่ได้ = `NestedCipher` · คำตัดสิน 274-10 · เทสต์ `PiiNestedCipherRound274_10Tests` (pure ×8) · Db `PiiNestedCipherDbTests` · กติกา `_R274_10_WHY` ×14 — commit 7c75b438_

@@ -21488,7 +21488,7 @@ RULES += [
 
 # รอบ 274-10 — เลขประจำตัวที่ถูกเข้ารหัสซ้อน (ciphertext ถูกเข้ารหัสอีกชั้น) กลับมาอ่านได้โดยไม่ต้องกรอกใหม่ · ทุกทางเข้าที่เขียนคอลัมน์ PII ของพนักงาน
 # ปฏิเสธ ciphertext ด้วยด่านเดียว (EmployeeRecordEdit.CipherInputProblem) · ตัวแกะชั้นซ้อนอยู่ที่ Inspect ตัวเดียว (ฝั่งอ่าน EF · งานย้ายคีย์ · รายงาน)
-_R274_10_WHY = "รอบ 274-10 (เข้ารหัสซ้อน — คำตัดสิน 274-10): "
+_R274_10_WHY = "รอบ 274-10 (เข้ารหัสซ้อน — คำตัดสิน 274-10 · commit 7c75b438): "
 RULES += [
     dict(file="Helpers/EncryptedColumnConverter.cs", method="Inspect",
          must=["return Unwrap(outer, currentKey, previousKeys, kind);"],
