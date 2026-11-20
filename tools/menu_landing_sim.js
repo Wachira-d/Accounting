@@ -26,7 +26,7 @@ function extractBlock(src, re, head) {
 const method = (src, name) => extractBlock(src, new RegExp('\\n\\s*' + name + '\\s*\\(([^)]*)\\)\\s*\\{'), m => `${name}(${m[1]}) {`);
 const prop = (src, name) => extractBlock(src, new RegExp('\\n\\s*' + name + '\\s*:\\s*\\{'), () => `${name}: {`);
 
-function build(src) {
+function build(src, mode) {
   const parts = ['hasMenuAccess', 'landingUrl', 'dashboardUrl', '_navLockState'].map(n => method(src, n));
   if (parts.some(p => !p)) return null;
   const hub = prop(src, 'billingHub');
@@ -41,7 +41,7 @@ function build(src) {
       { id: 'payment-intents', href: '/pages/payment-intents.html' },
       { id: 'contacts', href: '/pages/contacts.html' },
     ],
-    ${parts.join(',\n')} };`)({ getItem: () => 'advanced' });
+    ${parts.join(',\n')} };`)({ getItem: () => mode || 'advanced' });
 }
 
 function suite(src, quiet) {
@@ -74,6 +74,15 @@ function suite(src, quiet) {
   check('ทิศตรงข้าม: มีสิทธิ์แดชบอร์ด = เห็นเมนู + หน้าแรกคือแดชบอร์ด', L.hasMenuAccess('dashboard') === true && L.landingUrl() === '/app.html');
   L.myPermissions = { isOwnerOrAdmin: true, allowedMenuIds: [], permissionDeniedMenuIds: null };
   check('ทิศตรงข้าม: เจ้าของ = แดชบอร์ด', L.landingUrl() === '/app.html');
+  // ฝ่ายค้าน MED-2: โหมดง่าย — หน้าหลัก /simple.html ไม่ผูก Reports.Dashboard (ข้อมูลของหน้าไม่ตรวจคีย์นั้น) ⇒ พนักงานโหมดง่ายยังใช้ได้
+  const S = build(src, 'simple');
+  S.myPermissions = { isOwnerOrAdmin: false, allowedMenuIds: ['*'], permissionDeniedMenuIds: ['dashboard'] };
+  check('โหมดง่าย: ไม่มี Reports.Dashboard ยังเห็นหน้าหลักโหมดง่าย', S.hasMenuAccess('simple-home') === true && S.landingUrl() === '/simple.html');
+  check('โหมดง่าย: แต่เมนูแดชบอร์ดโหมดเต็มยังซ่อน', S.hasMenuAccess('dashboard') === false);
+  S.myPermissions = { isOwnerOrAdmin: false, allowedMenuIds: ['contacts'], permissionDeniedMenuIds: null };
+  check('โหมดง่าย: บทบาทไม่ได้ติ๊กเมนูแดชบอร์ด ⇒ ไม่มีหน้าหลักโหมดง่าย ⇒ เมนูแรกที่เข้าได้', S.hasMenuAccess('simple-home') === false && S.landingUrl() === '/pages/contacts.html');
+  S.myPermissions = { isOwnerOrAdmin: false, allowedMenuIds: [], accessPending: true };
+  check('โหมดง่าย: ยังไม่ได้รับสิทธิ์ ⇒ หน้าต้อนรับ', S.hasMenuAccess('simple-home') === false && S.landingUrl() === '/pages/no-access.html');
   L.myPermissions = null;
   check('ทิศตรงข้าม: ยังไม่รู้สิทธิ์ = ไม่ซ่อน (ไม่กระพริบ) + แดชบอร์ด (หน้าแดชบอร์ดตรวจซ้ำเอง)', L.hasMenuAccess('dashboard') === true && L.landingUrl() === '/app.html');
   return fail;
@@ -81,9 +90,18 @@ function suite(src, quiet) {
 
 console.log('menu_landing_sim — โค้ดจริงจาก layout.js');
 const fails = suite(SRC, false);
-const mutated = SRC.replace("if (this.hasMenuAccess('dashboard')) return this.dashboardUrl();", 'return this.dashboardUrl();');
-const negFails = mutated === SRC ? 0 : suite(mutated, true);
-if (mutated === SRC) console.log('  ✗ negative test: หาบรรทัดตรวจสิทธิ์แดชบอร์ดใน landingUrl ไม่เจอ (แก้ sim)');
-else console.log(`  ${negFails > 0 ? '✓' : '✗'} negative test: ถอดการตรวจสิทธิ์แดชบอร์ดแล้วชุดเดียวกันล้ม ${negFails} ข้อ`);
-if (fails || mutated === SRC || negFails === 0) { console.log('❌ menu_landing_sim ล้ม'); process.exit(1); }
+// negative test: (1) ถอดการตรวจสิทธิ์หน้าหลักใน landingUrl (2) ให้รายการตัดของแดชบอร์ดตัดหน้าหลักโหมดง่ายด้วย (ถดถอย MED-2) — ทุกตัวต้องทำชุดเดียวกันล้ม
+const mutations = [
+  ["if (this.hasMenuAccess(simpleMode ? 'simple-home' : 'dashboard')) return this.dashboardUrl();", 'return this.dashboardUrl();'],
+  ['if (!simpleHome && (this.myPermissions.permissionDeniedMenuIds', 'if ((this.myPermissions.permissionDeniedMenuIds'],
+];
+let negBad = false;
+for (const [from, to] of mutations) {
+  const mutated = SRC.replace(from, to);
+  if (mutated === SRC) { console.log('  ✗ negative test: หาโค้ดที่จะกลายพันธุ์ไม่เจอ — ' + from.slice(0, 60)); negBad = true; continue; }
+  const n = suite(mutated, true);
+  console.log(`  ${n > 0 ? '✓' : '✗'} negative test: กลายพันธุ์ "${from.slice(0, 50)}…" แล้วล้ม ${n} ข้อ`);
+  if (n === 0) negBad = true;
+}
+if (fails || negBad) { console.log('❌ menu_landing_sim ล้ม'); process.exit(1); }
 console.log('✅ menu_landing_sim ผ่านทุกทิศ');

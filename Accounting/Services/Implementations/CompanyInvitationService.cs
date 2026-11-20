@@ -19,9 +19,8 @@ public sealed record InvitationPreviewResponse(
     string RoleLabel,
     InvitationStatus Status,
     string? StatusMessage,
-    DateTime ExpiresAt,
-    /// <summary>อีเมลนี้มีบัญชีในระบบแล้ว ⇒ หน้าแนะนำ "เข้าสู่ระบบ" ก่อน · ยังไม่มี ⇒ "สมัคร (ไม่ต้องสร้างบริษัท)"</summary>
-    bool AccountExists);
+    DateTime ExpiresAt);
+// รอบ 277 ฝ่ายค้าน LOW: ไม่บอกว่าอีเมลนี้มีบัญชีอยู่แล้วหรือไม่ (ผู้ถือลิงก์ไล่ตรวจการมีบัญชีของอีเมลได้) — หน้ารับคำเชิญแสดงทั้งสองทางเสมอ
 
 /// <summary>ผลตอบรับคำเชิญ</summary>
 public sealed record AcceptInvitationResult(Guid CompanyId, string CompanyName, bool AccessPending, string Message);
@@ -83,10 +82,9 @@ public class CompanyInvitationService : ICompanyInvitationService
         var now = DateTime.UtcNow;
         var status = CompanyInvitationPolicy.DisplayStatus(inv.Status, inv.ExpiresAt, now);
         var verdict = CompanyInvitationPolicy.Check(inv.Status, inv.ExpiresAt, inv.Email, inv.Email, now);
-        var exists = await _db.Users.AsNoTracking().AnyAsync(u => u.Email.ToLower() == inv.Email);
         return new InvitationPreviewResponse(companyName, inviterName, inv.Email, inv.Role, inv.RoleChosen,
             CompanyInvitationPolicy.RoleLabel(inv.RoleChosen, inv.Role, customRole), status,
-            CompanyInvitationPolicy.Message(verdict), inv.ExpiresAt, exists);
+            CompanyInvitationPolicy.Message(verdict), inv.ExpiresAt);
     }
 
     public async Task<bool> IsUsableForEmailAsync(string? rawToken, string? email)
@@ -188,6 +186,16 @@ public class CompanyInvitationService : ICompanyInvitationService
                     .Select(cu => cu.AccessPending).FirstAsync();
             }
 
+            // รอบ 277 ฝ่ายค้าน MED-3 (คำตัดสิน 277-8): token ส่งถึงกล่องจดหมายของอีเมลที่เชิญเท่านั้น + อีเมลของบัญชีต้องตรงอีเมลที่เชิญ (ตรวจแล้วข้างบน)
+            // ⇒ การตอบรับด้วย token = หลักฐานถือกล่องจดหมาย ⇒ ประทับ "ยืนยันอีเมลแล้ว" (CompanyInvitationPolicy.ConfirmsEmail) · ระบบไม่มีทางเปลี่ยนอีเมลบัญชีภายหลัง
+            var emailNewlyVerified = false;
+            if (CompanyInvitationPolicy.ConfirmsEmail(verdict) && !user.EmailVerified)
+            {
+                var trackedUser = await _db.Users.FirstAsync(u => u.Id == userId);
+                trackedUser.EmailVerified = true;
+                emailNewlyVerified = true;
+            }
+
             inv.Status = InvitationStatus.Accepted;
             inv.AcceptedAt = now;
             inv.AcceptedByUserId = userId;
@@ -204,6 +212,7 @@ public class CompanyInvitationService : ICompanyInvitationService
                 NewValues = System.Text.Json.JsonSerializer.Serialize(new
                 {
                     action = "accept", status = "Accepted", alreadyMember, accessPending, role = inv.Role.ToString(), inv.RoleChosen, inv.CompanyRoleId,
+                    emailVerifiedByInvitation = emailNewlyVerified,
                     ruleCode = CompanyInvitationPolicy.RuleCode,
                 }),
                 IpAddress = _http?.HttpContext?.Connection.RemoteIpAddress?.ToString(),

@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.IO;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using Accounting.Helpers;
 using Accounting.Models.Constants;
@@ -23,16 +25,18 @@ public class MenuInviteRound277Tests
     // ── A: เมนูตามสิทธิ์ ──
 
     [Fact]
-    public void ตารางเมนู_แดชบอร์ดผูกReportsDashboard_รวมเมนูรับชำระของรอบ201()
+    public void ตารางเมนู_แดชบอร์ดผูกReportsDashboard_รวมเมนูรับชำระของรอบ201_ที่พักเห็นได้ทั้งผู้จัดการและผู้ตั้งค่า()
     {
-        Assert.Equal(PermissionKeys.ReportsDashboard, MenuPermissionMap.Keys["dashboard"]);
-        Assert.Equal(PermissionKeys.ReportsDashboard, MenuPermissionMap.Keys["executive-reports"]);
-        Assert.Equal(PermissionKeys.ReportsFinancial, MenuPermissionMap.Keys["consolidation"]);
+        Assert.Equal(new[] { PermissionKeys.ReportsDashboard }, MenuPermissionMap.Keys["dashboard"]);
+        Assert.Equal(new[] { PermissionKeys.ReportsDashboard }, MenuPermissionMap.Keys["executive-reports"]);
+        Assert.Equal(new[] { PermissionKeys.ReportsFinancial }, MenuPermissionMap.Keys["consolidation"]);
+        Assert.Equal(new[] { PermissionKeys.LodgingManage, PermissionKeys.LodgingSettings }, MenuPermissionMap.Keys["lodging"]);
         foreach (var kv in PaymentGatewayPermissionScope.MenuPermissionKeys)
-            Assert.Equal(kv.Value, MenuPermissionMap.Keys[kv.Key]);
-        Assert.All(MenuPermissionMap.Keys.Values, k => Assert.True(PermissionKeys.IsPermissionKey(k)));
+            Assert.Equal(new[] { kv.Value }, MenuPermissionMap.Keys[kv.Key]);
+        var all = MenuPermissionMap.Keys.Values.SelectMany(v => v).ToList();
+        Assert.All(all, k => Assert.True(PermissionKeys.IsPermissionKey(k)));
         // ทุกคีย์อยู่ในแคตตาล็อก (หน้าบทบาทติ๊กได้ — ไม่งั้นเมนูซ่อนถาวร)
-        Assert.All(MenuPermissionMap.Keys.Values, k => Assert.Contains(PermissionKeys.Catalog, c => c.Key == k));
+        Assert.All(all, k => Assert.Contains(PermissionKeys.Catalog, c => c.Key == k));
     }
 
     [Fact]
@@ -50,8 +54,55 @@ public class MenuInviteRound277Tests
     }
 
     [Fact]
+    public async Task ที่พัก_มีแค่สิทธิ์ตั้งค่าที่พัก_ยังเห็นเมนู_ไม่มีทั้งสอง_ซ่อน()
+    {
+        var onlySettings = await MenuPermissionMap.DeniedMenuIdsAsync(k => Task.FromResult(k != PermissionKeys.LodgingManage));
+        Assert.DoesNotContain("lodging", onlySettings ?? new List<string>());
+        var none = await MenuPermissionMap.DeniedMenuIdsAsync(k => Task.FromResult(k != PermissionKeys.LodgingManage && k != PermissionKeys.LodgingSettings));
+        Assert.Contains("lodging", none!);
+    }
+
+    [Fact]
+    public async Task ทิศเอกสาร_เห็นแต่ฝั่งขาย_ซ่อนเมนูฝั่งซื้อ_ทิศตรงข้ามเห็นทั้งสองฝั่งไม่ตัด()
+    {
+        var revenueOnly = await MenuPermissionMap.DeniedMenuIdsAsync(_ => Task.FromResult(true), () => Task.FromResult((true, false)));
+        Assert.Equal(new[] { "purchases" }, revenueOnly);
+        Assert.Null(await MenuPermissionMap.DeniedMenuIdsAsync(_ => Task.FromResult(true), () => Task.FromResult((true, true))));
+    }
+
+    [Fact]
     public async Task มีสิทธิ์ครบ_ไม่มีเมนูถูกตัด_null()
         => Assert.Null(await MenuPermissionMap.DeniedMenuIdsAsync(_ => Task.FromResult(true)));
+
+    /// <summary>ฝ่ายค้าน MED-1: เมนู<b>ทุกตัว</b>ใน layout.js ต้องถูกตัดสินแล้ว (มีคีย์ / ทิศเอกสาร / สิทธิ์เมนูอย่างเดียว) อยู่กลุ่มเดียว · ทะเบียนไม่มี id ที่ไม่มีจริง</summary>
+    [Fact]
+    public void ทะเบียนเมนู_ครบทุกเมนูในlayout_อยู่กลุ่มเดียว_ไม่มีidเกิน()
+    {
+        var src = File.ReadAllText(Path.Combine(RepoRoot(), "Accounting", "wwwroot", "js", "layout.js"));
+        var a = src.IndexOf("  navItems: [", StringComparison.Ordinal);
+        var b = src.IndexOf("\n  ],", a, StringComparison.Ordinal);
+        Assert.True(a > 0 && b > a, "หา navItems ใน layout.js ไม่เจอ");
+        var ids = Regex.Matches(src[a..b], @"\{ id: '([a-z0-9-]+)'").Select(m => m.Groups[1].Value).ToHashSet();
+        Assert.True(ids.Count > 100, $"อ่านเมนูได้ {ids.Count} ตัว — ตัวอ่านเพี้ยน");
+        var groups = new[] { MenuPermissionMap.Keys.Keys.ToHashSet(), MenuPermissionMap.DirectionMenus.Keys.ToHashSet(), MenuPermissionMap.RoleMenuOnly.ToHashSet() };
+        var missing = ids.Where(id => groups.Count(g => g.Contains(id)) == 0).OrderBy(x => x).ToList();
+        var twice = ids.Where(id => groups.Count(g => g.Contains(id)) > 1).OrderBy(x => x).ToList();
+        var extra = groups.SelectMany(g => g).Where(id => !ids.Contains(id)).OrderBy(x => x).ToList();
+        Assert.True(missing.Count == 0, "เมนูที่ยังไม่ได้ตัดสินใน MenuPermissionMap: " + string.Join(", ", missing));
+        Assert.True(twice.Count == 0, "เมนูอยู่หลายกลุ่ม: " + string.Join(", ", twice));
+        Assert.True(extra.Count == 0, "id ในทะเบียนที่ไม่มีใน layout.js: " + string.Join(", ", extra));
+    }
+
+    private static string RepoRoot()
+    {
+        foreach (var start in new[] { AppContext.BaseDirectory, Directory.GetCurrentDirectory() })
+        {
+            var d = new DirectoryInfo(start);
+            while (d != null && !File.Exists(Path.Combine(d.FullName, "Accounting.sln"))) d = d.Parent;
+            if (d != null) return d.FullName;
+        }
+        throw new InvalidOperationException("ไม่พบ Accounting.sln");
+    }
 
     // ── B: คำเชิญ ──
 

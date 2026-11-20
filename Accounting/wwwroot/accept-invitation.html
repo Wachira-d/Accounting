@@ -92,7 +92,8 @@
         return;
       }
 
-      // Pending — ล็อกอินอยู่ = ตอบรับได้เลย (เซิร์ฟเวอร์ตรวจอีเมลตรงคำเชิญ) · ยังไม่ล็อกอิน = มีบัญชีแล้ว → เข้าสู่ระบบ / ยังไม่มี → สมัคร (ไม่สร้างบริษัท)
+      // Pending — ล็อกอินอยู่ = ตอบรับได้เลย (เซิร์ฟเวอร์ตรวจอีเมลตรงคำเชิญ) · ยังไม่ล็อกอิน = แสดงทั้ง "เข้าสู่ระบบ" และ "สมัคร" เสมอ
+      // (ฝ่ายค้านรอบ 277 LOW: เซิร์ฟเวอร์ไม่บอกว่าอีเมลนี้มีบัญชีไหม)
       const hasToken = !!localStorage.getItem('token');
       const registerHref = `/register.html?invite=${encodeURIComponent(token)}&email=${encodeURIComponent(d.email)}`;
       const loginHref = `/login.html?invite=${encodeURIComponent(token)}`;
@@ -101,14 +102,10 @@
           <button id="acceptBtn" class="btn btn-primary btn-lg">✓ ตอบรับคำเชิญ</button>
           <a href="${loginHref}" class="btn btn-secondary" style="text-align:center;text-decoration:none">เข้าสู่ระบบในนามอื่น</a>`;
         document.getElementById('acceptBtn').addEventListener('click', acceptNow);
-      } else if (d.accountExists) {
-        actionsEl.innerHTML = `
-          <div class="alert alert-warn" style="margin:0">อีเมลนี้มีบัญชีอยู่แล้ว — เข้าสู่ระบบด้วย <b>${escapeHtml(d.email)}</b> แล้วระบบพากลับมาตอบรับ</div>
-          <a href="${loginHref}" class="btn btn-primary btn-lg" style="text-align:center;text-decoration:none">เข้าสู่ระบบแล้วตอบรับ</a>`;
       } else {
         actionsEl.innerHTML = `
-          <a href="${registerHref}" class="btn btn-primary btn-lg" style="text-align:center;text-decoration:none">สมัครด้วยอีเมลนี้แล้วเข้าร่วมทีม (ไม่ต้องสร้างบริษัท)</a>
-          <a href="${loginHref}" class="btn btn-secondary" style="text-align:center;text-decoration:none">เข้าสู่ระบบ (มีบัญชีแล้ว)</a>`;
+          <a href="${loginHref}" class="btn btn-primary btn-lg" style="text-align:center;text-decoration:none">มีบัญชีแล้ว — เข้าสู่ระบบแล้วตอบรับ</a>
+          <a href="${registerHref}" class="btn btn-secondary btn-lg" style="text-align:center;text-decoration:none">ยังไม่มีบัญชี — สมัครด้วยอีเมลนี้ (ไม่ต้องสร้างบริษัท)</a>`;
       }
       actionsEl.classList.remove('hidden');
     }
