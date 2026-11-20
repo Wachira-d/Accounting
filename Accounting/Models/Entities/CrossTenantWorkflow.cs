@@ -96,6 +96,33 @@ public class PartnerLinkRequest : TenantEntity
     /// <summary>ปลายทางยอมรับแล้ว (ประทับโดย <c>AcceptPartnershipAsync</c>) · null = ยังไม่มีผู้ยอมรับ</summary>
     public DateTime? AcceptedAt { get; set; }
     public Guid? AcceptedPartnershipId { get; set; }
+    /// <summary>รอบ 280: ผู้ติดต่อของเรา (คู่ค้ารายนี้) ที่ใช้แจ้งทางกลุ่ม LINE/อีเมล · null = ยังไม่เลือก · ผู้เขียน: <c>PartnerLinkRequestNotifier.SendAsync</c></summary>
+    public Guid? ContactId { get; set; }
+}
+
+/// <summary>
+/// รอบ 280 (คำตัดสิน 280-1…280-9 · <c>Helpers/PartnerLinkRequestChannels</c>) — บันทึกการแจ้งคำขอเชื่อมคู่ค้า<b>หนึ่งช่องหนึ่งครั้ง</b> ของบริษัทผู้ขอ
+/// (<see cref="TenantEntity.CompanyId"/> = ผู้ขอ) · ช่อง <c>InApp</c> = สถานะ "เข้าคิว" เสมอ (ไม่มีผลที่บอกสมาชิกภาพ) ·
+/// <c>LineGroup</c>/<c>Email</c> = ผลจริงจากผู้ให้บริการ (ส่งสำเร็จ/ล้มพร้อมเหตุ/ไม่ได้ส่งพร้อมเหตุ) · append-only (ไม่แก้แถวหลังจบ)
+/// </summary>
+public class PartnerLinkRequestNotice : TenantEntity
+{
+    public Guid LinkRequestId { get; set; }
+    /// <summary><c>PartnerLinkRequestChannels.InApp/LineGroup/Email</c></summary>
+    public string Channel { get; set; } = "";
+    /// <summary><c>PartnerLinkRequestChannels.Status*</c></summary>
+    public string Status { get; set; } = "";
+    public Guid? ContactId { get; set; }
+    /// <summary>ปลายทางของผู้ติดต่อ (<c>ContactNotifyEndpoint</c>) · null = อีเมลหลัก/ช่องในระบบ</summary>
+    public Guid? EndpointId { get; set; }
+    /// <summary>ป้ายผู้รับ (อีเมลปิดบัง · ชื่อกลุ่ม) — ไม่มี LINE id</summary>
+    public string? RecipientLabel { get; set; }
+    /// <summary>เหตุเมื่อไม่ได้ส่ง/ล้ม (ข้อความไทยที่หน้าแสดงตรงตัว)</summary>
+    public string? Reason { get; set; }
+    public string? RuleCode { get; set; }
+    public Guid? ByUserId { get; set; }
+    public DateTime AttemptedAt { get; set; }
+    public DateTime? CompletedAt { get; set; }
 }
 
 /// <summary>

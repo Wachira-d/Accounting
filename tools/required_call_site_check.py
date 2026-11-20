@@ -15301,7 +15301,7 @@ RULES += [
          before=[("e.UnlinkedAt == null", "_line.TryLeaveCompanyGroupAsync(")],
          why=_R254G_WHY + "Q8 บอทออกเมื่อไม่เหลือการผูกของกลุ่มนี้"),
     dict(file=_R254_GROUP, method="HandleCompanyGroupEventAsync",
-         must=["LineGroupBindRule.Parse(text)", "IssueCodeAsync(", "UnbindGroupAsync(companyId, idHash, LineGroupBindRule.UnlinkBotRemoved"],
+         must=["LineGroupBindRule.Parse(text)", "HeyAsync(", "UnbindGroupAsync(companyId, idHash, LineGroupBindRule.UnlinkBotRemoved"],
          forbid=["_db.Add(", "SaveChangesAsync("],
          why=_R254G_WHY + "คำสั่งกลุ่มตัวตั้งเดียว · ข้อความอื่นในกลุ่มไม่ประมวล/ไม่เก็บ"),
     dict(file="Controllers/CustomerLineWebhookController.cs", method="Receive",
@@ -15330,10 +15330,10 @@ RULES += [
          why=_R256C_WHY + "ตรวจบริษัทผู้ให้บริการซ้ำใต้ล็อกก่อนจองรหัส (CAS เดิม) · ปลายทาง/ประกาศผูกกับ OA ที่ออกรหัส"),
     dict(file=_R254_GROUP, method="HandleCentralGroupEventAsync",
          must=["LineGroupBindRule.CentralGroupEventActionable(type, text)", "UnbindCentralGroupAsync(idHashBye", "PlatformCompanyLookup.IdAsync(_db, ct)",
-               "LineGroupBindRule.CentralScopeAllowed(companyId, platformId)", "LineGroupBindRule.CentralOaGroupReply(", "IssueCodeAsync(companyId, scope",
+               "LineGroupBindRule.CentralScopeAllowed(companyId, platformId)", "LineGroupBindRule.CentralOaGroupReply(", "HeyAsync(companyId, scope",
                "RefreshMemberCountAsync(companyId, scope", "LineGroupBindRule.Parse(text)"],
          before=[("CentralGroupEventActionable(", "UnbindCentralGroupAsync("), ("UnbindCentralGroupAsync(", "PlatformCompanyLookup.IdAsync("),
-                 ("LineGroupBindRule.CentralScopeAllowed(", "IssueCodeAsync(")],
+                 ("LineGroupBindRule.CentralScopeAllowed(", "HeyAsync(")],
          forbid=["_db.Add(", "SaveChangesAsync(", "_line.TryGetCompanyGroupSummaryAsync("],
          why=_R256C_WHY + "webhook กลาง: กลุ่มขอเลิก (#ByeNextAcc/leave) ปลดทุกบริษัทก่อนด่าน (PDPA ม.22 · ฝ่ายค้าน M1) · ออกรหัสเฉพาะบริษัทผู้ให้บริการ · ข้อความอื่นไม่แตะฐาน"),
     dict(file=_R254_GROUP, method="UnbindCentralGroupAsync",
@@ -22343,6 +22343,85 @@ REVIEWER_CASES += [
     ("R278-4", "MergeSameSignerSlotsAsync", "SignatureSlotIdentity.ImageProfile && !string.IsNullOrWhiteSpace(profileRaw)", "false", True),
     ("R278-2", "ResolvePreparerUserIdAsync", "cu.AllowExternalPreparerBinding", "true", True),
     ("R278-3", "ComputeSignerSnapshot", "a.ApprovedAt != null && a.RevokedAt == null", "a.RevokedAt == null", True),
+]
+
+# ═══ รอบ 279 (สถานะกลุ่ม LINE — คำตัดสิน 279-1…279-3) ═══
+_R279_WHY = "รอบ 279 (กลุ่มผูกแล้วพิมพ์ #HeyNextAcc ได้รหัสใหม่ — คำตัดสิน 279-1…279-3 · commit aed2ad1f): "
+_R279_GROUPS = "Services/Implementations/ContactLineGroupService.cs"
+RULES += [
+    dict(file=_R279_GROUPS, method="HandleCompanyGroupEventAsync", must=["await HeyAsync(companyId, NotifyEndpointKind.ScopeCompany,"],
+         forbid=["await IssueCodeAsync("],
+         why=_R279_WHY + "OA บริษัท: #HeyNextAcc เดินตัวตัดสินเดียว (ผูกแล้ว ⇒ การ์ดสถานะ) — ห้ามออกรหัสตรง"),
+    dict(file=_R279_GROUPS, method="HandleCentralGroupEventAsync", must=["await HeyAsync(companyId, scope,"],
+         forbid=["await IssueCodeAsync("],
+         why=_R279_WHY + "OA กลาง (เคสที่เจ้าของรายงาน): เดินด่านเดียวกับ OA บริษัท"),
+    dict(file=_R279_GROUPS, method="HeyAsync",
+         must=["await BoundEndpointsAsync(companyId, scope, idHash, ct)", "LineGroupBindRule.ShouldIssueCode(command, bound.Count)", "await StatusCardAsync("],
+         before=[("LineGroupBindRule.ShouldIssueCode(", "await IssueCodeAsync(")],
+         why=_R279_WHY + "นับการผูกของบริษัท/OA นี้ก่อน · ตัดสินด้วย helper ตัวเดียวก่อนออกรหัส"),
+    dict(file=_R279_GROUPS, method="BoundEndpointsAsync", must=["e.CompanyId == companyId", "c.CompanyId == companyId", "e.UnlinkedAt == null"],
+         why=_R279_WHY + "tenant isolation: การผูกของบริษัทอื่นบนกลุ่มเดียวกันไม่ถูกนับ/ไม่ถูกแสดง"),
+    dict(file=_R279_GROUPS, method="StatusCardAsync",
+         must=["await ConsentStateAsync(companyId, e.ContactId, ct)", "ProviderConsent.GrantLinkOrMenu(", "LineGroupBindRule.Replies.Status("],
+         why=_R279_WHY + "สถานะความยินยอม/ทางยืนยันมาจากตัวจำแนก+ตัวประกอบลิงก์เดียว"),
+    dict(file=_R279_GROUPS, method="ConsentStateAsync",
+         must=["LineGroupBindRule.CentralScopeAllowed(providerId,", "c.CompanyId == providerId", "_providerConsent.CheckAsync(clientId, providerId, null, null, ct)",
+               "ProviderConsent.Classify("],
+         why=_R279_WHY + "เฉพาะบริษัทผู้ให้บริการ + ผู้ติดต่อของบริษัทนั้น · ตัวตรวจความยินยอมตัวเดียวกับท่อบันทึก"),
+    dict(file="Controllers/ContactNotifyEndpointsController.cs", method="WithConsentAsync",
+         must=["_groups.ProviderConsentViewAsync(companyId, contactId, ct)", "PermissionKeys.TaxFile"],
+         why=_R279_WHY + "ปุ่มส่งคำขอตามสิทธิ์จริงของ endpoint ที่ปุ่มเรียก (ไม่ใช่กดแล้ว 403)"),
+    dict(file="Controllers/TaxSlipDeskController.cs", method="RequestConsent", must=["ProviderConsent.GrantLinkOrMenu("],
+         why=_R279_WHY + "การ์ดในกลุ่มชี้หน้ายืนยันจริง (เดิม \"เมนู ค่าบริการ\" ที่ไม่มีในระบบ)"),
+]
+REVIEWER_CASES += [
+    ("R279-1", "HeyAsync", "LineGroupBindRule.ShouldIssueCode(command, bound.Count)", "true", True),
+    ("R279-2", "BoundEndpointsAsync", "e.CompanyId == companyId", "true", True),
+]
+
+
+# ── รอบ 280: ช่องทางแจ้งคำขอเชื่อมคู่ค้า (กลุ่ม LINE/อีเมลของผู้ติดต่อ · คำตัดสิน 280-1…280-9) ──
+# ตัวตัดสินเดียว Helpers/PartnerLinkRequestChannels · ส่งผ่านตัวหาผู้รับ/ผู้ส่งเดิมเท่านั้น · ช่องในระบบไม่มีผลที่บอกสมาชิกภาพ
+_R280_WHY = "รอบ 280 (ช่องทางแจ้งคำขอเชื่อมคู่ค้า — commit 4274be39): "
+_R280_SVC = "Services/Implementations/PartnerLinkRequestNotifier.cs"
+_R280_CTL = "Controllers/CrossTenantWorkflowController.cs"
+RULES += [
+    dict(file=_R280_SVC, method="SendAsync",
+         must=["r.Id == requestId && r.CompanyId == companyId", "_db.Database.ExecuteSqlRawAsync(", "AdvisoryLockKey.PartnerLinkNotify",
+               "PartnerLinkRequestChannels.RequestProblem(", "PartnerLinkRequestChannels.ThrottleProblem(Attempts(ch), now)",
+               "PartnerLinkRequestChannels.ContactProblem(", "await AvailabilityAsync(", "_db.AddChainedAuditLog("],
+         before=[("PartnerLinkRequestChannels.ThrottleProblem(Attempts(ch), now)", "await PushGroupsAsync("),
+                 ("await AvailabilityAsync(", "await PushGroupsAsync("),
+                 ("if (ownTx != null) await ownTx.CommitAsync(ct);", "await PushGroupsAsync(")],
+         why=_R280_WHY + "tenant · กันสองคลิกพร้อมกัน · คำขอที่เชื่อม/หมดอายุไม่แจ้ง · กันส่งถี่ก่อนยิง · ผู้ติดต่อของเราและเลขตรง · audit"),
+    dict(file=_R280_SVC, method="AvailabilityAsync", must=["_recipients.ResolveAsync(companyId, contactId, NotifyTopic.PartnerLink, ct)", "PartnerLinkRequestChannels.NoBaseUrlReason"],
+         why=_R280_WHY + "ความพร้อมของช่องจากตัวหาผู้รับเดียว (ยกเลิก/บล็อก/ถอนยินยอม/OA/กลุ่มกลาง/เรื่องที่รับ) · ข้อความต้องมีลิงก์"),
+    dict(file=_R280_SVC, method="PushGroupsAsync",
+         must=["e.CompanyId == companyId && e.ContactId == contactId", "_line.TryPushContactTextAsync(companyId, ep.OaScope, LineTargetKind.ContactGroup",
+               "LinePushOutcome.Classify("],
+         why=_R280_WHY + "ส่งเข้ากลุ่มของผู้ติดต่อรายนั้นผ่าน OA ที่กลุ่มผูก (ด่านกลุ่มกลางเดิม) · สำเร็จ = LINE ตอบรับเท่านั้น"),
+    dict(file=_R280_SVC, method="SendEmailAsync",
+         must=["ContactRecipientRule.ForEmail(", "NotifyTopic.PartnerLink", "DocumentEmailService.ResolveOnBehalfSenderAsync(", "PlatformEmailQuota.ForCompanyAsync(",
+               "ReservePlatformEmailAsync(", "Purpose = EmailPurpose"],
+         why=_R280_WHY + "อีเมลผ่านผู้ส่งเดียว + เพดาน/โควตาอีเมลของ NextAcc · นับในบันทึกอีเมล"),
+    dict(file=_R280_CTL, method="Invite",
+         must=["await _service.InvitePartnerAsync(", "_notifier.SendAsync(companyId, requestId, req.ContactId, req.Channels, userId, PartnerLinkRequestNotifier.InAppAction.Record)",
+               "PartnerCompanyMatch.InviteAckMessage"],
+         before=[("await _service.InvitePartnerAsync(", "_notifier.SendAsync(")],
+         why=_R280_WHY + "ส่งคำขอแล้วแจ้งช่องที่เลือก · ข้อความตอบรับเดิม (ไม่บอกสมาชิกภาพ)"),
+    dict(file=_R280_CTL, method="Renotify",
+         must=["_limiter.TryConsumeAsync(", "RenotifyPerCompanyPerDay, RenotifyPerCompanyPerDay, failClosed: true", "PartnerLinkRequestNotifier.InAppAction.Requeue"],
+         why=_R280_WHY + "ส่งแจ้งอีกครั้ง: เพดานต่อบริษัทต่อวัน + กันถี่ต่อคำขอต่อช่องในบริการ"),
+    dict(file=_R280_CTL, method="List", must=["await _service.MaterializeIncomingLinkRequestsAsync(companyId, DateTime.UtcNow);"],
+         why=_R280_WHY + "คู่ค้าที่สมัครทีหลังเห็นคำขอเมื่อเปิดหน้า (ลิงก์ในข้อความพามา)"),
+    dict(file="Services/Implementations/CrossTenantWorkflowService.LinkRequests.cs", method="MaterializeIncomingLinkRequestsAsync",
+         must=["PartnerCompanyMatch.InviteTargets(", "_db.Database.ExecuteSqlRawAsync(", "AdvisoryLockKey.TradingPartnerInvite",
+               "!await _db.TradingPartnerships.AnyAsync(p => p.CompanyAId == a && p.CompanyBId == b, ct)", "r.ExpiresAt > nowUtc", "r.AcceptedAt == null"],
+         why=_R280_WHY + "ตัวจับคู่เดียวกับตอนส่ง · คู่ที่มีแถวแล้ว (ปฏิเสธ/บล็อก) ไม่ถูกแตะ · เฉพาะคำขอที่ยังรอ"),
+]
+REVIEWER_CASES += [
+    ("R280-1", "PushGroupsAsync", "LinePushOutcome.Classify(", "Fake(", True),
+    ("R280-2", "MaterializeIncomingLinkRequestsAsync", "!await _db.TradingPartnerships.AnyAsync(p => p.CompanyAId == a && p.CompanyBId == b, ct)", "true", True),
 ]
 
 

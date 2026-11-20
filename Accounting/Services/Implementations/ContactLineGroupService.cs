@@ -84,7 +84,8 @@ public class ContactLineGroupService : IContactLineGroupService
                 switch (LineGroupBindRule.Parse(text))
                 {
                     case LineGroupCommand.HeyNextAcc:
-                        return new LineGroupEventOutcome(await IssueCodeAsync(companyId, NotifyEndpointKind.ScopeCompany, dest, groupId, idHash, ct), false);
+                    case LineGroupCommand.HeyNextAccAdd:
+                        return new LineGroupEventOutcome(await HeyAsync(companyId, NotifyEndpointKind.ScopeCompany, dest, groupId, idHash, LineGroupBindRule.Parse(text), ct), false);
                     case LineGroupCommand.ByeNextAcc:
                         var n = await UnbindGroupAsync(companyId, idHash, LineGroupBindRule.UnlinkGroupBye, null, ct);
                         return n > 0 ? new LineGroupEventOutcome(LineGroupBindRule.Replies.Bye, true)
@@ -149,7 +150,8 @@ public class ContactLineGroupService : IContactLineGroupService
                 switch (command)
                 {
                     case LineGroupCommand.HeyNextAcc:
-                        return new LineGroupEventOutcome(await IssueCodeAsync(companyId, scope, dest, groupId, idHash, ct), false);
+                    case LineGroupCommand.HeyNextAccAdd:
+                        return new LineGroupEventOutcome(await HeyAsync(companyId, scope, dest, groupId, idHash, command, ct), false);
                     case LineGroupCommand.ByeNextAcc:
                         return new LineGroupEventOutcome(LineGroupBindRule.Replies.ByeNothing, false);   // ปลดแล้วข้างบน (ไม่เหลือแถว)
                 }
@@ -172,7 +174,7 @@ public class ContactLineGroupService : IContactLineGroupService
             if (req == null) return;   // อนุญาตไว้แล้ว
             var name = await _db.Companies.AsNoTracking().Where(c => c.Id == clientId).Select(c => c.Name).FirstOrDefaultAsync(ct);
             var baseUrl = await SystemBaseUrl.ResolveAsync(_db, null, ct);
-            var link = string.IsNullOrWhiteSpace(baseUrl) ? "อนุญาตได้ที่เมนู ค่าบริการ › สำนักงานบัญชี NextAcc ทำแทน" : baseUrl.TrimEnd('/') + ProviderConsent.PageUrl(clientId);
+            var link = ProviderConsent.GrantLinkOrMenu(baseUrl, clientId);   // รอบ 279 (279-3): เมนูจริง (เดิม "ค่าบริการ ›" ไม่มีในระบบ)
             var text = TaxSlipReplyCard.Text(TaxSlipReplyCard.Kind.BoundAskConsent, new TaxSlipReplyCard.Facts(CompanyName: name, Link: link), false);
             var r = await _line.TryPushContactTextAsync(providerId, NotifyEndpointKind.ScopeNextAcc, LineTargetKind.ContactGroup, groupId, TaxSlipReplyCard.Clean(text), Guid.NewGuid());
             if (!r.Ok) _logger.LogError("การ์ดขออนุญาตบันทึกสลิปภาษีหลังผูกกลุ่ม (บริษัท {Client}) ส่งไม่สำเร็จ: {Error}", clientId, r.Error);
@@ -207,6 +209,92 @@ public class ContactLineGroupService : IContactLineGroupService
     /// <summary>ชื่อ/จำนวนสมาชิกตาม OA ที่ผูก (scope) — ตัวเลือก OA เดียวของบริการนี้</summary>
     private Task<LineGroupSummary?> SummaryAsync(Guid companyId, string scope, string groupId)
         => scope == NotifyEndpointKind.ScopeNextAcc ? _line.TryGetNextAccGroupSummaryAsync(groupId) : _line.TryGetCompanyGroupSummaryAsync(companyId, groupId);
+
+    /// <summary>รอบ 279 (คำตัดสิน 279-1): ปลายทางกลุ่มที่ยังผูกอยู่ของกลุ่มนี้ <b>ในบริษัทนี้ผ่าน OA นี้</b> (ผู้ติดต่อที่ยังไม่ถูกลบ) — ตัวนับของ
+    /// <see cref="LineGroupBindRule.ShouldIssueCode"/> + แถวของการ์ดสถานะ · <c>CompanyId == companyId</c> (บริษัทอื่นที่ผูกกลุ่มเดียวกันไม่ถูกนับ/ไม่ถูกแสดง)</summary>
+    private async Task<List<ContactNotifyEndpoint>> BoundEndpointsAsync(Guid companyId, string scope, string idHash, CancellationToken ct)
+    {
+        // แถวก่อนรอบ 256 มี OaScope = "" ⇒ "ไม่ใช่ nextacc" = OA ของบริษัท (รูปเดียวกับ ContactLineQueueService)
+        var central = scope == NotifyEndpointKind.ScopeNextAcc;
+        var live = _db.Contacts.Where(c => c.CompanyId == companyId && !c.IsDeleted).Select(c => c.Id);
+        return await _db.ContactNotifyEndpoints.AsNoTracking()
+            .Where(e => e.CompanyId == companyId && e.Kind == NotifyEndpointKind.LineGroup && e.LineIdHash == idHash && e.UnlinkedAt == null
+                && (central ? e.OaScope == NotifyEndpointKind.ScopeNextAcc : e.OaScope != NotifyEndpointKind.ScopeNextAcc) && live.Contains(e.ContactId))
+            .OrderBy(e => e.LinkedAt).ToListAsync(ct);
+    }
+
+    /// <summary>รอบ 279 (คำตัดสิน 279-1): <c>#HeyNextAcc</c> ⇒ กลุ่มที่ผูกแล้วได้<b>การ์ดสถานะ</b> (ไม่ออกรหัสใหม่) · ยังไม่ผูก ⇒ รหัสเหมือนเดิม ·
+    /// <c>#HeyNextAcc เพิ่ม</c> ⇒ รหัสเสมอ (ผูกผู้ติดต่ออีกราย) — ตัวตัดสินเดียว <see cref="LineGroupBindRule.ShouldIssueCode"/></summary>
+    private async Task<string> HeyAsync(Guid companyId, string scope, string? dest, string groupId, string idHash, LineGroupCommand command, CancellationToken ct)
+    {
+        var bound = await BoundEndpointsAsync(companyId, scope, idHash, ct);
+        if (LineGroupBindRule.ShouldIssueCode(command, bound.Count)) return await IssueCodeAsync(companyId, scope, dest, groupId, idHash, ct);
+        if (!await _limiter.TryConsumeAsync("linegroup-status:" + idHash, 5, 50, ct, failClosed: true)) return LineGroupBindRule.Replies.Throttled;
+        return await StatusCardAsync(companyId, scope, bound, ct);
+    }
+
+    /// <summary>รอบ 279: การ์ดสถานะกลุ่ม — ผูกกับใคร · เรื่องที่ส่ง · ความยินยอมบันทึกสลิปภาษี (เฉพาะกลุ่มผ่าน OA กลาง + ผู้ติดต่อที่เป็นบริษัทลูกค้า) · ทางไปต่อ ·
+    /// ไม่มีเลขภาษี/ยอดเงิน (ข้อความในกลุ่ม)</summary>
+    private async Task<string> StatusCardAsync(Guid companyId, string scope, List<ContactNotifyEndpoint> bound, CancellationToken ct)
+    {
+        var companyName = await _db.Companies.AsNoTracking().Where(c => c.Id == companyId).Select(c => c.Name).FirstOrDefaultAsync(ct);
+        var contactIds = bound.Select(e => e.ContactId).Distinct().ToList();
+        var names = await _db.Contacts.AsNoTracking().Where(c => c.CompanyId == companyId && contactIds.Contains(c.Id))
+            .Select(c => new { c.Id, c.Name }).ToListAsync(ct);
+        string? baseUrl = null;
+        var baseLoaded = false;
+        var lines = new List<LineGroupBindRule.GroupStatusLine>();
+        var anyNeedsRequest = false;
+        foreach (var e in bound)
+        {
+            var topics = (NotifyTopics.Parse(e.TopicsJson) ?? Array.Empty<NotifyTopic>()).Select(NotifyTopics.Label).ToList();
+            string? consentLabel = null, howTo = null;
+            if (scope == NotifyEndpointKind.ScopeNextAcc && await ConsentStateAsync(companyId, e.ContactId, ct) is { } cs)
+            {
+                consentLabel = ProviderConsent.StateLabel(cs.State);
+                if (ProviderConsent.NeedsClientAction(cs.State))
+                {
+                    if (!baseLoaded) { baseUrl = await SystemBaseUrl.ResolveAsync(_db, null, ct); baseLoaded = true; }
+                    howTo = ProviderConsent.GrantLinkOrMenu(baseUrl, cs.ClientId);
+                    anyNeedsRequest = true;
+                }
+            }
+            lines.Add(new LineGroupBindRule.GroupStatusLine(names.FirstOrDefault(n => n.Id == e.ContactId)?.Name, topics, consentLabel, howTo));
+        }
+        return LineGroupBindRule.Replies.Status(companyName, bound.FirstOrDefault()?.GroupNameSnapshot, lines,
+            anyNeedsRequest ? ProviderConsent.StaffRequestMenuPath : null);
+    }
+
+    /// <summary>รอบ 279 (คำตัดสิน 279-2): สถานะความยินยอม "NextAcc บันทึกการชำระภาษีจากสลิปแทน" ของผู้ติดต่อหนึ่งราย — ใช้เฉพาะ
+    /// บริษัทผู้ให้บริการ (<paramref name="providerId"/> = PlatformCompanyId) + ผู้ติดต่อที่เป็นบริษัทลูกค้าในระบบ (<c>NextAccTenant</c>) · อื่น ๆ ⇒ null (ไม่ใช้) ·
+    /// ตัวจำแนกเดียว <see cref="ProviderConsent.Classify"/> · การ์ดสถานะกลุ่มและหน้าผู้ติดต่อใช้ตัวนี้ตัวเดียว</summary>
+    private async Task<(ProviderConsent.GroupConsentState State, Guid ClientId)?> ConsentStateAsync(Guid providerId, Guid contactId, CancellationToken ct)
+    {
+        if (_providerConsent == null) return null;
+        if (!LineGroupBindRule.CentralScopeAllowed(providerId, await PlatformCompanyLookup.IdAsync(_db, ct))) return null;
+        var ext = await _db.Contacts.AsNoTracking()
+            .Where(c => c.Id == contactId && c.CompanyId == providerId && !c.IsDeleted && c.ExternalSystem == PlatformInvoiceRules.TenantContactSystem)
+            .Select(c => c.ExternalId).FirstOrDefaultAsync(ct);
+        if (!Guid.TryParse(ext, out var clientId) || clientId == providerId) return null;
+        var verdict = await _providerConsent.CheckAsync(clientId, providerId, null, null, ct);
+        var now = DateTime.UtcNow;
+        var open = await _db.ProviderConsentRequests.AsNoTracking()
+            .AnyAsync(r => r.CompanyId == clientId && r.ProviderCompanyId == providerId && r.Status == "Open" && r.ExpiresAt > now, ct);
+        return (ProviderConsent.Classify(verdict, open), clientId);
+    }
+
+    public async Task<ContactProviderConsentView?> ProviderConsentViewAsync(Guid companyId, Guid contactId, CancellationToken ct = default)
+    {
+        if (await ConsentStateAsync(companyId, contactId, ct) is not { } cs) return null;
+        var hasCentralGroup = await _db.ContactNotifyEndpoints.AsNoTracking()
+            .AnyAsync(e => e.CompanyId == companyId && e.ContactId == contactId && e.Kind == NotifyEndpointKind.LineGroup && e.UnlinkedAt == null
+                && e.OaScope == NotifyEndpointKind.ScopeNextAcc, ct);
+        var needs = ProviderConsent.NeedsClientAction(cs.State);
+        return new ContactProviderConsentView(cs.State.ToString(), ProviderConsent.StateLabel(cs.State),
+            needs ? "เจ้าของบริษัทลูกค้ายืนยันบนเว็บ: " + ProviderConsent.ClientMenuPath : null,
+            ProviderConsent.StaffRequestMenuPath, ProviderConsent.StaffDeskPage, needs,
+            $"/api/companies/{companyId:D}/tax-slip-desk/clients/{contactId:D}/request-consent", hasCentralGroup);
+    }
 
     /// <summary>#HeyNextAcc ⇒ รหัสผูก (ตอบด้วย reply · ฟรี) · กลุ่มกลางของแอดมิน/เกิน 200 คน/อ่านจำนวนไม่ได้ ⇒ ปฏิเสธพร้อมเหตุ ·
     /// รอบ 256-2: <paramref name="scope"/> = OA ที่ออกรหัส (company = OA ของบริษัทเจ้าของ webhook · nextacc = OA กลาง โดย <paramref name="companyId"/> = บริษัทผู้ให้บริการ)</summary>

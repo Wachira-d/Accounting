@@ -20,6 +20,9 @@ public enum NotifyTopic
     Sign = 5,
     /// <summary>แจ้งเตือนอื่นถึงผู้ติดต่อ</summary>
     Other = 6,
+    /// <summary>รอบ 280 (คำตัดสิน 280-2): คำขอเชื่อมคู่ค้า NextAcc ที่เราส่งถึงผู้ติดต่อรายนี้ (<c>Helpers/PartnerLinkRequestChannels</c>) —
+    /// ปลายทางใหม่ได้เป็นค่าตั้งต้น · ปลายทางเดิมไม่ถูกเปิดให้เอง (ผู้ดูแลติ๊กที่หน้าผู้ติดต่อ)</summary>
+    PartnerLink = 7,
 }
 
 /// <summary>รอบ 245 L1 — ตัวตั้งตัวเดียวของชนิดปลายทาง · ขอบเขต OA · ที่มา · เหตุยกเลิก ของ <c>ContactNotifyEndpoint</c> (F2 ข้อ 4)</summary>
@@ -125,6 +128,7 @@ public static class NotifyTopics
         NotifyTopic.Wht => "50 ทวิ",
         NotifyTopic.Sign => "ลิงก์เซ็น",
         NotifyTopic.Other => "อื่น ๆ",
+        NotifyTopic.PartnerLink => "คำขอเชื่อมคู่ค้า",
         _ => t.ToString(),
     };
 
@@ -133,8 +137,9 @@ public static class NotifyTopics
     {
         // รอบ 267 P3 (267-1-61): ลิงก์เซ็นส่งถึง LINE 1:1 ได้แล้ว (กลุ่มไม่ได้ — LineUnsupportedReason) แต่ไม่อยู่ในค่าตั้งต้น — ผู้ใช้ติ๊กเอง ·
         // 50 ทวิ ส่งทาง LINE ได้ แต่ผู้ใช้เลือกเอง
-        NotifyEndpointKind.LineUser => new[] { NotifyTopic.Document, NotifyTopic.Dunning, NotifyTopic.Receipt },
-        NotifyEndpointKind.LineGroup => new[] { NotifyTopic.Document, NotifyTopic.Dunning },
+        // รอบ 280 (คำตัดสิน 280-2): คำขอเชื่อมคู่ค้าเป็นค่าตั้งต้นของปลายทางใหม่ (ส่งเฉพาะเมื่อผู้ใช้กดเลือกช่องนี้ตอนส่งคำขอ — ไม่มีงานอัตโนมัติ)
+        NotifyEndpointKind.LineUser => new[] { NotifyTopic.Document, NotifyTopic.Dunning, NotifyTopic.Receipt, NotifyTopic.PartnerLink },
+        NotifyEndpointKind.LineGroup => new[] { NotifyTopic.Document, NotifyTopic.Dunning, NotifyTopic.PartnerLink },
         _ => All,
     };
 

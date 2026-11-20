@@ -180,8 +180,10 @@ public class TaxSlipDeskController : ControllerBase
         if (client == null) return NotFound(new ApiResponse<object>(false, null, "ผู้ติดต่อนี้ไม่ใช่บริษัทลูกค้า"));
         var (req, isNew) = await _consent.EnsureRequestAsync(client.ClientCompanyId, companyId, ProviderConsentService.ViaStaff, JwtHelper.GetUserIdFromClaims(User), ct);
         if (req == null) return Ok(new ApiResponse<object>(true, null, "บริษัทนี้อนุญาตไว้แล้ว — ไม่ต้องขอ"));
+        // รอบ 279 (279-3): ลิงก์จริงของหน้ายืนยัน (เดิมชี้เมนู "ค่าบริการ" ที่ไม่มี) — ตัวประกอบเดียว ProviderConsent.GrantLinkOrMenu
+        var link = ProviderConsent.GrantLinkOrMenu(await SystemBaseUrl.ResolveAsync(_db, null, ct), client.ClientCompanyId);
         var sent = await channel.PostToClientAsync(companyId, client.ClientCompanyId,
-            _ => TaxSlipReplyCard.Text(TaxSlipReplyCard.Kind.BoundAskConsent, new(CompanyName: client.Name, Link: "อนุญาตได้ที่เมนู ค่าบริการ › สำนักงานบัญชี NextAcc ทำแทน"), false), ct);
+            _ => TaxSlipReplyCard.Text(TaxSlipReplyCard.Kind.BoundAskConsent, new(CompanyName: client.Name, Link: link), false), ct);
         return Ok(new ApiResponse<object>(true, new { isNew, sent }, (isNew ? "ส่งคำขอแล้ว" : "มีคำขอเปิดอยู่แล้ว — ส่งข้อความเตือนในกลุ่ม") + " · " + sent));
     }
 

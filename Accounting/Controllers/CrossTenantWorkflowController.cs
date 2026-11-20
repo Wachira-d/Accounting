@@ -29,13 +29,17 @@ public class CrossTenantWorkflowController : ControllerBase
     private readonly AccountingDbContext _db;
     private readonly IPermissionService _perms;
     private readonly IChatRateLimiter _limiter;
+    /// <summary>รอบ 280: แจ้งคำขอเชื่อมทางกลุ่ม LINE/อีเมลของผู้ติดต่อ · null (เทสต์เดิมที่สร้างตรง) = ไม่มีช่องให้เลือก (คำตอบเดิม)</summary>
+    private readonly PartnerLinkRequestNotifier? _notifier;
 
-    public CrossTenantWorkflowController(CrossTenantWorkflowService service, AccountingDbContext db, IPermissionService perms, IChatRateLimiter limiter)
+    public CrossTenantWorkflowController(CrossTenantWorkflowService service, AccountingDbContext db, IPermissionService perms, IChatRateLimiter limiter,
+        PartnerLinkRequestNotifier? notifier = null)
     {
         _service = service;
         _db = db;
         _perms = perms;
         _limiter = limiter;
+        _notifier = notifier;
     }
 
     /// <summary>403 พร้อมข้อความบอกทางไปต่อ (ตัวสร้างข้อความตัวเดียว <see cref="PermissionKeys.DeniedMessage"/>)</summary>
@@ -49,6 +53,8 @@ public class CrossTenantWorkflowController : ControllerBase
     [HttpGet("trading-partners")]
     public async Task<ActionResult<ApiResponse<object>>> List(Guid companyId)
     {
+        // รอบ 280 (คำตัดสิน 280-5): คำขอที่ส่งถึงเลขภาษีของเรา<b>ก่อน</b>เราใช้ NextAcc/ตั้งเลขนี้ ⇒ เปิดแถว "รอเรายอมรับ" ให้ตอนเปิดหน้า (ลิงก์ในข้อความ LINE/อีเมลพามาที่นี่)
+        await _service.MaterializeIncomingLinkRequestsAsync(companyId, DateTime.UtcNow);
         var raw = await _db.TradingPartnerships.AsNoTracking()
             .Include(p => p.CompanyA)
             .Include(p => p.CompanyB)
@@ -128,7 +134,40 @@ public class CrossTenantWorkflowController : ControllerBase
         => Ok(new ApiResponse<object>(true, await _service.ListOutgoingLinkRequestsAsync(companyId, DateTime.UtcNow)));
 
     /// <param name="PartnerBranchCode">รหัสสาขา 5 หลักของคู่ค้า (ว่าง = ไม่ระบุ · 00000 = สำนักงานใหญ่) — จับคู่ด้วยเลขภาษี + สาขา (P-2)</param>
-    public record InviteRequest(string PartnerTaxId, string? Message, string? PartnerBranchCode = null);
+    /// <param name="ContactId">รอบ 280: ผู้ติดต่อของเรา (คู่ค้ารายนี้) ที่ใช้แจ้งทางกลุ่ม LINE/อีเมล</param>
+    /// <param name="Channels">รอบ 280: ช่องที่เลือก (<c>LineGroup</c> · <c>Email</c>) — ช่องในระบบของคู่ค้าทำเสมอ ไม่ต้องเลือก</param>
+    public record InviteRequest(string PartnerTaxId, string? Message, string? PartnerBranchCode = null, Guid? ContactId = null, List<string>? Channels = null);
+
+    /// <summary>รอบ 280: "ส่งแจ้งอีกครั้ง" บนแถวคำขอที่รอ</summary>
+    public record NotifyRequest(Guid? ContactId, List<string>? Channels);
+
+    /// <summary>รอบ 280: เพดานการกด "ส่งแจ้งอีกครั้ง" ต่อบริษัทต่อวัน (นับในฐาน · ต่อคำขอต่อช่องคุมอีกชั้นใน <see cref="PartnerLinkRequestChannels.ThrottleProblem"/>)</summary>
+    public const int RenotifyPerCompanyPerDay = 30;
+
+    /// <summary>รอบ 280 — ผู้ติดต่อของเราที่ตรงเลขภาษี + ความพร้อมของกลุ่ม LINE/อีเมล (เซิร์ฟเวอร์ตัดสิน · หน้าแสดงช่องปิดพร้อมเหตุ + ลิงก์เพิ่มช่องทาง) ·
+    /// อ่านเฉพาะข้อมูลของบริษัทนี้ ⇒ ไม่บอกว่าเลขนี้ใช้ NextAcc</summary>
+    [HttpGet("trading-partners/requests/channel-options")]
+    [Accounting.Filters.RequirePermission(PermissionKeys.CompanySettingsEdit)]
+    public async Task<ActionResult<ApiResponse<object>>> ChannelOptions(Guid companyId, [FromQuery] string? taxId, [FromQuery] Guid? contactId)
+    {
+        if (_notifier == null) return StatusCode(503, new ApiResponse<object>(false, null, "ช่องทางแจ้งยังไม่พร้อม"));
+        return Ok(new ApiResponse<object>(true, await _notifier.ChannelOptionsAsync(companyId, taxId, contactId)));
+    }
+
+    /// <summary>รอบ 280 — ส่งแจ้งคำขอที่รออีกครั้ง (ช่องในระบบ + ช่องที่เลือก) · ผลต่อช่องตามจริง (ช่องในระบบ = "เข้าคิว" เสมอ) · กันถี่ต่อคำขอต่อช่อง + ต่อบริษัทต่อวัน</summary>
+    [HttpPost("trading-partners/requests/{requestId:guid}/notify")]
+    [Accounting.Filters.RequirePermission(PermissionKeys.CompanySettingsEdit)]
+    [Accounting.Filters.RejectApiKey("ส่งแจ้งคำขอเชื่อมคู่ค้า")]
+    public async Task<ActionResult<ApiResponse<object>>> Renotify(Guid companyId, Guid requestId, [FromBody] NotifyRequest req)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        if (userId == Guid.Empty) return Unauthorized();
+        if (_notifier == null) return StatusCode(503, new ApiResponse<object>(false, null, "ช่องทางแจ้งยังไม่พร้อม"));
+        if (!await _limiter.TryConsumeAsync($"xt-link-notify:{companyId:N}", RenotifyPerCompanyPerDay, RenotifyPerCompanyPerDay, failClosed: true))
+            return StatusCode(429, new ApiResponse<object>(false, null, $"ส่งแจ้งคำขอครบ {RenotifyPerCompanyPerDay} ครั้งของวันนี้แล้ว — ลองใหม่พรุ่งนี้"));
+        var results = await _notifier.SendAsync(companyId, requestId, req?.ContactId, req?.Channels, userId, PartnerLinkRequestNotifier.InAppAction.Requeue);
+        return Ok(new ApiResponse<object>(true, new { notices = results }, "บันทึกการแจ้งแล้ว — ดูผลต่อช่องในแถวคำขอ"));
+    }
 
     /// <summary>
     /// เชิญคู่ค้า — รอบ 250 WP-02b (AUTOPILOT_BILLING_DESIGN §6.1 P-1/P-3 · คำตัดสินข้อ 3 PartnerDiscoverable ตั้งต้นปิด)
@@ -149,8 +188,14 @@ public class CrossTenantWorkflowController : ControllerBase
                 CrossTenantWorkflowService.InvitesPerCompanyPerDay, failClosed: true))
             return StatusCode(429, new ApiResponse<object>(false, null,
                 $"ส่งคำเชิญครบ {CrossTenantWorkflowService.InvitesPerCompanyPerDay} ครั้งของวันนี้แล้ว — ลองใหม่พรุ่งนี้"));
-        await _service.InvitePartnerAsync(companyId, req.PartnerTaxId, req.PartnerBranchCode, userId, req.Message);
-        return StatusCode(202, new ApiResponse<object>(true, null, PartnerCompanyMatch.InviteAckMessage));
+        var requestId = await _service.InvitePartnerAsync(companyId, req.PartnerTaxId, req.PartnerBranchCode, userId, req.Message);
+        // รอบ 280: ช่องในระบบบันทึกเป็น "เข้าคิว" เสมอ + ช่องที่เลือก (ของผู้ติดต่อของเรา — ผลไม่ขึ้นกับว่าเลขนี้ใช้ NextAcc) · ไม่เลือกช่อง ⇒ คำตอบเดิมทุกไบต์
+        var results = _notifier == null ? null
+            : await _notifier.SendAsync(companyId, requestId, req.ContactId, req.Channels, userId, PartnerLinkRequestNotifier.InAppAction.Record);
+        var chosen = PartnerLinkRequestChannels.NormalizeSelection(req.Channels);
+        return StatusCode(202, new ApiResponse<object>(true,
+            chosen.Count == 0 || results == null ? null : new { notices = results.Where(r => r.Channel != PartnerLinkRequestChannels.InApp).ToList() },
+            PartnerCompanyMatch.InviteAckMessage));
     }
 
     [HttpPost("trading-partners/{partnershipId:guid}/accept")]

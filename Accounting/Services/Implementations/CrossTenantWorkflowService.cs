@@ -54,7 +54,8 @@ public partial class CrossTenantWorkflowService
     /// เคยปฏิเสธไม่ถึง 7 วัน ⇒ ไม่เปิดคำเชิญซ้ำ (กันสแปม §6.3) — คำตอบยังเหมือนเดิม</para>
     /// เลขภาษีผิดรูป ⇒ <see cref="Accounting.Helpers.BusinessRuleException"/> (ตัดสินจากรูปแบบอย่างเดียว ไม่ดูฐาน ⇒ ไม่รั่ว)
     /// </summary>
-    public async Task InvitePartnerAsync(
+    /// <returns>รอบ 280: id ของ "คำขอที่เราส่ง" (เกิดทุกกรณี ⇒ ไม่บอกสมาชิกภาพ) — ใช้ต่อกับ <c>PartnerLinkRequestNotifier.SendAsync</c></returns>
+    public async Task<Guid> InvitePartnerAsync(
         Guid invitingCompanyId, string partnerTaxId, string? partnerBranchCode, Guid invitedByUserId, string? message)
     {
         // ฝ่ายค้าน H3: ข้อความเชิญยาวไม่จำกัด = ช่องฟิชชิง — ตัดที่ 500 ตัวอักษร (ข้อความถูกแสดงแบบ text เท่านั้น)
@@ -72,7 +73,7 @@ public partial class CrossTenantWorkflowService
         var sw = System.Diagnostics.Stopwatch.StartNew();
         try
         {
-            await InviteCoreAsync(invitingCompanyId, taxId, (partnerTaxId ?? "").Trim(), partnerBranchCode, invitedByUserId, message);
+            return await InviteCoreAsync(invitingCompanyId, taxId, (partnerTaxId ?? "").Trim(), partnerBranchCode, invitedByUserId, message);
         }
         finally
         {
@@ -81,7 +82,7 @@ public partial class CrossTenantWorkflowService
         }
     }
 
-    private async Task InviteCoreAsync(Guid invitingCompanyId, string taxId, string rawTax, string? partnerBranchCode, Guid invitedByUserId, string? message)
+    private async Task<Guid> InviteCoreAsync(Guid invitingCompanyId, string taxId, string rawTax, string? partnerBranchCode, Guid invitedByUserId, string? message)
     {
         var now = DateTime.UtcNow;
         // รอบ 264 (คำตัดสิน 264-1-2): "คำขอที่เราส่ง" — เกิดทุกครั้ง รูปเดียวกันทุกกรณี (ไม่มีผลการค้นในแถว) ⇒ ผู้ขอติดตามสถานะได้โดยไม่รู้ว่าเลขนี้ใช้ NextAcc
@@ -199,6 +200,7 @@ public partial class CrossTenantWorkflowService
             await _db.SaveChangesAsync();
             if (ownTx != null) await ownTx.CommitAsync();
             _logger.LogInformation("Trading partner invite from {Company}: outcome {Outcome}", invitingCompanyId, string.Join(",", outcomes));
+            return request.Id;
         }
         finally
         {

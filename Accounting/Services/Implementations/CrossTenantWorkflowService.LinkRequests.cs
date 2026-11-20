@@ -1,4 +1,5 @@
 using Accounting.Helpers;
+using Accounting.Models.Entities;
 using Accounting.Models.Enums;
 using Microsoft.EntityFrameworkCore;
 
@@ -91,6 +92,60 @@ public partial class CrossTenantWorkflowService
         return handled;
     }
 
+    /// <summary>
+    /// รอบ 280 (คำตัดสิน 280-5) — คำขอที่ส่งถึงเลขภาษีของ <paramref name="companyId"/> <b>ก่อน</b>บริษัทนี้มีในระบบ (หรือก่อนตั้งเลขนี้) ⇒ เปิดแถวคู่ "รอเรายอมรับ"
+    /// เหมือนตอนส่งคำขอ (ตัวจับคู่เดียว <see cref="Accounting.Helpers.PartnerCompanyMatch.InviteTargets"/> · ล็อกต่อคู่เดียวกับ <see cref="InvitePartnerAsync"/>) ·
+    /// คู่ที่มีแถวอยู่แล้ว (ทุกสถานะ — ปฏิเสธ/บล็อก/ระงับ) ไม่ถูกแตะ · ผู้ขอไม่ได้รับข้อมูลใดจนกว่าจะยอมรับ (264-1-2 คงเดิม) · ผู้เรียก: GET trading-partners (ลิงก์ในข้อความ LINE/อีเมลพามา)
+    /// </summary>
+    public async Task<int> MaterializeIncomingLinkRequestsAsync(Guid companyId, DateTime nowUtc, CancellationToken ct = default)
+    {
+        var me = await _db.Companies.AsNoTracking().Where(c => c.Id == companyId && !c.IsDeleted)
+            .Select(c => new { c.TaxId }).FirstOrDefaultAsync(ct);
+        var tax = Accounting.Helpers.PartnerCompanyMatch.NormalizeTaxId(me?.TaxId);
+        if (tax == null) return 0;
+        var open = await _db.PartnerLinkRequests.AsNoTracking()
+            .Where(r => r.PartnerTaxId == tax && r.AcceptedAt == null && r.ExpiresAt > nowUtc && r.CompanyId != companyId)
+            .OrderByDescending(r => r.CreatedAt).Take(50)
+            .ToListAsync(ct);
+        if (open.Count == 0) return 0;
+        var rawTax = (me!.TaxId ?? "").Trim();
+        var candidatesAll = await _db.Companies.AsNoTracking()
+            .Where(c => !c.IsDeleted && (c.TaxId == tax || c.TaxId == rawTax))
+            .Select(c => new Accounting.Helpers.PartnerCompanyCandidate(c.Id, c.BranchCode)).ToListAsync(ct);
+        var created = 0;
+        foreach (var r in open.GroupBy(x => x.CompanyId).Select(g => g.First()))   // คำขอล่าสุดต่อผู้ขอ
+        {
+            if (!Accounting.Helpers.PartnerCompanyMatch.InviteTargets(candidatesAll.Where(c => c.Id != r.CompanyId), r.PartnerBranchCode).Contains(companyId)) continue;
+            if (!await _db.Companies.AsNoTracking().AnyAsync(c => c.Id == r.CompanyId && !c.IsDeleted, ct)) continue;
+            var (a, b) = OrderPair(r.CompanyId, companyId);
+            var ownTx = _db.Database.CurrentTransaction == null ? await _db.Database.BeginTransactionAsync(ct) : null;
+            try
+            {
+                await _db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})",
+                    new object[] { Accounting.Helpers.AdvisoryLockKey.For(a, Accounting.Helpers.AdvisoryLockKey.TradingPartnerInvite, "invite:" + b.ToString("N")) }, ct);
+                if (!await _db.TradingPartnerships.AnyAsync(p => p.CompanyAId == a && p.CompanyBId == b, ct))
+                {
+                    _db.TradingPartnerships.Add(new TradingPartnership
+                    {
+                        CompanyAId = a, CompanyBId = b, Status = TradingPartnershipStatus.Pending,
+                        InvitedByCompanyId = r.CompanyId, InvitedByUserId = r.RequestedByUserId, InvitationMessage = r.Message,
+                        CreatedBy = r.RequestedByUserId.ToString(),
+                        // อายุคำขอนับจากวันที่ผู้ขอส่ง (ไม่ต่ออายุให้เอง) · แจ้งในระบบของเราผ่าน outbox เดิม
+                        InvitedAt = r.CreatedAt, InviteNoticeDueAt = nowUtc, LinkRequestId = r.Id,
+                    });
+                    await _db.SaveChangesAsync(ct);
+                    created++;
+                }
+                if (ownTx != null) await ownTx.CommitAsync(ct);
+            }
+            finally
+            {
+                if (ownTx != null) await ownTx.DisposeAsync();
+            }
+        }
+        return created;
+    }
+
     /// <summary>การ์ดยอมรับของปลายทาง (<c>partners.html?request=</c>) — เฉพาะบริษัทที่เป็นสมาชิกของคู่ <b>และไม่ใช่ผู้ขอ</b> · อื่น ๆ = null (ไม่พบ · ไม่บอกว่ามีแถว) ·
     /// ข้อมูลที่คืน = ของผู้ขอ (ผู้ขอเปิดเผยเองเมื่อส่ง) — ไม่มีข้อมูลของเราไหลไปผู้ขอจากการเปิดดู</summary>
     public async Task<object?> GetIncomingLinkRequestAsync(Guid companyId, Guid partnershipId, DateTime nowUtc)
@@ -139,17 +194,42 @@ public partial class CrossTenantWorkflowService
             .Where(r => r.CompanyId == companyId)
             .OrderByDescending(r => r.CreatedAt)
             .Take(50)
-            .Select(r => new { r.Id, r.PartnerTaxId, r.PartnerBranchCode, r.CreatedAt, r.ExpiresAt, r.AcceptedAt })
+            .Select(r => new { r.Id, r.PartnerTaxId, r.PartnerBranchCode, r.CreatedAt, r.ExpiresAt, r.AcceptedAt, r.ContactId })
             .ToListAsync();
+        // รอบ 280: แจ้งไปช่องไหนแล้ว + เวลา + ผล (ล่าสุดต่อช่อง · ช่องในระบบ = "เข้าคิว" เสมอ — ไม่มีผลที่บอกสมาชิกภาพ) · tenant = ผู้ขอ
+        var ids = rows.Select(r => r.Id).ToList();
+        var notices = await _db.PartnerLinkRequestNotices.AsNoTracking()
+            .Where(n => n.CompanyId == companyId && ids.Contains(n.LinkRequestId))
+            .Select(n => new { n.LinkRequestId, n.Channel, n.Status, n.RecipientLabel, n.Reason, n.AttemptedAt, n.CompletedAt })
+            .ToListAsync();
+        var contactIds = rows.Where(r => r.ContactId != null).Select(r => r.ContactId!.Value).Distinct().ToList();
+        var contactNames = await _db.Contacts.AsNoTracking().Where(c => c.CompanyId == companyId && contactIds.Contains(c.Id))
+            .Select(c => new { c.Id, c.Name }).ToDictionaryAsync(c => c.Id, c => c.Name);
         return rows.Select(r =>
         {
             var state = PartnerLinkRequestRules.OutgoingStateOf(r.AcceptedAt, r.ExpiresAt, nowUtc);
+            var mine = notices.Where(n => n.LinkRequestId == r.Id).ToList();
             return (object)new
             {
                 r.Id, r.PartnerTaxId,
                 BranchLabel = r.PartnerBranchCode == null ? "ไม่ระบุสาขา" : TaxBranchCode.Label(r.PartnerBranchCode),
                 SentAt = r.CreatedAt, r.ExpiresAt, r.AcceptedAt,
                 State = state.ToString(), StateLabel = PartnerLinkRequestRules.OutgoingLabel(state),
+                r.ContactId,
+                ContactName = r.ContactId is Guid cid && contactNames.TryGetValue(cid, out var nm) ? nm : null,
+                Notices = mine.GroupBy(n => n.Channel)
+                    .Select(g => g.OrderByDescending(n => n.AttemptedAt).First())
+                    .OrderBy(n => n.Channel == PartnerLinkRequestChannels.InApp ? 0 : n.Channel == PartnerLinkRequestChannels.LineGroup ? 1 : 2)
+                    .Select(n => new
+                    {
+                        n.Channel, ChannelLabel = PartnerLinkRequestChannels.ChannelLabel(n.Channel),
+                        n.Status, StatusLabel = PartnerLinkRequestChannels.StatusLabel(n.Status),
+                        Recipient = n.RecipientLabel, n.Reason, At = n.CompletedAt ?? n.AttemptedAt,
+                        Attempts = mine.Count(x => x.Channel == n.Channel && PartnerLinkRequestChannels.CountsAsAttempt(x.Status)),
+                    }).ToList(),
+                // ปุ่ม "ส่งแจ้งอีกครั้ง" — เฉพาะคำขอที่รอตอบ (สถานะที่ผู้ขอเห็นอยู่แล้ว) · กันถี่ตัดสินตอนกดต่อช่อง
+                CanNotify = state == PartnerLinkRequestRules.OutgoingState.Awaiting,
+                NotifyProblem = PartnerLinkRequestChannels.RequestProblem(r.AcceptedAt, r.ExpiresAt, nowUtc),
             };
         }).ToList();
     }
