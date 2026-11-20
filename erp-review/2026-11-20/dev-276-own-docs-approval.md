@@ -132,3 +132,32 @@
 1. หน้า "ทีม" → ปุ่ม 🔒 จำกัดเอกสาร ของพนักงานที่ต้องการ (หรือหน้า "บทบาท" → ช่อง "จำกัดเอกสาร")
 2. หน้า "การแจ้งเตือน" → เหตุการณ์ "พนักงานส่งเอกสารร่างขออนุมัติ" → เลือกช่อง (กระดิ่ง/อีเมล/LINE ส่วนตัว/กลุ่ม LINE) — ค่าตั้งต้นเปิดทุกช่องถึง "ผู้อนุมัติเอกสาร (เจ้าของ/บัญชี)"
 3. ผู้อนุมัติที่ต้องการแจ้ง LINE ส่วนตัวต้องผูก LINE กับบัญชีผู้ใช้แล้ว · กลุ่ม LINE ใช้ OA ของบริษัท (ตั้งค่า LINE) · อีเมลใช้ SMTP ของบริษัท
+
+## 7. ชุดแก้ฝ่ายค้าน 276 (HIGH 2 · MED 4 · LOW 6) — คำตัดสิน 276-9…16
+
+| ข้อ | ผล | วิธีแก้ |
+| --- | --- | --- |
+| หลัก | ✅ | ด่านผูก **ผู้ใช้ + บริษัทที่ทำงานอยู่**: route มี {companyId} ⇒ บริษัทนั้น · ไม่มี ⇒ header `X-Company-Id` สำหรับตัวกรองแถว + ค่าจำกัดที่เข้มที่สุดของทุกบริษัทที่เป็นสมาชิกสำหรับรายการอนุญาต (`DocumentRestrictionGuard.StrictestAsync`) · ข้ามเฉพาะ `[AllowAnonymous]`/API key |
+| HIGH-1 LINE | ✅ | `LineBotService` ตั้งขอบเขตทุกเหตุการณ์ (ข้อความ/รูป/ปุ่ม) · `DocumentRestrictionPolicy.LineCommandDenied`: ดูยอด (เห็นเฉพาะของตัวเอง) · ถาม (ทั้งสองแบบ) · ปุ่มอนุมัติ ⇒ ตอบเหตุ · "บันทึก"/ส่งรูป ⇒ ร่างของผู้ส่ง (ไม่อนุมัติอัตโนมัติ · ไม่ส่งการ์ดปุ่มอนุมัติ) |
+| HIGH-2 | ✅ | `api/accountant-workspace` (และทุกทางเข้าไม่มี companyId ที่ไม่อยู่ในรายการ) 403 — ผลไล่ด้านล่าง |
+| MED-3 | ✅ | `NotificationEngine` ตัดผู้รับ "เห็นเฉพาะของตัวเอง" ทั้งเส้นบทบาทและผู้รับระบุตัว ยกเว้นเรื่องของใบที่เขาสร้าง (`MayReceiveAsync`) · `api/notification` + ตัวนับกรองแถวเก่าด้วยกติกาเดียวกัน |
+| MED-4 | ✅ | ทางเขียนของผู้เห็นเฉพาะของตัวเอง: ตรวจ id ทุกตัวแล้ว **ยกตัวกรองแถว** ⇒ ด่านระดับบริษัทใน service (ยอดที่แปลงไปแล้ว · ผลรวมใบลดหนี้ · ใบซ้ำ · สต็อก) เห็นทั้งบริษัท (ธงเฉพาะร่าง/ผู้สร้างคงอยู่) · `CheckDuplicateAsync` ตรวจทั้งบริษัท คืนแค่ผลตัดสินของใบที่มองไม่เห็น (`RedactDuplicate`) · ตอนอนุมัติ: ใบที่ผู้ถูกจำกัดสร้างแล้วยอดรายได้สะสมเกิน ⇒ **บล็อก** `R276-OVER-CONVERT` (ใบทั่วไปยังเป็นคำเตือนตามข้อ 138) · Db test แปลงซ้ำใบที่คนอื่นแปลงแล้ว ⇒ ถูกกัน |
+| MED-5 | ✅ | id ใน body (`*DocumentId` · `SourceLineId` ลึก 2 ชั้น รวมบรรทัด) ต้องเป็นของที่มองเห็น ⇒ ไม่ใช่ 404 (`DocumentRestrictionFilter.BodyReferences`) |
+| MED-6 | ✅ | `PUT document/contacts/{id}` ออกจากรายการ ⇒ 403 + เหตุ · สร้างผู้ติดต่อใหม่ได้ |
+| LOW-7 | ✅ | `EnsureNotSelfApprovalAsync` + `OnDocumentApprovedAsync` แปลงผู้กระทำอีเมล→id (`ActorUserIdAsync`) |
+| LOW-8 | ✅ | `GET …/approval-request` ตรวจฝั่งเอกสาร + ชั้นความลับ (ด่านเดียวกับหน้าเอกสาร) ⇒ 404 |
+| LOW-9 | ✅ | `NotificationContext.PrivateNote` ต่อเฉพาะช่องส่วนตัว — หมายเหตุผู้ขอไม่เข้ากลุ่ม LINE |
+| LOW-10 | ✅ | `Document.CreatedByUserId` ประทับที่ `SaveChanges` (id ใน CreatedBy · อีเมลสมาชิกคนเดียว · ผู้ใช้ของคำขอที่ถูกจำกัดเมื่อเป็นป้ายระบบ) · ตัวกรองแถวใช้ Guid เป็นหลัก (ข้อความเป็นทางสำรองของแถวที่ยังว่าง) · Round276Migration เติมแถวเก่าที่จับคู่ได้แน่นอน |
+| LOW-11 | ✅ | `DocumentRestrictionRouteInventoryTests` ไล่ทุก route ของแอป: แถวตรง action · route ข้อมูลรวมไม่หลุด · ชื่อพารามิเตอร์ที่ตัวกรองตรวจได้ · สัดส่วนที่อนุญาต |
+| LOW-12 | ✅ | เปิด OCR สร้างร่างบนเว็บ (upload · scan · ดู/แก้/สร้างเอกสารจากสแกน · ลบ) เฉพาะสแกน/ไฟล์ที่ผู้ใช้อัปโหลดเอง (`RouteCheck.OwnScan`) · นำเข้าสต็อก/สินทรัพย์/JE/คิวตรวจ/ตั้งค่า ปิด · LINE ทางเดียวกัน |
+
+### ผลไล่ controller ที่ไม่มี {companyId} ใน route (HIGH-2)
+| กลุ่ม | ผลสำหรับผู้ถูกจำกัด |
+| --- | --- |
+| `Admin*` · `AiAdmin` · `MeteringAdmin` · `AiUsageReport` | ปิด (ไม่อยู่ในรายการ · ต้องเป็นแอดมินแพลตฟอร์มอยู่แล้ว) |
+| `AccountantWorkspace` (ภาพรวมข้ามบริษัท) | **ปิด** |
+| `AccountSubscription` · `Subscription/payments` · `trial/start` · `VendorPortal` | ปิด (บิล/ข้อมูลบริษัท) |
+| `Notification` GET/count/mark-read | เปิด — กรองแถวตามค่าจำกัด (MED-3) · `send` ปิด |
+| `Auth/*` · `me/permissions` · `company` (GET) · `signatures` (ลายเซ็นของตัวเอง) · `mobile/devices` · `invitations` | เปิด (ข้อมูลของผู้ใช้เอง) |
+| `gov/*` · `dbd/*` · `reference/*` · `subscription/plans|feature-catalog` · `integration/link-patterns` | เปิด GET (ข้อมูลอ้างอิงสาธารณะ) |
+| `Public*` · `Legal` · `HelpCenter` · `ContactInquiry` · `Cms*` (resolve) | นิรนาม — ไม่ใช่ข้อมูลภายในบริษัท |

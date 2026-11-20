@@ -4895,7 +4895,10 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
 - ผู้อนุมัติ: ปุ่ม "อนุมัติ" (endpoint เดิม — เลขออกตอนนี้) / "ตีกลับ" `…/approval-request/return` (เหตุผลบังคับ ⇒ ใบ `Rejected` + แจ้งผู้ขอ `document.approval_returned`) ·
   ผู้ขอห้ามอนุมัติ/ตีกลับใบที่ตัวเองขอ (`EnsureNotSelfApprovalAsync`) · อนุมัติแล้ว ⇒ `OnDocumentApprovedAsync` ปิดคำขอ + แจ้งผู้ขอ `document.approval_granted` ·
   ผู้ขอ**แก้ระหว่างรอไม่ได้** (กติกาเดิม) — `…/withdraw` ⇒ Draft (276-5) · คิว `GET document-approval-queue` (หน้า approval) · สถานะ/ปุ่มบนใบ `GET document/{id}/approval-request`
-- เลื่อน: OCR · POST ความเห็น · แชต AI/ค้นหาทั่วระบบ สำหรับผู้เห็นเฉพาะของตัวเอง (dev-276 §5)
+- **ชุดแก้ฝ่ายค้าน (276-9…16):** ด่านผูกผู้ใช้+บริษัท (ทางเข้าไม่มี {companyId} ใช้ค่าเข้มสุด · `accountant-workspace` ปิด) · LINE เดิน policy เดียวกับเว็บ ·
+  แจ้งเตือนกรองผู้เห็นเฉพาะของตัวเอง (ส่งใหม่ + รายการเก่า) · ทางเขียนยกตัวกรองแถวหลังตรวจ id (ด่านระดับบริษัทเห็นทั้งบริษัท) + อนุมัติใบเกินของผู้ถูกจำกัด = บล็อก ·
+  id ใน body ⇒ 404 · แก้ผู้ติดต่อเดิมไม่ได้ · `Document.CreatedByUserId` · OCR สร้างร่างจากสแกนของตัวเอง (เว็บ = LINE)
+- เลื่อน: POST ความเห็น · แชต AI/ค้นหาทั่วระบบ สำหรับผู้เห็นเฉพาะของตัวเอง (dev-276 §5)
 
 ### 3.3 Send (Approved → Sent)
 - **Endpoint**: `POST /documents/{id}/send-email`
@@ -9953,3 +9956,5 @@ _Last verified against codebase: 2026-11-20 (รอบ 275 แพ็ก A ผล
 _Last verified against codebase: 2026-11-20 (รอบ 276 — ผู้ใช้เห็นเฉพาะเอกสารที่ตัวเองสร้าง/สร้าง-แก้ได้เฉพาะร่าง: ตัวกรองแถว EF ของ Documents ·
 `DocumentRestrictionFilter` รายการอนุญาต + 404 · ด่าน Approve/Void ชั้น service · ส่งขออนุมัติพื้นฐาน/ถอน/ตีกลับ + แจ้งผ่านเครื่องแจ้งเตือนกลาง ·
 คำตัดสิน 276-1…8 — commit 69740aef + 4456de7a)_
+_Last verified against codebase: 2026-11-20 (รอบ 276 ชุดแก้ฝ่ายค้าน — ด่านผูกผู้ใช้+บริษัท · LINE · แจ้งเตือน · ด่านระดับบริษัทในทางเขียน · id ใน body ·
+ผู้ติดต่อ · CreatedByUserId · OCR — คำตัดสิน 276-9…16 — commit 8a2514f3)_
