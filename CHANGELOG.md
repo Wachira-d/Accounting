@@ -7402,4 +7402,4 @@ sim `menu_landing_sim.js` · กติกา `_R277_` — commit a1ae70d2 + d938
 _รอบ 277 ชุดแก้ฝ่ายค้าน (2026-11-20 · คำตัดสิน 277-8…12): HIGH-1/2 ตัวกรองสมาชิกเดียว `CompanyMembership` (ตัดสมาชิกรอสิทธิ์) ต่อสายบอท LINE ×3 ·
 หน้าสำนักงานบัญชี · `api/me/permissions` · SignalR · `TenantGuard` · ผู้อนุมัติ/ผู้ลงนาม · รายชื่อบริษัทของผู้ใช้ (รอสิทธิ์ = id/ชื่อเท่านั้น) · เส้นสำรอง middleware fail closed ·
 MED-1 ทะเบียนเมนูครบทุกตัว (คีย์ any-of · ทิศเอกสาร · สิทธิ์เมนูอย่างเดียว + เทสต์ inventory) · MED-2 หน้าหลักโหมดง่าย "simple-home" ไม่ผูก Reports.Dashboard ·
-ที่พัก = LodgingManage หรือ LodgingSettings · MED-3 ตอบรับด้วย token = ยืนยันอีเมล · LOW หน้ารับคำเชิญไม่บอกการมีบัญชี — commit PENDING277B_
+ที่พัก = LodgingManage หรือ LodgingSettings · MED-3 ตอบรับด้วย token = ยืนยันอีเมล · LOW หน้ารับคำเชิญไม่บอกการมีบัญชี — commit 6566b49b_

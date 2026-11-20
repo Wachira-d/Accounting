@@ -55,7 +55,7 @@
 
 | ข้อ | สถานะ | ทางแก้ |
 | --- | --- | --- |
-| HIGH-1 บอท LINE เลือกบริษัทโดยไม่กรองสมาชิกรอสิทธิ์ | ✅ PENDING277B | `CompanyMembership.ActiveOf` ใน `HandleMessageAsync` + `HandleImageAsync` + ด่านสมาชิกของปุ่มอนุมัติใน LINE (`ActiveRow`) · มีแต่บริษัทที่รอสิทธิ์ ⇒ ตอบ "รอเจ้าของตั้งสิทธิ์" |
+| HIGH-1 บอท LINE เลือกบริษัทโดยไม่กรองสมาชิกรอสิทธิ์ | ✅ 6566b49b | `CompanyMembership.ActiveOf` ใน `HandleMessageAsync` + `HandleImageAsync` + ด่านสมาชิกของปุ่มอนุมัติใน LINE (`ActiveRow`) · มีแต่บริษัทที่รอสิทธิ์ ⇒ ตอบ "รอเจ้าของตั้งสิทธิ์" |
 | HIGH-2 หน้าสำนักงานบัญชีแสดงเลขภาษี/ยอด | ✅ | `AccountantWorkspaceController` ใช้ `ActiveOf` · รายชื่อบริษัท (`GetUserCompaniesAsync`) ของบริษัทที่รอสิทธิ์ = id/ชื่อ + `AccessPending=true` (ไม่มีเลขภาษี/ที่อยู่/แพ็กเกจ) |
 | HIGH เส้นอื่น | ✅ | `MeController.GetMyPermissions` (companyId ทาง query) · `NotificationHub.JoinCompanyGroup` · `TenantGuard.CheckAsync` · ผู้อนุมัติ/ผู้ลงนาม (`ActiveMemberIdsAsync` ตัด AccessPending) · เส้นสำรองของ `TenantAccessMiddleware` อ่าน AccessPending ด้วย (fail closed) — จุดที่เลือกบริษัทจาก CompanyUsers ด้วย UserId อย่างเดียวที่เหลือ: แอดมินแพลตฟอร์ม (`AdminController` — ตั้งใจ) |
 | MED-1 ทะเบียนเมนูครอบไม่ครบ | ✅ | `MenuPermissionMap` สามกลุ่ม ครบ 131 เมนู + เทสต์ inventory · เพิ่ม `settlement-channels` (Settlement.View) · `settings` (CompanySettings.Edit — GET ของหน้าตรวจคีย์นี้) · ทิศเอกสาร `purchases`/`customer-credits` · ไล่แล้วว่า GET หลักของ payroll/fixed-assets/pos/สินค้า/คลัง/bank/tax/remittances/leaves **ไม่ตรวจคีย์** ⇒ สิทธิ์เมนูอย่างเดียว (ไม่ผูกเพื่อไม่ให้ผู้ใช้เดิมเสียเมนูที่ใช้ได้จริง · 277-10) · accounting-export/data-integrity ไม่มีเมนูของตัวเอง |
