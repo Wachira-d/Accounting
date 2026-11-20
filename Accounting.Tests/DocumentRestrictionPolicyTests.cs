@@ -170,7 +170,7 @@ public class DocumentRestrictionPolicyTests
     {
         var c = new Accounting.Models.DTOs.Document.DuplicateDocumentCandidate(Guid.NewGuid(), "PI-001", "PurchaseInvoice", new DateTime(2026, 1, 1),
             999m, "Approved", "INV-9", "ผู้ขายลับ", "SupplierInvoiceNumber", true);
-        var r = DocumentRestrictionPolicy.RedactDuplicate(c, new DateTime(2026, 2, 1), 100m);
+        var r = RestrictedResponseRedactor.RedactDuplicate(c, new DateTime(2026, 2, 1), 100m);
         Assert.Equal(Guid.Empty, r.Id);
         Assert.DoesNotContain("PI-001", r.DocumentNumber);
         Assert.Null(r.ContactName);
@@ -191,5 +191,20 @@ public class DocumentRestrictionPolicyTests
         Assert.Contains(src, lines);
         var (none, _) = Accounting.Filters.DocumentRestrictionFilter.BodyReferences(new object?[] { req with { RelatedDocumentId = Guid.Empty } });
         Assert.DoesNotContain(Guid.Empty, none);                       // ล้างค่า ≠ การอ้าง
+    }
+
+    [Fact]
+    public void ข้อความตอบกลับ_ด่านข้ามเอกสารใช้ข้อความกลาง_เลขของคนอื่นถูกแทน()
+    {
+        Assert.True(RestrictedResponseRedactor.IsCrossDocumentRule("CONVERT-QTY-DONE-AMOUNT-LEFT"));
+        Assert.True(RestrictedResponseRedactor.IsCrossDocumentRule("R276-OVER-CONVERT"));
+        Assert.False(RestrictedResponseRedactor.IsCrossDocumentRule("RD-86/4-MISSING"));
+        Assert.False(RestrictedResponseRedactor.IsCrossDocumentRule(null));
+        var g = RestrictedResponseRedactor.GenericConflictMessage("CONVERT-X");
+        Assert.Contains("เอกสารอื่นในบริษัท", g);
+        Assert.DoesNotMatch(@"\d{1,3}(,\d{3})*\.\d{2}", g);                // ไม่มียอดเงิน
+        var t = RestrictedResponseRedactor.Replace("ซ้ำกับ INV-2026-0012 และ INV-2026-001", new[] { "INV-2026-001", "INV-2026-0012" });
+        Assert.DoesNotContain("INV-2026", t);
+        Assert.Equal("ใบของฉัน QT-1", RestrictedResponseRedactor.Replace("ใบของฉัน QT-1", new[] { "INV-9" }));   // ทิศตรงข้าม
     }
 }
