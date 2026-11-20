@@ -245,7 +245,7 @@ public partial class PdfGenerationService : IPdfGenerationService
             ?? throw new KeyNotFoundException("ไม่พบหนังสือรับรองหัก ณ ที่จ่าย");
         await _db.HydratePayeeContactAsync(companyId, cert);
         // รอบ 274: ผู้รับที่เลขประจำตัวใช้ไม่ได้ (Contact ที่ระบบเคยสร้างจากเลขที่ตัดจาก ciphertext) ⇒ ไม่ออกไฟล์ + บอกทางแก้
-        if (WhtCertFormText.PayeeTaxIdProblem(cert.CertificateNumber, cert.PayeeContact?.TaxId) is string payeeProblem)
+        if (WhtCertFormText.PayeeTaxIdProblem(cert.CertificateNumber, Accounting.Helpers.WhtPayeeSnapshot.Of(cert)?.TaxId) is string payeeProblem)
             throw new BusinessRuleException(payeeProblem, "RD-50TWI-PAYEE-TAXID", 422);
 
         var company = await _db.Companies.FirstAsync(c => c.Id == companyId);
@@ -2788,6 +2788,8 @@ public partial class PdfGenerationService : IPdfGenerationService
         string? sigBase64 = null, string? sigName = null, WhtCertFundAmounts? funds = null,
         WhtCertStamp? stamp = null)
     {
+        // รอบ 275 แพ็ก B (คำตัดสิน 275-B-6 (ข)): ผู้ถูกหัก = สำเนา ณ วันออก (ตัวเดียว Helpers/WhtPayeeSnapshot · คู่กับ QuestPDF)
+        var payee = Accounting.Helpers.WhtPayeeSnapshot.Of(cert)!;
         _ = sigName;   // แบบพิมพ์มีแต่ลายเซ็น ไม่พิมพ์ชื่อ — ตรงกับ QuestPDF + หน้าพิมพ์ (ทีม J 2026-10-22 · เดิม HTML ต่อชื่อท้ายรูป)
         var sb = new StringBuilder();
         var certNum = WebUtility.HtmlEncode(cert.CertificateNumber);
@@ -2796,8 +2798,8 @@ public partial class PdfGenerationService : IPdfGenerationService
         // ซ้ำซ้อนเมื่อ free-text มีอยู่แล้ว.
         var fullAddress = FormatThaiAddress(company.Address, company.BuildingNumber, company.BuildingName, company.Moo, company.StreetName,
             company.SubDistrict, company.District, company.Province, company.PostalCode);
-        var payeeAddr = FormatThaiAddress(cert.PayeeContact.Address, cert.PayeeContact.BuildingNumber, cert.PayeeContact.BuildingName, cert.PayeeContact.Moo, cert.PayeeContact.StreetName,
-            cert.PayeeContact.SubDistrict, cert.PayeeContact.District, cert.PayeeContact.Province, cert.PayeeContact.PostalCode);
+        var payeeAddr = FormatThaiAddress(payee.Address, payee.BuildingNumber, payee.BuildingName, payee.Moo, payee.StreetName,
+            payee.SubDistrict, payee.District, payee.Province, payee.PostalCode);
         var lines = cert.Lines.OrderBy(l => l.LineOrder).ToList();
 
         string TaxIdBoxes(string? taxId, bool payee = true)
@@ -2907,9 +2909,9 @@ public partial class PdfGenerationService : IPdfGenerationService
 
             // Payee
             sb.AppendLine("<tr><td class='sec-cell'>");
-            sb.AppendLine($"<table class='inner' cellspacing='0'><tr><td class='sec-hdr' style='width:210px;vertical-align:top'>{WhtCertFormText.PayeeHeading}</td><td style='white-space:nowrap;text-align:right'>{WhtCertFormText.TaxId13}<span style='color:#900'>*</span> {TaxIdBoxes(cert.PayeeContact.TaxId)}</td></tr></table>");
+            sb.AppendLine($"<table class='inner' cellspacing='0'><tr><td class='sec-hdr' style='width:210px;vertical-align:top'>{WhtCertFormText.PayeeHeading}</td><td style='white-space:nowrap;text-align:right'>{WhtCertFormText.TaxId13}<span style='color:#900'>*</span> {TaxIdBoxes(payee.TaxId)}</td></tr></table>");
             // ช่องเลขเดิม 10 หลักอยู่บรรทัดเดียวกับ "ชื่อ" (ชิดขวา) ตามแบบทางการ — รอบ 204 (เดิมแยกบรรทัดเหนือชื่อ)
-            sb.AppendLine($"<table class='inner' cellspacing='0'><tr><td class='f-lbl'>{WhtCertFormText.Name}</td><td><u class='ul'>&nbsp;{WebUtility.HtmlEncode(WhtCertFormText.PartyName(cert.PayeeContact.TitleTh, cert.PayeeContact.Name, cert.PayeeContact.TaxId, cert.PayeeContact.BranchCode, cert.PayeeContact.BranchName))}&nbsp;</u></td><td style='white-space:nowrap;text-align:right;font-size:12px;padding-left:8px'>{WhtCertFormText.TaxId10} {OldTaxIdBoxes()}</td></tr></table>");
+            sb.AppendLine($"<table class='inner' cellspacing='0'><tr><td class='f-lbl'>{WhtCertFormText.Name}</td><td><u class='ul'>&nbsp;{WebUtility.HtmlEncode(WhtCertFormText.PartyName(payee.TitleTh, payee.Name, payee.TaxId, payee.BranchCode, payee.BranchName))}&nbsp;</u></td><td style='white-space:nowrap;text-align:right;font-size:12px;padding-left:8px'>{WhtCertFormText.TaxId10} {OldTaxIdBoxes()}</td></tr></table>");
             sb.AppendLine($"<div class='hint-text'>{WhtCertFormText.NameHint}</div>");
             sb.AppendLine($"<table class='inner' cellspacing='0'><tr><td class='f-lbl'>{WhtCertFormText.Address}</td><td><u class='ul'>&nbsp;{WebUtility.HtmlEncode(payeeAddr)}&nbsp;</u></td></tr></table>");
             sb.AppendLine($"<div class='hint-text'>{WhtCertFormText.AddressHint}</div>");

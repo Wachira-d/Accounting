@@ -1839,6 +1839,7 @@ public partial class TaxService : ITaxService
             await _db.HydratePayeeContactsAsync(companyId, monthCerts);
             foreach (var cert in monthCerts.OrderBy(c => c.CertificateNumber))
             {
+                var payeeAt = Accounting.Helpers.WhtPayeeSnapshot.Of(cert);   // รอบ 275 แพ็ก B (275-B-6 (ข)): ตัวตน ณ วันออก (ใบที่ยื่นแล้วไม่เปลี่ยนตามผู้ติดต่อ)
                 // c3: 50 ทวิ ที่ผู้ใช้ออกเองให้ใบ e-Withholding — ธนาคารนำส่งแล้ว ⇒ แถวข้อมูล (ติ๊กออก · ไม่นับยอด · ไม่บล็อกไฟล์) ตรงกับไฟล์ยื่นที่ข้ามใบนี้
                 var eWhtCert = cert.DocumentId is Guid certDocId && eWhtDocIds.Contains(certDocId);
                 var eWhtPrefix = eWhtCert ? Accounting.Helpers.EWithholdingScope.ReportMarker + " — " : "";
@@ -1848,8 +1849,8 @@ public partial class TaxService : ITaxService
                         report.Lines.Add(new TaxReportLine
                         {
                             TaxReportId = report.Id, LineOrder = lineOrder++,
-                            TaxPayerId = cert.PayeeContact?.TaxId,
-                            TaxPayerName = cert.PayeeContact?.Name ?? "",
+                            TaxPayerId = payeeAt?.TaxId,
+                            TaxPayerName = payeeAt?.Name ?? "",
                             TransactionDate = cl.PaymentDate,
                             Description = $"{eWhtPrefix}{cert.CertificateNumber} — {cl.IncomeDescription}",
                             IsExcluded = eWhtCert,
@@ -1859,8 +1860,8 @@ public partial class TaxService : ITaxService
                             IncomeTypeCode = cl.IncomeTypeCode,
                             // พาข้อมูลผู้ถูกหักมาถึงไฟล์ยื่นด้วย — ไม่งั้นปุ่ม e-Filing
                             // จะเติมค่า default แทน (สาขา 00000 · เงื่อนไข 1 · ไม่มีคำนำหน้า)
-                            TaxPayerTitle = cert.PayeeContact?.TitleTh,
-                            TaxPayerBranchCode = cert.PayeeContact?.BranchCode,
+                            TaxPayerTitle = payeeAt?.TitleTh,
+                            TaxPayerBranchCode = payeeAt?.BranchCode,
                             WhtCondition = Accounting.Helpers.WhtGrossUp.FilingCondition(cert.CertificateType),   // รอบ 204: 1/2/3 (เดิม "ครั้งเดียว" ตกเป็น 1)
                         });
                 }
@@ -1869,8 +1870,8 @@ public partial class TaxService : ITaxService
                     report.Lines.Add(new TaxReportLine
                     {
                         TaxReportId = report.Id, LineOrder = lineOrder++,
-                        TaxPayerId = cert.PayeeContact?.TaxId,
-                        TaxPayerName = cert.PayeeContact?.Name ?? "",
+                        TaxPayerId = payeeAt?.TaxId,
+                        TaxPayerName = payeeAt?.Name ?? "",
                         TransactionDate = cert.IssuedDate ?? new DateTime(cert.TaxYear, cert.TaxMonth, 1),
                         Description = eWhtPrefix + cert.CertificateNumber,
                         IsExcluded = eWhtCert,
@@ -1881,8 +1882,8 @@ public partial class TaxService : ITaxService
                         TaxAmount = cert.TotalTaxAmount, DocumentId = cert.DocumentId,
                         WhtCertId = cert.Id,
                         IncomeTypeCode = "40(8)",
-                        TaxPayerTitle = cert.PayeeContact?.TitleTh,
-                        TaxPayerBranchCode = cert.PayeeContact?.BranchCode,
+                        TaxPayerTitle = payeeAt?.TitleTh,
+                        TaxPayerBranchCode = payeeAt?.BranchCode,
                         WhtCondition = Accounting.Helpers.WhtGrossUp.FilingCondition(cert.CertificateType),   // รอบ 204: 1/2/3 (เดิม "ครั้งเดียว" ตกเป็น 1)
                     });
                 }
@@ -1901,11 +1902,12 @@ public partial class TaxService : ITaxService
             // c3: ร่างของใบ e-Withholding ไม่ใช่ "ใบค้างออก" (ธนาคารนำส่งแล้ว) — ไม่ขึ้นแถวเตือน/ไม่บล็อกไฟล์ยื่น
             foreach (var cert in draftCerts.Where(c => c.DocumentId is not Guid dd || !eWhtDocIds.Contains(dd)).OrderBy(c => c.CertificateNumber))
             {
+                var payeeAt = Accounting.Helpers.WhtPayeeSnapshot.Of(cert);   // ร่าง = ผู้ติดต่อสด
                 report.Lines.Add(new TaxReportLine
                 {
                     TaxReportId = report.Id, LineOrder = lineOrder++,
-                    TaxPayerId = cert.PayeeContact?.TaxId,
-                    TaxPayerName = cert.PayeeContact?.Name ?? "",
+                    TaxPayerId = payeeAt?.TaxId,
+                    TaxPayerName = payeeAt?.Name ?? "",
                     TransactionDate = new DateTime(cert.TaxYear, cert.TaxMonth, 1),
                     Description = $"{Accounting.Helpers.WhtUnissuedCertGate.DraftCertMarker} — {cert.CertificateNumber} (ออกใบก่อนยื่น)",
                     IncomeAmount = cert.TotalIncomeAmount,
@@ -1915,8 +1917,8 @@ public partial class TaxService : ITaxService
                     TaxAmount = cert.TotalTaxAmount, DocumentId = cert.DocumentId,
                     WhtCertId = cert.Id,
                     IncomeTypeCode = "40(8)", IsExcluded = true,
-                    TaxPayerTitle = cert.PayeeContact?.TitleTh,
-                    TaxPayerBranchCode = cert.PayeeContact?.BranchCode,
+                    TaxPayerTitle = payeeAt?.TitleTh,
+                    TaxPayerBranchCode = payeeAt?.BranchCode,
                     WhtCondition = Accounting.Helpers.WhtGrossUp.FilingCondition(cert.CertificateType),   // รอบ 204: 1/2/3 (เดิม "ครั้งเดียว" ตกเป็น 1)
                 });
             }
@@ -3328,15 +3330,15 @@ public partial class TaxService : ITaxService
                 var originalDescription = line.Description ?? "";
                 // รอบ 275 แพ็ก B (T2 M5 · H2): ช่องที่ระบบเป็นเจ้าของ (คำนำหน้าแถวเตือน · ยอดจาก 50 ทวิ) ห้ามแก้บนรายงาน — ปฏิเสธดัง ไม่ทิ้งเงียบ
                 // (ค่าที่ส่งมาเท่าเดิม = ไม่ใช่การแก้ — หน้าเว็บส่งทุกช่องของทุกบรรทัดทุกครั้งที่บันทึก)
-                var lockReason = Accounting.Helpers.WhtReportLineRule.LockReason(report.TaxType, originalDescription, line.WhtCertId);
+                var lockReason = Accounting.Helpers.WhtReportLineRule.LockReason(report.TaxType, originalDescription, line.WhtCertId, line.DocumentId);
                 if (lockReason != null)
                 {
                     if (lineUpdate.Description != null && lineUpdate.Description != originalDescription
-                        && Accounting.Helpers.WhtReportLineRule.DescriptionLocked(report.TaxType, originalDescription, line.WhtCertId))
+                        && Accounting.Helpers.WhtReportLineRule.DescriptionLocked(report.TaxType, originalDescription, line.WhtCertId, line.DocumentId))
                         throw new Accounting.Helpers.BusinessRuleException(
                             Accounting.Helpers.WhtReportLineRule.EditLocked(line.LineOrder, "คำอธิบาย", lockReason),
                             Accounting.Helpers.WhtReportLineRule.EditLockRuleCode);
-                    if (Accounting.Helpers.WhtReportLineRule.AmountsLocked(report.TaxType, line.WhtCertId)
+                    if (Accounting.Helpers.WhtReportLineRule.AmountsLocked(report.TaxType, line.WhtCertId, line.DocumentId)
                         && ((lineUpdate.IncomeAmount.HasValue && lineUpdate.IncomeAmount.Value != line.IncomeAmount)
                             || (lineUpdate.TaxRate.HasValue && lineUpdate.TaxRate.Value != line.TaxRate)
                             || (lineUpdate.TaxAmount.HasValue && lineUpdate.TaxAmount.Value != line.TaxAmount)))
@@ -4444,6 +4446,12 @@ public partial class TaxService : ITaxService
             ? existing.Lines.Select(l => Accounting.Helpers.WhtReportLineRule.RestoreKey(existing.TaxType, l.DocumentId, l.WhtCertId, l.Description, l.IsExcluded))
                 .Where(k => k.HasValue).Select(k => k!.Value).ToHashSet()
             : new HashSet<(Guid? DocumentId, Guid? WhtCertId, string Description)>();
+        // ฝ่ายค้าน MED-4: การติ๊ก "ออก" ของผู้ใช้ต้องคืนด้วย — ใบที่ตั้งใจตัดออกห้ามกลับเข้ายอด/ไฟล์ยื่นเงียบ ๆ (คีย์ เอกสาร+ใบ+ประเภทเงินได้+คำอธิบาย ·
+        // บรรทัดรุ่นก่อนรอบ 275 ที่ไม่มีตัวอ้างใบ ⇒ จับคู่โดยไม่ดูใบ) · แถวที่ระบบตัดออกเองจับคู่กับฉบับใหม่ที่ติ๊กออกอยู่แล้ว = ไม่มีผล
+        var untickSnapshot = existing.TaxType is TaxType.CorporateIncomeTax or TaxType.PersonalIncomeTax91
+            ? new List<Accounting.Helpers.RegenerateUntick.Key>()
+            : existing.Lines.Where(l => l.IsExcluded && !Accounting.Helpers.WhtReportTotals.IsSummary(l))
+                .Select(l => new Accounting.Helpers.RegenerateUntick.Key(l.DocumentId, l.WhtCertId, l.IncomeTypeCode, l.Description)).ToList();
         // ฟิลด์ audit/สถานะการยื่นที่ "ไม่ใช่ผลของการคำนวณ" — สร้างรายงานใหม่
         // ต้องไม่ลบร่องรอยการยื่น/ถูกปฏิเสธ/RD ack (เส้น ปลดล็อก → แก้ →
         // สร้างใหม่ เคยล้างทิ้งหมดรวมทั้งตัวชี้ JE กลับรายการ)
@@ -4531,13 +4539,22 @@ public partial class TaxService : ITaxService
         {
 
         // ===== Re-apply state ผู้ใช้บนรายงานรอบใหม่ =====
-        if (tickSnapshot.Count > 0 || whtTickSnapshot.Count > 0 || pulledSnapshot is { Count: > 0 })
+        if (tickSnapshot.Count > 0 || whtTickSnapshot.Count > 0 || untickSnapshot.Count > 0 || pulledSnapshot is { Count: > 0 })
         {
             var fresh = await _db.TaxReports.Include(r => r.Lines)
                 .FirstOrDefaultAsync(r => r.Id == response.Id && r.CompanyId == companyId);
             if (fresh != null)
             {
                 var changed = false;
+                // คืนติ๊ก "ออก" ของผู้ใช้ (MED-4) — ก่อนคืนติ๊กเข้า (สองชุดไม่ทับกัน: ชุดเข้า = แถวที่นับในฉบับเดิม)
+                foreach (var line in fresh.Lines)
+                {
+                    if (line.IsExcluded || Accounting.Helpers.WhtReportTotals.IsSummary(line)) continue;
+                    if (!Accounting.Helpers.RegenerateUntick.Matches(untickSnapshot,
+                            new Accounting.Helpers.RegenerateUntick.Key(line.DocumentId, line.WhtCertId, line.IncomeTypeCode, line.Description))) continue;
+                    line.IsExcluded = true;
+                    changed = true;
+                }
                 // คืนติ๊ก "ใช้" — ยกเว้นบรรทัดเตือน/ต้องห้าม (🚫/⚠️/รอใบกำกับ)
                 foreach (var line in fresh.Lines)
                 {
@@ -4701,9 +4718,12 @@ public partial class TaxService : ITaxService
     /// (ติ๊ก/บรรทัดดึงเป็นงานมือที่ "สร้างใหม่" คืนให้) + ช่อง ภ.พ.30 ที่รวมแล้วบนแถวเดียวกัน (ภ.พ.30) ·
     /// บรรทัดที่ไม่มีเอกสาร (เลื่อนเคลม/JE ล้วน/เครดิตยกมา) ไม่ถูกเทียบ — ระบุไว้ในข้อความ
     /// </summary>
+    /// <summary>ช่วงสูงสุดของแถบร่างล้าสมัย (ฝ่ายค้าน LOW: เดิม ≤ 12 เดือน × 7 แบบ คำนวณสดทุกคำขอ) — ร่างที่เก่ากว่านี้ยังถูกเทียบตอนยื่น/สร้างไฟล์</summary>
+    internal const int MaxStaleCheckMonths = 6;
+
     public async Task<List<StaleDraftReportRow>> GetStaleDraftReportsAsync(Guid companyId, int months = 2)
     {
-        months = Math.Clamp(months, 1, MaxAutoRefreshMonths);
+        months = Math.Clamp(months, 1, MaxStaleCheckMonths);
         var now = DateTime.UtcNow;
         var oldest = new DateTime(now.Year, now.Month, 1).AddMonths(-(months - 1));
         // รอบ 275 แพ็ก B (T2 M3): ชุด "ตรวจ" แยกจากชุด "สร้างอัตโนมัติ" — ร่าง ภ.ง.ด.1/2/54/ภ.พ.36 ที่มีอยู่แล้วต้องถูกเทียบ (เดิมตอบ "ร่างทุกงวดตรง" ทั้งที่ไม่ได้ดู)
@@ -4816,10 +4836,10 @@ public partial class TaxService : ITaxService
             Side: LineSide(l),
             // รอบ 275 แพ็ก B — ตัดสินที่เซิร์ฟเวอร์ (Helpers/WhtReportLineRule) หน้าเว็บล็อกช่อง/ถามเหตุผลตามนี้
             WhtCertId: l.WhtCertId,
-            DescriptionLocked: Accounting.Helpers.WhtReportLineRule.DescriptionLocked(r.TaxType, l.Description, l.WhtCertId),
-            AmountsLocked: Accounting.Helpers.WhtReportLineRule.AmountsLocked(r.TaxType, l.WhtCertId),
+            DescriptionLocked: Accounting.Helpers.WhtReportLineRule.DescriptionLocked(r.TaxType, l.Description, l.WhtCertId, l.DocumentId),
+            AmountsLocked: Accounting.Helpers.WhtReportLineRule.AmountsLocked(r.TaxType, l.WhtCertId, l.DocumentId),
             IncludeNeedsReason: Accounting.Helpers.WhtReportLineRule.IncludeNeedsReason(r.TaxType, l.Description),
-            LockReason: Accounting.Helpers.WhtReportLineRule.LockReason(r.TaxType, l.Description, l.WhtCertId));
+            LockReason: Accounting.Helpers.WhtReportLineRule.LockReason(r.TaxType, l.Description, l.WhtCertId, l.DocumentId));
     }
 
     /// <summary>ยอดท้ายตาราง "รายการ" บนจอ — ตัวตั้งเดียวกับยอดหัว/ตัวตรวจก่อนยื่น (รอบ 273 ฝ่ายค้านข้อ 1)</summary>

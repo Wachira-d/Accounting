@@ -10158,6 +10158,8 @@ public partial class DocumentService : IDocumentService
         decimal? expectedPaidAmount = null, Guid? keepLiveDocumentId = null)
     {
         var creditVoidNotices = new List<string>();   // รอบ 265 ฝ่ายค้าน M3 (ข้อความจาก CustomerCreditLedger ถึงผู้กด)
+        var whtVoidNotices = new List<string>();   // รอบ 275 แพ็ก B (275-B-6 (ก)): 50 ทวิ ที่หลุดการผูก/ยกเลิกตามไม่สำเร็จ ถึงผู้กด
+        static void AddOnce(List<string> list, string note) { if (!list.Contains(note)) list.Add(note); }
         // Lines must be Include'd here so ApplyStockMovementsAsync (called
         // during the void transaction below) can iterate them — otherwise
         // doc.Lines is null and stock never gets restored on a void.
@@ -10604,12 +10606,41 @@ public partial class DocumentService : IDocumentService
                 var linkedCerts = await _db.WithholdingTaxCerts
                     .Where(w => w.CompanyId == companyId && w.DocumentId == documentId
                                 && w.Status != WithholdingTaxCertStatus.Voided && !w.IsDeleted)
-                    .Select(w => w.Id)
+                    .Select(w => new { w.Id, w.CertificateNumber, w.LinkedAt })
                     .ToListAsync();
-                foreach (var certId in linkedCerts)
+                // รอบ 275 แพ็ก B (คำตัดสิน 275-B-6 (ก) · T2 L3): ใบที่ "ผูกด้วยมือ" (LinkedAt — ใบที่ออกไว้ก่อนแล้วผูกกับ PV นี้) ⇒ หลุดการผูก
+                // กลับเป็น "ยังไม่ผูก" (ไม่ยกเลิก — ใบอยู่ในมือผู้ถูกหักและอาจเป็นของการจ่ายอื่น) + audit + แจ้งในผลการยกเลิก ·
+                // ใบที่ระบบสร้างจาก PV คงพฤติกรรมเดิม (ยกเลิกตาม) — ล้ม ⇒ แจ้งในผลการยกเลิก (เดิม LogWarning เงียบ ⇒ ใบยัง Issued ถูกนับในแบบ)
+                foreach (var lc in linkedCerts)
                 {
-                    try { await _whtService.VoidAsync(companyId, certId); }
-                    catch (Exception ex) { _logger.LogWarning(ex, "WHT cert {Cert} void failed during doc void {Doc}", certId, documentId); }
+                    if (Accounting.Helpers.WhtCertVoidCascade.UnlinkInsteadOfVoid(lc.LinkedAt))
+                    {
+                        var c = await _db.WithholdingTaxCerts.FirstAsync(w => w.Id == lc.Id && w.CompanyId == companyId);
+                        c.DocumentId = null;
+                        c.SourcePaymentId = null;
+                        c.LinkedAt = null;
+                        c.LinkedByUserId = null;
+                        if (doc.WhtLinkCertId == c.Id) doc.WhtLinkCertId = null;
+                        _db.AddChainedAuditLog(new AuditLog
+                        {
+                            CompanyId = companyId, Action = AuditAction.Update,
+                            EntityType = "WithholdingTaxCert", EntityId = c.Id.ToString(),
+                            OldValues = System.Text.Json.JsonSerializer.Serialize(new { DocumentId = documentId, doc.DocumentNumber }),
+                            NewValues = System.Text.Json.JsonSerializer.Serialize(new
+                            {
+                                DocumentId = (Guid?)null, Reason = "ยกเลิกเอกสารที่ผูก", RuleCode = Accounting.Helpers.WhtCertVoidCascade.UnlinkRuleCode,
+                            }),
+                            Timestamp = DateTime.UtcNow,
+                        });
+                        AddOnce(whtVoidNotices, Accounting.Helpers.WhtCertVoidCascade.UnlinkedNotice(lc.CertificateNumber, doc.DocumentNumber));
+                        continue;
+                    }
+                    try { await _whtService.VoidAsync(companyId, lc.Id); }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "WHT cert {Cert} void failed during doc void {Doc}", lc.Id, documentId);
+                        AddOnce(whtVoidNotices, Accounting.Helpers.WhtCertVoidCascade.VoidFailedNotice(lc.CertificateNumber, ex.Message));
+                    }
                 }
 
                 // 6e) ฝ่ายค้าน P2b (รอบ 204): ยกเลิกใบลดหนี้ซื้อที่ลดภาษีหัก ณ ที่จ่ายไปแล้ว — ตอนอนุมัติ 50 ทวิ ของใบต้นทางถูกออกใหม่ยอดที่ลด
@@ -10918,7 +10949,7 @@ public partial class DocumentService : IDocumentService
             voidedAt = DateTime.UtcNow,
         });
         // รอบ 265 ฝ่ายค้าน M3: ข้อความของเงินรอจัดสรร (งวดรายการประจำที่ใบเสร็จนี้ปิดไว้) ถึงผู้กดยกเลิก
-        var creditNotice = creditVoidNotices.Count == 0 ? null : string.Join(" · ", creditVoidNotices);
+        var creditNotice = creditVoidNotices.Count + whtVoidNotices.Count == 0 ? null : string.Join(" · ", creditVoidNotices.Concat(whtVoidNotices));
         return cascadeEtaxFlag == null && cascadeVatNotice == null && creditNotice == null
             ? PaymentVoidResult.None
             : new PaymentVoidResult(cascadeEtaxFlag, cascadeVatNotice) with { CreditNotice = creditNotice };

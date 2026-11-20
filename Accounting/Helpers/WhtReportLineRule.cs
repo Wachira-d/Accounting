@@ -59,20 +59,29 @@ public static class WhtReportLineRule
     public static bool IncludeNeedsReason(TaxType t, string? description)
         => Applies(t) && KindOf(description) != WhtReportLineKind.Counted;
 
-    /// <summary>คำอธิบายล็อก — คำนำหน้าของระบบคือสิ่งที่ด่านยื่นใช้มองหาแถว (แก้ = ด่านมองไม่เห็น) · บรรทัดจาก 50 ทวิ คำอธิบายมาจากใบ</summary>
-    public static bool DescriptionLocked(TaxType t, string? description, Guid? whtCertId)
-        => Applies(t) && (whtCertId.HasValue || KindOf(description) != WhtReportLineKind.Counted);
+    /// <summary>คำอธิบายล็อก — คำนำหน้าของระบบคือสิ่งที่ด่านยื่นใช้มองหาแถว (แก้ = ด่านมองไม่เห็น) · บรรทัดจาก 50 ทวิ/เอกสาร คำอธิบายมาจากต้นทาง
+    /// (ชนิดบรรทัดในลายเซ็นตัดสินจากคำอธิบาย)</summary>
+    public static bool DescriptionLocked(TaxType t, string? description, Guid? whtCertId, Guid? documentId = null)
+        => Applies(t) && (whtCertId.HasValue || documentId.HasValue || KindOf(description) != WhtReportLineKind.Counted);
 
-    /// <summary>ยอดเงินได้/อัตรา/ภาษีล็อก — บรรทัดที่มาจากทะเบียน 50 ทวิ (แก้ที่ใบ แล้วกด "สร้างใหม่" · ด่านยื่นเทียบกับทะเบียน)</summary>
-    public static bool AmountsLocked(TaxType t, Guid? whtCertId) => Applies(t) && whtCertId.HasValue;
+    /// <summary>ยอดเงินได้/อัตรา/ภาษีล็อก — <b>บรรทัดที่อยู่ในลายเซ็นร่างล้าสมัย</b> (ฝ่ายค้าน MED-1/MED-2: ลายเซ็นต้องเทียบข้อมูลต้นทาง
+    /// ไม่ใช่ค่าที่ผู้ใช้แก้ในร่าง — เดิมแก้ยอดแถว "ยังไม่ออกหนังสือรับรอง"/บรรทัด ภ.พ.36 แล้วร่างล้าสมัยถาวร สร้างใหม่ก็ล้างค่าที่แก้ = วนไม่จบ) ·
+    /// ภ.ง.ด.: บรรทัดจาก 50 ทวิ หรือจากเอกสาร · ภ.พ.36: บรรทัดจากเอกสาร · แก้ที่ต้นทาง (ใบ/เอกสาร) แล้วกด "สร้างใหม่" ·
+    /// บรรทัด JE ล้วน (ไม่มีทั้งใบและเอกสาร · ไม่อยู่ในลายเซ็น) แก้ยอดได้เหมือนเดิม</summary>
+    public static bool AmountsLocked(TaxType t, Guid? whtCertId, Guid? documentId = null)
+        => (Applies(t) && (whtCertId.HasValue || documentId.HasValue))
+           || (t == TaxType.VatPp36 && documentId.HasValue);
 
     /// <summary>ข้อความเหตุผลของช่องที่ล็อก (หน้าเว็บแสดงเป็น tooltip · เซิร์ฟเวอร์ใช้ในข้อความปฏิเสธ) — null = ไม่ล็อก</summary>
-    public static string? LockReason(TaxType t, string? description, Guid? whtCertId)
+    public static string? LockReason(TaxType t, string? description, Guid? whtCertId, Guid? documentId = null)
     {
-        if (AmountsLocked(t, whtCertId))
+        if (whtCertId.HasValue && AmountsLocked(t, whtCertId, documentId))
             return "บรรทัดนี้มาจากหนังสือรับรอง 50 ทวิ — แก้ยอด/ประเภทเงินได้ที่หนังสือรับรอง (ยกเลิกแล้วออกใหม่) แล้วกด \"สร้างใหม่\" "
                 + "(ตอนยื่นระบบเทียบรายงานกับทะเบียน 50 ทวิ)";
-        if (DescriptionLocked(t, description, whtCertId))
+        if (AmountsLocked(t, whtCertId, documentId))
+            return "บรรทัดนี้คำนวณจากเอกสาร — แก้ยอดที่เอกสาร แล้วกด \"สร้างใหม่\" (ตอนยื่นระบบเทียบรายงานกับเอกสารปัจจุบัน)"
+                + (Applies(t) && KindOf(description) != WhtReportLineKind.Counted ? " · ติ๊ก \"ใช้\" ได้พร้อมระบุเหตุผล" : "");
+        if (DescriptionLocked(t, description, whtCertId, documentId))
             return "คำนำหน้าบรรทัดนี้ระบบเป็นผู้เขียน (ด่านยื่นใช้หาแถวที่ยังไม่มี 50 ทวิ) — แก้คำอธิบายไม่ได้ · ติ๊ก \"ใช้\" ได้พร้อมระบุเหตุผล";
         return null;
     }
@@ -96,4 +105,40 @@ public static class WhtReportLineRule
         var s = (d ?? "").Trim();
         return s.Length <= 60 ? s : s[..60] + "…";
     }
+}
+
+/// <summary>รอบ 275 แพ็ก B (ฝ่ายค้าน MED-4): "สร้างใหม่" คืนการติ๊ก<b>ออก</b>ของผู้ใช้ — ตัวจับคู่ตัวเดียว (pure)</summary>
+public static class RegenerateUntick
+{
+    public readonly record struct Key(Guid? DocumentId, Guid? WhtCertId, string? IncomeTypeCode, string? Description);
+
+    /// <summary>บรรทัดของฉบับใหม่ตรงกับบรรทัดที่ติ๊กออกในฉบับเดิมไหม — ตรงทั้ง เอกสาร · ใบ · ประเภทเงินได้ · คำอธิบาย ·
+    /// บรรทัดเดิมที่ไม่มีตัวอ้างใบ (ก่อนรอบ 275) เทียบโดยไม่ดูใบ</summary>
+    public static bool Matches(IReadOnlyCollection<Key> excluded, Key fresh)
+    {
+        foreach (var e in excluded)
+        {
+            if (e.DocumentId != fresh.DocumentId) continue;
+            if (!string.Equals((e.IncomeTypeCode ?? "").Trim(), (fresh.IncomeTypeCode ?? "").Trim(), StringComparison.Ordinal)) continue;
+            if (!string.Equals(e.Description ?? "", fresh.Description ?? "", StringComparison.Ordinal)) continue;
+            if (e.WhtCertId.HasValue && e.WhtCertId != fresh.WhtCertId) continue;
+            return true;
+        }
+        return false;
+    }
+}
+
+/// <summary>รอบ 275 แพ็ก B (คำตัดสิน 275-B-6 (ก) · T2 L3): ยกเลิกเอกสาร ⇒ 50 ทวิ ที่อ้างเอกสารนั้นทำอะไร — ตัวตัดสินเดียว</summary>
+public static class WhtCertVoidCascade
+{
+    public const string UnlinkRuleCode = "WHT-CERT-UNLINK-ON-VOID-275";
+
+    /// <summary>ใบที่ผูกด้วยมือ (มี <c>LinkedAt</c> — ใบที่ออกไว้ก่อนแล้วผูกกับเอกสาร) ⇒ หลุดการผูก ไม่ยกเลิก · ใบที่ระบบสร้างจากเอกสาร ⇒ ยกเลิกตาม (เดิม)</summary>
+    public static bool UnlinkInsteadOfVoid(DateTime? linkedAt) => linkedAt.HasValue;
+
+    public static string UnlinkedNotice(string certNo, string docNo)
+        => $"50 ทวิ {certNo} ที่ผูกด้วยมือกับ {docNo} หลุดการผูก (ไม่ถูกยกเลิก) — ขึ้นเป็น \"ยังไม่ผูก\" ที่หน้าหนังสือรับรอง: ผูกกับใบสำคัญจ่ายที่ถูกต้อง หรือยกเลิกใบถ้าไม่มีการจ่ายจริง";
+
+    public static string VoidFailedNotice(string certNo, string reason)
+        => $"⚠️ ยกเลิก 50 ทวิ {certNo} ตามเอกสารไม่สำเร็จ ({reason}) — ใบยังนับในแบบ ภ.ง.ด. · ยกเลิกใบที่หน้าหนังสือรับรอง";
 }

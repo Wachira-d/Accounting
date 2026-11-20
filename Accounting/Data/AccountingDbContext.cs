@@ -4702,8 +4702,27 @@ public class AccountingDbContext : DbContext
     /// <summary>แถว audit ที่รอประทับตอน commit — ผูกกับธุรกรรมที่บันทึก (TransactionId) · แถวของธุรกรรมอื่น (ถูกทิ้งโดยไม่ rollback ผ่าน EF) = ทิ้ง</summary>
     private readonly List<(Guid TxId, Models.Entities.AuditLog Row)> _deferredAudit = new();
 
+    /// <summary>รอบ 275 แพ็ก B (คำตัดสิน 275-B-6 (ข)): ประทับสำเนาผู้ถูกหัก ณ วันออก ให้ 50 ทวิ ที่เข้าสถานะออกแล้ว (หรือเปลี่ยนผู้ถูกหัก) —
+    /// จุดเดียวที่ทุกทางสร้าง/ออกใบผ่าน · ผู้ติดต่อที่ติดตามอยู่ก่อน (เพิ่มในคำขอเดียวกัน) ไม่งั้นอ่านจากฐาน (รวมที่ถูกลบ)</summary>
+    private void StampWhtPayeeSnapshots()
+    {
+        foreach (var e in ChangeTracker.Entries<Models.Entities.WithholdingTaxCert>())
+        {
+            if (e.State is not (EntityState.Added or EntityState.Modified)) continue;
+            var w = e.Entity;
+            if (!Accounting.Helpers.WhtPayeeSnapshot.ShouldStamp(w.Status)) continue;
+            var payeeChanged = e.State == EntityState.Modified && e.Property(x => x.PayeeContactId).IsModified;
+            if (w.PayeeSnapshotJson != null && !payeeChanged) continue;
+            var c = ChangeTracker.Entries<Models.Entities.Contact>().Select(x => x.Entity).FirstOrDefault(x => x.Id == w.PayeeContactId)
+                ?? Set<Models.Entities.Contact>().IgnoreQueryFilters().AsNoTracking()
+                    .FirstOrDefault(x => x.Id == w.PayeeContactId && x.CompanyId == w.CompanyId);
+            if (c != null) w.PayeeSnapshotJson = Accounting.Helpers.WhtPayeeSnapshot.Serialize(c);
+        }
+    }
+
     public override int SaveChanges()
     {
+        StampWhtPayeeSnapshots();
         UpdateTimestamps();
         if (Accounting.Helpers.PolicyAcceptanceAppendOnly.Violation(ChangeTracker) is string evidenceBad)   // รอบ 219 ส่วน B ฝ่ายค้าน S4
             throw new InvalidOperationException(evidenceBad);
@@ -4754,6 +4773,7 @@ public class AccountingDbContext : DbContext
 
     public override async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
     {
+        StampWhtPayeeSnapshots();
         UpdateTimestamps();
         if (Accounting.Helpers.PolicyAcceptanceAppendOnly.Violation(ChangeTracker) is string evidenceBad)   // รอบ 219 ส่วน B ฝ่ายค้าน S4
             throw new InvalidOperationException(evidenceBad);
