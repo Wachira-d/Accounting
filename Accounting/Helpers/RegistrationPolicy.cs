@@ -48,10 +48,7 @@ public static class RegistrationPolicy
     /// <c>AuthService.ConsumeInvitationAsync</c> ใช้ (ด่านบอกว่า "ผ่านด้วยคำเชิญ" ต้องแปลว่าคำเชิญถูกใช้ได้จริง)</summary>
     public static bool IsInvitationUsable(
         InvitationStatus status, DateTime expiresAtUtc, string? invitedEmail, string? email, DateTime nowUtc)
-        => status == InvitationStatus.Pending
-           && expiresAtUtc > nowUtc
-           && !string.IsNullOrWhiteSpace(email)
-           && string.Equals(invitedEmail?.Trim(), email.Trim(), StringComparison.OrdinalIgnoreCase);
+        => CompanyInvitationPolicy.Check(status, expiresAtUtc, invitedEmail, email, nowUtc) == CompanyInvitationPolicy.Verdict.Ok;   // รอบ 277: ตัวตัดสินเดียว
 
     /// <summary>สร้าง<b>บัญชีผู้ใช้ใหม่</b> (สมัครด้วยฟอร์ม · สมัครผ่าน SSO) ·
     /// <paramref name="hasUsableInvitation"/> = ผลของ <see cref="IsInvitationUsable"/> กับคำเชิญที่แนบมา</summary>

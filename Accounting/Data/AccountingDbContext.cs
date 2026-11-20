@@ -682,6 +682,7 @@ public class AccountingDbContext : DbContext
             e.HasOne(i => i.Company).WithMany().HasForeignKey(i => i.CompanyId).OnDelete(DeleteBehavior.Cascade);
             e.HasOne(i => i.InvitedBy).WithMany().HasForeignKey(i => i.InvitedByUserId).OnDelete(DeleteBehavior.Restrict);
             e.HasIndex(i => i.Token).IsUnique();
+            e.HasIndex(i => i.TokenHash).IsUnique();   // รอบ 277 — ค้นคำเชิญด้วย hash เท่านั้น
             // Email-lookup happens during invite acceptance — narrow index.
             e.HasIndex(i => new { i.CompanyId, i.Email });
             e.HasQueryFilter(i => !i.IsDeleted);

@@ -104,4 +104,9 @@ public class CompanyUser
     /// <summary>รอบ 276 — "สร้าง/แก้ได้เฉพาะร่าง" (อนุมัติ/ออกเลข/ยกเลิก/ลงบัญชี/รับชำระไม่ได้ · ขออนุมัติได้) · ผู้อ่าน: <c>DocumentRestrictionFilter</c> +
     /// <c>Helpers/DocumentRestrictionGuard</c> ใน <c>ApproveDocumentAsync</c>/<c>VoidDocumentAsync</c></summary>
     public bool DraftDocumentsOnly { get; set; }
+
+    /// <summary>รอบ 277 — เข้าร่วมผ่านคำเชิญที่ผู้เชิญไม่ได้เลือกบทบาท ⇒ <b>ยังไม่มีสิทธิ์ใด ๆ</b> (ทุก API ของบริษัท 403 · หน้าเว็บแสดงหน้าต้อนรับ) จนกว่า
+    /// เจ้าของตั้งบทบาท · ค่าตั้งต้น false = สมาชิกเดิมทุกคนพฤติกรรมเดิม · ตัวตัดสิน <c>Helpers/PendingMemberAccess</c> · ผู้อ่าน: <c>TenantAccessMiddleware</c>
+    /// + <c>RolePermissionService.GetMyPermissionsAsync</c> · ผู้ปลด: <c>CompanyService.UpdateUserRoleAsync</c> / <c>RolePermissionService.AssignRoleAsync</c></summary>
+    public bool AccessPending { get; set; }
 }
