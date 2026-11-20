@@ -22293,7 +22293,7 @@ RULES += [
 ]
 # รอบ 281 — เส้นคู่ค้า A↔B ครบเส้น (คำขอเจ้าของ: ใบแจ้งหนี้ → จ่าย → ใบเสร็จ/ใบกำกับ → ใบสำคัญจ่าย + 50 ทวิ → 50 ทวิ กลับ · แจ้งทุกขั้น) ·
 # ตัวคิดยอดก่อนหักตัวเดียว (DocumentPayLinkPolicy.AmountsFor) · คีย์แจ้งเตือนต่อขั้น (PartnerFlowNotificationSplit.Keys) · เส้นทางของใบ (PartnerJourney)
-_R281_WHY = "รอบ 281 (เส้นคู่ค้า A↔B — คำตัดสิน 281-1…281-5 · erp-review/2026-11-20/dev-281-partner-e2e.md): "
+_R281_WHY = "รอบ 281 (เส้นคู่ค้า A↔B — คำตัดสิน 281-1…281-5 · commit 22572b0c · erp-review/2026-11-20/dev-281-partner-e2e.md): "
 RULES += [
     dict(file="Services/Implementations/PartnerPaymentNoticeService.cs", method="PlanForAsync",
          must=["DocumentPayLinkPolicy.AmountsFor(doc.BalanceDue, wht.NetCap, 0m).Gross", "PartnerPaymentNoticeRule.For(doc.Status, grossDue,"],
