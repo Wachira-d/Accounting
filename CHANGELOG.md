@@ -7412,3 +7412,6 @@ _รอบ 277 ชุดแก้ฝ่ายค้าน (2026-11-20 · คำ�
 หน้าสำนักงานบัญชี · `api/me/permissions` · SignalR · `TenantGuard` · ผู้อนุมัติ/ผู้ลงนาม · รายชื่อบริษัทของผู้ใช้ (รอสิทธิ์ = id/ชื่อเท่านั้น) · เส้นสำรอง middleware fail closed ·
 MED-1 ทะเบียนเมนูครบทุกตัว (คีย์ any-of · ทิศเอกสาร · สิทธิ์เมนูอย่างเดียว + เทสต์ inventory) · MED-2 หน้าหลักโหมดง่าย "simple-home" ไม่ผูก Reports.Dashboard ·
 ที่พัก = LodgingManage หรือ LodgingSettings · MED-3 ตอบรับด้วย token = ยืนยันอีเมล · LOW หน้ารับคำเชิญไม่บอกการมีบัญชี — commit 6566b49b_
+
+_รอบ 277 ฝ่ายค้าน (แจ้งเตือน · คำตัดสิน 277-13): สมาชิกรอสิทธิ์ไม่ได้รับแจ้งเตือนของบริษัททุกช่อง — `NotificationEngine` (เส้นบทบาท + ผู้รับระบุตัว) เรียก
+`CompanyMembership.MayReceiveCompanyNotificationAsync` · กระดิ่ง (`NotificationService.VisibleAsync`) กรองแถวของบริษัทที่รอสิทธิ์ตอนอ่าน (รวมแถวเก่า) · Db test + กติกา _R277_ — commit PENDING277C_

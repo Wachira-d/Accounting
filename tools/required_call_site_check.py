@@ -22069,6 +22069,24 @@ RULES += [
     dict(file=_R277_INV, method="AcceptAsync", must=["CompanyInvitationPolicy.ConfirmsEmail(verdict)", "trackedUser.EmailVerified = true"],
          why=_R277_WHY + "ฝ่ายค้าน MED-3: ตอบรับด้วย token = ยืนยันอีเมล (คำตัดสิน 277-8)"),
 ]
+RULES += [
+    # ฝ่ายค้านรอบ 277: ช่องรั่วผ่านการแจ้งเตือน — สมาชิกรอสิทธิ์ไม่ได้รับทุกช่อง · กระดิ่งเก่ากรองตอนอ่าน
+    dict(file="Services/Implementations/NotificationEngine.cs", method="DispatchWithOutcomeAsync",
+         must=["CompanyMembership.MayReceiveCompanyNotificationAsync(_db, companyId, pu)"],
+         before=[("CompanyMembership.MayReceiveCompanyNotificationAsync(", "DispatchSystemAsync(")],
+         why=_R277_WHY + "เส้นบทบาท: ตัดผู้รับที่ยังรอสิทธิ์ก่อนส่งทุกช่อง (กระดิ่ง/อีเมล/LINE ส่วนตัว)"),
+    dict(file="Services/Implementations/NotificationEngine.cs", method="DispatchDirectAsync",
+         must=["CompanyMembership.MayReceiveCompanyNotificationAsync(_db, companyId, recipientUserId)"],
+         before=[("CompanyMembership.MayReceiveCompanyNotificationAsync(", "DispatchSystemAsync(")],
+         why=_R277_WHY + "ผู้รับระบุตัว: ตัดผู้รับที่ยังรอสิทธิ์"),
+    dict(file="Services/Implementations/NotificationService.cs", method="VisibleAsync",
+         must=["CompanyMembership.PendingCompanyIdsAsync(_db, userId)", "!pending.Contains(n.CompanyId.Value)"],
+         why=_R277_WHY + "กระดิ่ง: แถวของบริษัทที่ยังรอสิทธิ์ (รวมแถวเก่า) ไม่แสดง"),
+    dict(file="Helpers/CompanyMembership.cs", method="MayReceiveCompanyNotificationAsync", must=["Active(rows)"],
+         why=_R277_WHY + "ใช้ตัวกรองเดียว Active"),
+    dict(file="Helpers/CompanyMembership.cs", method="PendingCompanyIdsAsync", must=["Active(mine)"],
+         why=_R277_WHY + "ใช้ตัวกรองเดียว Active"),
+]
 REVIEWER_CASES += [
     ("R277-1", "InvokeAsync", "if (row.AccessPending && !PendingMemberAccess.IsAllowed(context.Request.Method, path))",
      "if (false && !PendingMemberAccess.IsAllowed(context.Request.Method, path))", True),
@@ -22078,6 +22096,7 @@ REVIEWER_CASES += [
     ("R277-4", "AddUserAsync", "await EnsureSeatAsync(companyId, adding);", "_ = adding;", True),
     ("R277-5", "GetWorkspace", "Accounting.Helpers.CompanyMembership.ActiveOf(_db, userId).AsNoTracking()", "_db.CompanyUsers.AsNoTracking().Where(cu => cu.UserId == userId)", True),
     ("R277-6", "Active", "rows.Where(cu => !cu.AccessPending)", "rows", True),
+    ("R277-7", "DispatchDirectAsync", "if (!await Accounting.Helpers.CompanyMembership.MayReceiveCompanyNotificationAsync(_db, companyId, recipientUserId)) return;", "", True),
 ]
 
 

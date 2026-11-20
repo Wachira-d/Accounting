@@ -390,6 +390,45 @@ public class TeamInvitationDbTests
         return System.Text.Json.JsonSerializer.Serialize(ok.Value);
     }
 
+    [Fact]
+    public async Task ฝ่ายค้านแจ้งเตือน_สมาชิกรอสิทธิ์ไม่ได้รับทั้งเส้นบทบาทและผู้รับระบุตัว_กระดิ่งเก่ากรองตอนอ่าน_ตั้งบทบาทแล้วได้()
+    {
+        await using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน — ข้าม"); return; }
+        var s = await SeedAsync(db);
+        var u = await UserAsync(db);
+        var r = await Company(db).AddUserAsync(s.CompanyId, s.Owner, new AddCompanyUserRequest(u.Email));
+        await Inv(db).AcceptAsync(u.Id, TokenOf(r));
+        // จำลองแถวรอสิทธิ์ที่บทบาทมาตรฐานถูกตั้งเป็นเจ้าของ (เส้นบทบาท "Owner" จะหาเจอ) — ด่านต้องตัดด้วย AccessPending ไม่ใช่ด้วยบทบาท
+        await db.CompanyUsers.Where(x => x.CompanyId == s.CompanyId && x.UserId == u.Id).ExecuteUpdateAsync(x => x.SetProperty(c => c.Role, UserRole.Owner));
+        // แถวกระดิ่งเก่าที่ค้าง (ส่งจากทางอื่นก่อนหน้า)
+        db.Notifications.Add(new Notification { UserId = u.Id, CompanyId = s.CompanyId, Type = NotificationType.System, Title = "ยอดขายเดือนนี้", Message = "ยอด 1,000,000" });
+        await db.SaveChangesAsync();
+        db.ChangeTracker.Clear();
+
+        var engine = Engine(db);
+        await engine.DispatchAsync(s.CompanyId, NotificationEvents.TeamInvitationAccepted, new NotificationContext { Title = "r277-role", Message = "x" });
+        await engine.DispatchAsync(s.CompanyId, NotificationEvents.ApprovalRequired, new NotificationContext { Title = "r277-direct", Message = "x", RecipientUserId = u.Id });
+        var got = await db.Notifications.AsNoTracking().Where(n => n.UserId == u.Id && n.Title.StartsWith("r277-")).CountAsync();
+        Assert.Equal(0, got);
+        // ทิศตรงข้าม: เจ้าของจริงได้เส้นบทบาท
+        Assert.True(await db.Notifications.AsNoTracking().AnyAsync(n => n.UserId == s.Owner && n.Title == "r277-role"));
+
+        var bell = new NotificationService(db, NullLogger<NotificationService>.Instance);
+        Assert.Empty(await bell.GetUserNotificationsAsync(u.Id));
+        Assert.Equal(0, (await bell.GetCountAsync(u.Id)).Total);
+
+        // เจ้าของตั้งบทบาท ⇒ เห็นกระดิ่ง + ได้แจ้งเตือนใหม่
+        await Company(db).UpdateUserRoleAsync(s.CompanyId, s.Owner, u.Id, UserRole.Staff);
+        Assert.Single(await bell.GetUserNotificationsAsync(u.Id));
+        await Engine(db).DispatchAsync(s.CompanyId, NotificationEvents.ApprovalRequired, new NotificationContext { Title = "r277-after", Message = "x", RecipientUserId = u.Id });
+        Assert.True(await db.Notifications.AsNoTracking().AnyAsync(n => n.UserId == u.Id && n.Title == "r277-after"));
+    }
+
+    private static NotificationEngine Engine(AccountingDbContext db)
+        => new(db, F4Proxy<ILineNotifyService>.Create((_, _) => null), F4Proxy<IOrganizationService>.Create((_, _) => null),
+            NullLogger<NotificationEngine>.Instance, new SecretProtector("db-test-key-277-notify"));
+
     // ── ตัวช่วย ──
 
     private static async Task<int> CallAsync(AccountingDbContext db, Guid userId, Guid companyId, string method, string path)
