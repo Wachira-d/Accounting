@@ -57,6 +57,8 @@ public partial class PdfGenerationService
         byte[]? signatureBytes = null, string? signerName = null, WhtCertFundAmounts? funds = null,
         WhtCertStamp? stamp = null)
     {
+        // รอบ 275 แพ็ก B (คำตัดสิน 275-B-6 (ข)): ผู้ถูกหัก = สำเนา ณ วันออก (ตัวเดียว Helpers/WhtPayeeSnapshot · คู่กับ HTML)
+        var payee = Accounting.Helpers.WhtPayeeSnapshot.Of(cert)!;
         var stampImg = stamp != null && LooksLikeImage(stamp.Image) ? stamp : null;
         EnsureThaiFontsRegistered();
         var lines = cert.Lines.OrderBy(l => l.LineOrder).ToList();
@@ -69,10 +71,10 @@ public partial class PdfGenerationService
             company.Address, company.BuildingNumber, company.BuildingName, company.Moo, company.StreetName,
             company.SubDistrict, company.District, company.Province, company.PostalCode);
         var payeeAddr = FormatThaiAddress(
-            cert.PayeeContact.Address, cert.PayeeContact.BuildingNumber, cert.PayeeContact.BuildingName,
-            cert.PayeeContact.Moo, cert.PayeeContact.StreetName,
-            cert.PayeeContact.SubDistrict, cert.PayeeContact.District,
-            cert.PayeeContact.Province, cert.PayeeContact.PostalCode);
+            payee.Address, payee.BuildingNumber, payee.BuildingName,
+            payee.Moo, payee.StreetName,
+            payee.SubDistrict, payee.District,
+            payee.Province, payee.PostalCode);
 
         var pdf = QuestPDF.Fluent.Document.Create(container =>
         {
@@ -111,9 +113,9 @@ public partial class PdfGenerationService
                             BuildPartyBlock(form, WhtCertFormText.PayerHeading, company.TaxId,
                                 WhtCertFormText.PartyName(null, company.Name, company.TaxId, company.BranchCode, company.BranchName), fullAddress);
                             // ชื่อผู้ถูกหัก = คำนำหน้า (Contact.TitleTh) + ชื่อ · "ลำดับที่ … ในแบบ" + ช่องแบบยื่นอยู่ในกรอบผู้ถูกหัก ตามแบบทางการ
-                            BuildPartyBlock(form, WhtCertFormText.PayeeHeading, cert.PayeeContact.TaxId,
-                                WhtCertFormText.PartyName(cert.PayeeContact.TitleTh, cert.PayeeContact.Name, cert.PayeeContact.TaxId,
-                                    cert.PayeeContact.BranchCode, cert.PayeeContact.BranchName), payeeAddr,
+                            BuildPartyBlock(form, WhtCertFormText.PayeeHeading, payee.TaxId,
+                                WhtCertFormText.PartyName(payee.TitleTh, payee.Name, payee.TaxId,
+                                    payee.BranchCode, payee.BranchName), payeeAddr,
                                 formTypeOf: cert, payee: true);
                             BuildIncomeTable(form, lines, cert.TotalIncomeAmount, cert.TotalTaxAmount);
                             BuildTotalInWords(form, cert.TotalTaxAmount);

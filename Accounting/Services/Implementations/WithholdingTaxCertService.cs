@@ -1653,15 +1653,18 @@ public partial class WithholdingTaxCertService : IWithholdingTaxCertService
             DividendSubRow: l.DividendSubRow, DividendCreditRate: l.DividendCreditRate);
     }
 
+    /// <summary>รอบ 275 แพ็ก B (275-B-6 (ข)): ผู้ถูกหักบนหน้าใบ/หน้าพิมพ์ = สำเนา ณ วันออก (Helpers/WhtPayeeSnapshot ตัวเดียวกับ PDF)</summary>
+    private static Contact PayeeOf(WithholdingTaxCert w) => Accounting.Helpers.WhtPayeeSnapshot.Of(w)!;
+
     private static WithholdingTaxCertResponse MapToResponse(WithholdingTaxCert w, Company company) => new(
         w.Id, w.CertificateNumber, w.CompanyId,
         company.Name, company.TaxId, company.BranchCode,
         ComposeFullAddress(company.Address, company.SubDistrict, company.District, company.Province, company.PostalCode,
             company.Moo, company.BuildingNumber, company.StreetName, company.BuildingName),
-        w.PayeeContactId, w.PayeeContact.Name, w.PayeeContact.TaxId,
-        w.PayeeContact.BranchCode,
-        ComposeFullAddress(w.PayeeContact.Address, w.PayeeContact.SubDistrict, w.PayeeContact.District, w.PayeeContact.Province, w.PayeeContact.PostalCode,
-            w.PayeeContact.Moo, w.PayeeContact.BuildingNumber, w.PayeeContact.StreetName, w.PayeeContact.BuildingName),
+        w.PayeeContactId, PayeeOf(w).Name, PayeeOf(w).TaxId,
+        PayeeOf(w).BranchCode,
+        ComposeFullAddress(PayeeOf(w).Address, PayeeOf(w).SubDistrict, PayeeOf(w).District, PayeeOf(w).Province, PayeeOf(w).PostalCode,
+            PayeeOf(w).Moo, PayeeOf(w).BuildingNumber, PayeeOf(w).StreetName, PayeeOf(w).BuildingName),
         w.TaxFormType, GetTaxFormName(w.TaxFormType),
         w.TaxYear, w.TaxMonth, w.CertificateType, w.Status,
         w.TotalIncomeAmount, w.TotalTaxAmount,
@@ -1676,8 +1679,8 @@ public partial class WithholdingTaxCertService : IWithholdingTaxCertService
         PayerConditionIndex: Accounting.Helpers.WhtCertFormText.PayerConditionIndex(w.CertificateType),
         DividendBlock: Accounting.Helpers.WhtCertFormText.DividendBlock(w.Lines),
         PayerNameLine: Accounting.Helpers.WhtCertFormText.PartyName(null, company.Name, company.TaxId, company.BranchCode, company.BranchName),
-        PayeeNameLine: Accounting.Helpers.WhtCertFormText.PartyName(w.PayeeContact.TitleTh, w.PayeeContact.Name, w.PayeeContact.TaxId,
-            w.PayeeContact.BranchCode, w.PayeeContact.BranchName),
+        PayeeNameLine: Accounting.Helpers.WhtCertFormText.PartyName(PayeeOf(w).TitleTh, PayeeOf(w).Name, PayeeOf(w).TaxId,
+            PayeeOf(w).BranchCode, PayeeOf(w).BranchName),
         TotalTaxAmountInWords: Accounting.Helpers.ThaiBahtText.Format(w.TotalTaxAmount),
         ExchangeRateUsed: w.ExchangeRateUsed, ExchangeRateBasis: w.ExchangeRateBasis,
         PartnerDeliveryLabel: Accounting.Helpers.PartnerExchangeRules.WhtDeliveryLabel(w.PartnerDeliveredAt, w.PartnerDeliveryError));

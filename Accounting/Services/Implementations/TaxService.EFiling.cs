@@ -40,6 +40,16 @@ public partial class TaxService
             ?? throw new KeyNotFoundException("ไม่พบบริษัท");
 
         formType = formType.ToUpperInvariant();
+        // รอบ 275 แพ็ก B (T2 M1 · H2 · ฝ่ายค้าน HIGH-1): ไฟล์ยื่นจากรายงานเดินด่านเดียวกับ "บันทึกการยื่น" — ร่าง: ตัวตรวจก่อนยื่น + เทียบทะเบียน (บล็อก) ·
+        // ยื่นแล้ว: สร้างจากยอดที่บันทึกไว้ได้เสมอ + คำเตือนเมื่อทะเบียนขยับหลังยื่น · แถว "ยังไม่ออก 50 ทวิ" คงเป็นคำเตือนบนไฟล์ (D2-B1a)
+        string? gateNote = null;
+        var gateType = formType == "PP.36" ? TaxType.VatPp36 : Accounting.Helpers.WhtUnissuedCertGate.TaxTypeForPndForm(formType);
+        if (gateType is TaxType gt && gt != TaxType.WithholdingTax1)
+        {
+            var gateReport = await _db.TaxReports.AsNoTracking().Include(r => r.Lines)
+                .FirstOrDefaultAsync(r => r.CompanyId == companyId && r.TaxType == gt && r.Year == year && r.Month == month);
+            if (gateReport != null) gateNote = await EnsureReportFileableAsync(companyId, gateReport);
+        }
         string body;
         decimal totalAmount;
         decimal totalTax;
@@ -85,7 +95,10 @@ public partial class TaxService
             .OrderByDescending(e => e.GeneratedAt)
             .FirstOrDefaultAsync();
         if (recent != null && Accounting.Helpers.EFilingExportDedupe.ReuseExisting(recent.FileContent, recent.GeneratedAt, body, dedupeNow))
+        {
+            recent.ReviewNote = gateNote;
             return recent;
+        }
 
         var export = new EFilingExport
         {
@@ -100,6 +113,7 @@ public partial class TaxService
             GeneratedAt = DateTime.UtcNow,
             GeneratedBy = userId,
             CreatedBy = userId,
+            ReviewNote = gateNote,
         };
         _db.EFilingExports.Add(export);
 
@@ -144,10 +158,6 @@ public partial class TaxService
                 && r.Year == year && r.Month == month)
             ?? throw new InvalidOperationException(
                 $"ไม่พบรายงาน {formType} ของงวด {year}/{month:D2} — กรุณา generate ก่อน");
-        // รอบ 275 แพ็ก B (T2 M1 · H2): ไฟล์ยื่นจากรายงานเดินด่านเดียวกับ "บันทึกการยื่น" (ตัวตรวจก่อนยื่น + เทียบทะเบียน 50 ทวิ) —
-        // แถว "ยังไม่ออก 50 ทวิ" คงเป็นคำเตือนบนไฟล์ (X-Filing-Review-Note · D2-B1a) และบล็อกที่ตัวบันทึกการยื่น
-        await EnsureReportFileableAsync(companyId, report);
-
         // เฉพาะบรรทัดรายการจริง — บรรทัด "[สรุป]" (IncomeTypeCode=SUMMARY เป็น
         // ยอดรวมซ้ำต่อผู้ขาย) และบรรทัดที่ผู้ทำบัญชีติ๊กออก (IsExcluded เช่น
         // เอกสารยกเลิก) ห้ามลงไฟล์ยื่น — เดิมยิงทุกบรรทัด ทำให้ผู้ขายที่มี
@@ -250,7 +260,6 @@ public partial class TaxService
                 && r.Year == year && r.Month == month)
             ?? throw new InvalidOperationException(
                 $"ไม่พบรายงาน ภพ.36 ของงวด {year}/{month:D2}");
-        await EnsureReportFileableAsync(companyId, report);   // รอบ 275 แพ็ก B (T2 M1 · M2) — ด่านเดียวกับบันทึกการยื่น
 
         // เฉพาะบรรทัดที่ผู้ทำบัญชียัง "ใช้" — เดิมวนทุกบรรทัด + header ใช้ยอด
         // persist ⇒ บรรทัดที่ติ๊กออกยังถูกส่ง RD และยอด H-row ไม่ตรงรายละเอียด.

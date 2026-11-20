@@ -437,7 +437,9 @@ public class WhtCertFormTextTests
         Assert.DoesNotContain("CertBranchSuffix", html);
         var svc = File.ReadAllText(Path.Combine(RepoRoot(), "Accounting/Services/Implementations/WithholdingTaxCertService.cs"));
         Assert.Contains("PayerNameLine: Accounting.Helpers.WhtCertFormText.PartyName(null, company.Name", svc);
-        Assert.Contains("PayeeNameLine: Accounting.Helpers.WhtCertFormText.PartyName(w.PayeeContact.TitleTh", svc);
+        // รอบ 275 แพ็ก B (275-B-6 (ข)): ผู้ถูกหัก = สำเนา ณ วันออก (PayeeOf → Helpers/WhtPayeeSnapshot.Of)
+        Assert.Contains("PayeeNameLine: Accounting.Helpers.WhtCertFormText.PartyName(PayeeOf(w).TitleTh", svc);
+        Assert.DoesNotContain("w.PayeeContact.TitleTh", svc);
         Assert.NotNull(typeof(WithholdingTaxCertResponse).GetProperty("PayerNameLine"));
         Assert.NotNull(typeof(WithholdingTaxCertResponse).GetProperty("PayeeNameLine"));
         // หน้าพิมพ์แสดงค่าจากเซิร์ฟเวอร์ (ไม่ประกอบชื่อเอง)

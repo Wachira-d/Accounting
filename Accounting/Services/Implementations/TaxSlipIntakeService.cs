@@ -1006,7 +1006,7 @@ public class TaxSlipIntakeService
         return ids.Distinct().ToList();
     }
 
-    public sealed record PendingView(string Type, string Label, int Year, int Month, decimal Amount);
+    public sealed record PendingView(string Type, string Label, int Year, int Month, decimal Amount, string? Blocked = null);   // Blocked = หน่วยงานบนสลิปไม่ตรงแบบ (ฝ่ายค้าน MED-1 · server ตัดสิน)
     public sealed record RemittanceView(Guid Id, string Label, decimal Total, DateTime PayDate, string? Blocked);
     public sealed record ClientManualView(Guid ClientCompanyId, string Name, IReadOnlyList<PendingView> Pending, IReadOnlyList<RemittanceView> Remittances,
         IReadOnlyList<AccountView> Accounts, string? TaxIdNote);
@@ -1027,7 +1027,8 @@ public class TaxSlipIntakeService
         {
             var dash = await _remit.GetDashboardAsync(co.Id, 24, includeOldAnnual: true);
             var pending = dash.Pending.Where(p => ProviderConsent.TaxTypes.Any(t => t.Type == p.RemittanceType))
-                .Select(p => new PendingView(p.RemittanceType, FormLabel(p.RemittanceType, p.PeriodYear, p.PeriodMonth), p.PeriodYear, p.PeriodMonth, p.Amount)).ToList();
+                .Select(p => new PendingView(p.RemittanceType, FormLabel(p.RemittanceType, p.PeriodYear, p.PeriodMonth), p.PeriodYear, p.PeriodMonth, p.Amount,
+                    TaxSlipDeskRule.AgencyTypeProblem(row.Agency, p.RemittanceType))).ToList();
             var recs = await _db.StatutoryRemittances.AsNoTracking()
                 .Where(r => r.CompanyId == co.Id && !r.IsDeleted && r.PayDate >= from && r.PayDate <= to)
                 .OrderByDescending(r => r.PayDate).Take(30)

@@ -764,7 +764,7 @@ public class TaxFilingExportService : ITaxFilingExportService
         var rows = new List<PndTextFileFormat.Row>();
         foreach (var cert in certs.OrderBy(c => c.CertificateNumber))
         {
-            var contact = cert.PayeeContact;
+            var contact = Accounting.Helpers.WhtPayeeSnapshot.Of(cert);   // รอบ 275 แพ็ก B (275-B-6 (ข)): ตัวตน ณ วันออก
             // เงื่อนไขการหักภาษี (Col11): 1 = หัก ณ ที่จ่าย · 2 = ออกให้ตลอดไป · 3 = ออกให้ครั้งเดียว — ตัวเดียว WhtGrossUp.FilingCondition
             // (รอบ 204: เดิม `is 2 ? 2 : 1` ⇒ ใบ "ออกให้ครั้งเดียว" ยื่นเป็นเงื่อนไข 1)
             var condition = Accounting.Helpers.WhtGrossUp.FilingCondition(cert.CertificateType);
@@ -1110,7 +1110,7 @@ public class TaxFilingExportService : ITaxFilingExportService
             .ToList();
         if (flagged.Count == 0) return "";
         var samples = flagged.Take(3)
-            .Select(x => $"{x.Cert.PayeeContact?.Name ?? x.Cert.CertificateNumber} {x.Line.TaxRate:0.##}%"
+            .Select(x => $"{Accounting.Helpers.WhtPayeeSnapshot.Of(x.Cert)?.Name ?? x.Cert.CertificateNumber} {x.Line.TaxRate:0.##}%"
                 + (x.Decision.RatePercent is decimal r ? $" (ม.70 {r:0.##}%)" : $" ({x.Decision.RuleCode})"))
             .ToList();
         return $" · ⚠️ {flagged.Count} บรรทัดอัตราไม่ตรงตัวตัดสิน ม.70 — " + string.Join(", ", samples)

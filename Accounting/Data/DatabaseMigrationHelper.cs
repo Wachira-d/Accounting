@@ -308,7 +308,8 @@ public static class DatabaseMigrationHelper
         list.AddRange(Accounting.Helpers.Round268Migration.Statements());   // รอบ 268 — ช่องทางของเงินมัดจำการจองต่องวด (268-1-3)
         list.AddRange(Accounting.Helpers.Round271Migration.Statements());   // รอบ 271 — ผูกใบสำคัญจ่ายกับ 50 ทวิ ที่ออกไว้แล้ว (SupersededByCertId ฯลฯ)
         list.AddRange(Accounting.Helpers.Round272Migration.Statements());   // รอบ 272 — สลิปชำระภาษีจากกลุ่ม LINE/อีเมล: ความยินยอมผู้ให้บริการ (append-only) · ใบขอชำระ · แถวสลิป · ที่มาของการนำส่ง
-        list.AddRange(Accounting.Helpers.Round275AMigration.Statements());   // รอบ 275 แพ็ก A — ลายนิ้วมือคีย์เข้ารหัสบน SiteSettings (กันหลายเครื่องคนละคีย์ · T4 M-4)
+        list.AddRange(Accounting.Helpers.Round275AMigration.Statements());
+        list.AddRange(Accounting.Helpers.Round275BMigration.Statements());   // รอบ 275 แพ็ก B — บรรทัดรายงาน ภ.ง.ด. อ้างใบ 50 ทวิ (+ เติมย้อนหลังที่จับคู่ได้แน่นอน) · สำเนาผู้ถูกหัก ณ วันออก   // รอบ 275 แพ็ก A — ลายนิ้วมือคีย์เข้ารหัสบน SiteSettings (กันหลายเครื่องคนละคีย์ · T4 M-4)
         return list;
     }
 
@@ -454,8 +455,6 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "TaxReportLines" ADD COLUMN IF NOT EXISTS "TaxPayerTitle" varchar(50) NULL;""",
             """ALTER TABLE "TaxReportLines" ADD COLUMN IF NOT EXISTS "TaxPayerBranchCode" varchar(5) NULL;""",
             """ALTER TABLE "TaxReportLines" ADD COLUMN IF NOT EXISTS "WhtCondition" integer NULL;""",
-            // รอบ 275 แพ็ก B (T2 H2): บรรทัดรายงาน ภ.ง.ด. อ้างใบ 50 ทวิ ที่มา — บรรทัดเก่า null (ร่างเก่าขึ้นแถบล้าสมัยหนึ่งครั้ง ⇒ "สร้างใหม่")
-            """ALTER TABLE "TaxReportLines" ADD COLUMN IF NOT EXISTS "WhtCertId" uuid NULL;""",
             """ALTER TABLE "Contacts" ADD COLUMN IF NOT EXISTS "NameEn" varchar(300) NULL;""",
             """ALTER TABLE "Contacts" ADD COLUMN IF NOT EXISTS "AddressEn" varchar(500) NULL;""",
             // ร่องรอยการ sync/ตรวจข้อมูลจากระบบภายนอก — **ภายในเท่านั้น** ห้ามพิมพ์ลงเอกสาร

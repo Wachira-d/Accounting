@@ -7365,6 +7365,11 @@ _Last verified against codebase: 2026-11-20 (รอบ 275 แพ็ก C — �
 คิว "รับเงินแล้วยังไม่มีใบกำกับ" (API + Autopilot + ปุ่มออกใบกำกับแทนใบรับเปล่า · ใบเก่าไม่แก้ย้อนหลัง) · MED-4 วันที่ปฏิทินไทยที่ต้นทางการรับชำระ · MED-5 ข้อความใบเสร็จผ่าน DocumentLabels ·
 LOW-1 การ์ด LINE "ยอดรับชำระ" · LOW-3 · ตัวโหลดรายการตัดยอดไม่นับการรับที่ถูกยกเลิก · เทสต์ `SettlementTaxInvoiceRoleTests` · Db `SettlementTaxInvoiceRoleDbTests` · กติกา `_R275C_*` — commit 96bb5262)_
 
+_รอบ 275 แพ็ก B ชุดแก้ฝ่ายค้าน + คำตัดสินแทนเจ้าของ 275-B-6…10 (2026-11-20): HIGH-1 ด่านทะเบียนเฉพาะร่าง (รายงานที่ยื่นแล้วสร้างไฟล์ได้ + คำเตือนยื่นเพิ่มเติม) ·
+MED-1/2 ยอดของบรรทัดในลายเซ็นล็อก (แก้ที่ต้นทาง) · MED-3 ด่านเซิร์ฟเวอร์บล็อกเฉพาะ `ServerBlockingCodes` · MED-4 สร้างใหม่คืนการติ๊กออก (`RegenerateUntick`) ·
+LOW ลายเซ็นใส่ DocumentId · `Round275BMigration` เติม WhtCertId ย้อนหลังที่จับคู่ได้แน่นอน · แถบ ≤ 6 เดือน · 275-B-6 (ก) ยกเลิก PV ⇒ ใบผูกด้วยมือหลุดการผูก (`WhtCertVoidCascade`) ·
+(ข) สำเนาผู้ถูกหัก ณ วันออก `WithholdingTaxCerts.PayeeSnapshotJson` (`WhtPayeeSnapshot` · ประทับที่ SaveChanges · backfill) — renderer ×2 · หน้าใบ · รายงาน/ไฟล์ — commit (เติมในคอมมิตตามหลัง)_
+
 _รอบ 275 แพ็ก A ผลตรวจฝ่ายค้าน (2026-11-20 · ไม่พบ HIGH): MED-1 ยืนยัน "ลายนิ้วมือที่ระบุ" จาก heartbeat ต่อเครื่อง (`EncryptionKeyHeartbeats`) · เครื่องที่ตอบใช้คีย์อื่น ⇒ 409 ·
 MED-2 `EncryptionWriteGuard` — เครื่องคีย์ไม่ตรงหยุดเข้ารหัสค่าใหม่ (ความลับ + PII · 503 ข้อความไทย · อ่านไม่กระทบ) · MED-3 `RotationPending` จนทุกเครื่องรายงานคีย์ใหม่/ผู้ดูแลยืนยัน ·
 MED-4 กุญแจ HMAC สลิปภาษี/OTP จากเมล็ดถาวร `SiteSettings.HmacSeedProtected` (`HmacSeedBootstrap`) · LOW ลายนิ้วมือจากกุญแจ PBKDF2 · ยืนยันแบบมีเงื่อนไขค่าเดิม · รอบข้ามสแกนลงชื่อ `…Skipped` ·
