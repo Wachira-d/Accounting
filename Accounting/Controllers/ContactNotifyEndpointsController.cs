@@ -51,7 +51,7 @@ public class ContactNotifyEndpointsController : ControllerBase
     {
         if (await DenyKeyAsync(companyId, "ผูกกลุ่ม LINE ของผู้ติดต่อ") is { } deny) return Forbid403(deny);
         if (_groups == null) return StatusCode(503, new ApiResponse<ContactNotifyOverviewResponse>(false, null, "บริการกลุ่ม LINE ยังไม่พร้อม"));
-        var r = await _groups.ConfirmAsync(companyId, contactId, request, Actor(), ct);
+        var r = await WithConsentAsync(companyId, contactId, await _groups.ConfirmAsync(companyId, contactId, request, Actor(), ct), ct);
         // รอบ 259 (A-M7): ข้อความตามผลประกาศจริง (ตัวเดียว LineGroupBindRule.ConfirmMessage)
         return StatusCode(201, new ApiResponse<ContactNotifyOverviewResponse>(true, r, LineGroupBindRule.ConfirmMessage(r.ActionNote)));
     }
@@ -63,7 +63,7 @@ public class ContactNotifyEndpointsController : ControllerBase
         var canEdit = await DenyKeyAsync(companyId, "แก้ช่องทางแจ้งเตือนของผู้ติดต่อ") == null;
         var overview = await _resolver.GetOverviewAsync(companyId, contactId, canEdit, ct);
         if (overview == null) return NotFound(new ApiResponse<ContactNotifyOverviewResponse>(false, null, "ไม่พบผู้ติดต่อ"));
-        return Ok(new ApiResponse<ContactNotifyOverviewResponse>(true, overview));
+        return Ok(new ApiResponse<ContactNotifyOverviewResponse>(true, await WithConsentAsync(companyId, contactId, overview, ct)));
     }
 
     /// <summary>ผู้รับของเรื่องหนึ่ง — ตัวหาผู้รับตัวเดียวกับที่เส้นส่งจะใช้ (หน้า "ดูว่าใครจะได้รับ")</summary>
@@ -86,7 +86,7 @@ public class ContactNotifyEndpointsController : ControllerBase
         [FromBody] AddContactNotifyEmailRequest request, CancellationToken ct)
     {
         if (await DenyKeyAsync(companyId, "เพิ่มช่องทางแจ้งเตือนของผู้ติดต่อ") is { } deny) return Forbid403(deny);
-        var r = await _endpoints.AddEmailAsync(companyId, contactId, request, Actor(), ct);
+        var r = await WithConsentAsync(companyId, contactId, await _endpoints.AddEmailAsync(companyId, contactId, request, Actor(), ct), ct);
         return StatusCode(201, new ApiResponse<ContactNotifyOverviewResponse>(true, r, "เพิ่มอีเมลแล้ว"));
     }
 
@@ -96,7 +96,7 @@ public class ContactNotifyEndpointsController : ControllerBase
         [FromBody] UpdateContactNotifyPrimaryRequest request, CancellationToken ct)
     {
         if (await DenyKeyAsync(companyId, "ตั้งช่องทางแจ้งเตือนของผู้ติดต่อ") is { } deny) return Forbid403(deny);
-        var r = await _endpoints.UpdatePrimaryAsync(companyId, contactId, request, Actor(), ct);
+        var r = await WithConsentAsync(companyId, contactId, await _endpoints.UpdatePrimaryAsync(companyId, contactId, request, Actor(), ct), ct);
         return Ok(new ApiResponse<ContactNotifyOverviewResponse>(true, r, "บันทึกเรื่องที่อีเมลหลักรับแล้ว"));
     }
 
@@ -106,7 +106,7 @@ public class ContactNotifyEndpointsController : ControllerBase
         [FromBody] UpdateContactNotifyEndpointRequest request, CancellationToken ct)
     {
         if (await DenyKeyAsync(companyId, "แก้ช่องทางแจ้งเตือนของผู้ติดต่อ") is { } deny) return Forbid403(deny);
-        var r = await _endpoints.UpdateAsync(companyId, contactId, endpointId, request, Actor(), ct);
+        var r = await WithConsentAsync(companyId, contactId, await _endpoints.UpdateAsync(companyId, contactId, endpointId, request, Actor(), ct), ct);
         return Ok(new ApiResponse<ContactNotifyOverviewResponse>(true, r, "บันทึกแล้ว"));
     }
 
@@ -115,7 +115,7 @@ public class ContactNotifyEndpointsController : ControllerBase
     public async Task<ActionResult<ApiResponse<ContactNotifyOverviewResponse>>> Unlink(Guid companyId, Guid contactId, Guid endpointId, CancellationToken ct)
     {
         if (await DenyKeyAsync(companyId, "ยกเลิกช่องทางแจ้งเตือนของผู้ติดต่อ") is { } deny) return Forbid403(deny);
-        var r = await _endpoints.UnlinkAsync(companyId, contactId, endpointId, Actor(), ct);
+        var r = await WithConsentAsync(companyId, contactId, await _endpoints.UnlinkAsync(companyId, contactId, endpointId, Actor(), ct), ct);
         return Ok(new ApiResponse<ContactNotifyOverviewResponse>(true, r, r.ActionNote ?? "ยกเลิกปลายทางแล้ว"));
     }
 
@@ -144,7 +144,19 @@ public class ContactNotifyEndpointsController : ControllerBase
         var actor = Actor();
         var n = await _lineBinding.RevokeInvitesAsync(companyId, contactId, actor.UserId, actor.Email, ct);
         var overview = await _resolver.GetOverviewAsync(companyId, contactId, true, ct);
-        return Ok(new ApiResponse<ContactNotifyOverviewResponse>(true, overview, $"ยกเลิกลิงก์ผูก LINE ที่ยังเปิดแล้ว {n} ลิงก์"));
+        return Ok(new ApiResponse<ContactNotifyOverviewResponse>(true, overview == null ? null : await WithConsentAsync(companyId, contactId, overview, ct), $"ยกเลิกลิงก์ผูก LINE ที่ยังเปิดแล้ว {n} ลิงก์"));
+    }
+
+    /// <summary>รอบ 279 (คำตัดสิน 279-2): ทุกคำตอบที่คืนแท็บ "ช่องทางแจ้งเตือน" เติมกล่องความยินยอมบันทึกสลิปภาษี (ตัวเดียว · ไม่หายหลังแก้อีเมล/หัวข้อ — §A echo กลับ) ·
+    /// ปุ่มส่งคำขอกดได้เมื่อยังไม่ยินยอม <b>และ</b>ผู้ใช้มีสิทธิ์ยื่นภาษี (ด่านเดียวกับโต๊ะสลิปที่ปุ่มเรียก) — ไม่มีสิทธิ์ ⇒ ปุ่มล็อก + เหตุ (ไม่ใช่กดแล้ว 403)</summary>
+    private async Task<ContactNotifyOverviewResponse> WithConsentAsync(Guid companyId, Guid contactId, ContactNotifyOverviewResponse overview, CancellationToken ct)
+    {
+        if (_groups == null) return overview;
+        var view = await _groups.ProviderConsentViewAsync(companyId, contactId, ct);
+        if (view is { CanRequest: true }
+            && !await _permissions.HasPermissionAsync(companyId, JwtHelper.GetUserIdFromClaims(User), PermissionKeys.TaxFile))
+            view = view with { CanRequest = false, RequestBlockedReason = "ต้องมีสิทธิ์ยื่นภาษี (" + PermissionKeys.TaxFile.Replace("perm:", "") + ") จึงส่งคำขอได้" };
+        return overview with { ProviderConsent = view };
     }
 
     private async Task<string?> DenyKeyAsync(Guid companyId, string verb)

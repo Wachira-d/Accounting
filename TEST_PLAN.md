@@ -1505,7 +1505,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **966 ไฟล์ · 10,536 `[Fact]` + 1,435 `[Theory]` (6,815 `InlineData`)** ณ 2026-11-20 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`) | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)**, **ReceiptFormRule (รูปแบบกระดาษหลักฐานรับเงิน · รอบ 203)** |
+| เทสต์ที่มี | **968 ไฟล์ · 10,545 `[Fact]` + 1,437 `[Theory]` (6,829 `InlineData`)** ณ 2026-11-20 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`) | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)**, **ReceiptFormRule (รูปแบบกระดาษหลักฐานรับเงิน · รอบ 203)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
 | CI | ✅ `.github/workflows/ci.yml` — static check → restore → build → test; รันบน PR/push เข้า main/master + `workflow_dispatch` (branch `claude/**` ปิดไว้ กัน mail spam ระหว่างพัฒนา) |
@@ -9223,3 +9223,15 @@ H2 (OCR ไม่พร้อม ⇒ แถวเข้าคิว) ล็อ�
 | T277-09 | ฝ่ายค้าน: `ทะเบียนเมนู_ครบทุกเมนูในlayout_อยู่กลุ่มเดียว_ไม่มีidเกิน` (inventory อ่าน layout.js) · `ที่พัก_มีแค่สิทธิ์ตั้งค่าที่พัก_ยังเห็นเมนู_*` · `ทิศเอกสาร_เห็นแต่ฝั่งขาย_ซ่อนเมนูฝั่งซื้อ_*` · sim โหมดง่าย (Staff ไม่มี Reports.Dashboard ยังเห็นหน้าหลักโหมดง่าย · กลายพันธุ์ 2 แบบ) | MED-1/MED-2 |
 | T277-10 | ฝ่ายค้าน Db: `ฝ่ายค้านHIGH_สมาชิกรอสิทธิ์_ไม่อยู่ในตัวกรองสมาชิก_หน้าสำนักงานบัญชีไม่เห็น_รายชื่อบริษัทไม่มีเลขภาษี_ตั้งบทบาทแล้วเห็น` · `ฝ่ายค้านMED3_ตอบรับด้วยtoken_ประทับยืนยันอีเมล_*` · preview ไม่มีช่องบอกการมีบัญชี (LOW) · กติกา R277-5/6 | HIGH/MED-3/LOW |
 | T277-11 | ฝ่ายค้าน Db: `ฝ่ายค้านแจ้งเตือน_สมาชิกรอสิทธิ์ไม่ได้รับทั้งเส้นบทบาทและผู้รับระบุตัว_กระดิ่งเก่ากรองตอนอ่าน_ตั้งบทบาทแล้วได้` (NotificationEngine จริง · ทิศตรงข้าม เจ้าของได้) · กติกา R277-7 | ช่องรั่วแจ้งเตือน |
+
+## รอบ 279 — กลุ่ม LINE ที่ผูกแล้ว: `#HeyNextAcc` ⇒ การ์ดสถานะ ไม่ออกรหัส (`erp-review/2026-11-20/dev-279-line-group-status.md` · คำตัดสิน 279-1…3)
+
+| ID | เทสต์ | ทิศ |
+| --- | --- | --- |
+| T279-01 | pure `LineGroupStatusRound279Tests.คำสั่งเพิ่ม_รับเฉพาะรูปที่กำหนด` (7 กรณี) · `คำสั่งเพิ่ม_นับเป็นคำสั่งกลุ่มของ_OA_กลาง` · `ออกรหัสหรือการ์ดสถานะ` (7 กรณี) | ผูกแล้ว ⇒ ไม่ออกรหัส · ยังไม่ผูก/คำสั่งเพิ่ม ⇒ ออก |
+| T279-02 | pure `การ์ดสถานะ_บอกผูกกับใคร_เรื่องที่ส่ง_ความยินยอม_ทางไปต่อ_ไม่มีรหัส` · `สถานะความยินยอม_สี่แบบจากตัวจำแนกเดียว` · `ลิงก์ยืนยัน_มีโดเมน_ใช้ลิงก์เต็ม_ไม่มี_ชี้เมนูจริง` | ไม่มี GB-/ยอดเงิน · ผู้ติดต่อทั่วไปไม่มีบรรทัดความยินยอม |
+| T279-03 | pure `เมนูที่การ์ดชี้_มีอยู่จริงในหน้าเว็บ` (layout.js · billing.html · tax-remittance.html · tax-slip-desk.html · "เมนู ค่าบริการ ›" เหลือ 0 จุด) · `ขั้นตอนบนหน้าผู้ติดต่อ_บอกคำสั่งเพิ่ม` | ทางไปต่อชี้เมนูจริง |
+| T279-04 | Db `LineGroupStatusRound279DbTests.กลุ่มผูกแล้ว_HeyNextAcc_ได้การ์ดสถานะ_ไม่ออกรหัส_ยังไม่ผูกได้รหัส_คำสั่งเพิ่มได้รหัส` | เคสเจ้าของ + ทิศตรงข้าม (ยังไม่ผูก/หลัง #ByeNextAcc ได้รหัส) · ไม่มีแถวรหัสใหม่ |
+| T279-05 | Db `การ์ดสถานะ_ความยินยอม_ยังไม่ได้ขอ_รอยืนยัน_ยินยอมแล้ว_และหน้าผู้ติดต่อตรงกัน` | 3 สถานะ (การ์ด = กล่องหน้าเว็บ) · เลขภาษีไม่หลุดเข้ากลุ่ม · ผู้ติดต่อทั่วไป/บริษัทอื่น ⇒ null |
+| T279-06 | Db `tenant_isolation_การผูกของบริษัทอื่นไม่นับ_ไม่แสดง_และ_OA_บริษัทได้การ์ดสถานะของตัวเอง` | ปลายทางค้างของบริษัทอื่นไม่บล็อกรหัส/ไม่โผล่ในการ์ด · OA บริษัท (แถวเก่า OaScope "") |
+| T279-07 | กติกา `_R279_*` (+8 · เคส R279-1/2) — ถอดตัวตัดสิน/ถอด `CompanyId` ในตัวนับต้องถูกจับ · กลายพันธุ์ `if (true \|\| ShouldIssueCode…)` ⇒ Db 3/3 แดง (ยืนยันในเครื่อง) | negative |
