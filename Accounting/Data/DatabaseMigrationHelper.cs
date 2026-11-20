@@ -3960,6 +3960,8 @@ public static class DatabaseMigrationHelper
             // รอบ 249: แยกคีย์ document.payment_made (จ่ายชำระฝั่งซื้อ) จาก payment_received — คัดลอกค่าตั้ง/การปิดช่องรายคนครั้งเดียว
             // (ต้องอยู่หลัง EnableLineGroup + ตาราง NotificationPreferences ข้างบน · ตัวตั้ง SQL ตัวเดียว Helpers/NotificationEventSplit)
             Accounting.Helpers.NotificationEventSplit.MigrationSql,
+            // รอบ 281 (คำตัดสิน 281-2): คีย์ต่อขั้นของเส้นคู่ค้า A↔B — คัดลอกค่าตั้ง/การปิดช่องของ autopilot.partner_exchange ครั้งเดียว (Helpers/PartnerFlowNotificationSplit)
+            Accounting.Helpers.PartnerFlowNotificationSplit.MigrationSql,
 
             // ===== SystemAccountTemplates: admin-editable master Chart of Accounts =====
             """

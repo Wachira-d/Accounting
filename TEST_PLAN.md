@@ -1505,7 +1505,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **970 ไฟล์ · 10,569 `[Fact]` + 1,437 `[Theory]` (6,829 `InlineData`)** ณ 2026-11-20 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`) | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)**, **ReceiptFormRule (รูปแบบกระดาษหลักฐานรับเงิน · รอบ 203)** |
+| เทสต์ที่มี | **972 ไฟล์ · 10,583 `[Fact]` + 1,437 `[Theory]` (6,829 `InlineData`)** ณ 2026-11-20 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`) | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)**, **ReceiptFormRule (รูปแบบกระดาษหลักฐานรับเงิน · รอบ 203)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
 | CI | ✅ `.github/workflows/ci.yml` — static check → restore → build → test; รันบน PR/push เข้า main/master + `workflow_dispatch` (branch `claude/**` ปิดไว้ กัน mail spam ระหว่างพัฒนา) |
@@ -9254,3 +9254,15 @@ H2 (OCR ไม่พร้อม ⇒ แถวเข้าคิว) ล็อ�
 | T280-12 | ฝ่ายค้าน LOW-1 pure `ฝ่ายค้านLOW1_*` · Db `ฝ่ายค้านLOW1_ส่งได้บางกลุ่ม_สถานะส่งได้บางส่วนพร้อมรายการที่ล้ม` | |
 | T280-13 | ฝ่ายค้าน LOW-2 (การ์ด 279) pure `ฝ่ายค้านLOW2_*` · Db `LineGroupStatusRound279DbTests.R280_LOW2_กลุ่มผูกหลายผู้ติดต่อ_*` (รายเดียว = ตามเดิม · ไม่มี GUID) | ทั้งสองทิศ |
 | T280-14 | กติกา `_R280_*` ชุดแก้ (+11 · R280-3…4) — ถอดเงื่อนไข TaxIdSetAt / การ์ดหลายผู้ติดต่อ ⇒ checker ฟ้อง | negative |
+
+## รอบ 281 — เส้นคู่ค้า A↔B ครบเส้น (`erp-review/2026-11-20/dev-281-partner-e2e.md` · คำตัดสิน 281-1…281-5)
+
+| ID | เทสต์ | ทิศ |
+| --- | --- | --- |
+| T281-01 | Db `PartnerFlowRound281DbTests.ครบเส้น_ใบแจ้งหนี้10700_จ่าย10400ผ่านลิงก์_…` (DocumentService จริงทั้งสองฝั่ง · CrossTenant · ท่อ P3 · ตัวออก 50 ทวิ จริง · กล่องรับปิด AI) | บวก: ใบซื้อร่าง → ใบกำกับแนบใบซื้อเดิม → ใบสำคัญจ่าย 10,400 + 50 ทวิ 300 → ผู้ขายยืนยันเอง · แจ้ง 7 คีย์ถึงฝั่งที่ถูก · รันซ้ำไม่ซ้ำ · chain สะอาด |
+| T281-02 | Db `ไม่มีความยินยอม_ไม่บันทึกจ่ายเอง_…` | ลบ: ไม่จ่าย ไม่มี 50 ทวิ · การแจ้งรอคน · เส้นทางบอกทางไปต่อ · ผู้ขายไม่เห็นคำแนะนำภายในของผู้ซื้อ |
+| T281-03 | Db `ยอดที่ผู้ขายรับไม่ตรงยอดค้าง_…_บริษัทที่สามไม่เห็นเส้นทาง` | ลบ: ยอดไม่ตรง ⇒ หยุด + เหตุ · tenant isolation · ไม่มีสิทธิ์ฝั่งซื้อ ⇒ ไม่เห็นทิศซื้อ |
+| T281-04 | pure `ใบ10700หัก300_ยอดค้างหลังหัก10400_…_ทิศตรงข้ามบั๊กเดิม` | reproduce บั๊ก (หัก 0 + คำเตือน) + ยอดค้าง 0 ไม่บวกภาษีหัก + ใบไม่มีภาษีหักเท่าเดิม |
+| T281-05 | pure `PartnerJourney` 8 เคส (ครบเส้น · ผู้ขายไม่เห็นเลขผู้ซื้อ · ไม่แต่งสถานะ · ใบกำกับหาย · ไม่มีภาษีหัก · ท่อหยุด · 50 ทวิ ไม่เปิด/ล้ม/รอยืนยัน · ผู้ขายยกเลิก) | สถานะจากหลักฐานเท่านั้น |
+| T281-06 | pure `คีย์ต่อขั้น_…` · `คัดลอกค่าตั้ง_…` | คีย์อยู่ในแค็ตตาล็อก + ค่าตั้งต้นเท่าคีย์เดิม · SQL คัดลอกเฉพาะบริษัท/ผู้ใช้ที่ยังไม่มีแถว |
+| T281-07 | กติกา `_R281_*` (+11 · เคสฝ่ายค้าน R281-1 ถอดยอดก่อนหัก · R281-2 คีย์ยืม) · fixture P3/P4 (`PartnerPayableRound264DbTests` · `PartnerOutboundRound264P4DbTests`) ใช้ยอดค้างหลังหักแบบใบจริง | ถอดด่าน ⇒ checker ฟ้อง |

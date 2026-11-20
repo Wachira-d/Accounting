@@ -3414,6 +3414,32 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
   แผนแจ้งโอนรุ่นแรก (ก่อนชุดแก้) ไม่มีกุญแจ/สถานะ outbox ⇒ ไม่ถูก outbox หยิบ (สำเนาสลิปรุ่นแรกส่งในคำขอแล้วหรือมีเหตุบนแผน)
 - **kill-switch**: ไม่มีจุดเรียก AI ในแพ็กนี้ (ตัวตัดสิน pure · อ่านสลิปในเครื่อง) ⇒ ไม่มี AiFeatureKey ใหม่ · เทสต์ `BankPaymentLineMatchTests` · Db `PartnerOutboundRound264P4DbTests`
 
+### 2.12g-281 รอบ 281 เส้นคู่ค้า A↔B ครบเส้น — ใบแจ้งหนี้ → จ่าย → ใบเสร็จ/ใบกำกับ → ใบสำคัญจ่าย + 50 ทวิ → 50 ทวิ กลับ · แจ้งทุกขั้น (`erp-review/2026-11-20/dev-281-partner-e2e.md` · คำตัดสิน 281-1…281-5)
+
+- **เส้นทั้งหมด (A = ผู้ขาย · B = ผู้ซื้อ · ทั้งคู่ใช้ NextAcc · คู่ Accepted)**:
+  ① A อนุมัติใบแจ้งหนี้/ใบกำกับ ⇒ `RouteSentDocumentAsync` ⇒ link InvoiceFlow ⇒ B ได้ใบซื้อร่าง (B เปิด `CreatePurchaseDraftsFromPartners` · ไม่อนุมัติเอง) — แจ้ง B `partner.purchase_draft_received` ·
+  ② B จ่าย: ลิงก์/gateway ของ A (`DocumentPaymentHandler`) · โอนเอง+สลิป · หรือเริ่มจากระบบ B (P4 `PartnerOutboundPaymentService`) ⇒ ทุกทางจบที่ `CreatePaymentAsync` ของ A ·
+  ③ A รับเงิน ⇒ ใบเสร็จ/ใบกำกับ ณ วันรับเงิน (`SettlementTaxInvoiceRole` 275-C) ⇒ `AfterSettlementReceiptIssuedAsync` ⇒ ReceiptFlow แนบใบซื้อเดิมของ B (ภาษีซื้อพักจนยืนยันต้นฉบับ) — แจ้ง B `partner.tax_invoice_received` + A `partner.receipt_delivered` ·
+  ④ หลัง commit ⇒ การแจ้ง "ผู้ขายรับเงินแล้ว" ใน B (`PartnerPaymentNotices`) — แจ้ง B `partner.seller_paid` ·
+  ⑤ ท่อ B (`PartnerPayablePipeline` · ความยินยอม `AutoRecordPayment` + หลักฐานรายการเดินบัญชี) ⇒ `CreatePaymentAsync(PartnerAuto)` = ใบสำคัญจ่าย + ภาษีหัก ⇒ 50 ทวิ ตามเส้นเดิม — แจ้ง B `partner.payment_auto_recorded` · ไม่ผ่าน ⇒ ปุ่มเดียว + เหตุ ·
+  ⑥ `PartnerWhtCertExchangeService` (AutopilotJob · B เปิด `SendWhtCertsToPartners` + ความยินยอม `ReturnWhtCerts`) ⇒ กล่องรับของ A ยืนยันด้วยที่มา — แจ้ง B `partner.wht_cert_delivered` + A `partner.wht_cert_received`
+- **281-1 ยอดก่อนหักของตัวคิดการแจ้ง (บั๊กจริง)**: ใบเก็บ `TotalAmount = ฐาน + VAT − WHT` · ยอดค้างหลังหัก ⇒ `PartnerPaymentNoticeService.PlanForAsync` ส่ง
+  `DocumentPayLinkPolicy.AmountsFor(doc.BalanceDue, wht.NetCap, 0m).Gross` เข้า `PartnerPaymentNoticeRule.For` (เดิมส่งยอดค้างหลังหัก ⇒ ผู้ขายรับ 10,400 ของใบ 10,700 หัก 300 ได้แผน "หัก 0 + คำเตือน" ·
+  ปุ่มเดียวบันทึกไม่มี 50 ทวิ · ท่อไม่บันทึกเอง) · P4 `OptionsAsync` เงินที่โอน = ยอดค้าง (เดิมส่ง NetCap เป็นยอดเงิน) · fixture ของเทสต์ P3/P4 แก้เป็นยอดค้างหลังหักแบบใบจริง ·
+  การจ่ายที่บันทึกไปแล้วด้วยแผนเดิม **ไม่แก้ย้อนหลัง** (แผน P-6 ในไฟล์ผล)
+- **281-2 คีย์แจ้งเตือนต่อขั้น**: `NotificationEvents.PartnerPurchaseDraftReceived` · `PartnerTaxInvoiceReceived` · `PartnerReceiptDelivered` · `PartnerSellerPaid` · `PartnerPaymentAutoRecorded` ·
+  `PartnerWhtCertDelivered` · `PartnerWhtCertReceived` (ตัวตั้งรายชื่อ `Helpers/PartnerFlowNotificationSplit.Keys`) · ค่าตั้งต้นเดียวกับ `autopilot.partner_exchange` (`EmailDefaultKeys`) ·
+  migration คัดลอกแถวค่าตั้งบริษัท/การปิดช่องรายคนของคีย์เดิมครั้งเดียว (เฉพาะที่ยังไม่มีแถวคีย์ใหม่ · `DatabaseMigrationHelper`) · คีย์เดิมคงไว้สำหรับเรื่องยกเลิก/ข้อยกเว้น/คำขอความยินยอม ·
+  แจ้งหลัง commit · แจ้งล้ม = LogError ไม่ย้อนงาน · ช่อง (กระดิ่ง/อีเมล/LINE/กลุ่ม LINE) ตัดสินที่ `NotificationEngine` ตัวเดียวตามหน้าแจ้งเตือนเดิม
+- **281-3 เส้นทางของใบนี้**: `GET api/companies/{c}/partner-journey[?documentId=]` (`PartnerExchangeController.Journey` · ทิศขาย/ซื้อตาม `DocumentPermissionHelper.VisibleDirectionsAsync`) →
+  `PartnerJourneyService` (อ่านอย่างเดียว · link ต้องมีบริษัทผู้เรียกเป็นฝั่งหนึ่ง · ทุก query ผูก CompanyId ของฝั่งที่อ่าน) → `Helpers/PartnerJourney.Build` (8 ขั้น · Done/Waiting/Blocked/NotApplicable ·
+  "เสร็จ" เฉพาะเมื่อมีแถว/เวลาจริง · อีกฝั่งเห็นแค่สถานะ+วันที่ ไม่เห็นเลข/เหตุภายใน) · หน้า `partners.html` §partner-journey แสดงอย่างเดียว
+- **281-4 ผูกผู้ติดต่อตอนส่งใบ**: `OnDocumentSentAsync` หลังตัวจับคู่เลขภาษี+สาขา (`PartnerCompanyMatch.Pick`) ⇒ ผู้ติดต่อที่ยังไม่ผูกระบบใด ⇒ `ExternalSystem = NextAccTenant` + id บริษัทคู่ค้า + audit `PartnerContactLinked` ·
+  ผูกระบบอื่นอยู่แล้ว = ไม่แตะ · เหตุ: กล่องรับ 50 ทวิ พิสูจน์ที่มาด้วยผู้ติดต่อที่ผูก — เดิมฝั่ง A ไม่เคยผูก ⇒ 50 ทวิ จากคู่ค้าค้างรอยืนยันทุกใบ
+- **kill-switch**: ไม่มีจุดเรียก AI ใหม่ · Db test ปิด provider ทุกตัวแล้ว 50 ทวิ ยังยืนยันเอง · ล็อกจุดเรียก `_R281_*` (+11) · Db `PartnerFlowRound281DbTests` · pure `PartnerFlowRound281Tests`
+- ยังไม่ทำ (แผน P-1…P-6 ในไฟล์ผล): อนุมัติใบซื้อร่างอัตโนมัติ · บัตร/พร้อมเพย์เป็นหลักฐานบัญชีจ่าย · เพดานความยินยอมเทียบยอดก่อนหัก · งานหลังรับชำระนับปลายทางคู่ค้า · ปลุกส่ง 50 ทวิ ทันที · รายงานการจ่ายเดิมที่หัก 0 ·
+  Last verified `commit 22572b0c`
+
 ### 2.12g-270 รอบ 270 งานค้างจาก 266/268/269 (คำตัดสิน 270-1-1…5 ใน `erp-review/2026-09-29/DECISIONS.md`)
 
 - **270-1-1 คืนมัดจำการจองหลายงวด (ฝ่ายค้าน 268 L7)**: `DocumentService.RefundDepositAsync` (ไม่ได้เลือกบัญชี) → `BookingDepositRefundPlanAsync` (ใบผูก `SiteBooking.ErpDocumentId`) →
@@ -10077,3 +10103,5 @@ _Last verified against codebase: 2026-11-20 (รอบ 280 — §2.12l เลื
 
 _Last verified against codebase: 2026-11-20 (รอบ 280 ชุดแก้ฝ่ายค้าน MED-1/MED-2/LOW-1/LOW-2 — เปิดคำขอเฉพาะหลัง `TaxIdSetAt` ผ่าน POST ที่มีสิทธิ์ · เปลี่ยนเลขยกเลิกคำขอเลขเดิม ·
 เพดานต่อผู้ติดต่อ 3 ครั้ง/7 วัน · เลขภาษีผู้ติดต่อต้องตรง · หัวเรื่อง/บรรทัดผู้ส่งคงที่ · ส่งได้บางส่วน · การ์ดสถานะหลายผู้ติดต่อ · คำตัดสิน 280-10…280-13 — commit (เติมในคอมมิตตามหลัง))_
+
+_Last verified against codebase: 2026-11-20 (รอบ 281 เส้นคู่ค้า A↔B ครบเส้น — §2.12g-281: ยอดก่อนหักของตัวคิดการแจ้ง (บั๊ก หัก 0) · คีย์แจ้งเตือนต่อขั้น 7 คีย์ + คัดลอกค่าตั้งเดิม · เส้นทางของใบ · ผูกผู้ติดต่อตอนส่งใบ — คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — commit 22572b0c)_

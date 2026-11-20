@@ -181,6 +181,14 @@ public static class NotificationAudiencePolicy
         Accounting.Models.Constants.NotificationEvents.ProviderConsentRequested,
         Accounting.Models.Constants.NotificationEvents.TaxSlipRemitted,
         Accounting.Models.Constants.NotificationEvents.TaxSlipNeedsStaff,
+        // รอบ 281 (คำตัดสิน 281-2): คีย์ต่อขั้นของเส้นคู่ค้า A↔B — ค่าตั้งต้นเดียวกับ partner_exchange ที่แยกมา (ตัวตั้งรายชื่อ Helpers/PartnerFlowNotificationSplit.Keys)
+        Accounting.Models.Constants.NotificationEvents.PartnerPurchaseDraftReceived,
+        Accounting.Models.Constants.NotificationEvents.PartnerTaxInvoiceReceived,
+        Accounting.Models.Constants.NotificationEvents.PartnerReceiptDelivered,
+        Accounting.Models.Constants.NotificationEvents.PartnerSellerPaid,
+        Accounting.Models.Constants.NotificationEvents.PartnerPaymentAutoRecorded,
+        Accounting.Models.Constants.NotificationEvents.PartnerWhtCertDelivered,
+        Accounting.Models.Constants.NotificationEvents.PartnerWhtCertReceived,
     };
 
     /// <summary>เส้นผู้รับที่ระบุ (บริษัทยังไม่ตั้งคีย์) ส่งอีเมลด้วยไหม — คีย์กระดิ่งเท่านั้น = ไม่ส่ง · อื่น ๆ = กระดิ่ง + อีเมลเหมือนเดิม</summary>

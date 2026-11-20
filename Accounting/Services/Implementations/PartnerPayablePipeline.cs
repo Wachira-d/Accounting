@@ -285,7 +285,8 @@ public class PartnerPayablePipeline
         if (_notify == null) return;
         try
         {
-            await _notify.DispatchAsync(companyId, NotificationEvents.AutopilotPartnerExchange, new NotificationContext
+            // รอบ 281 (คำตัดสิน 281-2): คีย์ของขั้นนี้เอง (เดิมยืม partner_exchange)
+            await _notify.DispatchAsync(companyId, NotificationEvents.PartnerPaymentAutoRecorded, new NotificationContext
             {
                 Title = $"⚙️ ระบบบันทึกจ่าย {amount:N2} บาท ของ {n.SourceDocumentNumber} เองแล้ว (ตามความยินยอมของ {grantorName})",
                 Message = $"จ่าย {amount:N2} บาท + ภาษีหัก ณ ที่จ่าย {wht:N2} บาท · {source.Label} · ลงวันที่ผู้ขายรับเงิน {n.PaidAt.AddHours(7):dd/MM/yyyy} — "

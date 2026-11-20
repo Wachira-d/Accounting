@@ -437,6 +437,27 @@ public partial class CrossTenantWorkflowService
             CreatedBy = "system-routing",
         };
         _db.CrossTenantDocumentLinks.Add(link);
+        // รอบ 281 (คำตัดสิน 281-4): ผู้ติดต่อที่เราส่งเอกสารถึง = บริษัทคู่ค้านี้ (ตัดสินด้วยกุญแจเลขภาษี + สาขา ข้างบน ไม่ใช่ชื่อ) ⇒ ผูก NextAccTenant
+        // เมื่อยังไม่ผูกระบบใด — เดิมฝั่งผู้ขายไม่เคยผูก ⇒ 50 ทวิ ที่ผู้ซื้อส่งกลับมาพิสูจน์ที่มาไม่ได้ (WhtCertIntakeService: ผู้จ่ายของแถวรอใบต้องผูกคู่ค้า)
+        // ⇒ ค้าง "รอยืนยัน" ทุกใบ · ผูกระบบอื่นอยู่แล้ว = ไม่แตะ (เหตุบนใบตามเดิม)
+        if (string.IsNullOrWhiteSpace(contact.ExternalSystem) && string.IsNullOrWhiteSpace(contact.ExternalId))
+        {
+            var linkedRows = await _db.Contacts
+                .Where(c => c.Id == contact.Id && c.CompanyId == doc.CompanyId
+                    && (c.ExternalSystem == null || c.ExternalSystem == "") && (c.ExternalId == null || c.ExternalId == ""))
+                .ExecuteUpdateAsync(s => s.SetProperty(c => c.ExternalSystem, "NextAccTenant").SetProperty(c => c.ExternalId, partnerCompanyId.ToString()));
+            if (linkedRows > 0)
+                _db.AddChainedAuditLog(new AuditLog
+                {
+                    CompanyId = doc.CompanyId, Action = AuditAction.Update, EntityType = "Contact", EntityId = contact.Id.ToString(),
+                    NewValues = System.Text.Json.JsonSerializer.Serialize(new
+                    {
+                        @event = "PartnerContactLinked", documentId = doc.Id, matchedBy = "TaxId+Branch",
+                        ruleCode = Accounting.Helpers.PartnerCompanyMatch.RuleCode,
+                    }),
+                    Timestamp = DateTime.UtcNow,
+                });
+        }
         await _db.SaveChangesAsync();
 
         // Check target's config for auto-approve
