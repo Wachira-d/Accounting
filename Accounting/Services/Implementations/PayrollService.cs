@@ -236,6 +236,9 @@ public class PayrollService : IPayrollService
         // รอบ 201 PR2 (A-PR1): เลขประกันสังคม — ตัวตัดสินเดียวกับเส้นแก้ไข (13 หลัก · เก็บตัวเลขล้วน)
         var ssoNoEdit = EmployeeRecordEdit.SsoInsuredNumber(request.SocialSecurityNumber, null);
         if (ssoNoEdit.Error != null) throw new BusinessRuleException(ssoNoEdit.Error);
+        // รอบ 274-10: เลขบัญชี/พาสปอร์ตที่เป็น ciphertext ห้ามเก็บเป็นค่า (กันเข้ารหัสซ้อน — ด่านเดียวกับเส้นแก้ไข)
+        if (EmployeeRecordEdit.CipherInputProblem(request.BankAccountNumber, "เลขบัญชีธนาคาร") is string createCipher)
+            throw new BusinessRuleException(createCipher, SecretInputRule.RuleCipherPrefix);
 
         var existing = await _db.Set<Employee>()
             .AnyAsync(e => e.CompanyId == companyId && e.EmployeeCode == request.EmployeeCode);
@@ -434,10 +437,11 @@ public class PayrollService : IPayrollService
         if (request.BaseSalary.HasValue) employee.BaseSalary = request.BaseSalary.Value;
         if (request.BankName != null) employee.BankName = request.BankName;
         if (request.BankAccountNumber != null
-            && !EmployeeRecordEdit.IsMaskedEcho(request.BankAccountNumber, PiiMask.BankAccountNo(employee.BankAccountNumber)))
+            && !EmployeeRecordEdit.IsMaskedEcho(request.BankAccountNumber, PiiMask.BankAccountNo(employee.BankAccountNumber))
+            && !EmployeeRecordEdit.IsEchoOfStoredUnreadable(request.BankAccountNumber, employee.BankAccountNumber))   // รอบ 274-10: ciphertext ของแถวนี้เองส่งกลับมา = ไม่ได้แก้
         {
-            // ฝ่ายค้านรอบ 231 S2: คอลัมน์เข้ารหัส — ค่าที่ขึ้นต้น enc1: ห้ามเข้า (ปิด oracle)
-            if (SecretInputRule.CipherPrefixProblem(request.BankAccountNumber, "เลขบัญชีธนาคาร") is string cipherProblem)
+            // ฝ่ายค้านรอบ 231 S2 · รอบ 274-10: คอลัมน์เข้ารหัส — ciphertext (enc1/รุ่นก่อน) ห้ามเข้า (ปิด oracle · กันเข้ารหัสซ้อน)
+            if (EmployeeRecordEdit.CipherInputProblem(request.BankAccountNumber, "เลขบัญชีธนาคาร") is string cipherProblem)
                 throw new BusinessRuleException(cipherProblem, SecretInputRule.RuleCipherPrefix);
             employee.BankAccountNumber = request.BankAccountNumber;
         }
@@ -577,6 +581,11 @@ public class PayrollService : IPayrollService
                     var syncSsoNo = EmployeeRecordEdit.SsoInsuredNumber(r.SocialSecurityNumber, null);
                     if (syncSsoNo.Error != null)
                         errors.Add($"{r.EmployeeCode}: สร้างพนักงานแล้วแต่ไม่บันทึกเลขประกันสังคม — {syncSsoNo.Error}");
+                    // รอบ 274-10: ciphertext จากระบบต้นทาง (เช่นข้อมูลที่ดึงจากเราไปตอนถอดรหัสไม่ได้) ห้ามเก็บเป็นค่า — สร้างพนักงานได้ แต่ไม่เก็บช่องนั้น + บอกในผลลัพธ์
+                    var syncCitizenCipher = EmployeeRecordEdit.CipherInputProblem(r.CitizenId, "เลขบัตรประชาชน");
+                    if (syncCitizenCipher != null) errors.Add($"{r.EmployeeCode}: สร้างพนักงานแล้วแต่ไม่บันทึกเลขบัตร — {syncCitizenCipher}");
+                    var syncBankCipher = EmployeeRecordEdit.CipherInputProblem(r.BankAccountNumber, "เลขบัญชีธนาคาร");
+                    if (syncBankCipher != null) errors.Add($"{r.EmployeeCode}: สร้างพนักงานแล้วแต่ไม่บันทึกเลขบัญชี — {syncBankCipher}");
                     var newEmp = new Employee
                     {
                         CompanyId = companyId,
@@ -586,7 +595,7 @@ public class PayrollService : IPayrollService
                         LastNameTh = r.LastNameTh,
                         FirstNameEn = r.FirstNameEn,
                         LastNameEn = r.LastNameEn,
-                        CitizenId = r.CitizenId,
+                        CitizenId = syncCitizenCipher == null ? r.CitizenId : null,
                         Email = r.Email,
                         Phone = r.Phone,
                         Department = r.Department,
@@ -596,7 +605,7 @@ public class PayrollService : IPayrollService
                         BaseSalary = r.BaseSalary,
                         SalaryType = r.SalaryType ?? "Monthly",
                         BankName = r.BankName,
-                        BankAccountNumber = r.BankAccountNumber,
+                        BankAccountNumber = syncBankCipher == null ? r.BankAccountNumber : null,
                         BankAccountName = r.BankAccountName,
                         SocialSecurityNumber = syncSsoNo.Error == null ? syncSsoNo.Value : null,
                         IsSubjectToSocialSecurity = r.IsSubjectToSocialSecurity,

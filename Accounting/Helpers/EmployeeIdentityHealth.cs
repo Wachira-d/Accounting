@@ -12,7 +12,7 @@ namespace Accounting.Helpers;
 /// <para>สองแหล่ง:
 /// <list type="number">
 /// <item><b>ทะเบียนพนักงาน</b> (<c>CitizenId</c>/<c>TaxId</c>) — อ่านค่าดิบข้าม converter แล้วตัดสินด้วย <see cref="EncryptedColumnConverter.Inspect"/> ตัวเดียวกับฝั่งอ่าน:
-///   ถอดไม่ออกทุกคีย์ (กู้ไม่ได้ ⇒ ตั้ง <c>ENCRYPTION_KEY_PREVIOUS</c> หรือกรอกใหม่) · เข้ารหัสซ้อน (ถอดแล้วได้ enc1:… อีกชั้น) · อยู่บนคีย์เดิม (อ่านได้แล้ว รองานย้ายคีย์) ·
+///   ถอดไม่ออกทุกคีย์ (กู้ไม่ได้ ⇒ ตั้ง <c>ENCRYPTION_KEY_PREVIOUS</c> หรือกรอกใหม่) · เข้ารหัสซ้อนที่แกะไม่ได้ (รอบ 274-10: ซ้อนที่แกะได้ = รอย้ายคีย์) · อยู่บนคีย์เดิม (อ่านได้แล้ว รองานย้ายคีย์) ·
 ///   ถอดได้แต่ไม่ใช่เลข 13 หลักที่ถูกต้อง</item>
 /// <item><b>ผู้รับใน 50 ทวิ ที่ยังไม่ยกเลิก</b> ที่เลขใน <c>Contact.TaxId</c> ใช้ไม่ได้ — ส่วนใหญ่คือ Contact ที่ระบบเคยสร้างจากเลขที่ตัดจาก ciphertext
 ///   ตอนออก 50 ทวิ รายเดือน (ทางแก้: "สร้างเอกสารใหม่" ที่รอบเงินเดือน — ยกเลิกใบเดิมและออกใหม่ด้วยเลขที่ถูก)</item>
@@ -25,9 +25,10 @@ public static class EmployeeIdentityHealth
     {
         /// <summary>enc1: ที่ถอดไม่ออกทุกคีย์ — ข้อมูลกู้ไม่ได้จนกว่าจะได้คีย์เดิมคืน</summary>
         Undecryptable,
-        /// <summary>ถอดแล้วได้ enc1: อีกชั้น (เคยถูกห่อซ้อน) — ระบบไม่ถอดชั้นในเอง (ปิด oracle รอบ 231) ⇒ กรอกใหม่</summary>
+        /// <summary>ถอดแล้วได้ ciphertext อีกชั้น (เคยถูกห่อซ้อน) และ<b>แกะไม่ได้</b> — ชั้นในถอดไม่ออก/ไม่ใช่ค่าที่ใช้ได้ (เลข 13 หลักผิด)/
+        /// เป็น ciphertext ที่ผู้ใช้ส่งมาเอง (ไม่แกะ — ปิด oracle รอบ 231) ⇒ กรอกใหม่ · รอบ 274-10: ซ้อนที่แกะได้ = <see cref="PendingRekey"/></summary>
         NestedCipher,
-        /// <summary>ถอดได้ด้วยคีย์เดิม — อ่านถูกแล้ว · งานย้ายคีย์จะเข้ารหัสใหม่ (ไม่ต้องทำอะไร)</summary>
+        /// <summary>ถอดได้ด้วยคีย์เดิม หรือเข้ารหัสซ้อนที่แกะได้ (รอบ 274-10) — อ่านถูกแล้ว · งานย้ายคีย์จะเข้ารหัสใหม่เป็นชั้นเดียว (ไม่ต้องทำอะไร)</summary>
         PendingRekey,
         /// <summary>ค่าที่ถอดแล้ว/ผู้รับใน 50 ทวิ ไม่ใช่เลข 13 หลักที่ถูกต้อง</summary>
         Invalid,
@@ -100,7 +101,7 @@ public static class EmployeeIdentityHealth
                     var raw = rd.IsDBNull(3) ? null : rd.GetString(3);
                     var taxCol = isEmp && IsTaxIdColumn(col.Property);
                     var field = isEmp && EmployeeFieldLabels.TryGetValue(col.Property, out var lbl) ? lbl : $"{col.Table}.{col.Property}";
-                    if (Classify(raw, current, previous, taxCol) is (Issue issue, string masked))
+                    if (Classify(raw, current, previous, taxCol, col.Kind) is (Issue issue, string masked))
                         rows.Add(new Row(isEmp ? "พนักงาน" : col.Table, code, isEmp ? name : null, field, issue, masked,
                             ActionFor(issue, job), taxCol && issue != Issue.PendingRekey));
                 }
@@ -137,19 +138,25 @@ public static class EmployeeIdentityHealth
 
     /// <summary>pure — ตัดสินค่าดิบหนึ่งค่า (null = ไม่มีปัญหา/ว่าง)</summary>
     /// <param name="taxIdColumn">false = คอลัมน์ที่ไม่ใช่เลขผู้เสียภาษี (เลขบัญชี/ประกันสังคม/พาสปอร์ต/อื่น) — ไม่ตรวจ 13 หลัก · ไม่แสดงค่า</param>
-    public static (Issue Issue, string Masked)? Classify(string? raw, string currentKey, IReadOnlyList<string> previousKeys, bool taxIdColumn = true)
+    /// <param name="kind">ชนิดค่าของคอลัมน์ (จาก converter ของโมเดล) · null = ตาม <paramref name="taxIdColumn"/> — ใช้ตัดสินค่าที่แกะจากชั้นซ้อน</param>
+    public static (Issue Issue, string Masked)? Classify(string? raw, string currentKey, IReadOnlyList<string> previousKeys, bool taxIdColumn = true,
+        PiiValueKind? kind = null)
     {
-        var r = EncryptedColumnConverter.Inspect(raw, currentKey, previousKeys);
+        var r = EncryptedColumnConverter.Inspect(raw, currentKey, previousKeys,
+            kind ?? (taxIdColumn ? PiiValueKind.ThaiTaxId : PiiValueKind.Text));
         switch (r.State)
         {
             case PiiCipherState.Empty: return null;
             case PiiCipherState.Undecryptable: return (Issue.Undecryptable, "(ถอดรหัสไม่ได้)");
         }
-        if (EncryptionHelper.IsEncrypted(r.Plain)) return (Issue.NestedCipher, "(เข้ารหัสซ้อน)");
-        if (!taxIdColumn) return r.State == PiiCipherState.Previous ? (Issue.PendingRekey, "(อ่านได้ด้วยคีย์เดิม)") : null;
+        // รอบ 274-10: ซ้อนที่แกะไม่ได้เท่านั้นที่ต้องกรอกใหม่ (ตัวตัดสินเดียว = Inspect) · ซ้อนที่แกะได้ไหลต่อเป็น "รอย้ายคีย์"
+        if (r.NestedUnresolved || EncryptedColumnConverter.IsUnreadable(r.Plain)) return (Issue.NestedCipher, "(เข้ารหัสซ้อน)");
+        var pending = r.State is PiiCipherState.Previous or PiiCipherState.Nested;
+        if (!taxIdColumn)
+            return pending ? (Issue.PendingRekey, r.State == PiiCipherState.Nested ? "(เข้ารหัสซ้อน — อ่านได้แล้ว)" : "(อ่านได้ด้วยคีย์เดิม)") : null;
         var id = EmployeeTaxIdentity.InspectValue(r.Plain);
         if (id.Problem == TaxIdProblem.Invalid) return (Issue.Invalid, id.Masked ?? "");
-        if (r.State == PiiCipherState.Previous) return (Issue.PendingRekey, id.Masked ?? "");
+        if (pending) return (Issue.PendingRekey, id.Masked ?? "");
         return null;
     }
 

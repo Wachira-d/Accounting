@@ -27,10 +27,13 @@ public static class PiiReprotectPass
 
     /// <param name="Undecryptable">ค่า enc1: ที่ถอดไม่ออกทุกคีย์ (กู้ไม่ได้จนกว่าจะได้คีย์เดิม หรือผู้ใช้กรอกใหม่)</param>
     /// <param name="SkippedConcurrent">ค่าถูกเปลี่ยนระหว่างอ่าน→เขียน ⇒ ไม่เขียนทับ</param>
-    public sealed record Result(int Scanned, int Rekeyed, int Undecryptable, int SkippedConcurrent, IReadOnlyDictionary<string, int> PerColumn);
+    /// <param name="Unwrapped">รอบ 274-10: ค่าเข้ารหัสซ้อนที่แกะได้และเขียนใหม่เป็นชั้นเดียว (นับรวมใน <paramref name="Rekeyed"/> ด้วย)</param>
+    /// <param name="NestedUnresolved">รอบ 274-10: ค่าเข้ารหัสซ้อนที่ชั้นในใช้ไม่ได้ — ไม่แตะ (ผู้ใช้ต้องกรอกใหม่)</param>
+    public sealed record Result(int Scanned, int Rekeyed, int Undecryptable, int SkippedConcurrent, IReadOnlyDictionary<string, int> PerColumn,
+        int Unwrapped = 0, int NestedUnresolved = 0);
 
     /// <summary>คอลัมน์ PII หนึ่งช่องจากโมเดล EF (ตาราง · คอลัมน์ · มี CompanyId ไหม)</summary>
-    public sealed record PiiColumn(string Table, string Column, string Property, bool HasCompanyId);
+    public sealed record PiiColumn(string Table, string Column, string Property, bool HasCompanyId, PiiValueKind Kind = PiiValueKind.Text);
 
     /// <summary>ทุกคอลัมน์ที่ใช้ <see cref="EncryptedColumnConverter"/> ในโมเดล — ตัวเดียวของงานนี้และรายงานแถวเสีย</summary>
     public static IReadOnlyList<PiiColumn> Columns(AccountingDbContext db)
@@ -38,7 +41,8 @@ public static class PiiReprotectPass
             .Where(t => t.GetTableName() != null && t.FindPrimaryKey()?.Properties is [{ Name: "Id" }])
             .SelectMany(t => t.GetProperties()
                 .Where(p => p.GetValueConverter() is EncryptedColumnConverter)
-                .Select(p => new PiiColumn(t.GetTableName()!, p.GetColumnName(), p.Name, t.FindProperty("CompanyId") != null)))
+                .Select(p => new PiiColumn(t.GetTableName()!, p.GetColumnName(), p.Name, t.FindProperty("CompanyId") != null,
+                    ((EncryptedColumnConverter)p.GetValueConverter()!).Kind)))
             .DistinctBy(c => (c.Table, c.Column))
             .OrderBy(c => c.Table, StringComparer.Ordinal).ThenBy(c => c.Column, StringComparer.Ordinal)
             .ToList();
@@ -54,8 +58,8 @@ public static class PiiReprotectPass
         var current = currentKey ?? EncryptedColumnConverter.Keys.Current;
         var previous = previousKeys ?? EncryptedColumnConverter.Keys.Previous;
         var per = new Dictionary<string, int>(StringComparer.Ordinal);
-        int scanned = 0, undecryptable = 0, skipped = 0;
-        if (previous.Count == 0) return new Result(0, 0, 0, 0, per);   // ไม่มีคีย์เดิมให้ลอง = ไม่มีอะไรย้ายได้
+        int scanned = 0, undecryptable = 0, skipped = 0, unwrapped = 0, nestedUnresolved = 0;
+        // รอบ 274-10: ไม่ตัดจบเมื่อไม่มีคีย์เดิม — แถวเข้ารหัสซ้อนบนคีย์ปัจจุบันทั้งสองชั้นยังต้องถูกแกะเป็นชั้นเดียว
 
         var conn = db.Database.GetDbConnection();
         var openedHere = conn.State != System.Data.ConnectionState.Open;
@@ -94,11 +98,15 @@ public static class PiiReprotectPass
                     foreach (var row in batch)
                     {
                         scanned++;
-                        var r = EncryptedColumnConverter.Inspect(row.Value, current, previous);
+                        var r = EncryptedColumnConverter.Inspect(row.Value, current, previous, col.Kind);
                         if (r.State == PiiCipherState.Undecryptable) { undecryptable++; continue; }
-                        if (r.State != PiiCipherState.Previous) continue;
+                        // รอบ 274-10: ชั้นในใช้ไม่ได้ ⇒ ไม่แกะ (ห้ามแต่งค่า) · ถ้าชั้นนอกอยู่บนคีย์เดิม ยังย้ายชั้นนอกไปคีย์ปัจจุบันด้วย plaintext ชั้นนอก<b>ตรงตัว</b>
+                        // (ไม่ใช้ r.Plain — ค่าที่ผู้ใช้ส่งมามีเครื่องหมายที่ต้องคงไว้)
+                        if (r.NestedUnresolved) nestedUnresolved++;
+                        if (r.State is not (PiiCipherState.Previous or PiiCipherState.Nested)) continue;
+                        var plainToWrite = r.NestedUnresolved ? EncryptionHelper.Decrypt(row.Value, previous[r.KeyIndex]) : r.Plain!;
                         if (beforeWrite != null) await beforeWrite(row.Id);
-                        var nv = EncryptedColumnConverter.ProtectWithCurrentKey(r.Plain!, current);
+                        var nv = EncryptedColumnConverter.ProtectWithCurrentKey(plainToWrite, current);
                         int n;
                         await using (var up = conn.CreateCommand())
                         {
@@ -112,6 +120,8 @@ public static class PiiReprotectPass
                         if (n != 1) { skipped++; continue; }
                         batchPer[$"{col.Table}.{col.Column}"] = batchPer.GetValueOrDefault($"{col.Table}.{col.Column}") + 1;
                         audits++;
+                        var nested = r.State == PiiCipherState.Nested;
+                        if (nested) unwrapped++;
                         db.AddChainedAuditLog(new AuditLog
                         {
                             CompanyId = row.CompanyId,
@@ -120,8 +130,11 @@ public static class PiiReprotectPass
                             EntityId = row.Id.ToString(),
                             NewValues = System.Text.Json.JsonSerializer.Serialize(new
                             {
-                                action = "PiiReprotected", field = col.Property, fromKeyIndex = r.KeyIndex,
-                                fromDevKey = previous[r.KeyIndex] == EncryptionKeyResolver.DevKey, ruleCode = "PDPA-26-KEY-ROTATE",
+                                // รอบ 274-10: แถวซ้อน = "PiiNestedUnwrapped" + จำนวนชั้น · ไม่มีค่า (PDPA)
+                                action = nested ? "PiiNestedUnwrapped" : "PiiReprotected", field = col.Property, fromKeyIndex = r.KeyIndex,
+                                fromDevKey = r.KeyIndex >= 0 && previous[r.KeyIndex] == EncryptionKeyResolver.DevKey,
+                                nestedLayers = r.NestedLayers,
+                                ruleCode = nested ? "PDPA-26-NESTED-UNWRAP" : "PDPA-26-KEY-ROTATE",
                             }),
                             Timestamp = DateTime.UtcNow,
                         });
@@ -138,7 +151,7 @@ public static class PiiReprotectPass
         {
             if (openedHere) await conn.CloseAsync();
         }
-        return new Result(scanned, per.Values.Sum(), undecryptable, skipped, per);
+        return new Result(scanned, per.Values.Sum(), undecryptable, skipped, per, unwrapped, nestedUnresolved);
     }
 
     /// <summary>แถวที่อาจเป็น ciphertext — enc1 หรือรุ่นก่อนไม่มีคำนำหน้า (base64 ล้วน ≥ 40 ตัว · ฝ่ายค้าน MED-1 เดิมเลือกแค่ enc1) ·
@@ -196,8 +209,10 @@ public class PiiReprotectJob : BackgroundService
                     + (r.PerColumn.Count == 0 ? "" : " (" + string.Join(", ", r.PerColumn.Select(kv => $"{kv.Key}={kv.Value}")) + ")")
                     + (r.Undecryptable == 0 ? "" : $" · ⛔ ถอดไม่ออกทุกคีย์ {r.Undecryptable} ค่า — ตั้ง {EncryptionKeyResolver.PreviousKeyEnv} เป็นคีย์เดิม หรือให้ผู้ใช้กรอกใหม่ "
                         + "(รายงาน: GET payroll/tax-identity-health)")
+                    + (r.Unwrapped == 0 ? "" : $" · แกะค่าเข้ารหัสซ้อนเป็นชั้นเดียว {r.Unwrapped} ค่า")
+                    + (r.NestedUnresolved == 0 ? "" : $" · ⛔ เข้ารหัสซ้อนแต่ชั้นในใช้ไม่ได้ {r.NestedUnresolved} ค่า — ให้ผู้ใช้กรอกใหม่ (รายงาน: GET payroll/tax-identity-health)")
                     + (r.SkippedConcurrent == 0 ? "" : $" · ข้าม {r.SkippedConcurrent} ค่าที่ผู้ใช้เพิ่งแก้");
-                if (r.Rekeyed > 0 || r.Undecryptable > 0) _logger.LogWarning("PiiReprotect: {Summary}", summary);
+                if (r.Rekeyed > 0 || r.Undecryptable > 0 || r.NestedUnresolved > 0) _logger.LogWarning("PiiReprotect: {Summary}", summary);
                 // สำเร็จ = งานรันจบ (ค่าที่ถอดไม่ออกเป็นงานของผู้ใช้ — อยู่ในข้อความ + รายงานรายแถว)
                 if (recorder != null) await recorder.RecordAsync(JobName, true, summary, r.Rekeyed, startedAt);
             }, _logger, ct: stoppingToken);
