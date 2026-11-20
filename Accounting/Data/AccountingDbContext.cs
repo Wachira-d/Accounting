@@ -1817,10 +1817,11 @@ public class AccountingDbContext : DbContext
             // สำหรับ input 13 หลัก → ตั้ง max length 200 เผื่อ encryption header.
             // Legacy plaintext rows อ่านได้ปกติ (ConvertToProvider pass-through);
             // re-save จะ migrate เป็น ciphertext อัตโนมัติ.
+            // รอบ 274-10: ชนิด ThaiTaxId ⇒ ค่าที่แกะจากชั้นซ้อนรับเฉพาะเลข 13 หลักที่ผ่าน mod-11
             e.Property(emp => emp.CitizenId).HasMaxLength(200)
-                .HasConversion(new Accounting.Helpers.EncryptedColumnConverter());
+                .HasConversion(new Accounting.Helpers.EncryptedColumnConverter(Accounting.Helpers.PiiValueKind.ThaiTaxId));
             e.Property(emp => emp.TaxId).HasMaxLength(200)
-                .HasConversion(new Accounting.Helpers.EncryptedColumnConverter());
+                .HasConversion(new Accounting.Helpers.EncryptedColumnConverter(Accounting.Helpers.PiiValueKind.ThaiTaxId));
             e.Property(emp => emp.PassportNumber).HasMaxLength(200)
                 .HasConversion(new Accounting.Helpers.EncryptedColumnConverter());
             // เพิ่ม PDPA ม.26: เลขบัญชีธนาคาร + เลขประกันสังคม (sensitive PII).

@@ -9808,3 +9808,8 @@ _Last verified against codebase: 2026-11-19 (รอบ 273 ชุดแก้ฝ
 
 _Last verified against codebase: 2026-11-19 (รอบ 274 ผลตรวจฝ่ายค้าน HIGH-1/MED-1/MED-2/LOW-1…5 — ไฟล์ ภ.ง.ด.1/1ก ที่มีแถวถูกกันไม่ออก · ciphertext รุ่นก่อน · งานย้ายคีย์เป็นระยะ+ผลจริง ·
 ไฟล์ สปส. · export — build + test 23,540 ผ่านในเครื่องนี้ (รวม Db) — commit aa7fb732)_
+
+_Last verified against codebase: 2026-11-20 (รอบ 274-10 — เลขที่ถูกเข้ารหัสซ้อนกลับมาอ่านได้โดยไม่ต้องกรอกใหม่: `EncryptedColumnConverter.Inspect` แกะชั้นซ้อน ≤ 3 ชั้น
+(เลขบัตร/ผู้เสียภาษีรับเฉพาะ 13 หลัก mod-11 · อื่น ๆ ต้องไม่ใช่ ciphertext) · `PiiReprotectPass` เขียนชั้นเดียว + audit `PiiNestedUnwrapped` · รายงานไม่บอกกรอกใหม่สำหรับแถวที่แกะได้ ·
+ทุกทางเข้าพนักงาน (แก้ไข/สร้าง/HRIS sync/นำเข้า) ปฏิเสธ ciphertext ด้วย `EmployeeRecordEdit.CipherInputProblem` · ciphertext ของแถวนั้นเองส่งกลับมา = คงค่าเดิม ·
+คำตัดสิน 274-10 — commit (เติมในคอมมิตตามหลัง))_
