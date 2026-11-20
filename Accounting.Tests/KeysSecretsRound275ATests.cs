@@ -189,3 +189,61 @@ public class KeysSecretsRound275ATests
         Assert.DoesNotContain("✓", s);
     }
 }
+
+/// <summary>รอบ 275 แพ็ก A ฝ่ายค้าน MED-2: เครื่องที่คีย์ไม่ตรงหยุดเขียนค่าเข้ารหัสใหม่ (ความลับ + PII) — อ่านไม่กระทบ · ประตูเป็นสถานะทั้ง process ⇒ รันไม่ขนาน</summary>
+[Collection(Accounting.Tests.Db.EncryptionGlobalStateCollection.Name)]
+public class EncryptionWriteGuardRound275ATests
+{
+    [Fact]
+    public void Mismatch_ห้ามเขียนความลับและPIIใหม่_อ่านค่าเดิมได้ตามปกติ()
+    {
+        var p = new SecretProtector("r275a-guard-key");
+        var existing = p.Protect("smtp-pass");
+        var existingPii = (string?)new EncryptedColumnConverter().ConvertToProvider("1101700207030");
+        try
+        {
+            EncryptionWriteGuard.Apply(KeyFingerprintVerdict.Mismatch);
+            var ex = Assert.Throws<EncryptionKeyMismatchException>(() => p.Protect("new-pass"));
+            Assert.Equal(503, ex.StatusCode);
+            Assert.DoesNotContain("ENCRYPTION_KEY", ex.Message);
+            Assert.Throws<EncryptionKeyMismatchException>(() => new EncryptedColumnConverter().ConvertToProvider("1101700207030"));
+            // อ่านไม่กระทบ
+            Assert.Equal("smtp-pass", p.Unprotect(existing));
+            Assert.Equal("1101700207030", (string?)new EncryptedColumnConverter().ConvertFromProvider(existingPii));
+            EncryptionWriteGuard.Apply(KeyFingerprintVerdict.RotatedBack);
+            Assert.Throws<EncryptionKeyMismatchException>(() => p.Protect("x"));
+        }
+        finally { EncryptionWriteGuard.Clear(); }
+    }
+
+    [Theory]
+    [InlineData(KeyFingerprintVerdict.Match)]
+    [InlineData(KeyFingerprintVerdict.FirstSeen)]
+    [InlineData(KeyFingerprintVerdict.Rotated)]
+    [InlineData(KeyFingerprintVerdict.RotationPending)]
+    [InlineData(KeyFingerprintVerdict.NotChecked)]
+    public void ทิศตรงข้าม_คีย์ไม่มีปัญหา_เขียนได้ตามปกติ(KeyFingerprintVerdict v)
+    {
+        var p = new SecretProtector("r275a-guard-key");
+        try
+        {
+            EncryptionWriteGuard.Apply(KeyFingerprintVerdict.Mismatch);
+            EncryptionWriteGuard.Apply(v);   // ผลตรวจรอบถัดไปปกติ ⇒ เปิดประตูคืน
+            Assert.Null(EncryptionWriteGuard.BlockedReason);
+            Assert.Equal("ok", p.Unprotect(p.Protect("ok")));
+            Assert.NotNull(new EncryptedColumnConverter().ConvertToProvider("1101700207030"));
+        }
+        finally { EncryptionWriteGuard.Clear(); }
+    }
+
+    [Fact]
+    public void รอยืนยันการหมุน_ไม่ใช่ปัญหาคีย์_แต่ห้ามย้ายแถว_และหมุนมีผลเมื่อทุกเครื่องรายงานคีย์ใหม่()
+    {
+        Assert.False(EncryptionKeyFingerprintRule.AllowsRekey(KeyFingerprintVerdict.RotationPending));
+        Assert.True(EncryptionKeyFingerprintRule.NeedsAdmin(KeyFingerprintVerdict.RotationPending));
+        Assert.False(EncryptionKeyFingerprintRule.IsProblem(KeyFingerprintVerdict.RotationPending));
+        Assert.True(EncryptionKeyFingerprintRule.AllInstancesOn("new", new[] { "new", "new" }));
+        Assert.False(EncryptionKeyFingerprintRule.AllInstancesOn("new", new[] { "new", "old" }));
+        Assert.False(EncryptionKeyFingerprintRule.AllInstancesOn("new", Array.Empty<string>()));
+    }
+}

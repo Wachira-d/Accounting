@@ -7354,7 +7354,7 @@ _รอบ 275 แพ็ก A (2026-11-20 · คีย์และความ�
 `SecretReprotectJob` เป็นระยะ + ล้ม = JobRunLog + watermark · ลายนิ้วมือคีย์ใน `SiteSettings` (งานย้ายคีย์ทั้งสองหยุดเมื่อไม่ตรง · ยืนยันคีย์โดยผู้ดูแล + audit) ·
 `Helpers/SecretUse` ที่ webhook ขาออก/CMS ขาเข้า/e-Tax/อีเมล/login ภายนอก/Omise/ธนาคาร/LINE OA/ลงนาม callback (ห้ามใช้ค่าว่างเงียบ · ห้ามส่งไม่เซ็น · ห้ามตรวจด้วยกุญแจว่าง) ·
 DTO พนักงานส่งป้าย ⛔ แทน ciphertext + ฟอร์มบอกชัด (ฝ่ายค้าน 274-10 MED-2) · หน้า `/pages/encryption-health.html` + มุมผู้ดูแล · runbook `docs/runbooks/encryption-key-rotation.md` ·
-คำตัดสิน 275-A-1…7 · pure + Db `KeysSecretsRound275A*` · กติกา `_R275A_` — commit (เติมในคอมมิตตามหลัง)_
+คำตัดสิน 275-A-1…7 · pure + Db `KeysSecretsRound275A*` · กติกา `_R275A_` — commit 2e7199e0 + bc9b6d73_
 
 _รอบ 275 แพ็ก D ชุดแก้ฝ่ายค้าน (ไม่พบ HIGH): MED-1 ผูก/บันทึกเองตรวจเลขผู้เสียภาษี + หน่วยงานกับแบบ (`AgencyTypeProblem` · `GovPaymentSlip.AgencyHint`) · MED-2 งานเบื้องหลัง/ยกเลิกใบเขียนแบบมีเงื่อนไขทีละแถว + Db test แข่งเวลา · MED-3 `ReleasedAt` · LOW-1 การ์ดสรุปต่อกลุ่ม + เพดาน 20 · LOW-2 ใบที่มีสลิปเปิดอ้างไม่หมดอายุ · LOW-3 `PaidBy` + การ์ดใบกลับเปิด (`ReopenedAt`/`ReopenNoticeAt`) · LOW-4 `MoveToStaffIfOpenAsync` — คอลัมน์ใหม่ 3 (Round272Migration)_
 คำตัดสิน 275-A-1…7 · pure + Db `KeysSecretsRound275A*` · กติกา `_R275A_` — commit 2e7199e0 + bc9b6d73_
@@ -7364,3 +7364,8 @@ _Last verified against codebase: 2026-11-20 (รอบ 275 แพ็ก C — �
 คำตัดสิน 4.1/275-C-1: งานบริการรับเป็นงวด ⇒ ใบกำกับทุกงวด VAT ตามส่วน + ย้าย 21913 ตามส่วนผูกการรับ + ถอยเฉพาะงวดเมื่อยกเลิก · ขายสินค้าคงเดิม · ใบลดหนี้ก่อนรับ/ตัดยอดที่ไล่ไม่ได้ ⇒ คิวให้คนตัดสิน ·
 คิว "รับเงินแล้วยังไม่มีใบกำกับ" (API + Autopilot + ปุ่มออกใบกำกับแทนใบรับเปล่า · ใบเก่าไม่แก้ย้อนหลัง) · MED-4 วันที่ปฏิทินไทยที่ต้นทางการรับชำระ · MED-5 ข้อความใบเสร็จผ่าน DocumentLabels ·
 LOW-1 การ์ด LINE "ยอดรับชำระ" · LOW-3 · ตัวโหลดรายการตัดยอดไม่นับการรับที่ถูกยกเลิก · เทสต์ `SettlementTaxInvoiceRoleTests` · Db `SettlementTaxInvoiceRoleDbTests` · กติกา `_R275C_*` — commit 96bb5262)_
+
+_รอบ 275 แพ็ก A ผลตรวจฝ่ายค้าน (2026-11-20 · ไม่พบ HIGH): MED-1 ยืนยัน "ลายนิ้วมือที่ระบุ" จาก heartbeat ต่อเครื่อง (`EncryptionKeyHeartbeats`) · เครื่องที่ตอบใช้คีย์อื่น ⇒ 409 ·
+MED-2 `EncryptionWriteGuard` — เครื่องคีย์ไม่ตรงหยุดเข้ารหัสค่าใหม่ (ความลับ + PII · 503 ข้อความไทย · อ่านไม่กระทบ) · MED-3 `RotationPending` จนทุกเครื่องรายงานคีย์ใหม่/ผู้ดูแลยืนยัน ·
+MED-4 กุญแจ HMAC สลิปภาษี/OTP จากเมล็ดถาวร `SiteSettings.HmacSeedProtected` (`HmacSeedBootstrap`) · LOW ลายนิ้วมือจากกุญแจ PBKDF2 · ยืนยันแบบมีเงื่อนไขค่าเดิม · รอบข้ามสแกนลงชื่อ `…Skipped` ·
+คำตัดสิน 275-A-8…12 · เทสต์ P275A-11…14 · runbook ขั้น 4 — commit (เติมในคอมมิตตามหลัง)_

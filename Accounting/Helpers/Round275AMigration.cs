@@ -11,5 +11,9 @@ public static class Round275AMigration
         """ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "EncryptionKeyFingerprint" text NULL;""",
         """ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "EncryptionKeyFingerprintPrevious" text NULL;""",
         """ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "EncryptionKeyFingerprintAt" timestamp without time zone NULL;""",
+        // ฝ่ายค้าน MED-1/MED-3: ลายนิ้วมือต่อเครื่อง (ตรงกับ AccountingDbContext — ฐานใหม่ได้จาก EnsureCreated)
+        """CREATE TABLE IF NOT EXISTS "EncryptionKeyHeartbeats" ("InstanceId" varchar(200) PRIMARY KEY, "Fingerprint" text NOT NULL DEFAULT '', "PreviousFingerprints" text NULL, "SeenAt" timestamp without time zone NOT NULL);""",
+        // ฝ่ายค้าน MED-4: เมล็ดกุญแจ HMAC ถาวร (เข้ารหัสด้วย SecretProtector · ไม่หมุนตาม ENCRYPTION_KEY)
+        """ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "HmacSeedProtected" text NULL;""",
     };
 }
