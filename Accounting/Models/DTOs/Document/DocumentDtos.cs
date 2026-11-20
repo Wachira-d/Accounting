@@ -1931,6 +1931,12 @@ public record PaymentWhtSuggestionResponse(
 /// (ไม่ได้สร้างใหม่) — ข้อความที่โชว์ต้องต่างกัน ไม่งั้นผู้ใช้นึกว่าออกใบซ้ำ ·
 /// <paramref name="IsDraft"/> = ผู้กดไม่มีสิทธิ์อนุมัติใบเสร็จ ใบจึงเป็นร่าง
 /// (เลขจริงออกตอนผู้มีสิทธิ์อนุมัติ — gap-free §86/4)</para></summary>
+/// <summary>รอบ 275 แพ็ก C — แถวคิว "รับเงินแล้วยังไม่มีใบกำกับภาษี" (server computes · หน้าแสดงอย่างเดียว) · <c>Mode</c>/<c>Reason</c> = ชื่อ enum ของ
+/// <c>SettlementTaxInvoiceRole</c> · <c>CanIssue</c> = ปุ่มออกใบกำกับใช้ได้ · <c>HumanReason</c> = เหตุที่ระบบไม่ออกเอง (ผู้ทำบัญชีตัดสิน)</summary>
+public record ReceivedWithoutTaxInvoiceRow(Guid DocumentId, string DocumentNumber, string? ContactName, Guid PaymentId, string PaymentNumber,
+    DateTime PaymentDate, decimal SettledAmount, Guid? PlainReceiptId, string? PlainReceiptNumber, string Mode, string Reason,
+    decimal? VatAmount, string? HumanReason, bool CanIssue);
+
 public record IssuedReceiptResult(
     Guid ReceiptId,
     string ReceiptNumber,

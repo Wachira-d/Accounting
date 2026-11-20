@@ -13353,12 +13353,12 @@
           const amt = parseFloat(amountEl.value || '0') || 0;
           const fullFirst = sourceTotal > 0 && Math.abs(balanceDue - sourceTotal) < 0.01  // งวดแรก
             && amt >= balanceDue - 0.01;                                                   // จ่ายเต็มยอด
-          // ใบแจ้งหนี้ (Invoice) มี VAT จ่ายเต็มงวดเดียว → ต้อง**ออกใบเสร็จ** เพราะ
-          // ใบเสร็จนั้นคือ "ใบกำกับภาษี/ใบเสร็จรับเงิน" (carryVat §78/1) — checked
-          if (_rpDt === 'Invoice' && docVat > 0 && fullFirst) {
+          // ใบแจ้งหนี้ (Invoice) มี VAT → ต้อง**ออกใบเสร็จ** เพราะใบเสร็จนั้นคือ "ใบกำกับภาษี/ใบเสร็จรับเงิน" ณ วันรับเงิน (§78/1) —
+          // รอบ 275 แพ็ก C: เซิร์ฟเวอร์ตัดสินเต็มใบ/ตามส่วนของงวด (ตัวตัดสินเดียว) และบังคับออกเอง · หน้านี้ไม่คำนวณ "งวดเดียว" ซ้ำ
+          if (_rpDt === 'Invoice' && docVat > 0) {
             rpIssueCb.checked = true;
             if (rpIssueHint) rpIssueHint.textContent =
-              '➕ สร้างใบใหม่ 1 ใบ: "ใบกำกับภาษี/ใบเสร็จรับเงิน" (§78/1 — ลูกค้าเคลมภาษีซื้อได้จากใบนี้) · ใบแจ้งหนี้เดิมคงอยู่เป็นเอกสารตั้งหนี้';
+              '➕ สร้างใบใหม่ 1 ใบ: "ใบกำกับภาษี/ใบเสร็จรับเงิน" ณ วันรับเงิน (§78/1 — ลูกค้าเคลมภาษีซื้อได้จากใบนี้) · รับครบ = VAT เต็มใบ · รับเป็นงวดของงานบริการ = VAT ตามส่วนของเงินที่รับ · ใบแจ้งหนี้เดิมคงอยู่เป็นเอกสารตั้งหนี้';
             return;
           }
           // ใบกำกับภาษี (TaxInvoice) จ่ายเต็มงวดเดียว → ใบกำกับทำหน้าที่ใบเสร็จเอง
@@ -13581,27 +13581,8 @@
             return;
           }
           const api = Layout.api(); if (!api) return;
-          // ใบแจ้งหนี้มี VAT + รับ "บางส่วน" → tax point §78/1 เกิดเต็มจำนวนที่งวด
-          // แรก แต่ใบเสร็จผ่อนถือ VAT เต็มไม่ได้ (carryVat ต้องปิดยอดครบงวดเดียว)
-          // ⇒ ต้องออกใบกำกับภาษีเต็มจำนวนก่อน แล้วรับชำระที่ใบกำกับ. รับ "เต็ม"
-          // ไม่ต้องแปลง — ระบบออกใบกำกับ/ใบเสร็จ ใบเดียวให้เอง
-          if (docType === 'Invoice' && docVat > 0 && amount < balanceDue - 0.01) {
-            const goConv = (await Layout.confirm({ title: 'รับชำระบางส่วนของใบที่มี VAT',
-              message: 'รับชำระ "บางส่วน" ของใบแจ้งหนี้ที่มี VAT\n\n' +
-              'จุดรับผิด VAT (§78/1) เกิดเต็มจำนวนตั้งแต่งวดแรก — ใบเสร็จผ่อนถือ VAT เต็มไม่ได้\n' +
-              'ต้องออกใบกำกับภาษีเต็มจำนวนก่อน แล้วรับชำระที่ใบกำกับ\n\n' +
-              '"ยกเลิก" = กลับไปแก้ยอดเป็นเต็มจำนวนเพื่อออกใบเดียวจบก็ได้',
-              okText: 'แปลงเป็นใบกำกับภาษีก่อน' }));
-            if (goConv) {
-              try {
-                const r = await api.convertDocument(docId, 'TaxInvoice');
-                document.getElementById('rpModal').classList.remove('active');
-                Layout.toast(`แปลงเป็นใบกำกับภาษี ${r.data?.documentNumber || ''} — อนุมัติแล้วรับชำระที่ใบกำกับ`, 'success', 8000);
-                await this.load();
-              } catch (e) { Layout.toast('แปลงไม่สำเร็จ: ' + e.message, 'error', 8000); }
-            }
-            return;
-          }
+          // รอบ 275 แพ็ก C (คำตัดสิน 275-C-1): "ใบแจ้งหนี้มี VAT รับบางส่วนได้ไหม" ตัดสินที่เซิร์ฟเวอร์ตัวเดียว (งานบริการ = ใบกำกับรายงวด VAT ตามส่วน ·
+          // ขายสินค้า/ไม่รู้ = ปฏิเสธพร้อมรหัสกฎ) — หน้านี้ไม่มีสำเนาเงื่อนไข · ถูกปฏิเสธ ⇒ เสนอทางไปต่อ "แปลงเป็นใบกำกับภาษีก่อน" ใน catch ข้างล่าง
           // ทีม A (2a): ผู้ใช้แก้ยอดภาษีหักเอง ⇒ ถามเซิร์ฟเวอร์ว่ายอดนี้เกินยอดที่เหลือหลังใบลดหนี้ไหม (ข้อความจากเซิร์ฟเวอร์ — ไม่ตัดสินที่หน้านี้) ·
           // เกินเพดานใบเดิม = เซิร์ฟเวอร์ปฏิเสธอยู่แล้ว (แจ้งก่อนส่ง) · เกินยอดที่เหลือ = ถามยืนยัน แล้วบันทึกตามที่ผู้ใช้ระบุได้
           const _whtTouched = hasWht && rpWht.dataset.userTouched === '1' && rpWht.value !== '';
@@ -13650,7 +13631,19 @@
             Layout.closeModal('detailModal');
             await this.load();
           } catch (e) {
-            Layout.toast(e.message, 'error');
+            if (e?.body?.data?.ruleCode === 'RD-78/1-PARTIAL-VAT-INVOICE') {
+              // ข้อความ/เหตุจากเซิร์ฟเวอร์ — หน้านี้แค่เสนอทางไปต่อ
+              const goConv = (await Layout.confirm({ title: 'รับชำระบางส่วนของใบที่มี VAT', message: e.message,
+                okText: 'แปลงเป็นใบกำกับภาษีก่อน' }));
+              if (goConv) {
+                try {
+                  const r = await api.convertDocument(docId, 'TaxInvoice');
+                  document.getElementById('rpModal').classList.remove('active');
+                  Layout.toast(`แปลงเป็นใบกำกับภาษี ${r.data?.documentNumber || ''} — อนุมัติแล้วรับชำระที่ใบกำกับ`, 'success', 8000);
+                  await this.load();
+                } catch (e2) { Layout.toast('แปลงไม่สำเร็จ: ' + e2.message, 'error', 8000); }
+              }
+            } else Layout.toast(e.message, 'error');
           } finally {
             submit.disabled = false; submit.textContent = '✓ บันทึก';
           }
