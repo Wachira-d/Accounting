@@ -49,7 +49,12 @@ public static class EncryptionKeyResolver
     /// <summary>รอบ 274: คีย์ที่<b>คอลัมน์ PII</b> (<c>EncryptedColumnConverter</c>) ใช้ลองถอดต่อจากคีย์ปัจจุบัน — <see cref="PreviousKeyEnv"/> (ดิบ + ตัดช่องว่าง) ก่อน
     /// แล้ว <see cref="LegacyCandidates"/> (config เดิมที่ถูก env ชนะ · dev key ก่อนตั้งคีย์) · ไม่มีคีย์ปัจจุบันซ้ำ · ลำดับคงที่ ·
     /// ใช้ถอดอย่างเดียว (เขียนด้วยคีย์ปัจจุบันเสมอ) ⇒ dev key ในรายการไม่ลดความปลอดภัย (ค่าที่เข้ารหัสด้วยมันเปิดได้อยู่แล้ว)</summary>
-    public static IReadOnlyList<string> PiiPreviousKeys(string currentKey, string? previousEnv, string? envKey, string? configKey)
+    internal static IReadOnlyList<string> PiiPreviousKeys(string currentKey, string? previousEnv, string? envKey, string? configKey)
+        => PreviousKeysFrom(currentKey, new[] { previousEnv }, envKey, configKey);
+
+    /// <summary>รอบ 275 แพ็ก A (T4 M-4 · K3/K9): คีย์เดิม<b>หลายตัว</b> — แต่ละค่าลองทั้งก้อน (ดิบ + ตัดช่องว่าง) แล้วแยกทีละบรรทัด
+    /// (ตัวคั่น = ขึ้นบรรทัดใหม่ — ไม่ชน base64/ตัวอักษรของคีย์) · ลำดับคงที่ตามที่ส่งเข้า · ตัดคีย์ปัจจุบัน/ค่าซ้ำ/ค่าว่าง</summary>
+    internal static IReadOnlyList<string> PreviousKeysFrom(string currentKey, IEnumerable<string?> previousInputs, string? envKey, string? configKey)
     {
         var list = new List<string>();
         void Add(string? k)
@@ -57,10 +62,44 @@ public static class EncryptionKeyResolver
             if (string.IsNullOrWhiteSpace(k) || k == currentKey || list.Contains(k)) return;
             list.Add(k);
         }
-        Add(previousEnv);
-        Add(previousEnv?.Trim());
+        foreach (var raw in previousInputs)
+        {
+            Add(raw);
+            Add(raw?.Trim());
+            if (raw == null || raw.IndexOfAny(new[] { '\n', '\r' }) < 0) continue;
+            foreach (var line in raw.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries))
+            {
+                Add(line);
+                Add(line.Trim());
+            }
+        }
         foreach (var k in LegacyCandidates(currentKey, envKey, configKey)) Add(k);
         return list;
+    }
+
+    /// <summary>รอบ 275 แพ็ก A: env คีย์เดิมแบบมีเลขกำกับ <c>ENCRYPTION_KEY_PREVIOUS_2</c> … <c>_9</c> (หมุนหลายครั้งโดยงานย้ายยังไม่จบ · restore ฐานเก่า)</summary>
+    public const int MaxNumberedPreviousKeys = 9;
+
+    /// <summary>รอบ 275 แพ็ก A (T4 H-1): <b>ห่วงโซ่คีย์ถอดตัวเดียว</b> ของทั้งคอลัมน์ PII (<c>EncryptedColumnConverter</c> ผ่าน <c>Program.cs</c>)
+    /// และความลับใน DB (<c>SecretProtector</c>) — เดิม SecretProtector ใช้แค่ <see cref="LegacyCandidates"/> (ไม่อ่าน <see cref="PreviousKeyEnv"/>) ⇒
+    /// หมุนคีย์ตามคู่มือรอบ 274 แล้ว PII กลับมาอ่านได้ แต่ SMTP · LINE · Omise · e-Tax · webhook ทั้งชุดเป็น WrongKey ·
+    /// ลำดับ: <see cref="PreviousKeyEnv"/> (หรือ config <c>Security:EncryptionKeyPrevious</c> เมื่อไม่มี env) → <c>_2</c>…<c>_9</c> → config เดิม/env ตัดช่องว่าง/dev key ·
+    /// ใช้ถอดอย่างเดียว (เขียนด้วยคีย์ปัจจุบันเสมอ)</summary>
+    /// <param name="env">ตัวอ่าน env (production = <see cref="Environment.GetEnvironmentVariable(string)"/> · เทสต์ส่งพจนานุกรม)</param>
+    public static IReadOnlyList<string> DecryptKeyChain(string currentKey, Func<string, string?> env, string? configKey, string? configPreviousKey)
+    {
+        var inputs = new List<string?> { env(PreviousKeyEnv) ?? configPreviousKey };
+        for (var i = 2; i <= MaxNumberedPreviousKeys; i++) inputs.Add(env($"{PreviousKeyEnv}_{i}"));
+        return PreviousKeysFrom(currentKey, inputs, env("ENCRYPTION_KEY"), configKey);
+    }
+
+    /// <summary>รอบ 275 แพ็ก A (T4 M-4): "ลายนิ้วมือ" ของคีย์ — HMAC-SHA256 ของค่าคงที่ด้วย<b>กุญแจที่ derive แล้ว</b> (PBKDF2 100,000 รอบ ตัวเดียวกับที่เข้ารหัสจริง ·
+    /// ฝ่ายค้าน LOW: เดิมใช้คีย์ดิบ ⇒ เดาคีย์สั้นจากลายนิ้วมือได้เร็ว) · ตัด 16 ตัวอักษรฐานสิบหก · ย้อนหาคีย์ไม่ได้ ·
+    /// ใช้ตรวจว่าทุกเครื่องใช้คีย์เดียวกัน (<c>EncryptionKeyFingerprintRule</c>) · ห้ามคำนวณที่อื่น (ฝั่งเขียน = ฝั่งตรวจ)</summary>
+    public static string Fingerprint(string key)
+    {
+        using var h = new System.Security.Cryptography.HMACSHA256(EncryptionHelper.DerivedKeyFor(key));
+        return Convert.ToHexString(h.ComputeHash(System.Text.Encoding.UTF8.GetBytes("nextacc/encryption-key-fingerprint/v1")))[..16].ToLowerInvariant();
     }
 
     /// <summary>production + คีย์ไม่ปลอดภัย ⇒ throw (boot ไม่ขึ้น) · อื่น ๆ คืนคีย์ที่จะใช้ (ไม่มี = dev key สำหรับเครื่องนักพัฒนา) · ค่าดิบไม่ Trim</summary>
@@ -83,7 +122,7 @@ public static class EncryptionKeyResolver
     /// <summary>ฝ่ายค้านรอบ 219 B2/S3: คีย์ "เดิม" ที่ความลับในฐานอาจถูกเข้ารหัสไว้ — <c>SecretProtector</c> รุ่นก่อนรอบ 219 ใช้
     /// <c>Security:EncryptionKey ?? DevKey</c> (ไม่อ่าน env) ⇒ ลอง config (ดิบ + ตัดช่องว่าง) · env (ตัดช่องว่าง) · dev key ·
     /// ตัดคีย์ปัจจุบันและค่าซ้ำออก · ลำดับคงที่ (ทดสอบได้)</summary>
-    public static IReadOnlyList<string> LegacyCandidates(string currentKey, string? envKey, string? configKey)
+    internal static IReadOnlyList<string> LegacyCandidates(string currentKey, string? envKey, string? configKey)
     {
         var list = new List<string>();
         void Add(string? k)

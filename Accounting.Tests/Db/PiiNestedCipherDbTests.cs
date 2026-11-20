@@ -53,6 +53,13 @@ public class PiiNestedCipherDbTests
             nestedRaw, nestedBank, nested.Id, cid);
         await db.Database.ExecuteSqlRawAsync("UPDATE \"Employees\" SET \"CitizenId\" = {0} WHERE \"Id\" = {1} AND \"CompanyId\" = {2}", badRaw, badInner.Id, cid);
         var normalRaw = await Raw(db, "CitizenId", normal.Id, cid);
+        // ฝ่ายค้าน MED-1: ผู้ลงนามนิรนามเคยวาง ciphertext (ถอดได้) ไว้เป็นชื่อ — นอก allow-list ⇒ ไม่ถูกแกะ ไม่ถูกเขียนใหม่ Prefill ได้ ciphertext ไม่ใช่ plaintext
+        var signer = new CustomerSignerProfile { CompanyId = cid, SubjectKey = "r274-10-signer", FirstName = "ผู้ลงนาม", LastName = "ทดสอบ", ConsentRecordId = Guid.NewGuid() };
+        db.Set<CustomerSignerProfile>().Add(signer);
+        await db.SaveChangesAsync();
+        var victimCipher = EncryptionHelper.Encrypt(ValidA, InnerKey);
+        var signerRaw = EncryptionHelper.Encrypt(victimCipher, current);
+        await db.Database.ExecuteSqlRawAsync("UPDATE \"CustomerSignerProfiles\" SET \"FirstName\" = {0} WHERE \"Id\" = {1} AND \"CompanyId\" = {2}", signerRaw, signer.Id, cid);
 
         // ── รายงาน: ซ้อนที่แกะได้ = รอย้ายคีย์ (ไม่กันยื่น) · ชั้นในเลขผิด = ต้องกรอกใหม่ · แถวปกติไม่อยู่ในรายงาน ──
         using (var rdb = DbTestDatabase.TryCreateContext()!)
@@ -73,7 +80,7 @@ public class PiiNestedCipherDbTests
         using (var jdb = DbTestDatabase.TryCreateContext()!)
         {
             var r = await PiiReprotectPass.RunAsync(jdb, currentKey: current, previousKeys: previous, onlyCompanyId: cid);
-            Assert.Equal(2, r.Unwrapped);          // N001 เลขบัตร + เลขบัญชี
+            Assert.Equal(2, r.Unwrapped);          // N001 เลขบัตร + เลขบัญชี (ผู้ลงนามไม่ถูกแกะ)
             Assert.True(r.NestedUnresolved >= 1);  // N002
             var again = await PiiReprotectPass.RunAsync(jdb, currentKey: current, previousKeys: previous, onlyCompanyId: cid);
             Assert.Equal(0, again.Unwrapped);      // idempotent
@@ -87,6 +94,11 @@ public class PiiNestedCipherDbTests
             Assert.Equal("123-4-56789-0", EncryptionHelper.Decrypt(await Raw(vdb, "BankAccountNumber", nested.Id, cid), current));
             Assert.Equal(badRaw, await Raw(vdb, "CitizenId", badInner.Id, cid));      // ห้ามแต่งค่า
             Assert.Equal(normalRaw, await Raw(vdb, "CitizenId", normal.Id, cid));
+            Assert.Equal(signerRaw, await vdb.Database.SqlQueryRaw<string>("SELECT \"FirstName\" AS \"Value\" FROM \"CustomerSignerProfiles\" WHERE \"Id\" = {0} AND \"CompanyId\" = {1}", signer.Id, cid).SingleAsync());
+            Assert.False(await vdb.AuditLogs.AnyAsync(l => l.CompanyId == cid && l.EntityId == signer.Id.ToString()
+                && l.NewValues != null && (l.NewValues.Contains("PiiNestedUnwrapped") || l.NewValues.Contains("PiiReprotected"))));
+            var sp = await vdb.Set<CustomerSignerProfile>().AsNoTracking().SingleAsync(x => x.Id == signer.Id && x.CompanyId == cid);
+            Assert.Equal(victimCipher, sp.FirstName);   // ไม่ใช่ ValidA
             Assert.True(await vdb.AuditLogs.AnyAsync(l => l.CompanyId == cid && l.EntityId == nested.Id.ToString()
                 && l.NewValues != null && l.NewValues.Contains("PiiNestedUnwrapped")));
             Assert.False(await vdb.AuditLogs.AnyAsync(l => l.CompanyId == cid && l.NewValues != null && l.NewValues.Contains(ValidA)));

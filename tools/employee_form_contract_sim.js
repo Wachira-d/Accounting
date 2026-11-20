@@ -299,7 +299,8 @@ const mutants = [
   },
   {
     name: 'EmployeeResponse ไม่มี SocialSecurityNumber (เก็บแล้วไม่ echo — เปิดแก้แล้วช่องว่าง)',
-    cs: (s) => s.replace(/(public record EmployeeResponse\([\s\S]*?)string\? SocialSecurityNumber = null\);/, '$1string? Removed2 = null);'),
+    // รอบ 275 แพ็ก A: EmployeeResponse มีช่องต่อท้าย (IdentityProblem ฯลฯ) ⇒ ช่องนี้ลงท้ายด้วย "," ไม่ใช่ ");"
+    cs: (s) => s.replace(/(public record EmployeeResponse\([\s\S]*?)string\? SocialSecurityNumber = null,/, '$1string? Removed2 = null,'),
     expect: /\[4\] hydrate อ่าน e\.socialSecurityNumber/,
   },
   {

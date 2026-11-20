@@ -7,6 +7,11 @@ namespace Accounting.Models.Entities;
 /// </summary>
 public class Document : TenantEntity
 {
+    /// <summary>รอบ 276 (ฝ่ายค้าน LOW-10) — ผู้สร้างเป็น id ผู้ใช้ (ไม่ใช่ข้อความ) · ประทับตอนบันทึกครั้งแรกที่ <c>AccountingDbContext.StampDocumentCreators</c>
+    /// จาก <c>CreatedBy</c> (id/อีเมลสมาชิก) หรือผู้ใช้ของคำขอที่ถูกจำกัด (เอกสารที่ระบบสร้างในคำขอของเขา เช่น OCR) · null = ระบบสร้าง/ไม่รู้ผู้สร้าง ·
+    /// ผู้อ่าน: ตัวกรองแถว "เห็นเฉพาะของตัวเอง" (ตัวหลัก — ข้อความเป็นทางสำรองของแถวเก่า) · Round276Migration เติมแถวเก่าที่จับคู่ได้แน่นอน</summary>
+    public Guid? CreatedByUserId { get; set; }
+
     public string DocumentNumber { get; set; } = null!;    // running number
     public DocumentType DocumentType { get; set; }
     public DocumentStatus Status { get; set; } = DocumentStatus.Draft;
@@ -376,6 +381,9 @@ public class Document : TenantEntity
     public bool IsSettlementReceipt { get; set; }
     /// <summary>Payment ต้นทางที่ออกใบเสร็จหลักฐานนี้ (คู่กับ IsSettlementReceipt).</summary>
     public Guid? SettlementPaymentId { get; set; }
+    /// <summary>รอบ 275 แพ็ก C (คำตัดสิน 275-C-10): ใบเสร็จที่ทำหน้าที่ใบกำกับภาษี ณ วันรับเงินของใบแจ้งหนี้รุ่นเก่าที่ภาษีขายทั้งใบ<b>รายงานแล้วที่ใบแจ้งหนี้</b>
+    /// ⇒ หลักฐานกระดาษเท่านั้น ไม่เป็นเจ้าของแถว ภ.พ.30/§87 (<c>OutputVatOwnership</c>) — ระบบตั้งเอง (<c>SettlementTaxInvoiceRole.Decision.VatReportedOnSource</c>)</summary>
+    public bool VatReportedOnSource { get; set; }
 
     /// <summary>"รับรู้ของกำพร้า" (รอบ 200 · DECISIONS ข้อ 10): เอกสารที่การลงบัญชีรอบโอนสร้างให้รอบที่ถูกยกเลิกไปแล้ว และ<b>ยกเลิกไม่ได้จริง</b>
     /// (e-Tax ตอบรับ · รายงานล็อก · 50 ทวิ ยื่นแล้ว · ใบที่อ้างมันยกเลิกไม่ได้) — ผู้มีสิทธิ์ลงบัญชีรอบโอนรับรู้พร้อมเหตุผลแล้ว ⇒ ไม่บล็อกการลงบัญชี

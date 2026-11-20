@@ -440,7 +440,9 @@ public class Pnd1FileFormatTests
     [Fact]
     public void Build_ไม่มีเลขผู้เสียภาษี_เตือน_แถวไม่แต่งเลข()
     {
-        var a = Payroll("E001", "", 50000m, 50000m, 2291.67m);
+        // รอบ 275 แพ็ก E (คำตัดสิน 4.2): ไม่มีเลข + มีภาษีหัก + ยังไม่รับทราบ ⇒ กันแถว (ตัวตัดสินเดียวกับ 50 ทวิ — PayrollCleanupRound275ETests) ·
+        // ภาษี 0 ยังเป็นเส้นเดิม (ลงเลข 0 + เตือน)
+        var a = Payroll("E001", "", 50000m, 50000m, 0m);
         var r = Pnd1FilingData.Build(new[] { a.Detail }, Array.Empty<WithholdingTaxCert>(), annual: false);
         Assert.Null(r.Rows.Single().PayeeTaxId);
         Assert.Contains(r.Notes, n => n.Contains("ไม่มีเลขประจำตัวผู้เสียภาษี"));

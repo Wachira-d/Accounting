@@ -192,8 +192,9 @@ public partial class PdfGenerationService : IPdfGenerationService
     /// (BuildWhtCertPdf) so RD compliance stays identical.</summary>
     /// <param name="funds">ยอด "เงินที่จ่ายเข้า" ประกันสังคม/สำรองเลี้ยงชีพของพนักงานทั้งปี (A9 · 2026-10-13 ·
     /// <see cref="WhtCertFormText.EmployeeAnnualFunds"/>) — ไม่ใช่คอลัมน์ในฐานข้อมูล (ใบนี้อยู่ใน memory)</param>
+    /// <param name="payeeNote">รอบ 275 แพ็ก E: ข้อความประกอบของผู้ไม่มีเลข 13 หลักที่รับทราบแล้ว (<see cref="EmployeeTaxIdentity.WaiverCertNote"/>) · null = ไม่แสดง</param>
     public async Task<byte[]> BuildEmployeeAnnualCertPdfAsync(Guid companyId, WithholdingTaxCert inMemoryCert,
-        WhtCertFundAmounts funds)
+        WhtCertFundAmounts funds, string? payeeNote = null)
     {
         var company = await _db.Companies.FirstAsync(c => c.Id == companyId);
         // ตรา + ด่านกฎลายเซ็น — ตัวตัดสินเดียวกับใบ 50 ทวิ ที่บันทึกในฐาน (DocumentStampPolicy · ทีม J 2026-10-22)
@@ -201,7 +202,7 @@ public partial class PdfGenerationService : IPdfGenerationService
         var decision = StampDecisionFor(inMemoryCert, settings);
         var (sigBytes, sigName) = await ResolveCertSignatoryAsync(companyId, inMemoryCert.CreatedBy, decision);
         var stamp = ResolveWhtCertStamp(inMemoryCert, settings);
-        return BuildWhtCertPdf(inMemoryCert, company, sigBytes, sigName, funds, stamp);
+        return BuildWhtCertPdf(inMemoryCert, company, sigBytes, sigName, funds, stamp, payeeNote);
     }
 
     /// <summary>Resolve the signer for a cert — exact same fallback chain
@@ -245,8 +246,10 @@ public partial class PdfGenerationService : IPdfGenerationService
             ?? throw new KeyNotFoundException("ไม่พบหนังสือรับรองหัก ณ ที่จ่าย");
         await _db.HydratePayeeContactAsync(companyId, cert);
         // รอบ 274: ผู้รับที่เลขประจำตัวใช้ไม่ได้ (Contact ที่ระบบเคยสร้างจากเลขที่ตัดจาก ciphertext) ⇒ ไม่ออกไฟล์ + บอกทางแก้
-        if (WhtCertFormText.PayeeTaxIdProblem(cert.CertificateNumber, cert.PayeeContact?.TaxId) is string payeeProblem)
+        if (WhtCertFormText.PayeeTaxIdProblem(cert.CertificateNumber, Accounting.Helpers.WhtPayeeSnapshot.Of(cert)?.TaxId) is string payeeProblem)
             throw new BusinessRuleException(payeeProblem, "RD-50TWI-PAYEE-TAXID", 422);
+        // รอบ 275 แพ็ก E (คำตัดสิน 4.2): ผู้ไม่มีเลข 13 หลักที่รับทราบแล้ว ⇒ เลขพาสปอร์ตเป็นข้อมูลประกอบ (ตัวเดียวกับหน้าพิมพ์ wht.html ผ่าน DTO)
+        var payeeNote = await Accounting.Helpers.WhtCertPayeeNote.LoadAsync(_db, companyId, cert);
 
         var company = await _db.Companies.FirstAsync(c => c.Id == companyId);
 
@@ -271,14 +274,14 @@ public partial class PdfGenerationService : IPdfGenerationService
             try
             {
                 var sigB64 = sigBytes != null ? Convert.ToBase64String(sigBytes) : null;
-                var certHtml = BuildWithholdingTaxCertHtml(cert, company, sigB64, sigName, stamp: stamp);
+                var certHtml = BuildWithholdingTaxCertHtml(cert, company, sigB64, sigName, stamp: stamp, payeeNote: payeeNote);
                 pdfBytes = await _htmlPdf.TryRenderAsync(certHtml);
             }
             catch { /* fallback QuestPDF */ }
         }
         // QuestPDF fallback — official RD form (TIN boxes/payer-payee/income table),
         // ฟอนต์ Sarabun (เมื่อ register ได้) — ใช้เมื่อ HTML renderer ไม่พร้อม.
-        pdfBytes ??= BuildWhtCertPdf(cert, company, sigBytes, sigName, stamp: stamp);
+        pdfBytes ??= BuildWhtCertPdf(cert, company, sigBytes, sigName, stamp: stamp, payeeNote: payeeNote);
 
         return new GeneratePdfResponse(cert.Id, cert.CertificateNumber,
             $"WHT-{cert.CertificateNumber}.pdf", "application/pdf", pdfBytes.Length, pdfBytes, DateTime.UtcNow);
@@ -2831,10 +2834,14 @@ public partial class PdfGenerationService : IPdfGenerationService
     /// พารามิเตอร์เดียวกับ QuestPDF <c>BuildWhtCertPdf</c> (สอง renderer ห้าม drift)</param>
     /// <param name="stamp">ตรานิติบุคคลที่ตัดสินแล้ว (<c>ResolveWhtCertStamp</c> ← <c>Helpers/DocumentStampPolicy</c>) · null = วงกลมว่างเหมือนเดิมทุกไบต์ ·
     /// พารามิเตอร์เดียวกับ QuestPDF <c>BuildWhtCertPdf</c> (ทีม J 2026-10-22)</param>
+    /// <param name="payeeNote">รอบ 275 แพ็ก E (คำตัดสิน 4.2): ข้อความประกอบใต้ที่อยู่ผู้ถูกหัก (ผู้ไม่มีเลข 13 หลักที่รับทราบแล้ว + เลขพาสปอร์ต) ·
+    /// null = ไม่มีบรรทัดนี้ (เดิมทุกไบต์) · พารามิเตอร์เดียวกับ QuestPDF <c>BuildWhtCertPdf</c></param>
     internal static string BuildWithholdingTaxCertHtml(WithholdingTaxCert cert, Company company,
         string? sigBase64 = null, string? sigName = null, WhtCertFundAmounts? funds = null,
-        WhtCertStamp? stamp = null)
+        WhtCertStamp? stamp = null, string? payeeNote = null)
     {
+        // รอบ 275 แพ็ก B (คำตัดสิน 275-B-6 (ข)): ผู้ถูกหัก = สำเนา ณ วันออก (ตัวเดียว Helpers/WhtPayeeSnapshot · คู่กับ QuestPDF)
+        var payee = Accounting.Helpers.WhtPayeeSnapshot.Of(cert)!;
         _ = sigName;   // แบบพิมพ์มีแต่ลายเซ็น ไม่พิมพ์ชื่อ — ตรงกับ QuestPDF + หน้าพิมพ์ (ทีม J 2026-10-22 · เดิม HTML ต่อชื่อท้ายรูป)
         var sb = new StringBuilder();
         var certNum = WebUtility.HtmlEncode(cert.CertificateNumber);
@@ -2843,8 +2850,8 @@ public partial class PdfGenerationService : IPdfGenerationService
         // ซ้ำซ้อนเมื่อ free-text มีอยู่แล้ว.
         var fullAddress = FormatThaiAddress(company.Address, company.BuildingNumber, company.BuildingName, company.Moo, company.StreetName,
             company.SubDistrict, company.District, company.Province, company.PostalCode);
-        var payeeAddr = FormatThaiAddress(cert.PayeeContact.Address, cert.PayeeContact.BuildingNumber, cert.PayeeContact.BuildingName, cert.PayeeContact.Moo, cert.PayeeContact.StreetName,
-            cert.PayeeContact.SubDistrict, cert.PayeeContact.District, cert.PayeeContact.Province, cert.PayeeContact.PostalCode);
+        var payeeAddr = FormatThaiAddress(payee.Address, payee.BuildingNumber, payee.BuildingName, payee.Moo, payee.StreetName,
+            payee.SubDistrict, payee.District, payee.Province, payee.PostalCode);
         var lines = cert.Lines.OrderBy(l => l.LineOrder).ToList();
 
         string TaxIdBoxes(string? taxId, bool payee = true)
@@ -2954,12 +2961,14 @@ public partial class PdfGenerationService : IPdfGenerationService
 
             // Payee
             sb.AppendLine("<tr><td class='sec-cell'>");
-            sb.AppendLine($"<table class='inner' cellspacing='0'><tr><td class='sec-hdr' style='width:210px;vertical-align:top'>{WhtCertFormText.PayeeHeading}</td><td style='white-space:nowrap;text-align:right'>{WhtCertFormText.TaxId13}<span style='color:#900'>*</span> {TaxIdBoxes(cert.PayeeContact.TaxId)}</td></tr></table>");
+            sb.AppendLine($"<table class='inner' cellspacing='0'><tr><td class='sec-hdr' style='width:210px;vertical-align:top'>{WhtCertFormText.PayeeHeading}</td><td style='white-space:nowrap;text-align:right'>{WhtCertFormText.TaxId13}<span style='color:#900'>*</span> {TaxIdBoxes(payee.TaxId)}</td></tr></table>");
             // ช่องเลขเดิม 10 หลักอยู่บรรทัดเดียวกับ "ชื่อ" (ชิดขวา) ตามแบบทางการ — รอบ 204 (เดิมแยกบรรทัดเหนือชื่อ)
-            sb.AppendLine($"<table class='inner' cellspacing='0'><tr><td class='f-lbl'>{WhtCertFormText.Name}</td><td><u class='ul'>&nbsp;{WebUtility.HtmlEncode(WhtCertFormText.PartyName(cert.PayeeContact.TitleTh, cert.PayeeContact.Name, cert.PayeeContact.TaxId, cert.PayeeContact.BranchCode, cert.PayeeContact.BranchName))}&nbsp;</u></td><td style='white-space:nowrap;text-align:right;font-size:12px;padding-left:8px'>{WhtCertFormText.TaxId10} {OldTaxIdBoxes()}</td></tr></table>");
+            sb.AppendLine($"<table class='inner' cellspacing='0'><tr><td class='f-lbl'>{WhtCertFormText.Name}</td><td><u class='ul'>&nbsp;{WebUtility.HtmlEncode(WhtCertFormText.PartyName(payee.TitleTh, payee.Name, payee.TaxId, payee.BranchCode, payee.BranchName))}&nbsp;</u></td><td style='white-space:nowrap;text-align:right;font-size:12px;padding-left:8px'>{WhtCertFormText.TaxId10} {OldTaxIdBoxes()}</td></tr></table>");
             sb.AppendLine($"<div class='hint-text'>{WhtCertFormText.NameHint}</div>");
             sb.AppendLine($"<table class='inner' cellspacing='0'><tr><td class='f-lbl'>{WhtCertFormText.Address}</td><td><u class='ul'>&nbsp;{WebUtility.HtmlEncode(payeeAddr)}&nbsp;</u></td></tr></table>");
             sb.AppendLine($"<div class='hint-text'>{WhtCertFormText.AddressHint}</div>");
+            if (!string.IsNullOrWhiteSpace(payeeNote))
+                sb.AppendLine($"<div class='hint-text' style='font-style:normal;color:#000'>{WebUtility.HtmlEncode(payeeNote)}</div>");   // รอบ 275 แพ็ก E (คำตัดสิน 4.2)
 
             // ลำดับที่ … ในแบบ + ช่องแบบยื่น — อยู่ในกรอบเดียวกับผู้ถูกหัก ตามแบบทางการ (รอบ 204 · เดิมเป็นกรอบแยก)
             sb.AppendLine("<div class='ftype-cell' style='padding:4px 0 0'><table class='inner' cellspacing='0'><tr>");

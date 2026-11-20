@@ -359,6 +359,7 @@ public static class SettlementPaidReissue
         nameof(Document.DepositRealizedAt), nameof(Document.DepositDeferredAccountCode), nameof(Document.DepositOutputVatDeferred),
         nameof(Document.DepositAppliedAmount), nameof(Document.DepositAppliedRef), nameof(Document.DepositAppliedDrivesJournal),
         nameof(Document.IsSettlementReceipt), nameof(Document.SettlementPaymentId), nameof(Document.DepositRefundedAmount),
+        nameof(Document.VatReportedOnSource),   // รอบ 275 แพ็ก C (275-C-10): ธงของใบเสร็จรับชำระ — ตามไปเหมือน IsSettlementReceipt
         nameof(Document.DepositRefundedAt), nameof(Document.DepositRefundReason), nameof(Document.DepositAppliedToDocumentId),
         nameof(Document.BookingNumber), nameof(Document.DepositOutputVatRecognizedAt), nameof(Document.DepositKindId),
         nameof(Document.DepositNature), nameof(Document.DepositKindName), nameof(Document.DepositPolicyNote), nameof(Document.CreditDays),

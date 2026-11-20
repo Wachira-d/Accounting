@@ -25,6 +25,7 @@ public class AuthService : IAuthService, ILineSignerLoginVerifier
     private readonly IHttpContextAccessor? _http;
     // รอบ 214 (คำตัดสินข้อ 173): เวอร์ชันนโยบายมาจาก resolver ตัวเดียว (ฉบับที่แอดมินเผยแพร่ หรือฉบับตั้งต้น 1.0) — ไม่อ่านค่าคงที่เอง
     private readonly ILegalDocumentService _legal;
+    private readonly ICompanyInvitationService _invitations;
 
     // Account lockout settings (configurable via appsettings Security section)
     private readonly int _maxFailedAttempts;
@@ -40,8 +41,10 @@ public class AuthService : IAuthService, ILineSignerLoginVerifier
         ILogger<AuthService> logger,
         ISecretProtector? secrets = null,
         IHttpContextAccessor? http = null,
-        ILegalDocumentService? legal = null)
+        ILegalDocumentService? legal = null,
+        ICompanyInvitationService? invitations = null)
     {
+        _invitations = invitations ?? new CompanyInvitationService(db);
         _http = http;
         _legal = legal ?? new LegalDocumentService(db, Microsoft.Extensions.Logging.Abstractions.NullLogger<LegalDocumentService>.Instance);
         _secrets = secrets;
@@ -1161,72 +1164,17 @@ public class AuthService : IAuthService, ILineSignerLoginVerifier
             .Select(s => (bool?)s.RegistrationEnabled).FirstOrDefaultAsync();
         if (RegistrationPolicy.IsOpen(enabled)) return RegistrationPolicy.EvaluateNewAccount(enabled, false);
 
-        var usableInvite = false;
-        if (!string.IsNullOrWhiteSpace(invitationToken))
-        {
-            var inv = await _db.CompanyInvitations.AsNoTracking()
-                .Where(i => i.Token == invitationToken && !i.IsDeleted)
-                .Select(i => new { i.Status, i.ExpiresAt, i.Email })
-                .FirstOrDefaultAsync();
-            usableInvite = inv != null
-                && RegistrationPolicy.IsInvitationUsable(inv.Status, inv.ExpiresAt, inv.Email, email, DateTime.UtcNow);
-        }
+        // รอบ 277: ค้นด้วย hash ของ token (ตัวเดียวกับตอนตอบรับ — CompanyInvitationPolicy)
+        var usableInvite = await _invitations.IsUsableForEmailAsync(invitationToken, email);
         return RegistrationPolicy.EvaluateNewAccount(enabled, usableInvite);
     }
 
-    /// <summary>ใช้คำเชิญเข้าบริษัท (ถ้ามีและยังใช้ได้) — helper ตัวเดียวที่ทั้ง
-    /// <c>RegisterAsync</c> และ <c>SsoLoginAsync</c> เรียก. คืน true = เข้าบริษัท
-    /// ผู้เชิญแล้ว ผู้เรียกต้อง**ไม่**สร้างบริษัท stub ให้อีก</summary>
+    /// <summary>ใช้คำเชิญเข้าบริษัท (ถ้ามีและยังใช้ได้) — ทั้ง <c>RegisterAsync</c> และ <c>SsoLoginAsync</c> (บัญชีใหม่ + บัญชีเดิม) เรียกตัวนี้ ·
+    /// รอบ 277: ตรรกะทั้งหมดย้ายไป <see cref="ICompanyInvitationService.TryAcceptOnSignupAsync"/> (ตัวเดียวกับกดตอบรับจากหน้าคำเชิญ —
+    /// hash token · ใช้ครั้งเดียว · อีเมลตรง · ที่นั่ง · บทบาท/ยังไม่มีสิทธิ์ · audit · แจ้งเจ้าของ) · คืน true = เข้าบริษัทผู้เชิญแล้ว ผู้เรียกต้อง<b>ไม่</b>สร้างบริษัท</summary>
     private async Task<bool> ConsumeInvitationAsync(User user, string? invitationToken)
     {
-        if (string.IsNullOrWhiteSpace(invitationToken)) return false;
-
-        var inv = await _db.CompanyInvitations
-            .FirstOrDefaultAsync(i => i.Token == invitationToken && !i.IsDeleted);
-        // predicate ตัวเดียวกับด่านเปิดรับสมัคร (RegistrationPolicy.IsInvitationUsable) — "ผ่านด่านด้วยคำเชิญ"
-        // ต้องแปลว่าคำเชิญใช้ได้จริงที่นี่
-        if (inv != null
-            && RegistrationPolicy.IsInvitationUsable(inv.Status, inv.ExpiresAt, inv.Email, user.Email, DateTime.UtcNow))
-        {
-            // ฝ่ายค้านรอบสาม P2-2 (รอบ 201 ทีม PL): บทบาทในคำเชิญต้องผ่าน MayAssign ตอนรับด้วย (คำเชิญเก่าที่ค้าง) — ไม่ผ่าน ⇒ ไม่เข้าร่วม
-            // (บัญชียังถูกสร้าง · ผู้ใช้เปิดลิงก์คำเชิญแล้วเห็นเหตุผลจาก InvitationController.Accept) — คำเตือนใน log ไม่ใช่การเงียบ
-            var inviterIsPlatformAdmin = await _db.Users.AsNoTracking()
-                .Where(u => u.Id == inv.InvitedByUserId).Select(u => u.IsSystemAdmin).FirstOrDefaultAsync();
-            var roleBlocked = Accounting.Helpers.OwnershipTransferPolicy.InvitationRoleBlock(inv.Role, inviterIsPlatformAdmin);
-            if (roleBlocked != null)
-            {
-                _logger.LogWarning("Invitation {InvitationId} role {Role} rejected at acceptance: {Reason}", inv.Id, inv.Role, roleBlocked);
-                return false;
-            }
-
-            // เส้น SSO ของ "บัญชีเดิม" เรียกเมธอดนี้ได้ด้วย ⇒ ผู้ใช้อาจเป็นสมาชิก
-            // บริษัทนั้นอยู่แล้ว การ Add ซ้ำจะได้สองสิทธิ์ในบริษัทเดียว (บทบาทไหน
-            // ชนะขึ้นกับลำดับแถว) — ถือว่าคำเชิญถูกใช้แล้ว แต่ไม่เพิ่มแถวใหม่
-            // ⚠️ `CompanyUser` เป็น join entity ที่ **ไม่ได้สืบทอด `BaseEntity`**
-            // จึงไม่มี `IsDeleted` — การถอนสมาชิกคือ **ลบแถวจริง** ไม่ใช่ soft delete
-            var already = await _db.CompanyUsers.AnyAsync(cu =>
-                cu.CompanyId == inv.CompanyId && cu.UserId == user.Id);
-            if (!already)
-            {
-                _db.CompanyUsers.Add(new CompanyUser
-                {
-                    CompanyId = inv.CompanyId,
-                    UserId = user.Id,
-                    Role = inv.Role,
-                });
-            }
-            inv.Status = Models.Enums.InvitationStatus.Accepted;
-            inv.AcceptedAt = DateTime.UtcNow;
-            inv.AcceptedByUserId = user.Id;
-            inv.UpdatedAt = DateTime.UtcNow;
-            await _db.SaveChangesAsync();
-            return true;
-        }
-
-        _logger.LogInformation(
-            "Invitation token did not match a valid invite (token={Token}, email={Email}) — proceeding without auto-join",
-            invitationToken, user.Email);
-        return false;
+        return await _invitations.TryAcceptOnSignupAsync(user, invitationToken);
     }
 
     /// <summary>ด่าน "ผู้ให้บริการนี้เปิดใช้แล้วหรือยัง" — **ตัวเดียว**ของทุกเส้น
@@ -1296,7 +1244,7 @@ public class AuthService : IAuthService, ILineSignerLoginVerifier
         var enc = await _db.SiteSettings.AsNoTracking()
             .Select(s => s.LineLoginChannelSecret).FirstOrDefaultAsync();
         if (!string.IsNullOrWhiteSpace(enc))
-            return (_secrets != null ? _secrets.Unprotect(enc) : enc) ?? "";
+            return OpenLoginSecret("LINE Login Channel Secret", enc);
         return _config["OAuth:Line:ChannelSecret"] ?? "";
     }
 
@@ -1307,8 +1255,19 @@ public class AuthService : IAuthService, ILineSignerLoginVerifier
         var enc = await _db.SiteSettings.AsNoTracking()
             .Select(s => s.FacebookAppSecret).FirstOrDefaultAsync();
         if (!string.IsNullOrWhiteSpace(enc))
-            return (_secrets != null ? _secrets.Unprotect(enc) : enc) ?? "";
+            return OpenLoginSecret("Facebook App Secret", enc);
         return _config["OAuth:Facebook:AppSecret"] ?? "";
+    }
+
+    /// <summary>รอบ 275 แพ็ก A (T4 M-5): ความลับเข้าสู่ระบบที่ผู้ดูแลตั้งไว้ใน DB แต่ถอดไม่ได้ ⇒ ปฏิเสธพร้อมเหตุ (401) — เดิมคืน "" ⇒
+    /// Google/LINE บอก "ยังไม่ได้ตั้ง" (เหตุไม่ตรง) และ <b>Facebook ข้ามการตรวจ app id ของ token</b> (fail-open) · ไม่ถอยไป appsettings เงียบ ๆ (อาจเป็นคนละแอป)</summary>
+    private string OpenLoginSecret(string label, string enc)
+    {
+        if (_secrets == null) return enc;
+        var o = SecretUse.Open(_secrets, label, enc);
+        if (o.Ok) return o.Value!;
+        _logger.LogError("เข้าสู่ระบบด้วยบัญชีภายนอก: {Problem}", o.Problem);
+        throw new UnauthorizedAccessException("เข้าสู่ระบบด้วยบัญชีนี้ใช้ไม่ได้ชั่วคราว — ผู้ดูแลระบบต้องตั้งค่า " + label + " ใหม่ (ค่าที่บันทึกไว้ถอดรหัสไม่ได้)");
     }
 
     private static string HmacSha256Hex(string key, string message)
@@ -1328,7 +1287,7 @@ public class AuthService : IAuthService, ILineSignerLoginVerifier
         var enc = await _db.SiteSettings.AsNoTracking()
             .Select(s => s.GoogleClientSecret).FirstOrDefaultAsync();
         if (!string.IsNullOrWhiteSpace(enc))
-            return (_secrets != null ? _secrets.Unprotect(enc) : enc) ?? "";
+            return OpenLoginSecret("Google Client Secret", enc);
         return _config["OAuth:Google:ClientSecret"] ?? "";
     }
 

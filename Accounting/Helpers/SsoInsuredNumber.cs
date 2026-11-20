@@ -25,24 +25,33 @@ public static class SsoInsuredNumber
     /// พร้อมรายชื่อ (เลขปิดบัง) + ทางไปต่อ · เลขบัตร<b>ว่าง</b> คงเดิม (ช่องว่าง + นับใน <see cref="MissingNotice"/>)</summary>
     public const string UnusableRuleCode = "SSO-CITIZENID-UNUSABLE";
 
-    public static void ThrowIfUnusable(string formName, IEnumerable<(string Code, string? Name, string? CitizenId)> people)
+    /// <remarks>รอบ 275 แพ็ก E (T4 F3 · คำตัดสิน 4.2 "ไฟล์ สปส. ตามสเปก สปส."): เลขบัตร<b>ไม่ถูกต้อง</b>กันเฉพาะคนที่<b>ไม่มีเลขประกันสังคมที่ใช้ได้</b>
+    /// (เดิมตรวจเลขบัตรทุกคน ⇒ ต่างชาติที่มีเลข ปกส. ถูกต้องแต่ช่องเลขบัตรมีพาสปอร์ตเก่า ทำให้ไฟล์ทั้งบริษัทถูกปฏิเสธ) — คนนั้นช่องเลขบัตรในไฟล์ว่าง
+    /// (<see cref="CitizenIdForFile"/>) ช่องเลข ปกส. ใช้เลข ปกส. · ถอดรหัสไม่ได้ยังกันทั้งไฟล์เหมือนเดิม (ข้อมูลหาย ต้องให้คนเห็น)</remarks>
+    public static void ThrowIfUnusable(string formName, IEnumerable<(string Code, string? Name, string? CitizenId, string? SocialSecurityNumber)> people)
     {
         var bad = people
-            .Select(p => (p.Code, p.Name, Id: EmployeeTaxIdentity.InspectValue(p.CitizenId)))
-            .Where(p => p.Id.Problem is TaxIdProblem.Undecryptable or TaxIdProblem.Invalid)
+            .Select(p => (p.Code, p.Name, Id: EmployeeTaxIdentity.InspectValue(p.CitizenId), HasSsn: HasUsableSsn(p.SocialSecurityNumber)))
+            .Where(p => p.Id.Problem == TaxIdProblem.Undecryptable || (p.Id.Problem == TaxIdProblem.Invalid && !p.HasSsn))
             .DistinctBy(p => p.Code)
             .ToList();
         if (bad.Count == 0) return;
         throw new BusinessRuleException(
             $"{formName}: ไม่ออกไฟล์ — เลขบัตรประชาชนของผู้ประกันตน {bad.Count} รายใช้ไม่ได้:\n"
             + string.Join("\n", bad.Select(b => $"• {b.Code} {b.Name} [{b.Id.Masked ?? "-"}]: {b.Id.Reason}"))
-            + "\nแก้ที่ทะเบียนพนักงาน (หรือตั้ง ENCRYPTION_KEY_PREVIOUS) แล้วดาวน์โหลดใหม่", UnusableRuleCode, 422);
+            + "\nแก้ที่ทะเบียนพนักงาน (ถอดรหัสไม่ได้: แจ้งผู้ดูแลระบบ — ดู " + EncryptionHealthText.PageName + ") แล้วดาวน์โหลดใหม่", UnusableRuleCode, 422);
     }
 
     /// <summary>รอบ 274: เลขบัตรที่ลงไฟล์ สปส. — ค่า enc1:… (ถอดรหัสไม่ได้) ⇒ ว่าง (ไม่ลง ciphertext ทั้งก้อน · ไม่ตัดตัวเลขจากมัน) · อื่น ๆ คงเดิม ·
     /// เหตุ/แถวที่ต้องแก้: รายงาน <c>EmployeeIdentityHealth</c></summary>
     public static string CitizenIdForFile(string? citizenId)
-        => EncryptedColumnConverter.IsUnreadable(citizenId) ? "" : citizenId ?? "";
+        => EncryptedColumnConverter.IsUnreadable(citizenId) ? ""
+            // รอบ 275 แพ็ก E: เลขที่ไม่ถูกต้อง (ผ่านด่านได้เพราะคนนั้นมีเลข ปกส.) ⇒ ว่าง — ไม่ลงเลขผิดในช่องเลขบัตร
+            : EmployeeTaxIdentity.InspectValue(citizenId).Problem == TaxIdProblem.Invalid ? "" : citizenId ?? "";
+
+    /// <summary>เลขประกันสังคมที่ใช้ได้ (มีค่า + ไม่ใช่ ciphertext ที่ถอดไม่ออก) — ตัวเดียวกับ <see cref="Resolve"/></summary>
+    private static bool HasUsableSsn(string? ssn)
+        => !string.IsNullOrWhiteSpace(ssn) && !EncryptedColumnConverter.IsUnreadable(ssn);
 
     /// <summary>เลขประกันสังคมที่<b>รายงานบนจอ</b>แสดง — รอบ 200 ทีม RF (R200-X6): ตัวตัดสินเดียวกับไฟล์ สปส.1-10 (<see cref="Resolve"/>)
     /// แล้วค่อยปิดบังด้วย <c>PiiMask.CitizenId</c> เมื่อไม่มีสิทธิ์ Pii.View · เดิมจออ่าน <c>Employee.SocialSecurityNumber</c> ตรง ๆ (ว่างเกือบทุกคน)

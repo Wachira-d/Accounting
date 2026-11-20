@@ -133,7 +133,10 @@ public record CompanyResponse(
     DateTime? WhtRoyaltyPnd2From = null,
     // ฝ่ายค้านรอบ 204 M2/L6: ประวัติช่วง ภ.ง.ด.2 (สรุปที่เซิร์ฟเวอร์คำนวณ — WhtRoyaltyPolicy.Summary) + วันที่ผู้ใช้ตัดสินแบบเอง (null = ยังเป็นค่าตั้งต้น ⇒ ยังเตือน)
     string? WhtRoyaltyPolicySummary = null,
-    DateTime? WhtRoyaltyFormDecidedAt = null);
+    DateTime? WhtRoyaltyFormDecidedAt = null,
+    /// <summary>รอบ 277 (ฝ่ายค้าน HIGH-2): ผู้ใช้ที่ขอรายการเป็นสมาชิกรอสิทธิ์ของบริษัทนี้ ⇒ แถวนี้มีแค่ id/ชื่อ (ไม่มีเลขภาษี/ที่อยู่/แพ็กเกจ) —
+    /// ให้เลือก/สลับบริษัทแล้วเห็นหน้าต้อนรับได้เท่านั้น</summary>
+    bool AccessPending = false);
 
 public record SubscriptionSummary(
     SubscriptionPlan Plan,
@@ -152,9 +155,33 @@ public record TrialSummary(
     int ExtensionsUsed,
     int MaxExtensions);
 
+/// <summary>เชิญสมาชิก (รอบ 277) — <paramref name="Role"/> = null และไม่ผูก <paramref name="CompanyRoleId"/> ⇒ "ยังไม่กำหนดบทบาท":
+/// ผู้ตอบรับเข้าร่วมแบบยังไม่มีสิทธิ์จนกว่าเจ้าของตั้ง (คำตัดสิน 277-4) · ค่าจำกัดเอกสารของรอบ 276 ตั้งได้ตั้งแต่ตอนเชิญ</summary>
 public record AddCompanyUserRequest(
     string Email,
-    UserRole Role);
+    UserRole? Role = null,
+    Guid? CompanyRoleId = null,
+    bool OwnDocumentsOnly = false,
+    bool DraftDocumentsOnly = false);
+
+/// <summary>รอบ 277 — แถว "รอตอบรับ" ในหน้าจัดการทีม (ป้ายบทบาท/สถานะจากเซิร์ฟเวอร์ · หน้าเว็บแสดงอย่างเดียว)</summary>
+public record CompanyInvitationResponse(
+    Guid Id,
+    string Email,
+    UserRole Role,
+    bool RoleChosen,
+    Guid? CompanyRoleId,
+    string? CompanyRoleName,
+    string RoleLabel,
+    bool OwnDocumentsOnly,
+    bool DraftDocumentsOnly,
+    string Status,
+    string StatusLabel,
+    DateTime ExpiresAt,
+    DateTime? LastSentAt,
+    int SendCount,
+    string? InvitedByName,
+    DateTime CreatedAt);
 
 public record UpdateUserRoleRequest(UserRole Role);
 public record UpdateMemberNameRequest(string FullName);
@@ -169,4 +196,14 @@ public record CompanyMemberResponse(
     string? CompanyRoleName,
     DateTime JoinedAt,
     DateTime? LastLoginAt,
-    UserStatus Status);
+    UserStatus Status,
+    /// <summary>รอบ 276 — ค่าที่เจ้าของตั้งให้ผู้ใช้คนนี้ (เก็บแล้วต้อง echo) · ค่าที่มีผลรวมบทบาทอยู่ที่ <see cref="EffectiveDocumentRestrictionNotice"/></summary>
+    bool OwnDocumentsOnly = false,
+    bool DraftDocumentsOnly = false,
+    /// <summary>ป้ายค่าที่มีผล (ผู้ใช้ ∪ บทบาท · <c>DocumentRestrictionPolicy.Notice</c>) · null = ไม่ถูกจำกัด</summary>
+    string? EffectiveDocumentRestrictionNotice = null,
+    /// <summary>รอบ 277 — ตอบรับคำเชิญแล้วแต่เจ้าของยังไม่ตั้งบทบาท (ยังใช้งานอะไรไม่ได้) · หน้าทีมแสดงป้าย "รอตั้งสิทธิ์"</summary>
+    bool AccessPending = false);
+
+/// <summary>รอบ 276 — เจ้าของตั้ง "เห็นเฉพาะเอกสารที่ตัวเองสร้าง" / "สร้าง/แก้ได้เฉพาะร่าง" ให้สมาชิก</summary>
+public sealed record UpdateDocumentRestrictionRequest(bool OwnDocumentsOnly, bool DraftDocumentsOnly);

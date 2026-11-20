@@ -86,6 +86,14 @@ public class TaxPaymentRequestService
         var item = dash.Pending.FirstOrDefault(p => p.RemittanceType == req.RemittanceType && p.PeriodYear == req.PeriodYear && p.PeriodMonth == req.PeriodMonth);
         var check = TaxSlipMatch.RequestProblem(req.RemittanceType, req.Amount, req.Surcharge, req.Penalty, req.ControlCode, item?.Amount, req.SendAnyway, req.IsAmendment);
         if (check.Problem != null) throw new BusinessRuleException(check.Problem, check.RuleCode, 400);
+        // รอบ 275 แพ็ก D (M7): ใบที่เปิดได้ทีละใบต่อ (บริษัท·แบบ·งวด) — ส่งใบใหม่ทับโดยใบเก่ายังเปิด ⇒ ลูกค้ามี Control Code สองชุดของงวดเดียว
+        var openSame = await _db.TaxPaymentRequests.AsNoTracking()
+            .Where(r => r.CompanyId == cid && r.ProviderCompanyId == providerId && r.Status == TaxPaymentRequestLifecycle.Open
+                && r.RemittanceType == req.RemittanceType && r.PeriodYear == req.PeriodYear && r.PeriodMonth == req.PeriodMonth)
+            .Select(r => r.ControlCodeLast4).FirstOrDefaultAsync(ct);
+        if (openSame != null)
+            throw new BusinessRuleException($"งวดนี้มีใบขอชำระที่ยังเปิดอยู่ (Control ••{openSame}) — ยกเลิกใบเดิมก่อน (ระบบแจ้งลูกค้าในกลุ่มให้ไม่ชำระตามใบเดิม)",
+                TaxSlipMatch.Codes.RequestClosed, 409);
         var cc = TaxSlipRefHash.Canon(req.ControlCode);
         var now = DateTime.UtcNow;
         var row = new TaxPaymentRequest
@@ -136,15 +144,19 @@ public class TaxPaymentRequestService
         var ids = rows.Select(r => r.CompanyId).Distinct().ToList();
         var names = await _db.Companies.AsNoTracking().Where(c => ids.Contains(c.Id)).Select(c => new { c.Id, c.Name }).ToListAsync(ct);
         return rows.Select(r => new RequestRow(r.Id, names.FirstOrDefault(n => n.Id == r.CompanyId)?.Name ?? "-", TaxSlipIntakeService.FormLabel(r.RemittanceType, r.PeriodYear, r.PeriodMonth),
-            r.Amount + r.Surcharge + r.Penalty, r.ControlCodeLast4, r.Status switch { "Open" => "รอชำระ", "Paid" => "ชำระแล้ว (สลิป)", "Cancelled" => "ยกเลิก", _ => r.Status },
+            r.Amount + r.Surcharge + r.Penalty, r.ControlCodeLast4, TaxPaymentRequestLifecycle.Label(r.Status),
             r.BooksMismatch, r.SentAt, r.SendNote)).ToList();
     }
 
+    /// <summary>รอบ 275 แพ็ก D (M7): ยกเลิก ⇒ แจ้งกลุ่ม/อีเมลที่เคยได้ใบแจ้งชำระว่า<b>อย่าชำระตามใบนี้</b> (เดิมไม่แจ้ง ⇒ ลูกค้าจ่ายตามใบที่ยกเลิก) · ผลการส่งเก็บบนใบ</summary>
     public async Task CancelAsync(Guid providerId, Guid staffUserId, Guid requestId, CancellationToken ct = default)
     {
-        var row = await _db.TaxPaymentRequests.FirstOrDefaultAsync(r => r.Id == requestId && r.ProviderCompanyId == providerId, ct) ?? throw new KeyNotFoundException("ไม่พบใบขอชำระ");
-        if (row.Status != "Open") throw new BusinessRuleException("ยกเลิกได้เฉพาะใบที่ยังรอชำระ", TaxSlipMatch.Codes.RequestClosed, 409);
-        row.Status = "Cancelled"; row.UpdatedAt = DateTime.UtcNow;
+        var row = await _db.TaxPaymentRequests.AsNoTracking().FirstOrDefaultAsync(r => r.Id == requestId && r.ProviderCompanyId == providerId, ct) ?? throw new KeyNotFoundException("ไม่พบใบขอชำระ");
+        // ฝ่ายค้าน MED-2 (คลาสเดียวกัน): เปลี่ยนแบบมีเงื่อนไข — สลิปบันทึกชำระใบนี้ระหว่างนี้ ⇒ ไม่เขียนทับ "ชำระแล้ว"
+        var done = await _db.TaxPaymentRequests.Where(r => r.Id == requestId && r.CompanyId == row.CompanyId && r.Status == TaxPaymentRequestLifecycle.Open)
+            .ExecuteUpdateAsync(u => u.SetProperty(r => r.Status, TaxPaymentRequestLifecycle.Cancelled).SetProperty(r => r.UpdatedAt, (DateTime?)DateTime.UtcNow), ct);
+        if (done == 0) throw new BusinessRuleException("ยกเลิกได้เฉพาะใบที่ยังรอชำระ", TaxSlipMatch.Codes.RequestClosed, 409);
+        row.Status = TaxPaymentRequestLifecycle.Cancelled;
         foreach (var co in new[] { row.CompanyId, providerId })
             _db.AddChainedAuditLog(new AuditLog
             {
@@ -152,5 +164,118 @@ public class TaxPaymentRequestService
                 NewValues = JsonSerializer.Serialize(new { @event = "TaxPaymentRequestCancelled" }), Timestamp = DateTime.UtcNow,
             });
         await _db.SaveChangesAsync(ct);
+        await NotifyClosedAsync(new[] { row }, TaxSlipReplyCard.Kind.PaymentRequestCancelled, ct);
+    }
+
+    /// <summary>แจ้งกลุ่ม/อีเมลของบริษัทลูกค้า — ฝ่ายค้าน LOW-1: หลายใบของบริษัทเดียวในรอบเดียว ⇒ การ์ดสรุปใบเดียว · ผลการส่งเก็บบนทุกใบ</summary>
+    private async Task NotifyClosedAsync(IReadOnlyList<TaxPaymentRequest> rows, TaxSlipReplyCard.Kind kind, CancellationToken ct)
+    {
+        if (rows.Count == 0) return;
+        var row = rows[0];
+        var name = await _db.Companies.AsNoTracking().Where(c => c.Id == row.CompanyId).Select(c => c.Name).FirstOrDefaultAsync(ct);
+        var facts = new TaxSlipReplyCard.Facts(CompanyName: name,
+            FormLabel: string.Join(" / ", rows.Take(5).Select(r => TaxSlipIntakeService.FormLabel(r.RemittanceType, r.PeriodYear, r.PeriodMonth))) + (rows.Count > 5 ? " …" : ""),
+            ControlLast4: rows.Count == 1 ? row.ControlCodeLast4 : null, HeldCount: rows.Count);
+        var outcome = await _channel.PostToClientAsync(row.ProviderCompanyId, row.CompanyId, show => TaxSlipReplyCard.Text(kind, facts, show), ct);
+        foreach (var r in rows)
+        {
+            var tracked = await _db.TaxPaymentRequests.FirstAsync(x => x.Id == r.Id && x.CompanyId == r.CompanyId, ct);
+            var note = ((tracked.SendNote ?? "") + " · " + TaxPaymentRequestLifecycle.Label(tracked.Status) + ": "
+                + (string.IsNullOrWhiteSpace(outcome) ? "ไม่มีปลายทางให้แจ้ง" : outcome)).Trim(' ', '·');
+            tracked.SendNote = note.Length > 500 ? note[..500] : note;
+        }
+        await _db.SaveChangesAsync(ct);
+    }
+
+    /// <summary>ฝ่ายค้าน LOW-1: ใบต่อบริษัทลูกค้าต่อรอบสูงสุดเท่านี้ (รอบแรกหลัง deploy ไม่ระดมการ์ด — ที่เหลือรอบถัดไป)</summary>
+    public const int ExpireCapPerClientPerRun = 20;
+
+    /// <summary>รอบ 275 แพ็ก D (M7): ใบที่ Control Code หมดอายุ ⇒ Expired + แจ้งกลุ่ม (ผู้เรียก: <c>TaxSlipJob</c> · JobLock) · คืนจำนวนใบ</summary>
+    public async Task<int> ExpireDueAsync(DateTime nowUtc, CancellationToken ct = default)
+    {
+        if (await _consent.ProviderIdAsync(ct) is not Guid providerId) return 0;
+        return await ExpireDueForAsync(providerId, nowUtc, ct) + await NotifyReopenedAsync(providerId, ct);
+    }
+
+    /// <summary>ฝ่ายค้าน MED-2/LOW-1/LOW-2: เปลี่ยนสถานะแบบมีเงื่อนไขทีละใบ (<c>WHERE Status = Open</c> — สลิป/ยกเลิกที่ commit ระหว่างนี้ชนะ) · การ์ดเฉพาะใบที่เปลี่ยนจริง
+    /// รวมเป็นใบเดียวต่อบริษัท · ข้ามใบที่ยังมีสลิปเปิดอ้างอยู่ (กำลังรอพนักงาน/ลูกค้าเลือก — ไม่ตัดทางบันทึก)</summary>
+    public async Task<int> ExpireDueForAsync(Guid providerId, DateTime nowUtc, CancellationToken ct = default)
+    {
+        var candidates = await _db.TaxPaymentRequests.AsNoTracking()
+            .Where(r => r.ProviderCompanyId == providerId && r.Status == TaxPaymentRequestLifecycle.Open && r.ControlCodeExpiresAt != null)
+            .OrderBy(r => r.ControlCodeExpiresAt).Take(200).ToListAsync(ct);
+        candidates = candidates.Where(r => TaxPaymentRequestLifecycle.IsExpired(r.ControlCodeExpiresAt, nowUtc)).ToList();
+        if (candidates.Count == 0) return 0;
+        var ids = candidates.Select(r => r.Id).ToList();
+        var heldBySlip = await _db.TaxSlipEvidences.AsNoTracking()
+            .Where(s => s.CompanyId == providerId && s.TaxPaymentRequestId != null && ids.Contains(s.TaxPaymentRequestId.Value) && TaxSlipIntakeService.Statuses.Open.Contains(s.Status))
+            .Select(s => s.TaxPaymentRequestId!.Value).Distinct().ToListAsync(ct);
+        var n = 0;
+        foreach (var group in candidates.Where(r => !heldBySlip.Contains(r.Id)).GroupBy(r => r.CompanyId))
+        {
+            var changed = new List<TaxPaymentRequest>();
+            foreach (var r in group.Take(ExpireCapPerClientPerRun))
+            {
+                var done = await _db.TaxPaymentRequests.Where(x => x.Id == r.Id && x.CompanyId == r.CompanyId && x.Status == TaxPaymentRequestLifecycle.Open)
+                    .ExecuteUpdateAsync(u => u.SetProperty(x => x.Status, TaxPaymentRequestLifecycle.Expired).SetProperty(x => x.UpdatedAt, (DateTime?)nowUtc), ct);
+                if (done == 0) continue;   // ชำระ/ยกเลิกระหว่างนี้ — ไม่แตะ ไม่แจ้ง
+                foreach (var co in new[] { r.CompanyId, providerId })
+                    _db.AddChainedAuditLog(new AuditLog
+                    {
+                        CompanyId = co, Action = AuditAction.Update, EntityType = nameof(TaxPaymentRequest), EntityId = r.Id.ToString(),
+                        NewValues = JsonSerializer.Serialize(new { @event = "TaxPaymentRequestExpired", expiresAt = r.ControlCodeExpiresAt }), Timestamp = nowUtc,
+                    });
+                r.Status = TaxPaymentRequestLifecycle.Expired;
+                changed.Add(r);
+            }
+            if (changed.Count == 0) continue;
+            await _db.SaveChangesAsync(ct);
+            await NotifyClosedAsync(changed, TaxSlipReplyCard.Kind.PaymentRequestExpired, ct);
+            n += changed.Count;
+        }
+        return n;
+    }
+
+    /// <summary>ฝ่ายค้าน LOW-3: ใบที่กลับเปิดเพราะรายการนำส่งถูกยกเลิก (<c>ReleaseOnVoidAsync</c>) ⇒ แจ้งกลุ่มตามจริงครั้งเดียว (การ์ดสรุปต่อบริษัท)</summary>
+    private async Task<int> NotifyReopenedAsync(Guid providerId, CancellationToken ct)
+    {
+        var rows = await _db.TaxPaymentRequests.AsNoTracking()
+            .Where(r => r.ProviderCompanyId == providerId && r.ReopenedAt != null && r.ReopenNoticeAt == null).OrderBy(r => r.ReopenedAt).Take(100).ToListAsync(ct);
+        var n = 0;
+        foreach (var group in rows.GroupBy(r => r.CompanyId))
+        {
+            var list = group.Take(ExpireCapPerClientPerRun).ToList();
+            var ids = list.Select(r => r.Id).ToList();
+            var now = DateTime.UtcNow;
+            await _db.TaxPaymentRequests.Where(r => r.CompanyId == group.Key && ids.Contains(r.Id) && r.ReopenNoticeAt == null)
+                .ExecuteUpdateAsync(u => u.SetProperty(r => r.ReopenNoticeAt, (DateTime?)now), ct);
+            await NotifyClosedAsync(list, TaxSlipReplyCard.Kind.PaymentRequestReopened, ct);
+            n += list.Count;
+        }
+        return n;
+    }
+
+    /// <summary>
+    /// รอบ 275 แพ็ก D (M7): งวดนี้ถูกนำส่งแล้ว (สลิป · บันทึกมือที่หน้านำส่ง · ผูกสลิปกับรายการเดิม) ⇒ ใบขอชำระที่ยังเปิดของงวดนั้นปิดเป็น <c>Paid</c> ผูกรายการนำส่ง ·
+    /// เดิมเส้นมือไม่ปิด ⇒ ใบค้าง "รอชำระ" ตลอดไป · แบบที่นำส่งหลายครั้งต่องวด (ภ.พ.36 · กท.20ก) ไม่ปิดเอง ·
+    /// ผู้เรียก: <c>StatutoryRemittanceService.RemitAsync</c> / <c>TaxSlipRemitService.LinkAsync</c> ในธุรกรรมเดียวกัน (ผู้เรียก SaveChanges)
+    /// </summary>
+    /// <param name="remittedTotal">ยอดรวมที่นำส่ง (ภาษี + เงินเพิ่ม + เบี้ยปรับ + ค่าปรับ) · <paramref name="slipControlHash"/> = แฮช Control Code ของสลิป (null = ไม่รู้)</param>
+    public static async Task<int> CloseOnRemitAsync(AccountingDbContext db, Guid companyId, string type, int year, int month, Guid remittanceId, Guid? slipId,
+        decimal remittedTotal, string? slipControlHash, CancellationToken ct = default)
+    {
+        if (!TaxPaymentRequestLifecycle.ClosesOnRemit(type)) return 0;
+        var all = await db.TaxPaymentRequests.Where(r => r.CompanyId == companyId && r.Status == TaxPaymentRequestLifecycle.Open
+            && r.RemittanceType == type && r.PeriodYear == year && r.PeriodMonth == month).ToListAsync(ct);
+        // ฝ่ายค้าน LOW-3: ปิดเฉพาะใบที่ยอด (และ Control Code ถ้ารู้) ตรงการนำส่ง — บันทึกบางส่วน/ยอดอื่น ใบยังเปิดให้ลูกค้าเห็นว่ายังค้าง
+        var rows = all.Where(r => TaxPaymentRequestLifecycle.PaidBy(r.Amount + r.Surcharge + r.Penalty, r.ControlCodeHash, remittedTotal, slipControlHash)).ToList();
+        foreach (var r in rows)
+        {
+            r.Status = TaxPaymentRequestLifecycle.Paid;
+            r.StatutoryRemittanceId = remittanceId;
+            r.TaxSlipEvidenceId = slipId ?? r.TaxSlipEvidenceId;
+            r.UpdatedAt = DateTime.UtcNow;
+        }
+        return rows.Count;
     }
 }

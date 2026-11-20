@@ -76,4 +76,18 @@ public class NotificationContext
     /// ที่ผู้รับเป็น user ตัวเฉพาะที่ระบบรู้ตัวอยู่แล้ว (ApprovalAction.ApproverUserId).
     /// Engine ยัง apply per-user channel preferences ตามปกติ.</summary>
     public Guid? RecipientUserId { get; set; }
+
+    /// <summary>รอบ 276 (ฝ่ายค้าน LOW-9 · คำตัดสิน 276-6): ข้อความอิสระที่ผู้ใช้พิมพ์ (เช่นหมายเหตุถึงผู้อนุมัติ) — ต่อท้ายเฉพาะช่องส่วนตัว
+    /// (กระดิ่ง · อีเมล · LINE ส่วนตัว) **ไม่ส่งเข้ากลุ่ม LINE ของบริษัท** · null = ไม่มี</summary>
+    public string? PrivateNote { get; set; }
+
+    /// <summary>สำเนาสำหรับช่องส่วนตัว (ต่อ <see cref="PrivateNote"/>) — ผู้เรียกเดียว: ตัวส่งช่องส่วนตัวของ <c>NotificationEngine</c></summary>
+    public NotificationContext ForPersonalChannel()
+    {
+        if (string.IsNullOrWhiteSpace(PrivateNote)) return this;
+        var copy = (NotificationContext)MemberwiseClone();
+        copy.Message = Message + "\nหมายเหตุ: " + PrivateNote;
+        copy.PrivateNote = null;
+        return copy;
+    }
 }

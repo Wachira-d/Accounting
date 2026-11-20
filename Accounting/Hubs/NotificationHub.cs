@@ -46,8 +46,8 @@ public class NotificationHub : Hub
             throw new HubException("User not authenticated.");
 
         // Verify user has access to this company
-        var hasAccess = await _db.CompanyUsers
-            .AnyAsync(cu => cu.CompanyId == companyGuid && cu.UserId == userGuid);
+        // รอบ 277: สมาชิกรอสิทธิ์ (AccessPending) เข้ากลุ่มแจ้งเตือนของบริษัทไม่ได้ — ตัวกรองเดียว CompanyMembership
+        var hasAccess = await Accounting.Helpers.CompanyMembership.ActiveRow(_db, companyGuid, userGuid).AnyAsync();
 
         if (!hasAccess)
             throw new HubException("Access denied to this company.");

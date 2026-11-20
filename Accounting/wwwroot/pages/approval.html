@@ -44,6 +44,16 @@
 
     <!-- Pending Approvals -->
     <div id="tabPending">
+      <!-- รอบ 276: เอกสารที่พนักงานส่งขออนุมัติ (ไม่มีกฎ workflow ที่ตรง) — คิวจากเซิร์ฟเวอร์ (เฉพาะชนิดที่ผู้ใช้คนนี้อนุมัติได้) -->
+      <div id="docQueueBox" style="display:none;margin-bottom:18px">
+        <h3 style="font-size:15px;font-weight:600;margin-bottom:8px">📄 เอกสารร่างที่พนักงานส่งขออนุมัติ <span id="docQueueCount" class="pill pill-warning"></span></h3>
+        <div class="table-container">
+          <table class="table">
+            <thead><tr><th>ประเภท</th><th>วันที่เอกสาร</th><th>ผู้ติดต่อ</th><th class="text-right">ยอดรวม</th><th>ผู้ขอ</th><th>ส่งเมื่อ</th><th>หมายเหตุ</th><th>เปิด</th></tr></thead>
+            <tbody id="docQueueBody"></tbody>
+          </table>
+        </div>
+      </div>
       <div class="toolbar" style="margin-bottom:16px">
         <input type="text" class="search-input" placeholder="ค้นหาผู้ขอ, ประเภท..." id="searchInput" oninput="Page.filterPending()">
         <select class="filter-select" id="typeFilter" onchange="Page.filterPending()">
@@ -154,6 +164,28 @@
         Layout.setTitle('ระบบอนุมัติ');
         await this.load();
         this.loadStalled();
+        this.loadDocQueue();
+      },
+      /** รอบ 276 — คิวเอกสารที่พนักงานส่งขออนุมัติ (อนุมัติ/ตีกลับทำที่หน้าเอกสาร — ด่าน/เลขเอกสารเดิมทุกประการ) · ว่าง/ไม่มีสิทธิ์ = ซ่อน */
+      async loadDocQueue() {
+        const box = document.getElementById('docQueueBox');
+        try {
+          const res = await API.get(`/api/companies/${Layout.getCompanyId()}/document-approval-queue`);
+          const rows = res?.data || [];
+          if (!rows.length) { box.style.display = 'none'; return; }
+          document.getElementById('docQueueCount').textContent = rows.length;
+          document.getElementById('docQueueBody').innerHTML = rows.map(r => `<tr>
+              <td>${Layout.esc(r.documentTypeLabel)}</td>
+              <td>${Layout.date(r.documentDate)}</td>
+              <td>${Layout.esc(r.contactName || '-')}</td>
+              <td class="text-right">${Layout.money(r.totalAmount)}</td>
+              <td>${Layout.esc(r.requestedByName)}</td>
+              <td>${Layout.date(r.requestedAt)}</td>
+              <td style="max-width:220px;white-space:normal">${Layout.esc(r.note || '')}</td>
+              <td><a class="btn btn-sm btn-primary" href="/pages/documents.html?id=${encodeURIComponent(r.documentId)}">เปิดเพื่ออนุมัติ/ตีกลับ</a></td>
+            </tr>`).join('');
+          box.style.display = '';
+        } catch { box.style.display = 'none'; }
       },
       // === STALLED (ID#11) ===
       /** คำขอที่ค้างเพราะผู้อนุมัติออกจากบริษัท — ผู้ไม่มีสิทธิ์ตั้งค่าบริษัทได้ 403 ⇒ ซ่อนแท็บเงียบ ๆ (ไม่ใช่ข้อผิดพลาดของผู้ใช้) */

@@ -109,7 +109,9 @@
       },
       row(r) {
         const e = Layout.esc;
-        const cands = (r.candidates || []).map(c => `<option value="${c.index}">${e(c.label)} · ${e(Layout.money(c.total))}</option>`).join('');
+        // รอบ 275 D (M2): ผู้สมัครที่ล้มแน่นอน (server ตัดสิน · blocked) แสดงเหตุแต่เลือกไม่ได้
+        const cands = (r.candidates || []).map(c => `<option value="${c.index}" ${c.blocked ? 'disabled' : ''}>${e(c.label)} · ${e(Layout.money(c.total))}${c.blocked ? ' — ' + e(c.blocked) : ''}</option>`).join('');
+        const blockedNote = (r.candidates || []).filter(c => c.blocked).map(c => `<div class="ts-muted">${e(c.label)}: ${e(c.blocked)}</div>`).join('');
         const accs = (r.accounts || []).map(a => `<option value="${e(a.id)}" ${a.preselected ? 'selected' : ''}>${e(a.label)}</option>`).join('');
         return `<div class="ts-row"><div><b>${e(r.clientName || 'ไม่รู้บริษัท')}</b> · ${e(r.agency || 'หน่วยงานไม่รู้จัก')} · ${r.amount != null ? e(Layout.money(r.amount)) : 'ยอดอ่านไม่ได้'}`
           + (r.slipDate ? ` · ${e(Layout.date(r.slipDate))}` : '') + (r.controlLast4 ? ` · Control ••${e(r.controlLast4)}` : '') + (r.taxIdMasked ? ` · ${e(r.taxIdMasked)}` : '')
@@ -118,10 +120,75 @@
           + (r.canRemit ? `<div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">`
               + `<label for="c_${e(r.id)}" class="ts-muted">รายการ</label><select id="c_${e(r.id)}" class="form-select" style="max-width:260px">${cands}</select>`
               + `<label for="a_${e(r.id)}" class="ts-muted">บัญชีที่จ่าย</label><select id="a_${e(r.id)}" class="form-select" style="max-width:220px"><option value="">— เลือก —</option>${accs}</select>`
-              + `<button class="btn btn-sm btn-primary" onclick="Desk.remit('${e(r.id)}')">บันทึกนำส่ง</button></div>`
-            : (r.candidates || []).length === 0 && ['ToStaff', 'AwaitingChoice'].includes(r.status) ? `<div class="ts-muted">ไม่มีรายการที่ยอดตรง — ตรวจ/แก้สมุดของลูกค้าที่หน้านำส่งของบริษัทนั้น แล้วปิดสลิปนี้</div>` : '')
-          + (['ToStaff', 'AwaitingChoice', 'AwaitingConsent', 'Received'].includes(r.status) ? `<button class="btn btn-sm btn-ghost" style="color:#b91c1c" onclick="Desk.reject('${e(r.id)}')">ไม่บันทึก</button>` : '')
+              + `<button class="btn btn-sm btn-primary" onclick="Desk.remit('${e(r.id)}', this)">บันทึกนำส่ง</button></div>`
+            : '')
+          + blockedNote
+          + (r.canManual ? `<div style="margin-top:6px"><button class="btn btn-sm btn-secondary" onclick="Desk.openManual('${e(r.id)}', this)">บันทึกเอง / ผูกกับรายการนำส่งที่มีอยู่</button></div>`
+              + `<div id="m_${e(r.id)}"></div>` : '')
+          + (r.canManual ? `<button class="btn btn-sm btn-ghost" style="color:#b91c1c" onclick="Desk.reject('${e(r.id)}', this)">ไม่บันทึก</button>` : '')
           + `</div>`;
+      },
+      // ── รอบ 275 D (H1): บันทึกเอง / ผูกรายการนำส่ง — ตัวเลือกทั้งหมดมาจาก server (manual-options) · หน้าแสดงเท่านั้น ──
+      async openManual(id, btn) {
+        const box = document.getElementById('m_' + id), e = Layout.esc;
+        if (btn) btn.disabled = true;
+        try {
+          const o = (await API.get(`${this.base()}/slips/${id}/manual-options`)).data;
+          this.manual = this.manual || {}; this.manual[id] = o;
+          const clients = (o.clients || []).map((c, i) => `<option value="${i}">${e(c.name)}${c.taxIdNote ? ' — ' + e(c.taxIdNote) : ''}</option>`).join('');
+          box.innerHTML = `<div class="ts-card" style="margin-top:6px">`
+            + `<label for="mc_${e(id)}" class="ts-muted">บริษัท</label> <select id="mc_${e(id)}" class="form-select" style="max-width:260px" onchange="Desk.fillManual('${e(id)}')">${clients}</select>`
+            + `<div id="mb_${e(id)}"></div></div>`;
+          this.fillManual(id);
+        } catch (err) { Layout.toast(err.message || 'โหลดตัวเลือกไม่สำเร็จ', 'error'); }
+        if (btn) btn.disabled = false;
+      },
+      fillManual(id) {
+        const o = this.manual[id], e = Layout.esc, c = (o.clients || [])[Number(document.getElementById('mc_' + id).value)];
+        const box = document.getElementById('mb_' + id);
+        if (!c) { box.innerHTML = '<div class="ts-muted">ไม่มีบริษัทที่ช่องทางนี้ผูก</div>'; return; }
+        const pend = c.pending.map((p, i) => `<option value="${i}" ${p.blocked ? 'disabled' : ''}>${e(p.label)} · ค้าง ${e(Layout.money(p.amount))}${p.blocked ? ' — ' + e(p.blocked) : ''}</option>`).join('');
+        const accs = c.accounts.map(a => `<option value="${e(a.id)}">${e(a.label)}</option>`).join('');
+        const recs = c.remittances.map(r => `<option value="${e(r.id)}" ${r.blocked ? 'disabled' : ''}>${e(r.label)} · ${e(Layout.money(r.total))} · จ่าย ${e(Layout.date(r.payDate))}${r.blocked ? ' — ' + e(r.blocked) : ''}</option>`).join('');
+        // ผู้ประสานงาน 275-D: แถวเก่าที่ระบบเทียบเลขผู้เสียภาษีเต็มไม่ได้ ⇒ ต้องติ๊กยืนยันจากรูป (server ตัดสินว่าต้องติ๊กไหม)
+        const confirmBox = c.taxIdNeedsConfirm ? `<div style="margin-top:6px"><label for="mt_${e(id)}"><input type="checkbox" id="mt_${e(id)}"> ตรวจเลขผู้เสียภาษีบนรูปสลิปแล้ว ตรงกับ ${e(c.name)}</label></div>` : '';
+        box.innerHTML = (c.taxIdNote ? `<div class="ts-muted" style="color:#b45309">${e(c.taxIdNote)}</div>` : '') + confirmBox
+          + `<div style="margin-top:6px"><b>บันทึกเอง</b> <span class="ts-muted">(ภาษี + เงินเพิ่ม + เบี้ยปรับ ต้องเท่ายอดบนสลิป${o.slipAmount != null ? ' ' + e(Layout.money(o.slipAmount)) : ''} ทุกสตางค์)</span></div>`
+          + (pend ? `<label for="mp_${e(id)}" class="ts-muted">งวดค้าง</label> <select id="mp_${e(id)}" class="form-select" style="max-width:280px">${pend}</select>` : '<div class="ts-muted">ไม่มีงวดค้างในสมุดของบริษัทนี้ — ลงรายการของงวดที่หน้าบริษัทลูกค้าก่อน</div>')
+          + ` <label for="ms_${e(id)}" class="ts-muted">เงินเพิ่ม</label> <input id="ms_${e(id)}" class="form-input" style="max-width:110px" inputmode="decimal" value="0">`
+          + ` <label for="mx_${e(id)}" class="ts-muted">เบี้ยปรับ</label> <input id="mx_${e(id)}" class="form-input" style="max-width:110px" inputmode="decimal" value="0">`
+          + (o.needsSlipAmount ? ` <label for="ma_${e(id)}" class="ts-muted">ยอดบนสลิป (อ่านเอง)</label> <input id="ma_${e(id)}" class="form-input" style="max-width:120px" inputmode="decimal">` : '')
+          + (o.needsPayDate ? ` <label for="md_${e(id)}" class="ts-muted">วันที่จ่าย</label> <input id="md_${e(id)}" type="date" class="form-input" style="max-width:160px">` : '')
+          + ` <label for="mk_${e(id)}" class="ts-muted">บัญชีที่จ่าย</label> <select id="mk_${e(id)}" class="form-select" style="max-width:220px"><option value="">— เลือก —</option>${accs}</select>`
+          + (pend ? ` <button class="btn btn-sm btn-primary" onclick="Desk.manualRemit('${e(id)}', this)">บันทึกนำส่ง</button>` : '')
+          + `<div style="margin-top:8px"><b>ผูกกับรายการนำส่งที่มีอยู่</b> <span class="ts-muted">(บันทึกที่หน้านำส่งของลูกค้าไว้แล้ว)</span></div>`
+          + (recs ? `<select id="mr_${e(id)}" class="form-select" style="max-width:360px" aria-label="รายการนำส่ง">${recs}</select> <button class="btn btn-sm btn-secondary" onclick="Desk.link('${e(id)}', this)">ผูกสลิปกับรายการนี้</button>`
+            : '<div class="ts-muted">ไม่มีรายการนำส่งช่วงวันที่ของสลิป</div>');
+      },
+      async manualRemit(id, btn) {
+        const o = this.manual[id], c = o.clients[Number(document.getElementById('mc_' + id).value)];
+        const p = c && c.pending[Number(document.getElementById('mp_' + id).value)];
+        const num = el => el ? Number(String(el.value || '0').replace(/,/g, '')) : null;
+        const acc = document.getElementById('mk_' + id).value;
+        if (!p || !acc) { Layout.toast('เลือกงวดและบัญชีที่จ่าย', 'error'); return; }
+        btn.disabled = true;
+        try {
+          const r = await API.post(`${this.base()}/slips/${id}/manual-remit`, {
+            clientCompanyId: c.clientCompanyId, remittanceType: p.type, periodYear: p.year, periodMonth: p.month, tax: p.amount,
+            surcharge: num(document.getElementById('ms_' + id)), penalty: num(document.getElementById('mx_' + id)), bankAccountId: acc,
+            slipAmount: o.needsSlipAmount ? num(document.getElementById('ma_' + id)) : null,
+            payDate: o.needsPayDate ? (document.getElementById('md_' + id).value || null) : null,
+            confirmTaxId: !!(document.getElementById('mt_' + id) || {}).checked,
+          });
+          Layout.toast(r?.message || 'บันทึกแล้ว', 'success'); await this.load();
+        } catch (e) { Layout.toast(e.message || 'บันทึกไม่สำเร็จ', 'error'); btn.disabled = false; }
+      },
+      async link(id, btn) {
+        const o = this.manual[id], c = o.clients[Number(document.getElementById('mc_' + id).value)], rid = document.getElementById('mr_' + id).value;
+        if (!c || !rid) { Layout.toast('เลือกรายการนำส่ง', 'error'); return; }
+        btn.disabled = true;
+        try { const r = await API.post(`${this.base()}/slips/${id}/link`, { clientCompanyId: c.clientCompanyId, remittanceId: rid, confirmTaxId: !!(document.getElementById('mt_' + id) || {}).checked }); Layout.toast(r?.message || 'ผูกแล้ว', 'success'); await this.load(); }
+        catch (e) { Layout.toast(e.message || 'ผูกไม่สำเร็จ', 'error'); btn.disabled = false; }
       },
       async toggle(on) {
         try { const r = await API.put(this.base() + '/settings', { enabled: on }); Layout.toast(r?.message || 'บันทึกแล้ว', 'success'); await this.load(); }
@@ -179,17 +246,20 @@
         try { const r = await API.post(`${this.base()}/clients/${contactId}/power-of-attorney/${consentId}/approve`, {}); Layout.toast(r?.message || 'อนุมัติแล้ว', 'success'); await this.load(); }
         catch (e) { Layout.toast(e.message || 'อนุมัติไม่สำเร็จ', 'error'); }
       },
-      async remit(id) {
+      async remit(id, btn) {
         const c = document.getElementById('c_' + id), a = document.getElementById('a_' + id);
         if (!a || !a.value) { Layout.toast('เลือกบัญชีที่จ่าย', 'error'); return; }
+        // รอบ 275 D (H2): ปิดปุ่มระหว่างรอ — ดับเบิลคลิกไม่ส่งคำขอที่สอง (server กันซ้ำใต้ล็อกอีกชั้น)
+        if (btn) btn.disabled = true;
         try { const r = await API.post(`${this.base()}/slips/${id}/remit`, { candidateIndex: Number(c.value), bankAccountId: a.value }); Layout.toast(r?.message || 'บันทึกแล้ว', 'success'); await this.load(); }
         catch (e) { Layout.toast(e.message || 'บันทึกไม่สำเร็จ', 'error'); await this.load(); }
       },
-      async reject(id) {
-        const reason = prompt('เหตุที่ไม่บันทึก (ลูกค้าจะเห็นในกลุ่ม)', 'ไม่ใช่สลิปชำระภาษีของงวดที่ค้าง');
+      async reject(id, btn) {
+        const reason = prompt('เหตุที่ไม่บันทึก (ลูกค้าจะเห็นในกลุ่ม) — ถ้าบันทึกนำส่งที่หน้าลูกค้าไว้แล้ว ใช้ “ผูกกับรายการนำส่งที่มีอยู่” แทน', 'ไม่ใช่สลิปชำระภาษีของงวดที่ค้าง');
         if (reason === null) return;
+        if (btn) btn.disabled = true;
         try { const r = await API.post(`${this.base()}/slips/${id}/reject`, { reason }); Layout.toast(r?.message || 'ปิดแล้ว', 'success'); await this.load(); }
-        catch (e) { Layout.toast(e.message || 'ปิดไม่สำเร็จ', 'error'); }
+        catch (e) { Layout.toast(e.message || 'ปิดไม่สำเร็จ', 'error'); if (btn) btn.disabled = false; }
       },
       async cancelRequest(id) {
         if (!confirm('ยกเลิกใบขอชำระนี้? สลิปที่ส่งมาภายหลังจะไม่จับกับใบนี้')) return;

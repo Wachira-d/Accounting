@@ -7330,6 +7330,89 @@ ciphertext ของแถวนั้นเองส่งกลับมา = 
 `PiiValueKind` ต่อคอลัมน์ (เลขบัตร/ผู้เสียภาษี = 13 หลัก mod-11) · `PiiReprotectPass` เขียนชั้นเดียว + audit `PiiNestedUnwrapped` (ไม่ตัดจบเมื่อไม่มีคีย์เดิม) ·
 รายงาน: แกะได้ = รอย้ายคีย์ · แกะไม่ได้ = `NestedCipher` · คำตัดสิน 274-10 · เทสต์ `PiiNestedCipherRound274_10Tests` (pure ×8) · Db `PiiNestedCipherDbTests` · กติกา `_R274_10_WHY` ×14 — commit 7c75b438_
 
+_รอบ 274-11 ผลตรวจฝ่ายค้าน 274-10 (2026-11-20): MED-1 การแกะชั้นซ้อนเปิด oracle ย้อนหลังที่ `CustomerSignerProfile` (ผู้ลงนามนิรนามเขียนแล้วอ่านกลับผ่าน Prefill) ⇒
+converter ค่าตั้งต้น `NoUnwrap` · allow-list 5 คอลัมน์พนักงาน · LOW-1 ด่านเข้าปฏิเสธเครื่องหมายภายใน + converter ห่อค่าที่ขึ้นต้นด้วยเครื่องหมาย (อ่านกลับตรงตัว) ·
+LOW-2 `IsUnreadable` ไม่ trim · มีช่องว่าง = ไม่ใช่ ciphertext · `CandidateSql` กติกาเดียวกัน · LOW-3 งานย้ายคีย์ข้ามการสแกนเมื่อชุดคีย์เดิมสแกนครบแล้ว (≤ 7 วัน) ·
+LOW-4 HRIS sync `Status`/`Warnings` · คำตัดสิน 274-11 · เทสต์ pure +5 · Db +ผู้ลงนาม · กติกา `_R274_10_WHY` +8 — commit 55b251d9_
+_รอบ 275 แพ็ก B (2026-11-20 · ผลตรวจรายสัปดาห์ T2 — รายงาน ภ.ง.ด. ↔ ทะเบียน 50 ทวิ · คำตัดสิน 275-B-1…6): **H1** สร้างใหม่คืนติ๊กเฉพาะแถวระบบที่ผู้ใช้ติ๊กเข้า
+(`Helpers/WhtReportLineRule.RestoreKey` — เดิมติ๊กแถวใบร่างของเอกสารเดียวกันเข้าเอง ⇒ ยอดไฟล์ 300 ≠ หัว 150 · ด่านยังไม่ออกใบไม่บล็อก) + คำนวณยอดหัว
+`RecalcWhtTotals`/`RecalcPp36Totals` หลังคืนติ๊ก (เดิมค้าง 178.65 vs 357.65) · **H2** `TaxReportLine.WhtCertId` (migration ADD COLUMN) + ลายเซ็น ภ.ง.ด. ต่อใบ
+(`TaxReportDraftFreshness.WhtSignature` — ออก/ยกเลิก/ผูก/เปลี่ยนผูก/ใบมือ/ผู้ถูกหัก) ตัวเทียบเดียว `TaxService.DraftFreshnessAsync` ของแถบและด่านยื่น ·
+**M1** ด่านยื่นฝั่งเซิร์ฟเวอร์ `EnsureReportFileableAsync` (ตัวตรวจก่อนยื่น Error + ทะเบียน) ที่บันทึกการยื่นและไฟล์ e-Filing ของรายงาน · **M2/L4** ตัวตรวจครอบ ภ.ง.ด.54
+(ไม่ฟ้องเลขของผู้รับ ตปท.) + ภ.พ.36 · **M3** ชุดตรวจร่าง `CheckedTaxTypes` แยกจากชุดสร้างอัตโนมัติ (+ ภ.ง.ด.1 รุ่นเก่า CanRegenerate=false) · **M4** ลายเซ็นเทียบเลข/สาขา/ชื่อผู้ถูกหัก
++ ทางแก้ RD-WHT-005 ที่ทำได้จริง · **M5** ข้อความด่านยังไม่ออกใบชี้ทางจริง · คำนำหน้าแถวระบบ/ยอดจาก 50 ทวิ ล็อก · ติ๊กเข้าต้องมีเหตุผล + audit chain · **L1** ค่าคลาดเคลื่อน 0.00 ·
+**L2** แถวสรุปหลัง JE ล้วน + คีย์สาขา · เลื่อน: L3 · M4 ครึ่งหลัง (275-B-6) · เทสต์ `WhtReportRound275Tests` (pure) · Db `WhtReportRound275DbTests` (×11) · กติกา `_R275B_*` (12) + R275B-1…6 — commit 33b2c7de_
+
+_รอบ 275 แพ็ก D (2026-11-20 · โต๊ะสลิปภาษี · ผลตรวจ T1): ปิด H1 (บันทึกเอง/ผูกกับรายการนำส่งที่มีอยู่จากโต๊ะ — ยอดเท่าสลิปทุกสตางค์ · คำตัดสิน 4.3 · "ไม่บันทึก" ไม่ลบหลักฐานทันที) ·
+H2 (ApplyAsync/LinkAsync ล็อกแล้ว Reload · ทางล้มไม่เขียนทับ Remitted · claim ปุ่มเลือก/ปุ่มไม่บันทึกแบบ atomic · Db test สองการเชื่อมต่อ) · M1 (ยกเลิกรายการนำส่ง ⇒ สลิปกลับคิว + ใบขอชำระกลับเปิด) ·
+M2 (ผู้สมัครที่ล้มแน่นอนเลือกไม่ได้ · พนักงานกดล้ม = 409 ไม่ส่งการ์ด) · M3 (ไฟล์เดิมจากกลุ่มอื่น ⇒ ประมวลแถวเดิมใหม่) · M4 (เตือน/ปิดแถวรอนาน · ลบไฟล์ครบ 90 วันทำงานจริง · อ่านใหม่เมื่อ OCR กลับมา) ·
+M5/M6 (เส้น 260 ไม่จับสลิปรัฐกับใบแจ้งหนี้ · สลิปโอนทั่วไปในกลุ่มตอบตามจริง + กระดิ่ง) · M7 (วงจรใบขอชำระ Paid/Expired/ยกเลิกแจ้งกลุ่ม/ทีละใบต่องวด) · M8 (ไม่พบเงินออกตรวจซ้ำได้) ·
+L2 L3 L4 L5 L6 L8 L9 · เลื่อน L1 L7 (dev-275-D.md) · ตัวตัดสิน `Helpers/TaxSlipDeskRule.cs` (TaxSlipDeskRule · TaxSlipChannelRedirect · TaxPaymentRequestLifecycle · TaxSlipOpenAge) · กติกา `_R275D_` ·
+คอลัมน์ใหม่ `TaxSlipEvidences.StaffRemindedAt` (Round272Migration) · commit 2c247bd4_
+
+_รอบ 275 แพ็ก A (2026-11-20 · คีย์และความลับ · T4 H-1/M-1/M-2/M-4/M-5): `SecretProtector` ใช้ห่วงโซ่คีย์เดียวกับ PII (`DecryptKeyChain` — รวม `ENCRYPTION_KEY_PREVIOUS` + `_2`…`_9` + หลายบรรทัด) ·
+`SecretReprotectJob` เป็นระยะ + ล้ม = JobRunLog + watermark · ลายนิ้วมือคีย์ใน `SiteSettings` (งานย้ายคีย์ทั้งสองหยุดเมื่อไม่ตรง · ยืนยันคีย์โดยผู้ดูแล + audit) ·
+`Helpers/SecretUse` ที่ webhook ขาออก/CMS ขาเข้า/e-Tax/อีเมล/login ภายนอก/Omise/ธนาคาร/LINE OA/ลงนาม callback (ห้ามใช้ค่าว่างเงียบ · ห้ามส่งไม่เซ็น · ห้ามตรวจด้วยกุญแจว่าง) ·
+DTO พนักงานส่งป้าย ⛔ แทน ciphertext + ฟอร์มบอกชัด (ฝ่ายค้าน 274-10 MED-2) · หน้า `/pages/encryption-health.html` + มุมผู้ดูแล · runbook `docs/runbooks/encryption-key-rotation.md` ·
+คำตัดสิน 275-A-1…7 · pure + Db `KeysSecretsRound275A*` · กติกา `_R275A_` — commit 2e7199e0 + bc9b6d73_
+
+_รอบ 275 แพ็ก D ชุดแก้ฝ่ายค้าน (ไม่พบ HIGH): MED-1 ผูก/บันทึกเองตรวจเลขผู้เสียภาษี + หน่วยงานกับแบบ (`AgencyTypeProblem` · `GovPaymentSlip.AgencyHint`) · MED-2 งานเบื้องหลัง/ยกเลิกใบเขียนแบบมีเงื่อนไขทีละแถว + Db test แข่งเวลา · MED-3 `ReleasedAt` · LOW-1 การ์ดสรุปต่อกลุ่ม + เพดาน 20 · LOW-2 ใบที่มีสลิปเปิดอ้างไม่หมดอายุ · LOW-3 `PaidBy` + การ์ดใบกลับเปิด (`ReopenedAt`/`ReopenNoticeAt`) · LOW-4 `MoveToStaffIfOpenAsync` — คอลัมน์ใหม่ 3 (Round272Migration)_
+
+_Last verified against codebase: 2026-11-20 (รอบ 275 แพ็ก C — ใบเสร็จ/ใบกำกับภาษี ณ วันรับเงิน: ตัวตัดสินเดียว `Helpers/SettlementTaxInvoiceRole` ยุบสูตร "งวดเดียว" 4 สำเนา
+(บันทึกรับชำระ · ออกใบย้อนหลัง · ย้ายการรับชำระ · งานหลังรับชำระ — นับค่าธรรมเนียม/บรรทัดปรับ/ภาษีหัก/ใบลดหนี้ตามลำดับเหตุการณ์ผ่านตัวไล่ยอด `SettlementReceiptTotals.Walk` ตัวเดียว) ·
+คำตัดสิน 4.1/275-C-1: งานบริการรับเป็นงวด ⇒ ใบกำกับทุกงวด VAT ตามส่วน + ย้าย 21913 ตามส่วนผูกการรับ + ถอยเฉพาะงวดเมื่อยกเลิก · ขายสินค้าคงเดิม · ใบลดหนี้ก่อนรับ/ตัดยอดที่ไล่ไม่ได้ ⇒ คิวให้คนตัดสิน ·
+คิว "รับเงินแล้วยังไม่มีใบกำกับ" (API + Autopilot + ปุ่มออกใบกำกับแทนใบรับเปล่า · ใบเก่าไม่แก้ย้อนหลัง) · MED-4 วันที่ปฏิทินไทยที่ต้นทางการรับชำระ · MED-5 ข้อความใบเสร็จผ่าน DocumentLabels ·
+LOW-1 การ์ด LINE "ยอดรับชำระ" · LOW-3 · ตัวโหลดรายการตัดยอดไม่นับการรับที่ถูกยกเลิก · เทสต์ `SettlementTaxInvoiceRoleTests` · Db `SettlementTaxInvoiceRoleDbTests` · กติกา `_R275C_*` — commit 96bb5262)_
+
+_รอบ 275 แพ็ก B ชุดแก้ฝ่ายค้าน + คำตัดสินแทนเจ้าของ 275-B-6…10 (2026-11-20): HIGH-1 ด่านทะเบียนเฉพาะร่าง (รายงานที่ยื่นแล้วสร้างไฟล์ได้ + คำเตือนยื่นเพิ่มเติม) ·
+MED-1/2 ยอดของบรรทัดในลายเซ็นล็อก (แก้ที่ต้นทาง) · MED-3 ด่านเซิร์ฟเวอร์บล็อกเฉพาะ `ServerBlockingCodes` · MED-4 สร้างใหม่คืนการติ๊กออก (`RegenerateUntick`) ·
+LOW ลายเซ็นใส่ DocumentId · `Round275BMigration` เติม WhtCertId ย้อนหลังที่จับคู่ได้แน่นอน · แถบ ≤ 6 เดือน · 275-B-6 (ก) ยกเลิก PV ⇒ ใบผูกด้วยมือหลุดการผูก (`WhtCertVoidCascade`) ·
+(ข) สำเนาผู้ถูกหัก ณ วันออก `WithholdingTaxCerts.PayeeSnapshotJson` (`WhtPayeeSnapshot` · ประทับที่ SaveChanges · backfill) — renderer ×2 · หน้าใบ · รายงาน/ไฟล์ — commit 24aad79a_
+
+_รอบ 275 แพ็ก A ผลตรวจฝ่ายค้าน (2026-11-20 · ไม่พบ HIGH): MED-1 ยืนยัน "ลายนิ้วมือที่ระบุ" จาก heartbeat ต่อเครื่อง (`EncryptionKeyHeartbeats`) · เครื่องที่ตอบใช้คีย์อื่น ⇒ 409 ·
+MED-2 `EncryptionWriteGuard` — เครื่องคีย์ไม่ตรงหยุดเข้ารหัสค่าใหม่ (ความลับ + PII · 503 ข้อความไทย · อ่านไม่กระทบ) · MED-3 `RotationPending` จนทุกเครื่องรายงานคีย์ใหม่/ผู้ดูแลยืนยัน ·
+MED-4 กุญแจ HMAC สลิปภาษี/OTP จากเมล็ดถาวร `SiteSettings.HmacSeedProtected` (`HmacSeedBootstrap`) · LOW ลายนิ้วมือจากกุญแจ PBKDF2 · ยืนยันแบบมีเงื่อนไขค่าเดิม · รอบข้ามสแกนลงชื่อ `…Skipped` ·
+คำตัดสิน 275-A-8…12 · เทสต์ P275A-11…14 · runbook ขั้น 4 — commit 17305b6a_
+
+_รอบ 276 (2026-11-20 · ความต้องการเจ้าของ "เห็นเฉพาะเอกสารที่ตัวเองสร้าง + เฉพาะร่าง + กดแจ้งให้บัญชีอนุมัติ · แจ้ง LINE กลุ่ม/ส่วนตัว/อีเมล/ในระบบ"):
+ค่าตั้งต่อผู้ใช้/บทบาท (`CompanyUser`/`CompanyRole.OwnDocumentsOnly/DraftDocumentsOnly` · Round276Migration) · ตัวตัดสิน `Helpers/DocumentRestrictionPolicy` ·
+ด่าน `Filters/DocumentRestrictionFilter` + ตัวกรองแถว EF ของ Documents · ด่าน Approve/Void ชั้น service (`DocumentRestrictionGuard`) ·
+ส่งขออนุมัติพื้นฐาน `DocumentApprovalRequests` + `DocumentApprovalRequestService` (กฎที่ตรง ⇒ workflow เดิม) · คีย์แจ้งเตือน `document.approval_requested/returned/granted` +
+บทบาทผู้รับ `DocumentApprover` · UI ทีม/บทบาท/เอกสาร/คิวอนุมัติ/เมนู · คำตัดสิน 276-1…8 · เทสต์ `DocumentRestrictionPolicyTests` + Db `DocumentRestrictionDbTests` ·
+กติกา `_R276_` — commit 69740aef + 4456de7a_
+
+_Last verified against codebase: 2026-11-20 (รอบ 275 แพ็ก C ชุดแก้ฝ่ายค้าน — HIGH-1 invariant ปิดยอดแล้ว 21913 = 0 ทุกเส้น (งวดปิดถือภาษีที่ยังพัก · ใบลดหนี้ที่แตะภาษีพักไม่นับซ้ำใน ภ.พ.30) ·
+MED-1 รับหลายใบ/ยกเลิกเดินตัวตัดสินเดียว · MED-2 ใบกำกับรายงวดแยกบรรทัดตามอัตรา · MED-3 ใบเก่าที่ภาษีรายงานแล้ว = ใบกำกับหลักฐานกระดาษ `VatReportedOnSource` (แทนการออกทุกงวดพร้อมกัน) ·
+MED-4 เส้นหลังยกเลิกทาง e-Tax · MED-5 วันที่ UTC เท่านั้น · LOW รายงานวันที่ข้ามเดือน/ภาษีหักตามสัดส่วนใบ/งวดปิดไม่พิมพ์ "(บางส่วน)" · คำตัดสิน 275-C-3/4/6/7 ปรับ + 275-C-10…13) — commit 0e43cd18_
+MED-4 เส้นหลังยกเลิกทาง e-Tax · MED-5 วันที่ UTC เท่านั้น · LOW รายงานวันที่ข้ามเดือน/ภาษีหักตามสัดส่วนใบ/งวดปิดไม่พิมพ์ "(บางส่วน)" · คำตัดสิน 275-C-3/4/6/7 ปรับ + 275-C-10…13)_
+
+_รอบ 275 แพ็ก D (ผู้ประสานงาน): ค่าเทียบเลขผู้เสียภาษีเต็ม `TaxSlipEvidences.TaxIdHash` (HMAC เมล็ดถาวร) + `TaxSlipDeskRule.TaxIdVerdict` — นิติบุคคลที่ขึ้นต้น 7 หลักเหมือนกันถูกกัน · แถวเก่าตัดสินไม่ได้ ⇒ พนักงานยืนยันจากรูป (audit) · ลบบรรทัดซ้ำที่เกิดจาก resolve conflict — commit f32c38ed_
+
+_รอบ 276 ชุดแก้ฝ่ายค้าน (2026-11-20 · HIGH 2 · MED 4 · LOW 6): ด่านผูกผู้ใช้+บริษัททุกทางเข้า (รวมไม่มี companyId · accountant-workspace ปิด) · LINE ดูยอด/ถาม/อนุมัติตาม policy เว็บ ·
+แจ้งเตือน/รายการแจ้งเตือนกรองผู้ถูกจำกัด · หมายเหตุผู้ขอไม่เข้ากลุ่ม LINE · ทางเขียนยกตัวกรองแถว (ด่านระดับบริษัทเห็นทั้งบริษัท) + บล็อกอนุมัติใบเกินของผู้ถูกจำกัด ·
+id ใน body 404 · แก้ผู้ติดต่อเดิมไม่ได้ · `Document.CreatedByUserId` + migration · OCR ร่างของตัวเอง · `DocumentRestrictionRouteInventoryTests` · คำตัดสิน 276-9…16 — commit 8a2514f3 + 9ca871bb_
+_รอบ 277 (2026-11-20 · `erp-review/2026-11-20/dev-277-menu-invite.md` · คำตัดสิน 277-1…7): (A) เมนูตามสิทธิ์ — ตาราง `Helpers/MenuPermissionMap`
+(แดชบอร์ด = Reports.Dashboard + หน้ารายงานผู้บริหาร/FP&A/บริหารการเงิน/งบรวม/รอบโอน/ที่พัก + หน้ารับชำระรอบ 201) ⇒ `permissionDeniedMenuIds` · `layout.js`
+`landingUrl`/`ensurePageAccess` (ไม่มีสิทธิ์แดชบอร์ด ⇒ หน้าแรกที่เข้าได้ · ไม่มีเลย ⇒ `/pages/no-access.html`) · command palette/แถบล่าง/ลิงก์หน้าหลักกรองตามสิทธิ์ ·
+(B) คำเชิญ — ทุกอีเมลได้คำเชิญ (เดิมผู้มีบัญชีถูกยัดเข้าบริษัท) · แถวรอตอบรับ + ส่งซ้ำ/ยกเลิกในหน้าทีม · token เก็บ SHA-256 (Round277Migration ย้ายค่าดิบ) ·
+ตอบรับตัวเดียว `CompanyInvitationService` (ปุ่ม/ฟอร์ม/SSO) · ไม่สร้างบริษัท · ไม่เลือกบทบาท ⇒ `CompanyUser.AccessPending` (ทุก API 403 ที่ `TenantAccessMiddleware`) จนเจ้าของตั้ง ·
+แจ้ง `team.invitation_accepted` · ที่นั่งไม่นับคำเชิญหมดอายุ · อีเมลคำเชิญ HtmlEncode + บอก "ไม่ต้องสร้างบริษัท" · เทสต์ `MenuInviteRound277Tests` + Db `TeamInvitationDbTests` +
+sim `menu_landing_sim.js` · กติกา `_R277_` — commit a1ae70d2 + d93800f2_
+
+_รอบ 276 ข้อความตอบกลับ (2026-11-20): ตัวช่วยกลาง `Helpers/RestrictedResponseRedactor` ใช้ทุกทางเขียนที่ยกตัวกรองแถว + ใบซ้ำ — เหตุจากด่านข้ามเอกสาร/อ้างเลขของคนอื่น ⇒ "มีเอกสารอื่นในบริษัทที่…" · DTO แทนเลข/ล้าง id ของคนอื่น · คำตัดสิน 276-17 — commit 401add83_
+
+
+_รอบ 275 แพ็ก E (2026-11-20 · เก็บกวาดหลังรอบ 274 · T4 H-2/H-3/M-3/M-6/L-7/L-8 · คำตัดสินแทนเจ้าของ 4.2): พนักงานไม่มีเลข 13 หลัก ⇒ ผู้ทำบัญชีรับทราบรายคน
+(`EmployeeTaxIdWaiver` · เหตุ/ผู้กด/เวลา/audit) ⇒ 50 ทวิ ออกได้ (พาสปอร์ตประกอบ `WhtCertPayeeNote`) · ไฟล์ ภ.ง.ด.1 เลข 0 · ตัวตัดสินเดียว `EmployeeTaxIdentity.ForFiling` ทั้ง 50 ทวิ/ไฟล์/ด่านนำส่ง ·
+คนที่ยังไม่รับทราบ (มีภาษี) ถูกกันทั้งใบและไฟล์ · เลขผิดไม่ได้รับสิทธิ์ · สปส. ตามเลข ปกส. (F3) · ผู้รับ ตปท. ในไฟล์ ภ.ง.ด.1 (F12) · ผู้ติดต่อเลขขยะจากเงินเดือน: รายงาน+ซ่อมเฉพาะแถวที่เลือก
+(`PayrollJunkPayee` · งวดยื่นแล้วต้องยืนยันยื่นเพิ่มเติม · สำเนาผู้ถูกหักประทับใหม่) + ด่าน ภ.ง.ด.3/53 ที่ SaveChanges · รายงานสุขภาพ M-3 + ทางไปต่อจริง (H-2 ก) · ImportJson M-6 ·
+คำตัดสิน 275-E-1…6 · เทสต์ P275E-1…12 · กติกา `_R275E_` — commit 09a52c66_
+
+_รอบ 277 ชุดแก้ฝ่ายค้าน (2026-11-20 · คำตัดสิน 277-8…12): HIGH-1/2 ตัวกรองสมาชิกเดียว `CompanyMembership` (ตัดสมาชิกรอสิทธิ์) ต่อสายบอท LINE ×3 ·
+หน้าสำนักงานบัญชี · `api/me/permissions` · SignalR · `TenantGuard` · ผู้อนุมัติ/ผู้ลงนาม · รายชื่อบริษัทของผู้ใช้ (รอสิทธิ์ = id/ชื่อเท่านั้น) · เส้นสำรอง middleware fail closed ·
+MED-1 ทะเบียนเมนูครบทุกตัว (คีย์ any-of · ทิศเอกสาร · สิทธิ์เมนูอย่างเดียว + เทสต์ inventory) · MED-2 หน้าหลักโหมดง่าย "simple-home" ไม่ผูก Reports.Dashboard ·
+ที่พัก = LodgingManage หรือ LodgingSettings · MED-3 ตอบรับด้วย token = ยืนยันอีเมล · LOW หน้ารับคำเชิญไม่บอกการมีบัญชี — commit 6566b49b_
+
 ## รอบ 278 (2026-11-20 · ช่องลายเซ็นผู้จัดทำ ↔ ผู้มีอำนาจลงนาม เป็นคนเดียวกัน)
 
 **ปัญหา (เจ้าของ · QT-20261119-0001 จากระบบภายนอกผ่าน API key):** ช่อง "ผู้เสนอราคา" = "K.นัท" + ลายเซ็น (มาจาก `PreparerName`/`PreparerSignatureBase64` ใน payload) ·

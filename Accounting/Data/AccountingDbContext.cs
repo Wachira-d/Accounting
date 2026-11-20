@@ -8,6 +8,21 @@ public class AccountingDbContext : DbContext
 {
     public AccountingDbContext(DbContextOptions<AccountingDbContext> options) : base(options) { }
 
+    /// <summary>รอบ 276 — ขอบเขต "เห็นเฉพาะเอกสารที่ตัวเองสร้าง" ของ<b>คำขอนี้</b> (DbContext เป็น scoped ต่อคำขอ) · ผู้ตั้งเดียว
+    /// <c>Filters/DocumentRestrictionFilter</c> (หรือ <c>Helpers/DocumentRestrictionScope.Apply</c>) · null = ไม่จำกัด (ผู้ใช้ทั่วไป · งานเบื้องหลัง) ·
+    /// ผู้อ่าน: ตัวกรองแถวของ <see cref="Document"/> ด้านล่าง (ทุก query ผ่าน <c>_db.Documents</c> รวม Include/FromSql ที่ compose)</summary>
+    public string? DocumentOwnerScopeUserId { get; set; }
+    /// <summary>id ผู้ใช้ของขอบเขตเดียวกัน (ตัวกรองหลักเทียบ <see cref="Document.CreatedByUserId"/>) — ตั้งคู่กับ <see cref="DocumentOwnerScopeUserId"/> เสมอ</summary>
+    public Guid? DocumentOwnerScopeGuid { get; set; }
+    /// <summary>ผู้ใช้ของคำขอนี้ที่ถูกจำกัด (เห็นเฉพาะของตัวเอง หรือเฉพาะร่าง) — เอกสารที่สร้างในคำขอนี้ประทับ <see cref="Document.CreatedByUserId"/> เป็นคนนี้
+    /// เมื่อ CreatedBy เป็นป้ายระบบ (OCR/LINE) · ตั้งโดย <c>DocumentRestrictionGuard.ApplyScope</c></summary>
+    public Guid? DocumentRestrictedActorId { get; set; }
+    /// <summary>อีเมลของผู้ใช้คนเดียวกัน — บางทางเข้า (LINE) ประทับ <c>CreatedBy</c> เป็นอีเมล (คำตัดสิน 276-3)</summary>
+    public string? DocumentOwnerScopeEmail { get; set; }
+    /// <summary>รอบ 276 — คำขอนี้มาจากผู้ใช้ "เฉพาะร่าง" (ตั้งโดย <c>DocumentRestrictionFilter</c>) · ผู้อ่าน: <c>Helpers/DocumentRestrictionGuard</c>
+    /// (กันอนุมัติอัตโนมัติที่ประทับผู้กระทำเป็นป้ายระบบระหว่างคำขอของผู้ถูกจำกัด)</summary>
+    public bool DocumentDraftOnlyRequest { get; set; }
+
     // Core
     public DbSet<User> Users => Set<User>();
     public DbSet<LineBindCode> LineBindCodes => Set<LineBindCode>();
@@ -102,6 +117,8 @@ public class AccountingDbContext : DbContext
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
     /// <summary>watermark งานตรวจ audit chain ต่อบริษัท (รอบ 201 ทีม PL · A-PL3)</summary>
     public DbSet<AuditChainCheckpoint> AuditChainCheckpoints => Set<AuditChainCheckpoint>();
+    /// <summary>รอบ 275 แพ็ก A (ฝ่ายค้าน MED-1/MED-3): ลายนิ้วมือคีย์ต่อเครื่อง</summary>
+    public DbSet<EncryptionKeyHeartbeat> EncryptionKeyHeartbeats => Set<EncryptionKeyHeartbeat>();
     /// <summary>วันหยุดราชการระดับแพลตฟอร์ม (รอบ 201 ทีม PL · B-9) — เลื่อนกำหนดยื่น/นับวันทำการ · ว่าง = เสาร์/อาทิตย์อย่างเดียว</summary>
     public DbSet<PlatformHoliday> PlatformHolidays => Set<PlatformHoliday>();
     public DbSet<LegalDocumentVersion> LegalDocumentVersions => Set<LegalDocumentVersion>();   // รอบ 214 — นโยบาย/ข้อกำหนดของแพลตฟอร์มที่แอดมินแก้ได้
@@ -212,6 +229,7 @@ public class AccountingDbContext : DbContext
     public DbSet<ApprovalRule> ApprovalRules => Set<ApprovalRule>();
     public DbSet<ApprovalStep> ApprovalSteps => Set<ApprovalStep>();
     public DbSet<ApprovalRequest> ApprovalRequests => Set<ApprovalRequest>();
+    public DbSet<DocumentApprovalRequest> DocumentApprovalRequests => Set<DocumentApprovalRequest>();   // รอบ 276 — คำขออนุมัติพื้นฐาน (Helpers/Round276Migration)
     public DbSet<ApprovalAction> ApprovalActions => Set<ApprovalAction>();
 
     // File Attachments
@@ -669,6 +687,7 @@ public class AccountingDbContext : DbContext
             e.HasOne(i => i.Company).WithMany().HasForeignKey(i => i.CompanyId).OnDelete(DeleteBehavior.Cascade);
             e.HasOne(i => i.InvitedBy).WithMany().HasForeignKey(i => i.InvitedByUserId).OnDelete(DeleteBehavior.Restrict);
             e.HasIndex(i => i.Token).IsUnique();
+            e.HasIndex(i => i.TokenHash).IsUnique();   // รอบ 277 — ค้นคำเชิญด้วย hash เท่านั้น
             // Email-lookup happens during invite acceptance — narrow index.
             e.HasIndex(i => new { i.CompanyId, i.Email });
             e.HasQueryFilter(i => !i.IsDeleted);
@@ -994,7 +1013,15 @@ public class AccountingDbContext : DbContext
             // (รหัสที่พิมพ์จริงถูก snapshot ไว้ใน IssuerBranchCode แล้ว ใบเก่ายังพิมพ์ถูก)
             e.HasOne(d => d.Branch).WithMany().HasForeignKey(d => d.BranchId).OnDelete(DeleteBehavior.SetNull);
             e.Property(d => d.IssuerBranchCode).HasMaxLength(5);
-            e.HasQueryFilter(d => !d.IsDeleted);
+            // EF มีตัวกรองได้ตัวเดียวต่อ entity (ตัวหลังทับตัวก่อน) ⇒ รวมไว้ที่นี่ที่เดียว:
+            // ใบที่ลบแล้ว + รอบ 276 "เห็นเฉพาะเอกสารที่ตัวเองสร้าง" (มีผลเฉพาะคำขอที่ DocumentRestrictionFilter ตั้งขอบเขต · ค่าอื่น null ⇒ ไม่กรอง)
+            e.HasQueryFilter(d => !d.IsDeleted
+                && (DocumentOwnerScopeUserId == null
+                    || d.CreatedByUserId == DocumentOwnerScopeGuid
+                    || (d.CreatedByUserId == null
+                        && (d.CreatedBy == DocumentOwnerScopeUserId
+                            || (DocumentOwnerScopeEmail != null && d.CreatedBy == DocumentOwnerScopeEmail)))));
+            e.HasIndex(d => new { d.CompanyId, d.CreatedByUserId }).HasDatabaseName("IX_Documents_CompanyId_CreatedByUserId");
         });
 
         // ===== DocumentLine =====
@@ -1246,6 +1273,13 @@ public class AccountingDbContext : DbContext
             e.HasQueryFilter(h => !h.IsDeleted);
         });
 
+        // ===== EncryptionKeyHeartbeat (รอบ 275 แพ็ก A) — แถวเดียวต่อ process =====
+        modelBuilder.Entity<EncryptionKeyHeartbeat>(e =>
+        {
+            e.HasKey(h => h.InstanceId);
+            e.Property(h => h.InstanceId).HasMaxLength(200);
+        });
+
         // ===== AuditChainCheckpoint (รอบ 201 ทีม PL · A-PL3) — แถวเดียวต่อบริษัท =====
         modelBuilder.Entity<AuditChainCheckpoint>(e =>
         {
@@ -1483,6 +1517,15 @@ public class AccountingDbContext : DbContext
         });
 
         // ===== ApprovalRequest =====
+        modelBuilder.Entity<DocumentApprovalRequest>(e =>
+        {
+            e.HasIndex(r => new { r.CompanyId, r.DocumentId, r.Status }).HasDatabaseName("IX_DocumentApprovalRequests_Company_Doc_Status");
+            e.Property(r => r.Note).HasMaxLength(500);
+            e.Property(r => r.DecisionReason).HasMaxLength(500);
+            e.Property(r => r.Status).HasConversion<int>();
+            e.HasQueryFilter(r => !r.IsDeleted);
+        });
+
         modelBuilder.Entity<ApprovalRequest>(e =>
         {
             e.HasIndex(r => new { r.EntityType, r.EntityId });
@@ -1822,16 +1865,18 @@ public class AccountingDbContext : DbContext
                 .HasConversion(new Accounting.Helpers.EncryptedColumnConverter(Accounting.Helpers.PiiValueKind.ThaiTaxId));
             e.Property(emp => emp.TaxId).HasMaxLength(200)
                 .HasConversion(new Accounting.Helpers.EncryptedColumnConverter(Accounting.Helpers.PiiValueKind.ThaiTaxId));
+            // ฝ่ายค้าน 274-10 MED-1: allow-list การแกะชั้นซ้อน = 5 คอลัมน์ของพนักงาน (เขียนได้เฉพาะ HR/HRIS/นำเข้า ที่ผ่าน EmployeeRecordEdit.CipherInputProblem)
             e.Property(emp => emp.PassportNumber).HasMaxLength(200)
-                .HasConversion(new Accounting.Helpers.EncryptedColumnConverter());
+                .HasConversion(new Accounting.Helpers.EncryptedColumnConverter(Accounting.Helpers.PiiValueKind.Text));
+            e.Property(emp => emp.TaxIdWaiverReason).HasMaxLength(500);   // รอบ 275 แพ็ก E (คำตัดสิน 4.2) — ตรงกับ Round275EMigration
             // เพิ่ม PDPA ม.26: เลขบัญชีธนาคาร + เลขประกันสังคม (sensitive PII).
             // ปลอดภัยต่อการ encrypt เพราะไม่ถูกใช้ใน equality query ที่ไหน
             // (ต่างจาก Contact.TaxId ที่ใช้ matching → ห้าม encrypt). Legacy
             // plaintext อ่านได้ปกติ + re-save migrate เป็น ciphertext อัตโนมัติ.
             e.Property(emp => emp.BankAccountNumber).HasMaxLength(200)
-                .HasConversion(new Accounting.Helpers.EncryptedColumnConverter());
+                .HasConversion(new Accounting.Helpers.EncryptedColumnConverter(Accounting.Helpers.PiiValueKind.Text));
             e.Property(emp => emp.SocialSecurityNumber).HasMaxLength(200)
-                .HasConversion(new Accounting.Helpers.EncryptedColumnConverter());
+                .HasConversion(new Accounting.Helpers.EncryptedColumnConverter(Accounting.Helpers.PiiValueKind.Text));
             e.Property(emp => emp.BaseSalary).HasPrecision(18, 2);
             e.Property(emp => emp.ProvidentFundEmployeePercent).HasPrecision(5, 2);
             e.Property(emp => emp.ProvidentFundEmployerPercent).HasPrecision(5, 2);
@@ -4701,8 +4746,54 @@ public class AccountingDbContext : DbContext
     /// <summary>แถว audit ที่รอประทับตอน commit — ผูกกับธุรกรรมที่บันทึก (TransactionId) · แถวของธุรกรรมอื่น (ถูกทิ้งโดยไม่ rollback ผ่าน EF) = ทิ้ง</summary>
     private readonly List<(Guid TxId, Models.Entities.AuditLog Row)> _deferredAudit = new();
 
+    /// <summary>รอบ 275 แพ็ก B (คำตัดสิน 275-B-6 (ข)): ประทับสำเนาผู้ถูกหัก ณ วันออก ให้ 50 ทวิ ที่เข้าสถานะออกแล้ว (หรือเปลี่ยนผู้ถูกหัก) —
+    /// จุดเดียวที่ทุกทางสร้าง/ออกใบผ่าน · ผู้ติดต่อที่ติดตามอยู่ก่อน (เพิ่มในคำขอเดียวกัน) ไม่งั้นอ่านจากฐาน (รวมที่ถูกลบ)</summary>
+    private void StampWhtPayeeSnapshots()
+    {
+        foreach (var e in ChangeTracker.Entries<Models.Entities.WithholdingTaxCert>())
+        {
+            if (e.State is not (EntityState.Added or EntityState.Modified)) continue;
+            var w = e.Entity;
+            if (!Accounting.Helpers.WhtPayeeSnapshot.ShouldStamp(w.Status)) continue;
+            var payeeChanged = e.State == EntityState.Modified && e.Property(x => x.PayeeContactId).IsModified;
+            if (w.PayeeSnapshotJson != null && !payeeChanged) continue;
+            var c = ChangeTracker.Entries<Models.Entities.Contact>().Select(x => x.Entity).FirstOrDefault(x => x.Id == w.PayeeContactId)
+                ?? Set<Models.Entities.Contact>().IgnoreQueryFilters().AsNoTracking()
+                    .FirstOrDefault(x => x.Id == w.PayeeContactId && x.CompanyId == w.CompanyId);
+            if (c != null) w.PayeeSnapshotJson = Accounting.Helpers.WhtPayeeSnapshot.Serialize(c);
+        }
+    }
+
+    /// <summary>รอบ 275 แพ็ก E (T4 H-2 (ข)): ผู้ติดต่อที่เส้นเงินเดือนเคยสร้างด้วยเลขขยะ (<see cref="Accounting.Helpers.PayrollJunkPayee"/>) ห้ามเป็นผู้ถูกหักของ
+    /// 50 ทวิ ภ.ง.ด.3/53 ระหว่างรอซ่อม — จุดเดียวที่ทุกทางสร้าง/ออก/เปลี่ยนผู้ถูกหักผ่าน (มือ · จากใบสำคัญจ่าย · อัตโนมัติ · ออกใหม่) ·
+    /// ตัดสินด้วย "เลขไม่ผ่าน 13 หลัก + mod-11" <b>และ</b> "มาจากเงินเดือน" (ผู้ขายจริงที่เลขไม่ครบไม่ถูกกันที่นี่ — ด่านเดิมของ 50 ทวิ ตัดสิน) ·
+    /// ใบที่ยกเลิก/ใบเงินเดือนเอง/แก้ช่องอื่นของใบเดิม ไม่ถูกตรวจ</summary>
+    private void GuardPayrollJunkPayees()
+    {
+        foreach (var e in ChangeTracker.Entries<Models.Entities.WithholdingTaxCert>())
+        {
+            var w = e.Entity;
+            if (w.TaxFormType is not (TaxType.WithholdingTax3 or TaxType.WithholdingTax53)) continue;
+            if (w.SourcePayrollRunId != null || w.Status == Models.DTOs.Tax.WithholdingTaxCertStatus.Voided) continue;
+            var touched = e.State == EntityState.Added
+                || (e.State == EntityState.Modified && (e.Property(x => x.PayeeContactId).IsModified || e.Property(x => x.Status).IsModified
+                    || e.Property(x => x.TaxFormType).IsModified));
+            if (!touched) continue;
+            var c = ChangeTracker.Entries<Models.Entities.Contact>().Select(x => x.Entity).FirstOrDefault(x => x.Id == w.PayeeContactId)
+                ?? Set<Models.Entities.Contact>().IgnoreQueryFilters().AsNoTracking()
+                    .FirstOrDefault(x => x.Id == w.PayeeContactId && x.CompanyId == w.CompanyId);
+            if (c == null || !Accounting.Helpers.PayrollJunkPayee.IsJunkTaxId(c.TaxId)) continue;
+            if (!Accounting.Helpers.PayrollJunkPayee.IsPayrollOrigin(this, w.CompanyId, c.Id)) continue;
+            throw new Accounting.Helpers.BusinessRuleException(Accounting.Helpers.PayrollJunkPayee.QuarantineMessage(c.Name, c.TaxId),
+                Accounting.Helpers.PayrollJunkPayee.QuarantineRuleCode, 422);
+        }
+    }
+
     public override int SaveChanges()
     {
+        GuardPayrollJunkPayees();
+        StampDocumentCreators();
+        StampWhtPayeeSnapshots();
         UpdateTimestamps();
         if (Accounting.Helpers.PolicyAcceptanceAppendOnly.Violation(ChangeTracker) is string evidenceBad)   // รอบ 219 ส่วน B ฝ่ายค้าน S4
             throw new InvalidOperationException(evidenceBad);
@@ -4751,8 +4842,32 @@ public class AccountingDbContext : DbContext
         }
     }
 
+    /// <summary>รอบ 276 (ฝ่ายค้าน LOW-10): ประทับ <see cref="Document.CreatedByUserId"/> ของเอกสารใหม่ — ตัวตัดสินเดียว
+    /// <c>Helpers/DocumentCreatorStamp.Resolve</c> (id ใน CreatedBy · ผู้ใช้ของคำขอที่ถูกจำกัด) · อีเมล (ทาง LINE) จับคู่สมาชิกบริษัทแบบตรงตัวหนึ่งคน</summary>
+    private void StampDocumentCreators()
+    {
+        foreach (var entry in ChangeTracker.Entries<Document>())
+        {
+            if (entry.State != EntityState.Added || entry.Entity.CreatedByUserId != null) continue;
+            var d = entry.Entity;
+            var id = Accounting.Helpers.DocumentCreatorStamp.Resolve(d.CreatedBy, DocumentRestrictedActorId);
+            if (id == null && Accounting.Helpers.DocumentCreatorStamp.LooksLikeEmail(d.CreatedBy))
+            {
+                var email = d.CreatedBy!.Trim();
+                var ids = Set<CompanyUser>().AsNoTracking()
+                    .Where(cu => cu.CompanyId == d.CompanyId && cu.User.Email == email)
+                    .Select(cu => cu.UserId).Take(2).ToList();
+                if (ids.Count == 1) id = ids[0];
+            }
+            d.CreatedByUserId = id;
+        }
+    }
+
     public override async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
     {
+        GuardPayrollJunkPayees();
+        StampDocumentCreators();
+        StampWhtPayeeSnapshots();
         UpdateTimestamps();
         if (Accounting.Helpers.PolicyAcceptanceAppendOnly.Violation(ChangeTracker) is string evidenceBad)   // รอบ 219 ส่วน B ฝ่ายค้าน S4
             throw new InvalidOperationException(evidenceBad);

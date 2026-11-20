@@ -106,9 +106,11 @@ public class RateLimitMiddleware
         {
             var userId = context.User?.FindFirst("sub")?.Value
                       ?? context.User?.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
-            clientKey = !string.IsNullOrEmpty(userId)
-                ? $"user:{userId}"
-                : $"key:{context.Request.Headers["X-Api-Key"].FirstOrDefault() ?? context.Request.Headers["X-Integration-Key"].FirstOrDefault() ?? context.Connection.RemoteIpAddress?.ToString() ?? "unknown"}";
+            // รอบ 275 แพ็ก A: แยกค่าออกจาก interpolated string (สตริงซ้อนในรู {} ทำให้ tools/using_check.py อ่าน `Key` เป็นชนิด) — พฤติกรรมเดิม
+            var apiKeyOrIp = context.Request.Headers["X-Api-Key"].FirstOrDefault()
+                ?? context.Request.Headers["X-Integration-Key"].FirstOrDefault()
+                ?? context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+            clientKey = !string.IsNullOrEmpty(userId) ? $"user:{userId}" : "key:" + apiKeyOrIp;
             limit = _authenticatedMaxPerMinute;
         }
         else

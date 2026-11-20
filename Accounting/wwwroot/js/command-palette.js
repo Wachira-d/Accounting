@@ -16,19 +16,26 @@
 
   // Static commands — สามารถ extend ได้จากภายนอกผ่าน window.CmdPalette.register()
   const staticCommands = [
-    { id: 'nav-dashboard', label: 'ไปหน้าหลัก (Dashboard)', icon: '🏠', keys: 'dashboard หน้าหลัก home', action: () => location.href = ((localStorage.getItem('uiMode') || 'simple') === 'advanced' ? '/app.html' : '/simple.html') },
-    { id: 'nav-aging', label: 'รายงานอายุลูกหนี้/เจ้าหนี้', icon: '⏳', keys: 'aging ลูกหนี้ เจ้าหนี้', action: () => location.href = '/pages/aging.html' },
-    { id: 'nav-cash', label: 'จัดการเงินสด (PDC + Forecast + Bulk Pay)', icon: '🏦', keys: 'cash pdc forecast เช็ค เงินสด', action: () => location.href = '/pages/cash-management.html' },
-    { id: 'nav-mobile', label: 'รับเงินสดด่วน (Mobile)', icon: '📱', keys: 'mobile receipt รับเงิน', action: () => location.href = '/pages/mobile-receipt.html' },
-    { id: 'nav-docs', label: 'เอกสารทั้งหมด', icon: '📄', keys: 'documents เอกสาร invoice receipt', action: () => location.href = '/pages/documents.html' },
-    { id: 'nav-payroll', label: 'เงินเดือน + ภ.ง.ด.1', icon: '👥', keys: 'payroll salary เงินเดือน', action: () => location.href = '/pages/payroll.html' },
-    { id: 'nav-bank', label: 'กระทบยอดธนาคาร', icon: '🏛️', keys: 'bank reconcile กระทบยอด', action: () => location.href = '/pages/bank.html' },
-    { id: 'nav-tax', label: 'ภาษี & รายงานสรรพากร', icon: '🧾', keys: 'tax ภาษี ภพ.30 ภงด', action: () => location.href = '/pages/tax.html' },
-    { id: 'nav-reports', label: 'รายงานการเงิน', icon: '📊', keys: 'reports งบ balance sheet pnl กำไร', action: () => location.href = '/pages/reports.html' },
-    { id: 'act-new-invoice', label: '+ สร้างใบแจ้งหนี้ใหม่', icon: '📝', keys: 'new invoice ใหม่ ใบแจ้งหนี้', action: () => location.href = '/pages/documents.html?openCreate=revenue&type=Invoice' },
-    { id: 'act-new-expense', label: '+ บันทึกค่าใช้จ่าย', icon: '💸', keys: 'new expense ค่าใช้จ่าย', action: () => location.href = '/pages/documents.html?openCreate=expense&type=Expense' },
-    { id: 'act-new-pv', label: '+ สร้างใบสำคัญจ่าย', icon: '💵', keys: 'new pv payment voucher จ่าย', action: () => location.href = '/pages/documents.html?openCreate=expense&type=PaymentVoucher' },
+    // รอบ 277: `menu` = id เมนูของปลายทาง — ซ่อนเมื่อไม่มีสิทธิ์ (Layout.hasMenuAccess · เซิร์ฟเวอร์ตัดสิน) · "ไปหน้าหลัก" = หน้าแรกที่ผู้ใช้เข้าได้ (Layout.landingUrl)
+    { id: 'nav-dashboard', menu: 'dashboard', label: 'ไปหน้าหลัก (Dashboard)', icon: '🏠', keys: 'dashboard หน้าหลัก home', action: () => location.href = (window.Layout && Layout.landingUrl ? Layout.landingUrl() : '/simple.html') },
+    { id: 'nav-aging', menu: 'aging', label: 'รายงานอายุลูกหนี้/เจ้าหนี้', icon: '⏳', keys: 'aging ลูกหนี้ เจ้าหนี้', action: () => location.href = '/pages/aging.html' },
+    { id: 'nav-cash', menu: 'cash-management', label: 'จัดการเงินสด (PDC + Forecast + Bulk Pay)', icon: '🏦', keys: 'cash pdc forecast เช็ค เงินสด', action: () => location.href = '/pages/cash-management.html' },
+    { id: 'nav-mobile', menu: 'mobile-receipt', label: 'รับเงินสดด่วน (Mobile)', icon: '📱', keys: 'mobile receipt รับเงิน', action: () => location.href = '/pages/mobile-receipt.html' },
+    { id: 'nav-docs', menu: 'documents', label: 'เอกสารทั้งหมด', icon: '📄', keys: 'documents เอกสาร invoice receipt', action: () => location.href = '/pages/documents.html' },
+    { id: 'nav-payroll', menu: 'payroll', label: 'เงินเดือน + ภ.ง.ด.1', icon: '👥', keys: 'payroll salary เงินเดือน', action: () => location.href = '/pages/payroll.html' },
+    { id: 'nav-bank', menu: 'bank', label: 'กระทบยอดธนาคาร', icon: '🏛️', keys: 'bank reconcile กระทบยอด', action: () => location.href = '/pages/bank.html' },
+    { id: 'nav-tax', menu: 'tax', label: 'ภาษี & รายงานสรรพากร', icon: '🧾', keys: 'tax ภาษี ภพ.30 ภงด', action: () => location.href = '/pages/tax.html' },
+    { id: 'nav-reports', menu: 'reports', label: 'รายงานการเงิน', icon: '📊', keys: 'reports งบ balance sheet pnl กำไร', action: () => location.href = '/pages/reports.html' },
+    { id: 'act-new-invoice', menu: 'documents', label: '+ สร้างใบแจ้งหนี้ใหม่', icon: '📝', keys: 'new invoice ใหม่ ใบแจ้งหนี้', action: () => location.href = '/pages/documents.html?openCreate=revenue&type=Invoice' },
+    { id: 'act-new-expense', menu: 'expense-docs', label: '+ บันทึกค่าใช้จ่าย', icon: '💸', keys: 'new expense ค่าใช้จ่าย', action: () => location.href = '/pages/documents.html?openCreate=expense&type=Expense' },
+    { id: 'act-new-pv', menu: 'expense-docs', label: '+ สร้างใบสำคัญจ่าย', icon: '💵', keys: 'new pv payment voucher จ่าย', action: () => location.href = '/pages/documents.html?openCreate=expense&type=PaymentVoucher' },
   ];
+  /** คำสั่ง static ที่ผู้ใช้มีสิทธิ์เมนูปลายทาง (สิทธิ์อาจมาถึงหลังโหลดสคริปต์ ⇒ คำนวณใหม่ทุกครั้งที่เปิด) */
+  function allowedStatic() {
+    const L = window.Layout;
+    if (!L || typeof L.hasMenuAccess !== 'function') return staticCommands;
+    return staticCommands.filter(c => !c.menu || L.hasMenuAccess(c.menu));
+  }
 
   function getRecents() {
     try { return JSON.parse(localStorage.getItem(RECENTS_KEY) || '[]'); } catch { return []; }
@@ -76,7 +83,7 @@
     });
     return out;
   }
-  let allCommands = [...staticCommands, ...navCommands()];
+  let allCommands = [...allowedStatic(), ...navCommands()];
   let selectedIdx = 0;
   let visibleCommands = [];
 
@@ -89,6 +96,7 @@
       inputEl.addEventListener('keydown', onKey);
       overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
     }
+    allCommands = [...allowedStatic(), ...navCommands(), ...allCommands.filter(c => c._external)];
     overlay.style.display = 'flex';
     inputEl.value = '';
     selectedIdx = 0;
@@ -244,7 +252,7 @@
     open, close,
     register(cmds) {
       if (!Array.isArray(cmds)) cmds = [cmds];
-      for (const c of cmds) if (c.id && c.label && c.action) allCommands.push(c);
+      for (const c of cmds) if (c.id && c.label && c.action) { c._external = true; allCommands.push(c); }
     }
   };
 })();

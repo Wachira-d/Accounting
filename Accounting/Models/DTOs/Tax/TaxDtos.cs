@@ -113,7 +113,9 @@ public record UpdateTaxReportLineRequest(
     decimal? TaxRate,
     decimal? TaxAmount,
     string? Description,
-    bool? Excluded = null);
+    bool? Excluded = null,
+    // รอบ 275 แพ็ก B (T2 M5): เหตุผลเมื่อติ๊กบรรทัดที่ระบบตัดออก (ยังไม่มี 50 ทวิ ที่ออกแล้ว ฯลฯ) กลับเข้ายอด — บังคับ · ลง audit
+    string? IncludeReason = null);
 
 public record PullableDocumentDto(
     Guid Id,
@@ -156,7 +158,9 @@ public record PullableDocumentListResponse(
 
 /// <summary>รอบ 269 ชุดสอง H1 — ร่างรายงานภาษีที่ล้าสมัย (อ่านอย่างเดียว · แทนการลบ-สร้างใหม่อัตโนมัติ) · ป้ายงวด พ.ศ. + ข้อความจาก server</summary>
 public record StaleDraftReportRow(Guid ReportId, string TaxType, int Year, int Month, string PeriodLabel,
-    int AddedDocuments, int RemovedDocuments, int ChangedDocuments, string? Message, string RuleCode);
+    int AddedDocuments, int RemovedDocuments, int ChangedDocuments, string? Message, string RuleCode,
+    // รอบ 275 แพ็ก B: ปุ่ม "สร้างใหม่" ใช้ได้ไหม (ภ.ง.ด.1 รุ่นเก่าสร้างใหม่ไม่ได้ — ข้อความบอกทางไปต่อแทน) · server ตัดสิน
+    bool CanRegenerate = true);
 
 /// <summary>รอบ 269 — รายงาน ภ.พ.30 ที่บันทึกไว้ซึ่งยอดขาย 0%/ยกเว้นต่างจากการคำนวณสด (กติกาเจ้าของการขาย) · อ่านอย่างเดียว ·
 /// <paramref name="PeriodLabel"/> = "ดด/พ.ศ." คำนวณที่ server · <paramref name="SuggestedAction"/> = Regenerate / ConsiderAmendedFiling ·
@@ -218,7 +222,18 @@ public record TaxReportLineResponse(
     /// <para>เซิร์ฟเวอร์คำนวณจาก <c>Helpers/VatReportLineKind</c> — หน้าเว็บ<b>แสดง
     /// อย่างเดียว</b> ห้ามจำแนกจาก <c>IncomeTypeCode</c> เอง (เดิม tax.html มีสำเนา
     /// กติกา 2 ชุด ซึ่งเป็นทางที่รหัสใหม่หลุดออกจากการจัดฝั่งโดยไม่มีอะไรฟ้อง)</para></summary>
-    string Side = "output");
+    string Side = "output",
+    // ── รอบ 275 แพ็ก B (T2 H2 · M5) — server ตัดสิน หน้าเว็บแสดงอย่างเดียว ──
+    /// <summary>หนังสือรับรอง 50 ทวิ ที่บรรทัดนี้มาจาก (null = ไม่ได้มาจากทะเบียน)</summary>
+    Guid? WhtCertId = null,
+    /// <summary>คำอธิบายแก้ไม่ได้ (คำนำหน้าของระบบ / มาจาก 50 ทวิ)</summary>
+    bool DescriptionLocked = false,
+    /// <summary>ยอดเงินได้/อัตรา/ภาษีแก้ไม่ได้ (มาจาก 50 ทวิ — แก้ที่ใบแล้วสร้างใหม่)</summary>
+    bool AmountsLocked = false,
+    /// <summary>ติ๊กกลับเข้ายอดต้องระบุเหตุผล (แถวที่ระบบตัดออก)</summary>
+    bool IncludeNeedsReason = false,
+    /// <summary>เหตุผลของการล็อก (tooltip)</summary>
+    string? LockReason = null);
 
 /// <summary>รอบ 270 (ฝ่ายค้าน M3 · คำตัดสิน 270-2-5): เอกสารจาก OCR ที่อนุมัติแล้วซึ่งเป็นใบกำกับ VAT 0% ทั้งใบ และกระดาษไม่บอกอัตราศูนย์ — อ่านอย่างเดียว
 /// (ระบบไม่แก้เอง) · <see cref="HowToFix"/> = ทางไปต่อจากเซิร์ฟเวอร์ · <see cref="PeriodFiled"/> = งวด ภ.พ.30 ของใบนั้นยื่นแล้ว</summary>

@@ -22,16 +22,17 @@ public class RolePermissionService : IRolePermissionService
         _permissions = permissions;
     }
 
-    /// <summary>รอบ 201 ทีม GW (A-GW10): เมนูที่ผู้ใช้ไม่มีสิทธิ์ตามตาราง <see cref="Accounting.Helpers.PaymentGatewayPermissionScope.MenuPermissionKeys"/> —
+    /// <summary>เมนูที่ผู้ใช้ไม่มีสิทธิ์ตามตาราง <see cref="Accounting.Helpers.MenuPermissionMap.Keys"/> (รอบ 277 · เดิมรอบ 201 GW เฉพาะหน้ารับชำระ) —
     /// ด่านเดียวกับ endpoint ของหน้านั้น (<see cref="IPermissionService.HasPermissionAsync"/>) · ไม่มีตัวตรวจสิทธิ์ = ไม่ตัด (ด่านจริงอยู่ที่ API)</summary>
     private async Task<List<string>?> PermissionDeniedMenuIdsAsync(Guid companyId, Guid userId)
     {
         if (_permissions == null) return null;
-        var denied = new List<string>();
-        foreach (var (menuId, key) in Accounting.Helpers.PaymentGatewayPermissionScope.MenuPermissionKeys)
-            if (!await _permissions.HasPermissionAsync(companyId, userId, key))
-                denied.Add(menuId);
-        return denied.Count == 0 ? null : denied;
+        return await Accounting.Helpers.MenuPermissionMap.DeniedMenuIdsAsync(key => _permissions.HasPermissionAsync(companyId, userId, key),
+            async () =>
+            {
+                var v = await Accounting.Helpers.DocumentPermissionHelper.VisibleDirectionsAsync(_permissions, companyId, userId);
+                return (v.Revenue, v.Purchase);
+            });
     }
 
     public async Task<List<CompanyRoleResponse>> GetRolesAsync(Guid companyId, Guid userId)
@@ -88,7 +89,10 @@ public class RolePermissionService : IRolePermissionService
             Icon = request.Icon ?? "👤",
             IsSystemRole = false,
             SortOrder = maxSort + 1,
-            CreatedBy = userId.ToString()
+            CreatedBy = userId.ToString(),
+            // รอบ 276 — เห็นเฉพาะของตัวเอง ⇒ เฉพาะร่างด้วย (คำตัดสิน 276-2)
+            OwnDocumentsOnly = request.OwnDocumentsOnly,
+            DraftDocumentsOnly = request.DraftDocumentsOnly || request.OwnDocumentsOnly,
         };
 
         if (request.AllowedMenuIds?.Count > 0)
@@ -135,6 +139,23 @@ public class RolePermissionService : IRolePermissionService
         if (request.Color != null) role.Color = request.Color;
         if (request.Icon != null) role.Icon = request.Icon;
         if (request.SortOrder.HasValue) role.SortOrder = request.SortOrder.Value;
+        // รอบ 276 — ค่าจำกัดเอกสารของบทบาท (null = ไม่เปลี่ยน · เห็นเฉพาะของตัวเอง ⇒ เฉพาะร่างด้วย) + audit
+        if (request.OwnDocumentsOnly.HasValue || request.DraftDocumentsOnly.HasValue)
+        {
+            var before = new { role.OwnDocumentsOnly, role.DraftDocumentsOnly };
+            if (request.OwnDocumentsOnly is bool own) role.OwnDocumentsOnly = own;
+            if (request.DraftDocumentsOnly is bool draft) role.DraftDocumentsOnly = draft;
+            if (role.OwnDocumentsOnly) role.DraftDocumentsOnly = true;
+            if (before.OwnDocumentsOnly != role.OwnDocumentsOnly || before.DraftDocumentsOnly != role.DraftDocumentsOnly)
+                _db.AddChainedAuditLog(new AuditLog
+                {
+                    CompanyId = companyId, UserId = userId, Action = AuditAction.Update,
+                    EntityType = nameof(CompanyRole), EntityId = role.Id.ToString(),
+                    OldValues = System.Text.Json.JsonSerializer.Serialize(before),
+                    NewValues = System.Text.Json.JsonSerializer.Serialize(new { action = "document-restriction", role.OwnDocumentsOnly, role.DraftDocumentsOnly }),
+                    Timestamp = DateTime.UtcNow,
+                });
+        }
         role.UpdatedBy = userId.ToString();
 
         if (request.AllowedMenuIds != null)
@@ -222,6 +243,12 @@ public class RolePermissionService : IRolePermissionService
                 .FirstOrDefaultAsync(r => r.Id == request.RoleId && r.CompanyId == companyId)
                 ?? throw new KeyNotFoundException("ไม่พบ Role");
             cu.CompanyRoleId = role.Id;
+            // รอบ 277 — ผูกบทบาทกำหนดเองให้สมาชิกที่ "ยังไม่มีสิทธิ์" = เจ้าของตั้งสิทธิ์แล้ว (ปลดสถานะ) · ถอดบทบาท (RoleId ว่าง) ไม่ปลด
+            if (cu.AccessPending)
+            {
+                cu.AccessPending = false;
+                _db.AddChainedAuditLog(Accounting.Helpers.PendingMemberAccess.GrantAudit(companyId, actingUserId, targetUserId, role.Name));
+            }
         }
 
         await _db.SaveChangesAsync();
@@ -264,6 +291,15 @@ public class RolePermissionService : IRolePermissionService
                 isPlatformAdmin);
         }
 
+        // รอบ 277 (งาน B · คำตัดสิน 277-4): ตอบรับคำเชิญที่ผู้เชิญไม่ได้เลือกบทบาท ⇒ ยังไม่มีสิทธิ์ใด ๆ จนกว่าเจ้าของตั้งบทบาท ·
+        // ด่านจริงอยู่ที่ TenantAccessMiddleware (ทุก API ของบริษัท) — ตรงนี้บอกหน้าเว็บให้แสดงหน้าต้อนรับแทนเมนู
+        if (cu.AccessPending)
+        {
+            var companyName = await _db.Companies.AsNoTracking().Where(c => c.Id == companyId).Select(c => c.Name).FirstOrDefaultAsync();
+            return new MyPermissionsResponse(cu.Role.ToString(), false, new List<string>(), ownerHiddenMenuIds, isPlatformAdmin,
+                AccessPending: true, AccessPendingNotice: Accounting.Helpers.PendingMemberAccess.Notice(companyName));
+        }
+
         if (cu.CompanyRoleId == null)
         {
             // No custom CompanyRole assigned → backwards-compat fallback.
@@ -276,7 +312,8 @@ public class RolePermissionService : IRolePermissionService
                 new List<string> { "*" },
                 ownerHiddenMenuIds,
                 isPlatformAdmin,
-                await PermissionDeniedMenuIdsAsync(companyId, userId));
+                await PermissionDeniedMenuIdsAsync(companyId, userId),
+                await MyDocumentRestrictionAsync(companyId, userId));
         }
 
         // CompanyRole assigned → STRICT mode. An empty granted list now
@@ -294,7 +331,16 @@ public class RolePermissionService : IRolePermissionService
             .FirstOrDefaultAsync() ?? cu.Role.ToString();
 
         return new MyPermissionsResponse(roleName, false, perms, ownerHiddenMenuIds, isPlatformAdmin,
-            await PermissionDeniedMenuIdsAsync(companyId, userId));
+            await PermissionDeniedMenuIdsAsync(companyId, userId), await MyDocumentRestrictionAsync(companyId, userId));
+    }
+
+    /// <summary>รอบ 276 — ค่าจำกัดเอกสารที่มีผลของผู้ใช้ที่ล็อกอิน (ตัวอ่านเดียวกับด่าน <c>DocumentRestrictionFilter</c>) · null = ไม่ถูกจำกัด</summary>
+    private async Task<MyDocumentRestriction?> MyDocumentRestrictionAsync(Guid companyId, Guid userId)
+    {
+        var r = (await Accounting.Helpers.DocumentRestrictionGuard.ForUserAsync(_db, companyId, userId)).Restriction;
+        if (!r.IsRestricted) return null;
+        return new MyDocumentRestriction(r.OwnDocumentsOnly, r.DraftOnly, Accounting.Helpers.DocumentRestrictionPolicy.Notice(r)!,
+            r.OwnDocumentsOnly ? Accounting.Helpers.DocumentRestrictionPolicy.OwnScopeMenuIds.ToList() : null);
     }
 
     /// <summary>รอบ 200 ทีม R (G2-08): ต้องเป็นเจ้าของ (ด่านเดียวกับสร้าง/แก้ Role อื่น) + idempotent — เดิมสมาชิกคนไหนก็กดได้
@@ -402,7 +448,9 @@ public class RolePermissionService : IRolePermissionService
             r.IsSystemRole,
             r.SortOrder,
             memberCount,
-            r.Permissions.Where(p => p.CanAccess).Select(p => p.MenuItemId).ToList());
+            r.Permissions.Where(p => p.CanAccess).Select(p => p.MenuItemId).ToList(),
+            r.OwnDocumentsOnly,
+            r.DraftDocumentsOnly);
     }
 
     private static List<string> GetAllMenuItemIds()

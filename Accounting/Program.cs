@@ -156,10 +156,11 @@ else
 // รอบ 274 (บั๊ก production — เลขผู้เสียภาษีพนักงานผิดจำนวนหลักหลังตั้ง ENCRYPTION_KEY): คีย์เดิมสำหรับ<b>ถอด</b>คอลัมน์ PII ·
 // ENCRYPTION_KEY_PREVIOUS (หมุนคีย์ env→env) + config เดิมที่ env ชนะ + dev key (แถวที่บันทึกก่อนตั้งคีย์) · เขียนด้วยคีย์ปัจจุบันเสมอ ·
 // PiiReprotectJob ย้ายแถวไปคีย์ปัจจุบัน (JobLock · audit)
-Accounting.Helpers.EncryptedColumnConverter.ConfigurePreviousKeys(Accounting.Helpers.EncryptionKeyResolver.PiiPreviousKeys(
+// รอบ 275 แพ็ก A (T4 H-1/M-4): ห่วงโซ่ตัวเดียวกับ SecretProtector (DecryptKeyChain) — รับ ENCRYPTION_KEY_PREVIOUS หลายบรรทัด + _2…_9
+Accounting.Helpers.EncryptedColumnConverter.ConfigurePreviousKeys(Accounting.Helpers.EncryptionKeyResolver.DecryptKeyChain(
     string.IsNullOrWhiteSpace(encryptionKey) ? Accounting.Helpers.EncryptionKeyResolver.DevKey : encryptionKey,
-    Environment.GetEnvironmentVariable(Accounting.Helpers.EncryptionKeyResolver.PreviousKeyEnv) ?? builder.Configuration["Security:EncryptionKeyPrevious"],
-    Environment.GetEnvironmentVariable("ENCRYPTION_KEY"), builder.Configuration["Security:EncryptionKey"]));
+    Environment.GetEnvironmentVariable, builder.Configuration["Security:EncryptionKey"],
+    builder.Configuration[Accounting.Helpers.SecretProtector.PreviousKeyConfigKey]));
 // ฝ่ายค้าน 267-P2 M1: กุญแจ HMAC ของรหัสยืนยันอีเมลผู้ลงนาม — แหล่งเดียวกับข้างบน · production ไม่มีคีย์/เป็น dev key = boot ไม่ขึ้น
 Accounting.Helpers.CustomerSignRule.ConfigureOtpKey(Accounting.Helpers.EncryptionKeyResolver.RequireUsable(
     Accounting.Helpers.EncryptionKeyResolver.Resolve(Environment.GetEnvironmentVariable("ENCRYPTION_KEY"), builder.Configuration["Security:EncryptionKey"]),
@@ -350,6 +351,8 @@ builder.Services.AddScoped<Accounting.Services.Implementations.Import.IDuplicate
                            Accounting.Services.Implementations.Import.DuplicateDetector>();
 builder.Services.AddScoped<Accounting.Services.Interfaces.ILineBotService, Accounting.Services.Implementations.LineBotService>();
 builder.Services.AddScoped<ICompanyService, CompanyService>();
+// รอบ 277 — ฝั่งตอบรับคำเชิญเข้าบริษัทตัวเดียว (ลิงก์อีเมล · ล็อกอินแล้วกดรับ · สมัครด้วยฟอร์ม/SSO ผ่านลิงก์)
+builder.Services.AddScoped<Accounting.Services.Implementations.ICompanyInvitationService, CompanyInvitationService>();
 builder.Services.AddScoped<ISubscriptionService, SubscriptionService>();
 // ออกเอกสารค่าบริการผ่าน tenant ของผู้ให้บริการเอง (ACCOUNT_STRUCTURE §6.1) —
 // ต้อง register ก่อน SaasBillingDocumentService ที่รับตัวนี้เป็น optional dependency
@@ -571,6 +574,7 @@ builder.Services.AddHostedService<Accounting.Services.Background.AutopilotJob>()
 builder.Services.AddScoped<IFixedAssetService, FixedAssetService>();
 builder.Services.AddScoped<IFinancialManagementService, FinancialManagementService>();
 builder.Services.AddScoped<IApprovalService, ApprovalService>();
+builder.Services.AddScoped<IDocumentApprovalRequestService, DocumentApprovalRequestService>();   // รอบ 276 — ส่งขออนุมัติ/ถอน/ตีกลับ/คิว
 builder.Services.AddScoped<IFileAttachmentService, FileAttachmentService>();
 // ที่เก็บไฟล์กลาง (Local | S3-compatible) + ด่าน fail-fast ใน production — ทีม FS 2026-11-02 · erp-review/2026-11-02/FILE_STORAGE_AUDIT.md
 Accounting.Services.Storage.FileStorageRegistration.AddFileStorage(builder.Services, builder.Configuration, builder.Environment);
@@ -963,6 +967,9 @@ builder.Services.AddControllers(options =>
         // F1 — Cross-cutting tenant guard: ทุก route ที่มี {companyId}
         // ต้องผ่าน membership check ก่อนเข้า action.
         options.Filters.Add<Accounting.Middleware.TenantGuardFilter>();
+        // รอบ 276 — ผู้ใช้ "เห็นเฉพาะเอกสารที่ตัวเองสร้าง" / "เฉพาะร่าง": รายการทางเข้าที่อนุญาต + ตัวกรองแถว Documents + id ⇒ 404
+        // (ต้องอยู่หลัง TenantGuard — ตรวจสมาชิกก่อน แล้วค่อยตัดขอบเขต)
+        options.Filters.Add<Accounting.Filters.DocumentRestrictionFilter>();
         // F-05 — บังคับ CanRead/CanWrite/CanDelete ของ API key. ค่าเหล่านี้ถูก
         // เขียนลง HttpContext.Items โดย ApiKeyMiddleware มาตลอดแต่ไม่มีใครอ่าน
         // ⇒ คีย์ "อ่านอย่างเดียว" เขียน/ลบได้เต็ม. ต้องเป็น global filter เพราะ
@@ -2227,6 +2234,22 @@ try
     catch (Exception ex)
     {
         app.Logger.LogError(ex, "รอบ 245: ย้าย Contact.LineUserId เป็นปลายทาง legacy ไม่สำเร็จ — จะลองใหม่ตอนบูตถัดไป");
+    }
+
+    // รอบ 275 แพ็ก A ฝ่ายค้าน MED-4: กุญแจ HMAC (แฮชสลิปภาษี · OTP ผู้ลงนาม) จากเมล็ดถาวรใน SiteSettings — ไม่หมุนตาม ENCRYPTION_KEY ·
+    // MED-2: ตรวจลายนิ้วมือคีย์ของเครื่องนี้ตั้งแต่บูต (ส่ง heartbeat + ตั้งประตูเขียนค่าเข้ารหัส) — ล้ม = LogError (ไม่ล้มแอป · งานเบื้องหลังตรวจซ้ำทุก 5 นาที)
+    try
+    {
+        var bootSecrets = scope.ServiceProvider.GetRequiredService<Accounting.Helpers.ISecretProtector>();
+        var hmacSeed = await Accounting.Helpers.HmacSeedBootstrap.EnsureAsync(db, bootSecrets,
+            Accounting.Helpers.EncryptionKeyResolver.CurrentOrDev(app.Configuration["Security:EncryptionKey"]), app.Logger);
+        Accounting.Helpers.HmacSeedBootstrap.Configure(hmacSeed);
+        await Accounting.Services.Implementations.Security.EncryptionKeyFingerprintService.CheckKeyAsync(db, bootSecrets, persist: true, app.Logger,
+            applyWriteGuard: true);
+    }
+    catch (Exception ex)
+    {
+        app.Logger.LogError(ex, "รอบ 275: ตั้งกุญแจ HMAC ถาวร/ตรวจลายนิ้วมือคีย์ตอนบูตไม่สำเร็จ — ใช้กุญแจจาก ENCRYPTION_KEY ไปก่อน · งานเบื้องหลังตรวจคีย์ซ้ำ");
     }
 
     // รอบ 252 ฝ่ายค้าน WP-09 รอบสอง L7: ล้างเลขบุคคลธรรมดาใน feedback ตรวจของจริง 50 ทวิ ที่เก็บก่อนรอบนี้ (ครั้งเดียว · marker OneShotDataFixes) ·

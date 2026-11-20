@@ -123,4 +123,10 @@ public class TaxReportLine : BaseEntity
     /// filed return (e.g. prohibited input VAT, an over-age invoice). The
     /// line is kept for audit but excluded from OutputVat/InputVat/NetVat.</summary>
     public bool IsExcluded { get; set; } = false;
+
+    /// <summary>รอบ 275 แพ็ก B (T2 H2): หนังสือรับรอง 50 ทวิ ที่บรรทัดนี้มาจาก (null = ไม่ได้มาจากทะเบียน 50 ทวิ: แถวเตือนเอกสารยังไม่ออกใบ ·
+    /// JE ล้วน · ภ.พ.30/ภ.พ.36 · บรรทัดที่สร้างก่อนรอบ 275) — คีย์ของลายเซ็นร่างล้าสมัย/ด่านทะเบียนตอนยื่น
+    /// (<c>Helpers/TaxReportDraftFreshness.WhtSignature</c>) · เดิมบรรทัดอ้างได้แค่ <c>DocumentId</c> ⇒ ใบมือ "ยังไม่ผูก" มองไม่เห็นเลย
+    /// และเปลี่ยนการผูก A→B ยอดเท่ากันได้ลายเซ็นเดิม</summary>
+    public Guid? WhtCertId { get; set; }
 }

@@ -122,6 +122,8 @@ public class NotificationEngine : INotificationEngine
                 foreach (var r in recipients)
                 {
                     if (r.UserId.HasValue && context.ActorUserId == r.UserId) continue;
+                    // รอบ 276 (ฝ่ายค้าน MED-3): ผู้ "เห็นเฉพาะเอกสารที่ตัวเองสร้าง" ได้เฉพาะเรื่องของใบตัวเอง
+                    if (r.UserId is Guid ru && !await DocumentRestrictionGuard.MayReceiveAsync(_db, companyId, ru, context.EntityType, context.EntityId)) continue;
                     var key = r.UserId?.ToString()
                         ?? (r.LineUserId != null ? $"line:{r.LineUserId}" : null)
                         ?? (r.Email != null ? $"email:{r.Email}" : null);
@@ -268,6 +270,18 @@ public class NotificationEngine : INotificationEngine
                         .ToList();
                 }
 
+                case NotificationRecipientRoles.DocumentApprover:   // รอบ 276: ผู้อนุมัติเอกสารได้ (ตัวตัดสินเดียว DocumentApproverDirectory · ไม่รวมผู้ "เฉพาะร่าง")
+                {
+                    DocumentType? docType = null;
+                    if (ctx.EntityType == "Document" && ctx.EntityId is Guid docId)
+                        docType = await _db.Documents.AsNoTracking().IgnoreQueryFilters()
+                            .Where(d => d.Id == docId && d.CompanyId == companyId)
+                            .Select(d => (DocumentType?)d.DocumentType).FirstOrDefaultAsync();
+                    return (await DocumentApproverDirectory.ResolveAsync(_db, new PermissionService(_db), companyId, docType))
+                        .Select(uid => new Recipient(uid, null, null, null))
+                        .ToList();
+                }
+
                 case NotificationRecipientRoles.HrAdmin:
                     return (await ResolveByPermissionOrRoleAsync(companyId, PermissionKeys.HrAdmin, UserRole.SystemAdmin))
                         .Select(uid => new Recipient(uid, null, null, null))
@@ -339,6 +353,8 @@ public class NotificationEngine : INotificationEngine
             .FirstOrDefaultAsync();
         if (user == null) return;
         if (context.ActorUserId == recipientUserId) return;   // ไม่ notify ตัวเอง
+        // รอบ 276 (ฝ่ายค้าน MED-3): ผู้รับระบุตัวที่ "เห็นเฉพาะของตัวเอง" ได้เฉพาะเรื่องของใบตัวเอง (ตัวตัดสินเดียวกับเส้นบทบาท)
+        if (!await DocumentRestrictionGuard.MayReceiveAsync(_db, companyId, recipientUserId, context.EntityType, context.EntityId)) return;
 
         var pp = await _db.NotificationPreferences.AsNoTracking()
             .FirstOrDefaultAsync(p => p.CompanyId == companyId && p.EventKey == eventKey
@@ -357,6 +373,7 @@ public class NotificationEngine : INotificationEngine
 
     private async Task DispatchSystemAsync(Guid userId, Guid companyId, NotificationContext context)
     {
+        context = context.ForPersonalChannel();   // รอบ 276 LOW-9: หมายเหตุอิสระเฉพาะช่องส่วนตัว
         var n = new Notification
         {
             UserId = userId,
@@ -380,6 +397,7 @@ public class NotificationEngine : INotificationEngine
 
     private async Task DispatchEmailAsync(Guid companyId, string toEmail, string? toName, NotificationContext context, string? link)
     {
+        context = context.ForPersonalChannel();   // รอบ 276 LOW-9: หมายเหตุอิสระเฉพาะช่องส่วนตัว
         try
         {
             var s = await _db.Set<CompanySettings>().AsNoTracking().FirstOrDefaultAsync(x => x.CompanyId == companyId);
@@ -412,7 +430,8 @@ public class NotificationEngine : INotificationEngine
             {
                 EnableSsl = s.EmailSmtpUseSsl,
                 Credentials = !string.IsNullOrEmpty(s.EmailSmtpUsername)
-                    ? new NetworkCredential(s.EmailSmtpUsername, _secrets.Unprotect(s.EmailSmtpPassword) ?? "")
+                    // รอบ 275 แพ็ก A (T4 M-5): รหัสผ่านตั้งไว้แต่ถอดไม่ได้ ⇒ throw พร้อมเหตุ (LogError ข้างล่าง) ไม่ยืนยันตัวตนด้วยรหัสว่าง
+                    ? new NetworkCredential(s.EmailSmtpUsername, SecretUse.Optional(_secrets, "รหัสผ่าน SMTP ของบริษัท", s.EmailSmtpPassword) ?? "")
                     : null,
             };
             await client.SendMailAsync(msg);
@@ -426,6 +445,7 @@ public class NotificationEngine : INotificationEngine
     /// แจ้งเตือนรายเหตุการณ์<b>ไม่นับ</b>โควตาข้อความช่องกลาง (§10) · ล้ม ⇒ log พร้อมเหตุ (ช่องอื่นของผู้รับยังทำงานตามเดิม)</summary>
     private async Task DispatchLineAsync(Guid companyId, string lineUserId, NotificationContext context, string eventKey, string? link)
     {
+        context = context.ForPersonalChannel();   // รอบ 276 LOW-9: หมายเหตุอิสระเฉพาะช่องส่วนตัว
         // รอบ 232 (232-Notify): ผู้รับตามบทบาทของบริษัทนี้ = สมาชิกของผู้เช่า (TenantMember) ผ่านบอทกลางที่เขาผูกเอง — ตัดสินก่อนยิงทุกครั้ง
         var route = NotificationAudiencePolicy.LineRoute(NotificationAudiencePolicy.Classify(eventKey), LineOaKind.NextAccOa, LineTargetKind.TenantMember, companyOaConfigured: false);
         if (!route.Allowed)

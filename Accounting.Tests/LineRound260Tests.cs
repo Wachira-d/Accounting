@@ -74,7 +74,7 @@ public class LineRound260Tests
         Assert.Null(LineFailureAlert.AlertKind(LineFailureAlert.Threshold - 1, false));
         var ids = Enum.GetValues<LineFailureAlert.Kind>().Select(LineFailureAlert.KindId).ToList();
         Assert.Equal(ids.Count, ids.Distinct().Count());
-        Assert.Contains("ENCRYPTION_KEY", LineFailureAlert.Message(LineFailureAlert.Kind.Decrypt, 1, null));
+        Assert.Contains("คีย์เข้ารหัสเดียวกัน", LineFailureAlert.Message(LineFailureAlert.Kind.Decrypt, 1, null));
         Assert.DoesNotContain("ผูกใหม่", LineFailureAlert.DecryptRetryNote);
         // M2: ข้อความของแต่ละทางเข้าที่เข้าคิวอัตโนมัติ
         Assert.Contains("สลิป", LineFailureAlert.EnqueueMessage(LineFailureAlert.EnqueueSource.PayrollPaid, "มี.ค.", null));

@@ -131,13 +131,21 @@ public class QuotaGateService : IQuotaGate
         return limit;
     }
 
+    private async Task<int> UsersUsedAsync(Guid companyId, CancellationToken ct)
+    {
+        var now = DateTime.UtcNow;
+        return await _db.CompanyUsers.CountAsync(cu => cu.CompanyId == companyId, ct)
+            + await _db.CompanyInvitations.CountAsync(i => i.CompanyId == companyId && i.Status == InvitationStatus.Pending
+                && i.ExpiresAt > now && !i.IsDeleted, ct);
+    }
+
     public async Task<int> UsedAsync(Guid companyId, string resourceKey, CancellationToken ct = default) => resourceKey switch
     {
         // เว็บ: ทุกสถานะที่ยังไม่ลบ (ร่าง/ปิดปรับปรุง/ระงับ นับด้วย — §C: ไม่นับร่าง = สร้างร่างได้ไม่จำกัด)
         QuotaResources.CmsSites => await _db.Sites.CountAsync(s => s.CompanyId == companyId && !s.IsDeleted, ct),
-        // ที่นั่ง: สมาชิก + คำเชิญค้าง (สูตรเดียวกับด่านเดิมของ CompanyService.AddUserAsync — คำเชิญที่ยังไม่ตอบกินที่นั่งแล้ว)
-        QuotaResources.Users => await _db.CompanyUsers.CountAsync(cu => cu.CompanyId == companyId, ct)
-            + await _db.CompanyInvitations.CountAsync(i => i.CompanyId == companyId && i.Status == InvitationStatus.Pending && !i.IsDeleted, ct),
+        // ที่นั่ง: สมาชิก + คำเชิญค้างที่ยังไม่หมดอายุ (คำเชิญที่ยังไม่ตอบกินที่นั่งแล้ว) · รอบ 277: คำเชิญหมดอายุไม่ล็อกที่นั่งถาวร
+        // (นิยามเดียว CompanyInvitationPolicy.HoldsSeat — Pending และ ExpiresAt > now · ส่งซ้ำ = ต้องมีที่นั่งว่างอีกครั้ง)
+        QuotaResources.Users => await UsersUsedAsync(companyId, ct),
         QuotaResources.LodgingProperties => await _db.LodgingProperties.CountAsync(p => p.CompanyId == companyId && !p.IsDeleted, ct),
         QuotaResources.StorageGb => (int)Math.Min(int.MaxValue,
             (((await Subscriptions.GetStorageStatusAsync(companyId))?.UsedBytes ?? 0L) + QuotaResources.BytesPerGb - 1) / QuotaResources.BytesPerGb),
