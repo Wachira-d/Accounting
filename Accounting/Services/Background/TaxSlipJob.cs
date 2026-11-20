@@ -26,12 +26,16 @@ public class TaxSlipJob : BackgroundService
                 var db = scope.ServiceProvider.GetRequiredService<AccountingDbContext>();
                 var intake = scope.ServiceProvider.GetRequiredService<Accounting.Services.Implementations.TaxSlipIntakeService>();
                 var review = scope.ServiceProvider.GetRequiredService<Accounting.Services.Implementations.TaxSlipReviewService>();
+                var requests = scope.ServiceProvider.GetRequiredService<Accounting.Services.Implementations.TaxPaymentRequestService>();
                 await Accounting.Helpers.JobLock.RunExclusiveAsync(db, Accounting.Helpers.AdvisoryLockKey.BackgroundJob, nameof(TaxSlipJob), async () =>
                 {
                     var now = DateTime.UtcNow;
                     var moved = await intake.RunHeldAsync(now, stoppingToken);
                     var reviewed = await review.ReviewAsync(now, stoppingToken);
-                    if (moved + reviewed > 0) _logger.LogInformation("TaxSlipJob: สลิปที่พัก/รอเลือก {Moved} · ตรวจทานนำส่ง {Reviewed}", moved, reviewed);
+                    // รอบ 275 แพ็ก D (M7): ใบขอชำระที่ Control Code หมดอายุ ⇒ Expired + แจ้งกลุ่ม
+                    var expired = await requests.ExpireDueAsync(now, stoppingToken);
+                    if (moved + reviewed + expired > 0)
+                        _logger.LogInformation("TaxSlipJob: สลิปที่พัก/รอเลือก/อายุคิว {Moved} · ตรวจทานนำส่ง {Reviewed} · ใบขอชำระหมดอายุ {Expired}", moved, reviewed, expired);
                 }, _logger, ct: stoppingToken);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)

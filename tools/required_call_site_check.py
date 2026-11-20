@@ -21333,7 +21333,7 @@ RULES += [
 _R272F_WHY = "รอบ 272 ฝ่ายค้าน (review-272): "
 RULES += [
     dict(file=_R272_REMIT, method="ApplyAsync", must=["ExpectedAmount: c.Amount"],
-         must_re=[r"if\s*\(\s*slip\.Amount\s+is\s+decimal\s+paid\s*&&", r"if\s*\(\s*slip\.SenderUnverified\s*&&\s*a\.StaffUserId\s*==\s*null\s*\)\s*throw\b"],
+         must_re=[r"if\s*\(\s*\(slip\.Amount\s*\?\?\s*staffRead\)\s+is\s+not\s+decimal\s+paid\s*\)\s*throw\b", r"if\s*\(\s*Math\.Round\(paid,[^)]*\)\s*!=\s*Math\.Round\(total,[^)]*\)\)\s*throw\b", r"if\s*\(\s*slip\.SenderUnverified\s*&&\s*a\.StaffUserId\s*==\s*null\s*\)\s*throw\b"],
          why=_R272F_WHY + "H1 ยอดสลิป = ผู้สมัคร + ยอดสมุดสดต้องเท่ายอดที่คาด (RemitAsync ปฏิเสธ) · H3 อีเมลยืนยันผู้ส่งไม่ได้ ⇒ ไม่บันทึกเอง"),
     dict(file="Services/Implementations/StatutoryRemittanceService.cs", method="RemitAsync",
          must_re=[r"if\s*\(\s*req\.ExpectedAmount\s+is\s+decimal\s+expected", r"isPp36\s*&&\s*ownTx"],
@@ -21346,11 +21346,11 @@ RULES += [
     dict(file=_R272_CONSENT, method="ApprovePowerOfAttorneyAsync", must=["AddChainedAuditLog(", "NotifyClientPoaAsync("],
          must_re=[r"if\s*\(\s*row\.GrantedByUserId\s*==\s*approverUserId\s*\)\s*throw\b"],
          why=_R272F_WHY + "M4 ผู้อนุมัติหนังสือมอบอำนาจต้องไม่ใช่ผู้แนบ + แจ้งเจ้าของลูกค้า"),
-    dict(file=_R272_INTAKE, method="StaffRemitAsync", must=["cu.CompanyId == cand.CompanyId", "PermissionKeys.TaxFile"],
+    dict(file=_R272_INTAKE, method="StaffRemitAsync", must=["StaffIsClientTaxFilerAsync(cand.CompanyId, staffUserId, ct)"],   # รอบ 275 D: ตัวตรวจย้ายเป็นเมธอดกลาง (บันทึกเอง/ผูก ใช้ร่วม)
          why=_R272F_WHY + "M4 สิทธิ์ผู้ยื่นภาษีของลูกค้าตรวจกับบริษัทที่บันทึกลงจริง"),
     dict(file=_R272_INTAKE, method="HandleChoicePostbackAsync", must=["NotifyStaffAsync(", "_channel.GroupBindingAsync("],
          why=_R272F_WHY + "M5 ปุ่มล้ม ⇒ คิวพนักงานจริง + กระดิ่ง · L1 กลุ่มต้องยังผูก"),
-    dict(file=_R272_INTAKE, method="PurgeClosedFilesAsync", must=["s.StatutoryRemittanceId == null", "s.Status == Statuses.Rejected"],
+    dict(file=_R272_INTAKE, method="PurgeClosedFilesAsync", must=["s.StatutoryRemittanceId == null", "Statuses.ClosedUnrecorded.Contains(s.Status)"],
          why=_R272F_WHY + "M6 ลบเฉพาะไฟล์ของแถวที่ปิดโดยไม่บันทึก (legal hold/รอตัดสิน ไม่แตะ)"),
     dict(file="Services/Background/LineChatSlipRetentionJob.cs", method="ExecuteAsync", must=["TaxSlipIntakeService.PurgeClosedFilesAsync(", "JobLock.RunExclusiveAsync("],
          why=_R272F_WHY + "M6 ลบไฟล์สลิปภาษีในงาน retention เดิม (JobLock)"),
@@ -21542,6 +21542,78 @@ RULES += [
          must=["EmployeeRecordEdit.CipherInputProblem(citizenRaw", "EmployeeRecordEdit.CipherInputProblem(row.GetValueOrDefault("],
          before=[("CipherInputProblem(citizenRaw", "new Employee")],
          why=_R274_10_WHY + "นำเข้าไฟล์ (เช่นไฟล์ที่ส่งออกไว้ช่วงถอดรหัสไม่ได้): ciphertext ⇒ แถวล้มพร้อมเหตุ"),
+]
+
+# ── รอบ 275 แพ็ก D (โต๊ะสลิปภาษี · ผลตรวจ T1 · คำตัดสินแทนเจ้าของ 4.3 · 275-D-1…4 ใน erp-review/2026-09-29/DECISIONS.md) ──
+_R275D_WHY = "รอบ 275 แพ็ก D: "
+_R275D_REMIT = "Services/Implementations/TaxSlipRemitService.cs"
+_R275D_INTAKE = "Services/Implementations/TaxSlipIntakeService.cs"
+_R275D_STAT = "Services/Implementations/StatutoryRemittanceService.cs"
+_R275D_REQ = "Services/Implementations/TaxPaymentRequestService.cs"
+RULES += [
+    dict(file=_R275D_REMIT, method="ApplyAsync", must=["LockedSlipAsync(", "_remit.RemitAsync("],
+         before=[("LockedSlipAsync(", "_remit.RemitAsync(")],
+         why=_R275D_WHY + "H2 ตรวจสถานะแถวสลิปใต้ล็อกด้วยค่าที่อ่านใหม่จากฐาน ก่อนเขียนบัญชีลูกค้า"),
+    dict(file=_R275D_REMIT, method="LockedSlipAsync", must=["ExecuteSqlInterpolatedAsync(", "ReloadAsync(", "TaxSlipIntakeService.Statuses.Open.Contains(slip.Status)"],
+         before=[("ReloadAsync(", "TaxSlipIntakeService.Statuses.Open.Contains(slip.Status)")],
+         why=_R275D_WHY + "H2/L9 ค่าใน tracker คือค่าก่อนล็อก — Reload แล้วปฏิเสธทุกสถานะที่ไม่ใช่รอตัดสิน (รวม Rejected)"),
+    dict(file=_R275D_REMIT, method="LinkAsync",
+         must=["LockedSlipAsync(", "TaxSlipDeskRule.LinkProblem(", "_consent.CheckForWriteAsync(", "TaxPaymentRequestService.CloseOnRemitAsync(", "AddChainedAuditLog(",
+               "a.AllowedClients.Contains(a.ClientCompanyId)", "r.CompanyId == a.ClientCompanyId"],
+         before=[("TaxSlipDeskRule.LinkProblem(", "_files.UploadBytesAsync("), ("_consent.CheckForWriteAsync(", "_files.UploadBytesAsync(")],
+         why=_R275D_WHY + "H1 ผูกสลิปกับรายการนำส่งที่มีอยู่: ยอดตรง + ความยินยอมใต้ล็อก ก่อนแนบ · บริษัทในชุดที่ช่องทางผูก · audit"),
+    dict(file=_R275D_STAT, method="VoidRemittanceAsync", must=["TaxSlipRemitService.ReleaseOnVoidAsync("],
+         before=[("TaxSlipRemitService.ReleaseOnVoidAsync(", "await _db.SaveChangesAsync()")],
+         why=_R275D_WHY + "M1 ยกเลิกรายการนำส่ง ⇒ สลิปกลับคิว + ใบขอชำระกลับเปิด ในธุรกรรมเดียวกัน"),
+    dict(file=_R275D_STAT, method="RemitAsync", must=["TaxPaymentRequestService.CloseOnRemitAsync("],
+         why=_R275D_WHY + "M7 นำส่งงวดใดก็ตาม (มือ/สลิป) ⇒ ใบขอชำระที่เปิดของงวดนั้นปิด"),
+    dict(file=_R275D_INTAKE, method="ApplyAndReplyAsync",
+         must=["_db.ChangeTracker.Clear()", "Statuses.Open.Contains(fresh.Status)", "cardReason"],
+         before=[("Statuses.Open.Contains(fresh.Status)", "fresh.Status = Statuses.ToStaff"),
+                 ("throw new BusinessRuleException(", "fresh.Status = Statuses.ToStaff")],
+         why=_R275D_WHY + "H2 ทางล้มห้ามเขียนทับแถวที่บันทึก/ปิดแล้ว · M2 พนักงานกดล้ม = 409 ไม่ส่งการ์ด · L2 ข้อความ exception ทั่วไปไม่ถึงกลุ่ม"),
+    dict(file=_R275D_INTAKE, method="StaffRemitAsync", must=["TaxSlipDeskRule.CandidateBlocker(", "ApplyAndReplyAsync("],
+         before=[("TaxSlipDeskRule.CandidateBlocker(", "ApplyAndReplyAsync(")],
+         why=_R275D_WHY + "M2 ผู้สมัครที่ล้มแน่นอน ⇒ 409 ก่อนเรียกผู้เขียน"),
+    dict(file=_R275D_INTAKE, method="StaffIsClientTaxFilerAsync", must=["cu.CompanyId == clientId", "PermissionKeys.TaxFile", "_perms.HasPermissionAsync(clientId"],
+         why=_R275D_WHY + "(คงกติกา 272 M4) สิทธิ์ผู้ยื่นภาษีของลูกค้าตรวจกับบริษัทที่บันทึกลงจริง — ตัวกลางของบันทึก 1 คลิก/บันทึกเอง/ผูก"),
+    dict(file=_R275D_INTAKE, method="StaffQueueAsync", must=["TaxSlipDeskRule.CandidateBlocker("],
+         why=_R275D_WHY + "M2 server ตัดสินว่าปุ่มไหนกดได้ (หน้าแสดง)"),
+    dict(file=_R275D_INTAKE, method="StaffManualRemitAsync",
+         must=["AllowedClientsAsync(", "TaxSlipDeskRule.ManualProblem(", "ApplyAndReplyAsync(", "manualEntry: true"],
+         before=[("TaxSlipDeskRule.ManualProblem(", "ApplyAndReplyAsync(")],
+         why=_R275D_WHY + "H1 (คำตัดสิน 4.3) บันทึกเอง: บริษัทในชุดที่ผูก · ยอดเท่าสลิปทุกสตางค์ · ผ่านผู้เขียนตัวเดียว"),
+    dict(file=_R275D_INTAKE, method="StaffRejectAsync", must=["ExecuteUpdateAsync(", "Statuses.Open.Contains(s.Status)"], forbid=["_storage.DeleteAsync("],
+         why=_R275D_WHY + "M4 ไม่บันทึก ⇒ ไม่ลบไฟล์ทันที (ลบเมื่อครบระยะเก็บ) · H2 ปิดแบบ atomic ไม่เขียนทับบันทึกแล้ว"),
+    dict(file=_R275D_INTAKE, method="HandleChoicePostbackAsync", must=["s.Status == Statuses.AwaitingChoice", "ExecuteUpdateAsync("],
+         why=_R275D_WHY + "H2 claim ปุ่มเลือกแบบ atomic — สองคนกดคนละปุ่มพร้อมกัน ชนะคนเดียว"),
+    dict(file=_R275D_INTAKE, method="RunHeldAsync", must=["RereadAsync(", "AgeOpenRowsAsync("],
+         why=_R275D_WHY + "M4/L5 อ่านใหม่เมื่อ OCR กลับมา/แถวค้าง · อายุคิวพนักงาน"),
+    dict(file=_R275D_INTAKE, method="AgeOpenRowsAsync", must=["TaxSlipOpenAge.Decide("],
+         why=_R275D_WHY + "M4 ตัวตัดสินอายุคิวตัวเดียว"),
+    dict(file=_R275D_INTAKE, method="PurgeClosedFilesAsync", must=["Statuses.ClosedUnrecorded.Contains("],
+         why=_R275D_WHY + "M4 งานลบไฟล์ครอบทุกแถวที่ปิดโดยไม่บันทึก"),
+    dict(file=_R275D_INTAKE, method="IntakeAsync", must=["TaxSlipChannelRedirect.ShouldReprocess("],
+         before=[("TaxSlipChannelRedirect.ShouldReprocess(", "Card.Duplicate")],
+         why=_R275D_WHY + "M3 ไฟล์เดิมจากกลุ่มที่ถูก ⇒ ประมวลแถวเดิมใหม่ ไม่ใช่ได้รับไปแล้ว"),
+    dict(file="Helpers/LineChatSlipRule.cs", method="Decide", must=["GovPaymentSlip.Identify(reading).IsGovernment"],
+         before=[("GovPaymentSlip.Identify(reading).IsGovernment", "matches.Add(")],
+         why=_R275D_WHY + "M6 เส้น 260 ไม่จับคู่สลิปจ่ายหน่วยงานรัฐกับใบแจ้งหนี้ด้วยยอด"),
+    dict(file=_R275D_REQ, method="CreateAsync", must=["TaxPaymentRequestLifecycle.Open"],
+         why=_R275D_WHY + "M7 ใบที่เปิดได้ทีละใบต่อ (บริษัท·แบบ·งวด)"),
+    dict(file=_R275D_REQ, method="CancelAsync", must=["NotifyClosedAsync("],
+         why=_R275D_WHY + "M7 ยกเลิกใบขอชำระ ⇒ แจ้งกลุ่มว่าอย่าชำระตามใบนี้"),
+    dict(file="Services/Background/TaxSlipJob.cs", method="ExecuteAsync", must=["ExpireDueAsync("],
+         why=_R275D_WHY + "M7 ใบขอชำระหมดอายุตาม Control Code"),
+    dict(file="Services/Implementations/TaxSlipReviewService.cs", method="ReviewAsync", must=["verdict == r.ReviewStatus", "recheckFrom"],
+         why=_R275D_WHY + "M8 ผลไม่พบเงินออกตรวจซ้ำได้ ไม่ประทับถาวร · ผลเดิมไม่กระดิ่งซ้ำ"),
+]
+REVIEWER_CASES += [
+    ("R275D-1", "LockedSlipAsync", "await _db.Entry(slip).ReloadAsync(ct);", "", True),                       # กลับไปเชื่อ tracker (H2)
+    ("R275D-2", "ApplyAndReplyAsync", "if (!Statuses.Open.Contains(fresh.Status))", "if (false)", True),         # ทางล้มเขียนทับ Remitted
+    ("R275D-3", "StaffRejectAsync", "var n = await _db.TaxSlipEvidences", "await _storage.DeleteAsync(\"x\", ct); var n = await _db.TaxSlipEvidences", True),   # ลบไฟล์ทันที (M4)
+    ("R275D-4", "VoidRemittanceAsync", "var released = await TaxSlipRemitService.ReleaseOnVoidAsync(_db, rec, why, DateTime.UtcNow);", "var released = (Slips: 0, Requests: 0);", True),
+    ("R275D-5", "StaffRemitAsync", "if (TaxSlipDeskRule.CandidateBlocker(", "if (TaxSlipDeskRule.ManualProblem(", True),
 ]
 
 

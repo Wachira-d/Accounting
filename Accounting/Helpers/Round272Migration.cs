@@ -220,5 +220,8 @@ public static class Round272Migration
         """ALTER TABLE "ProviderAutomationConsents" ADD COLUMN IF NOT EXISTS "ApprovedAt" timestamp without time zone NULL;""",
         """ALTER TABLE "TaxSlipEvidences" ADD COLUMN IF NOT EXISTS "SenderUnverified" boolean NOT NULL DEFAULT false;""",
         """ALTER TABLE "TaxSlipEvidences" ADD COLUMN IF NOT EXISTS "FilePurgedAt" timestamp without time zone NULL;""",
+        // รอบ 275 แพ็ก D (M4): เตือนแถวที่รอพนักงานนาน (TaxSlipOpenAge)
+        """ALTER TABLE "TaxSlipEvidences" ADD COLUMN IF NOT EXISTS "StaffRemindedAt" timestamp without time zone NULL;""",
+        // รอบ 275 แพ็ก D (M4 · ข้อมูลที่ persist ผิดอยู่แล้ว): แถว "ไม่บันทึก" ก่อนรอบนี้ถูกลบไฟล์ทันทีตอนปฏิเสธ — ไม่มีอะไรให้ซ่อม (ไฟล์หายแล้ว · แถวประทับ FilePurgedAt ตรงความจริง)
     };
 }
