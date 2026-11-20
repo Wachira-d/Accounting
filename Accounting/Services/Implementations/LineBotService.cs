@@ -284,9 +284,16 @@ public class LineBotService : ILineBotService
         }
         await _db.SaveChangesAsync();
 
+        // รอบ 276 (ฝ่ายค้าน HIGH-1): ผู้ใช้ที่ถูกจำกัดเอกสาร — คำสั่ง LINE เดิน policy เดียวกับเว็บ (DocumentRestrictionPolicy.LineCommandDenied) ·
+        // ขอบเขตของคำขอ (ตัวกรองแถว + ผู้สร้าง + ห้ามอนุมัติอัตโนมัติ) ตั้งบน DbContext ตัวเดียวกับที่ทุก service ในคำขอนี้ใช้
+        var lineScope = await DocumentRestrictionGuard.ForUserAsync(_db, companyId, user.Id);
+        DocumentRestrictionGuard.ApplyScope(_db, user.Id, lineScope);
+
         // 3) "ดูยอด" — quick this-month summary.
         if (msg.StartsWith("ดูยอด") || msg.Equals("ยอด", StringComparison.OrdinalIgnoreCase))
         {
+            if (DocumentRestrictionPolicy.LineCommandDenied(lineScope.Restriction, DocumentRestrictionPolicy.LineCommand.CompanySummary) is string noSummary)
+                return noSummary;
             var now = DateTime.UtcNow;
             var from = new DateTime(now.Year, now.Month, 1);
             var lines = await Accounting.Helpers.ReportableJournal.WherePeriodActivity(_db.JournalEntryLines)
@@ -321,6 +328,8 @@ public class LineBotService : ILineBotService
         if (msg.StartsWith("ถาม", StringComparison.OrdinalIgnoreCase)
          || msg.StartsWith("ask ", StringComparison.OrdinalIgnoreCase))
         {
+            if (DocumentRestrictionPolicy.LineCommandDenied(lineScope.Restriction, DocumentRestrictionPolicy.LineCommand.AskAssistant) is string noAsk)
+                return noAsk;
             var q = msg.StartsWith("ถาม") ? msg[3..].Trim() : msg[4..].Trim();
             if (string.IsNullOrWhiteSpace(q))
                 return "พิมพ์: ถาม {คำถาม}\nเช่น \"ถาม ค่าน้ำมันรถส่งของลงหมวดไหน\"";
@@ -375,8 +384,11 @@ public class LineBotService : ILineBotService
                 // ด่านสิทธิ์เดียวกับเว็บ/postback — เดิมเส้นข้อความนี้อนุมัติอัตโนมัติให้ทุกสมาชิก
                 // (Viewer พิมพ์ "จ่าย xxx 99999" ⇒ Expense Approved + JE) และ `catch {}` กลืน error
                 // แล้วตอบ ✅ พร้อมเลข DRAFT- (ERP_REVIEW G-03)
-                if (!await DocumentPermissionHelper.CanApproveAsync(_perms, companyId, user.Id, Models.Enums.DocumentType.Expense))
-                    return $"📝 บันทึกเป็นฉบับร่างแล้ว {vendor} {amount.Value:N2} ฿ — สิทธิ์ของคุณอนุมัติไม่ได้ แจ้งเจ้าของกิจการ/นักบัญชีอนุมัติในระบบ";
+                // รอบ 276: ตัวตัดสินเดียวกับปุ่มอนุมัติ + ค่าจำกัดเอกสาร (ผู้ "เฉพาะร่าง" ได้ร่างเสมอ — ส่งขออนุมัติที่เว็บ)
+                if (!await DocumentApproverDirectory.MayApproveAsync(_db, _perms, companyId, user.Id, Models.Enums.DocumentType.Expense))
+                    return lineScope.Restriction.IsRestricted
+                        ? $"📝 บันทึกเป็นฉบับร่างแล้ว {vendor} {amount.Value:N2} ฿ — บัญชีของคุณสร้างได้เฉพาะร่าง เปิดใบในเว็บแล้วกด \"ส่งขออนุมัติ\""
+                        : $"📝 บันทึกเป็นฉบับร่างแล้ว {vendor} {amount.Value:N2} ฿ — สิทธิ์ของคุณอนุมัติไม่ได้ แจ้งเจ้าของกิจการ/นักบัญชีอนุมัติในระบบ";
                 try
                 {
                     // ฝ่ายค้านรอบ 201 รอบสาม P2-2: แชทไม่มีหน้าจอรับทราบ (Unattended · คำตัดสินข้อ 110 — §65 ตรีไม่บล็อก) แต่มีคนพิมพ์อยู่ ⇒ ข้อสังเกตที่ผ่านต้องตอบกลับในแชท
@@ -482,6 +494,10 @@ public class LineBotService : ILineBotService
                 "📷 ได้รับรูปแล้ว — แต่คุณมีหลายบริษัท กรุณาเลือกบริษัทก่อน แล้วส่งรูปอีกครั้ง:",
                 c => c.Name);
         }
+
+        // รอบ 276 (ฝ่ายค้าน HIGH-1/LOW-12): OCR ทาง LINE = สร้างร่างของผู้ส่งเอง (ผู้สร้าง = ผู้ใช้คนนี้ · ไม่อนุมัติอัตโนมัติ) — สอดคล้องกับ OCR บนเว็บ
+        var imageScope = await DocumentRestrictionGuard.ForUserAsync(_db, companyId, user.Id);
+        DocumentRestrictionGuard.ApplyScope(_db, user.Id, imageScope);
 
         // ── 1) ดึงไฟล์จริงจาก LINE Content API ──
         var token = (await _nextAccLine.GetAsync()).AccessToken;
@@ -616,9 +632,11 @@ public class LineBotService : ILineBotService
 
         // สร้างเอกสารสำเร็จ → ส่งการ์ด Flex พร้อมปุ่ม "อนุมัติเลย" กดจบในแชท
         // (ส่งไม่ผ่านก็ตกลงมาใช้ข้อความธรรมดา — ผู้ใช้ต้องได้คำตอบเสมอ)
-        if (result.CreatedDocumentId.HasValue && !result.IsDuplicate
+        if (result.CreatedDocumentId.HasValue && !result.IsDuplicate && !imageScope.Restriction.DraftOnly
             && await TrySendCreatedDocFlexAsync(lineUserId, result))
             return null;
+        if (result.CreatedDocumentId.HasValue && imageScope.Restriction.DraftOnly)
+            return (await BuildScanReplyAsync(companyId, result)) + "\n📝 บัญชีของคุณสร้างได้เฉพาะร่าง — เปิดใบในเว็บแล้วกด \"ส่งขออนุมัติ\"";
 
         return await BuildScanReplyAsync(companyId, result);
     }
@@ -814,6 +832,11 @@ public class LineBotService : ILineBotService
         var membership = await _db.CompanyUsers.AsNoTracking()
             .FirstOrDefaultAsync(cu => cu.CompanyId == doc.CompanyId && cu.UserId == user.Id);
         if (membership == null) return "❌ คุณไม่มีสิทธิ์ในบริษัทของเอกสารนี้";
+        // รอบ 276 (ฝ่ายค้าน HIGH-1): ผู้ถูกจำกัดเอกสารกดอนุมัติในแชตไม่ได้ (policy เดียวกับเว็บ) — ตอบเหตุ
+        var postbackScope = await DocumentRestrictionGuard.ForUserAsync(_db, doc.CompanyId, user.Id);
+        DocumentRestrictionGuard.ApplyScope(_db, user.Id, postbackScope);   // webhook หนึ่งคำขออาจมีหลายเหตุการณ์ — ตั้งใหม่ทุกครั้ง
+        if (DocumentRestrictionPolicy.LineCommandDenied(postbackScope.Restriction, DocumentRestrictionPolicy.LineCommand.Approve) is string noApprove)
+            return noApprove;
 
         // ด่านสิทธิ์ตัวเดียวกับเว็บ (DocumentPermissionHelper) — เดิมเป็นสำเนามือของ role list
         // ⇒ custom role ที่ได้ Document.Approve อนุมัติในเว็บได้แต่ LINE ปฏิเสธ · Accountant ที่ถูก

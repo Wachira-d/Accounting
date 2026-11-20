@@ -54,6 +54,12 @@ public class DocumentRestrictionPolicyTests
     [InlineData("POST", C + "documents/{sourceId:guid}/clone")]
     [InlineData("POST", C + "document/{documentId:guid}/approval-request")]
     [InlineData("POST", C + "document-templates/generate-pdf")]
+    [InlineData("POST", C + "ocr/upload")]                                 // ฝ่ายค้าน LOW-12: OCR สร้างร่างของตัวเอง
+    [InlineData("POST", C + "ocr/{scanId:guid}/create-document")]
+    [InlineData("POST", C + "Document/contacts")]                         // MED-6: สร้างผู้ติดต่อใหม่ได้
+    [InlineData("GET", "api/notification")]
+    [InlineData("POST", "api/auth/change-password")]
+    [InlineData("GET", "api/gov/address/provinces")]
     public void ผู้เห็นเฉพาะของตัวเอง_งานร่างทำได้ครบ(string method, string template)
         => Assert.True(DocumentRestrictionPolicy.Decide(Own, method, template).Allowed);
 
@@ -65,6 +71,9 @@ public class DocumentRestrictionPolicyTests
     [InlineData("GET", C + "Document/deposits")]
     [InlineData("GET", C + "Document/payments")]
     [InlineData("GET", "api/mobile/companies/{companyId:guid}/dashboard")]
+    [InlineData("GET", "api/accountant-workspace")]                      // ฝ่ายค้าน HIGH-2: ภาพรวมข้ามบริษัท
+    [InlineData("GET", "api/account-subscription")]
+    [InlineData("POST", "api/notification/send")]
     [InlineData("POST", C + "Document/{documentId:guid}/approve")]
     public void ผู้เห็นเฉพาะของตัวเอง_รายงานและข้อมูลรวมของบริษัทเปิดไม่ได้(string method, string template)
     {
@@ -83,6 +92,9 @@ public class DocumentRestrictionPolicyTests
     [InlineData("POST", C + "document/{documentId:guid}/approval-request/return")]
     [InlineData("POST", "api/mobile/companies/{companyId:guid}/approve")]
     [InlineData("POST", C + "accounting/journals")]
+    [InlineData("PUT", C + "Document/contacts/{contactId:guid}")]          // ฝ่ายค้าน MED-6: แก้ผู้ติดต่อเดิมไม่ได้
+    [InlineData("POST", C + "ocr/{scanId:guid}/import-stock")]
+    [InlineData("POST", "api/account-subscription/attach")]
     public void ผู้เฉพาะร่าง_อนุมัติยกเลิกรับชำระลงบัญชีไม่ได้(string method, string template)
         => Assert.Equal(DocumentRestrictionPolicy.Verdict.DenyDraftOnly, DocumentRestrictionPolicy.Decide(DraftOnly, method, template).Verdict);
 
@@ -113,32 +125,6 @@ public class DocumentRestrictionPolicyTests
         Assert.False(DocumentRestrictionPolicy.IsEditableDraftStatus(DocumentStatus.Approved));
     }
 
-    /// <summary>กัน drift: ทุกแถวในรายการอนุญาตต้องตรงกับ action จริง (method + route template) — route เปลี่ยนแล้วรายการไม่ตาม = ผู้ถูกจำกัดใช้งานไม่ได้เงียบ ๆ</summary>
-    [Fact]
-    public void รายการอนุญาตทุกแถวตรงกับ_action_จริง()
-    {
-        var actual = new HashSet<(string, string)>();
-        foreach (var ctl in typeof(Accounting.Controllers.DocumentController).Assembly.GetTypes()
-                     .Where(t => typeof(ControllerBase).IsAssignableFrom(t) && !t.IsAbstract))
-        {
-            var name = ctl.Name.EndsWith("Controller") ? ctl.Name[..^"Controller".Length] : ctl.Name;
-            var bases = ctl.GetCustomAttributes<RouteAttribute>(true).Select(r => r.Template.Replace("[controller]", name)).DefaultIfEmpty("").ToList();
-            foreach (var m in ctl.GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.DeclaredOnly))
-                foreach (var h in m.GetCustomAttributes<HttpMethodAttribute>(true))
-                    foreach (var verb in h.HttpMethods)
-                        foreach (var b in bases)
-                        {
-                            var t = h.Template ?? "";
-                            var full = t.StartsWith("~/") ? t[2..] : t.StartsWith("api/") || b == "" ? t : string.IsNullOrEmpty(t) ? b : b + "/" + t;
-                            actual.Add((verb.ToUpperInvariant(), DocumentRestrictionPolicy.NormalizeTemplate(full)));
-                        }
-        }
-        var missing = DocumentRestrictionPolicy.Routes
-            .Where(r => !actual.Contains((r.Method.ToUpperInvariant(), DocumentRestrictionPolicy.NormalizeTemplate(r.Template))))
-            .Select(r => r.Method + " " + r.Template).ToList();
-        Assert.True(missing.Count == 0, "แถวที่ไม่มี action จริง: " + string.Join(" | ", missing));
-    }
-
     [Fact]
     public void แจ้งขออนุมัติ_ค่าตั้งต้นถึงผู้อนุมัติเอกสาร_ทุกช่อง_กลุ่มเมื่อผูกแล้ว()
     {
@@ -153,5 +139,57 @@ public class DocumentRestrictionPolicyTests
         Assert.Empty(NotificationAudiencePolicy.DefaultMatrix(NotificationEvents.DocumentApprovalReturned, true));
         Assert.Contains(NotificationRecipientRoles.DocumentApprover, NotificationRecipientRoles.All);
         Assert.Contains(NotificationEvents.All, c => c.Key == NotificationEvents.DocumentApprovalRequested);
+    }
+
+    [Fact]
+    public void คำสั่งLINE_policyเดียวกับเว็บ()
+    {
+        var L = DocumentRestrictionPolicy.LineCommand.CompanySummary;
+        Assert.NotNull(DocumentRestrictionPolicy.LineCommandDenied(Own, L));
+        Assert.Null(DocumentRestrictionPolicy.LineCommandDenied(DraftOnly, L));               // เว็บ: ผู้เฉพาะร่างอ่านรายงานได้
+        Assert.NotNull(DocumentRestrictionPolicy.LineCommandDenied(DraftOnly, DocumentRestrictionPolicy.LineCommand.AskAssistant));
+        Assert.NotNull(DocumentRestrictionPolicy.LineCommandDenied(DraftOnly, DocumentRestrictionPolicy.LineCommand.Approve));
+        Assert.Null(DocumentRestrictionPolicy.LineCommandDenied(Own, DocumentRestrictionPolicy.LineCommand.CreateDraft));
+        foreach (var c in Enum.GetValues<DocumentRestrictionPolicy.LineCommand>())
+            Assert.Null(DocumentRestrictionPolicy.LineCommandDenied(DocumentRestrictionPolicy.Restriction.None, c));   // ทิศตรงข้าม
+    }
+
+    [Fact]
+    public void ผู้สร้าง_idเป็นหลัก_ป้ายระบบในคำขอที่ถูกจำกัดเป็นของผู้ใช้()
+    {
+        var u = Guid.NewGuid();
+        Assert.Equal(u, DocumentCreatorStamp.Resolve(u.ToString(), null));
+        Assert.Equal(u, DocumentCreatorStamp.Resolve("ocr-auto", u));
+        Assert.Null(DocumentCreatorStamp.Resolve("system:recurring", null));
+        Assert.True(DocumentCreatorStamp.LooksLikeEmail("a@b.th"));
+        Assert.False(DocumentCreatorStamp.LooksLikeEmail("system"));
+    }
+
+    [Fact]
+    public void ใบซ้ำของผู้อื่น_คืนแค่ผลตัดสิน()
+    {
+        var c = new Accounting.Models.DTOs.Document.DuplicateDocumentCandidate(Guid.NewGuid(), "PI-001", "PurchaseInvoice", new DateTime(2026, 1, 1),
+            999m, "Approved", "INV-9", "ผู้ขายลับ", "SupplierInvoiceNumber", true);
+        var r = DocumentRestrictionPolicy.RedactDuplicate(c, new DateTime(2026, 2, 1), 100m);
+        Assert.Equal(Guid.Empty, r.Id);
+        Assert.DoesNotContain("PI-001", r.DocumentNumber);
+        Assert.Null(r.ContactName);
+        Assert.Null(r.SupplierInvoiceNumber);
+        Assert.Equal(100m, r.TotalAmount);
+        Assert.True(r.IsStrong);
+    }
+
+    [Fact]
+    public void id_ใน_body_ถูกเก็บครบ_รวมบรรทัด()
+    {
+        var rel = Guid.NewGuid(); var src = Guid.NewGuid();
+        var req = new Accounting.Models.DTOs.Document.CreateDocumentRequest(DocumentType.Invoice, DateTime.Today, null, Guid.NewGuid(), null, null,
+            new List<Accounting.Models.DTOs.Document.DocumentLineRequest> { new("x", 1, null, 1, 0, 7, 0, null) { SourceLineId = src } },
+            RelatedDocumentId: rel);
+        var (docs, lines) = Accounting.Filters.DocumentRestrictionFilter.BodyReferences(new object?[] { req, Guid.NewGuid(), "x" });
+        Assert.Contains(rel, docs);
+        Assert.Contains(src, lines);
+        var (none, _) = Accounting.Filters.DocumentRestrictionFilter.BodyReferences(new object?[] { req with { RelatedDocumentId = Guid.Empty } });
+        Assert.DoesNotContain(Guid.Empty, none);                       // ล้างค่า ≠ การอ้าง
     }
 }

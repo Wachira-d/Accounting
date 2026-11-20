@@ -35,5 +35,21 @@ public static class Round276Migration
         """CREATE INDEX IF NOT EXISTS "IX_DocumentApprovalRequests_Company_Doc_Status" ON "DocumentApprovalRequests" ("CompanyId", "DocumentId", "Status");""",
         // ตัวกรองแถว "ของตัวเอง" อ่าน CreatedBy ต่อบริษัท — index บางส่วนไม่จำเป็น (ค่าว่างมีน้อย) · ทั้งคอลัมน์พอ
         """CREATE INDEX IF NOT EXISTS "IX_Documents_CompanyId_CreatedBy" ON "Documents" ("CompanyId", "CreatedBy");""",
+        // ฝ่ายค้าน LOW-10: ผู้สร้างเป็น id ผู้ใช้ + เติมแถวเก่าที่จับคู่ได้แน่นอน (CreatedBy = id สมาชิกของบริษัทนั้น · หรืออีเมลที่ตรงสมาชิกคนเดียว) — ทำซ้ำได้ (เฉพาะแถวที่ยัง null)
+        """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "CreatedByUserId" uuid NULL;""",
+        """CREATE INDEX IF NOT EXISTS "IX_Documents_CompanyId_CreatedByUserId" ON "Documents" ("CompanyId", "CreatedByUserId");""",
+        """
+        UPDATE "Documents" d SET "CreatedByUserId" = cu."UserId"
+        FROM "CompanyUsers" cu
+        WHERE d."CreatedByUserId" IS NULL
+          AND cu."CompanyId" = d."CompanyId" AND lower(d."CreatedBy") = cu."UserId"::text;
+        """,
+        """
+        UPDATE "Documents" d SET "CreatedByUserId" = m."UserId"
+        FROM (SELECT cu."CompanyId", u."Email", MIN(cu."UserId"::text)::uuid AS "UserId", COUNT(*) AS n
+              FROM "CompanyUsers" cu JOIN "Users" u ON u."Id" = cu."UserId" GROUP BY cu."CompanyId", u."Email") m
+        WHERE d."CreatedByUserId" IS NULL AND m.n = 1
+          AND m."CompanyId" = d."CompanyId" AND d."CreatedBy" = m."Email";
+        """,
     };
 }
