@@ -1632,6 +1632,8 @@ const API = {
       // รอบ 280: ช่องทางแจ้งคำขอ (กลุ่ม LINE/อีเมลของผู้ติดต่อ) · ส่งแจ้งอีกครั้ง
       getPartnerRequestChannels: (taxId, contactId) => API.get(`${base}/trading-partners/requests/channel-options?taxId=${encodeURIComponent(taxId || '')}${contactId ? '&contactId=' + encodeURIComponent(contactId) : ''}`),
       renotifyPartnerRequest: (id, d) => API.post(`${base}/trading-partners/requests/${encodeURIComponent(id)}/notify`, d),
+      // รอบ 280 ฝ่ายค้าน MED-1: เปิดคำขอที่ส่งถึงเลขของเรา (ต้องมีสิทธิ์ตั้งค่าบริษัท — ไม่ทำใน GET)
+      refreshIncomingPartnerRequests: () => API.post(`${base}/trading-partners/requests/incoming/refresh`),
       acceptPartner: (id) => API.post(`${base}/trading-partners/${encodeURIComponent(id)}/accept`),
       rejectPartner: (id, reason, blockRequester) => API.post(`${base}/trading-partners/${encodeURIComponent(id)}/reject`, { reason: reason || null, blockRequester: !!blockRequester }),
       suspendPartner: (id, reason) => API.post(`${base}/trading-partners/${encodeURIComponent(id)}/suspend`, { reason: reason || null }),

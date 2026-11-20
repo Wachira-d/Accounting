@@ -174,7 +174,7 @@ public class ContactLineGroupService : IContactLineGroupService
             if (req == null) return;   // อนุญาตไว้แล้ว
             var name = await _db.Companies.AsNoTracking().Where(c => c.Id == clientId).Select(c => c.Name).FirstOrDefaultAsync(ct);
             var baseUrl = await SystemBaseUrl.ResolveAsync(_db, null, ct);
-            var link = ProviderConsent.GrantLinkOrMenu(baseUrl, clientId);   // รอบ 279 (279-3): เมนูจริง (เดิม "ค่าบริการ ›" ไม่มีในระบบ)
+            var link = ProviderConsent.GroupGrantLinkOrMenu(baseUrl);   // รอบ 279 (279-3) เมนูจริง · รอบ 280 LOW-2: โพสต์เข้ากลุ่ม ⇒ ไม่มี id บริษัทลูกค้า
             var text = TaxSlipReplyCard.Text(TaxSlipReplyCard.Kind.BoundAskConsent, new TaxSlipReplyCard.Facts(CompanyName: name, Link: link), false);
             var r = await _line.TryPushContactTextAsync(providerId, NotifyEndpointKind.ScopeNextAcc, LineTargetKind.ContactGroup, groupId, TaxSlipReplyCard.Clean(text), Guid.NewGuid());
             if (!r.Ok) _logger.LogError("การ์ดขออนุญาตบันทึกสลิปภาษีหลังผูกกลุ่ม (บริษัท {Client}) ส่งไม่สำเร็จ: {Error}", clientId, r.Error);
@@ -239,6 +239,10 @@ public class ContactLineGroupService : IContactLineGroupService
     {
         var companyName = await _db.Companies.AsNoTracking().Where(c => c.Id == companyId).Select(c => c.Name).FirstOrDefaultAsync(ct);
         var contactIds = bound.Select(e => e.ContactId).Distinct().ToList();
+        // รอบ 280 (ฝ่ายค้าน LOW-2): ผู้ติดต่อหลายราย ⇒ ไม่เปิดเผยชื่อ/ความยินยอมรายผู้ติดต่อในกลุ่ม (ไม่อ่านสถานะความยินยอมเลย)
+        if (contactIds.Count > 1)
+            return LineGroupBindRule.Replies.StatusMulti(companyName, bound.FirstOrDefault()?.GroupNameSnapshot, contactIds.Count,
+                bound.SelectMany(e => NotifyTopics.Parse(e.TopicsJson) ?? Array.Empty<NotifyTopic>()).Distinct().OrderBy(t => (int)t).Select(NotifyTopics.Label).ToList());
         var names = await _db.Contacts.AsNoTracking().Where(c => c.CompanyId == companyId && contactIds.Contains(c.Id))
             .Select(c => new { c.Id, c.Name }).ToListAsync(ct);
         string? baseUrl = null;
@@ -255,7 +259,7 @@ public class ContactLineGroupService : IContactLineGroupService
                 if (ProviderConsent.NeedsClientAction(cs.State))
                 {
                     if (!baseLoaded) { baseUrl = await SystemBaseUrl.ResolveAsync(_db, null, ct); baseLoaded = true; }
-                    howTo = ProviderConsent.GrantLinkOrMenu(baseUrl, cs.ClientId);
+                    howTo = ProviderConsent.GroupGrantLinkOrMenu(baseUrl);   // รอบ 280 LOW-2: ข้อความในกลุ่มไม่มี id บริษัทลูกค้า
                     anyNeedsRequest = true;
                 }
             }

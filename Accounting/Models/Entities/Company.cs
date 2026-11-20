@@ -7,6 +7,9 @@ public class Company : BaseEntity
     public string Name { get; set; } = null!;
     public string? NameEn { get; set; }
     public string TaxId { get; set; } = null!;          // เลขผู้เสียภาษี 13 หลัก
+    /// <summary>รอบ 280 (ฝ่ายค้าน MED-1): เวลาที่ตั้ง/เปลี่ยน <see cref="TaxId"/> ล่าสุด — ประทับโดย <c>AccountingDbContext.StampTaxIdSetAt</c> ทุกทางเข้า ·
+    /// ระบบยังไม่มีขั้นยืนยันเลขภาษี ⇒ คำขอเชื่อมคู่ค้าที่ส่งถึงเลขนี้<b>ก่อน</b>เวลานี้ไม่ถูกเปิดให้บริษัทนี้ (<c>MaterializeIncomingLinkRequestsAsync</c>)</summary>
+    public DateTime? TaxIdSetAt { get; set; }
     public string? BranchCode { get; set; } = "00000";  // รหัสสาขา (00000 = สำนักงานใหญ่)
     public string? BranchName { get; set; }              // ชื่อสาขา
     /// <summary>รอบ 250 ฝ่ายค้าน H3 (คำตัดสิน AUTOPILOT ข้อ 3): บริษัทยินยอมให้คู่ค้าที่ใช้ NextAcc ส่งคำเชิญเชื่อมระบบถึง (ค้นเจอด้วยเลขภาษี+สาขา) ·

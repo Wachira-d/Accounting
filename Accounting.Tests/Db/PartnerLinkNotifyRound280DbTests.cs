@@ -326,38 +326,160 @@ public class PartnerLinkNotifyRound280DbTests
         Assert.Equal(2, probe.Pushes.Count);
     }
 
-    // ═══════════ (5) คู่ค้ายังไม่ใช้ NextAcc ⇒ สมัครทีหลังแล้วเห็นคำขอ ═══════════
+    // ═══════════ (5) คู่ค้ายังไม่ใช้ NextAcc ⇒ สมัครทีหลัง (แก้ตามฝ่ายค้าน MED-1 · 280-10) ═══════════
+
+    private static async Task<bool> PairAsync(Guid requester, Guid target)
+    {
+        using var c = DbTestDatabase.TryCreateContext()!;
+        return await c.TradingPartnerships.AsNoTracking().AnyAsync(p => p.InvitedByCompanyId == requester && (p.CompanyAId == target || p.CompanyBId == target));
+    }
 
     [Fact]
-    public async Task คู่ค้าสมัครทีหลังด้วยเลขเดิม_เปิดหน้าคู่ค้าแล้วเห็นคำขอรอยอมรับ_ยอมรับแล้วผู้ขอเห็นเชื่อมแล้ว()
+    public async Task ฝ่ายค้านMED1_สมัครด้วยเลขของคนอื่นแล้วเปิดหน้า_ไม่เห็นคำขอเก่า_ผู้ขอส่งแจ้งอีกครั้งจึงเสนอใหม่()
     {
         using var db = DbTestDatabase.TryCreateContext();
         if (db == null) { _out.WriteLine(Skip); return; }
         var a = await CompanyAsync(db, "ผู้ขอ 280 รอสมัคร");
         var tax = RandTax();
-        await InviteOnlyAsync(db, a, tax);
+        var reqId = await InviteOnlyAsync(db, a, tax);
         Assert.False(await db.TradingPartnerships.AnyAsync(p => p.InvitedByCompanyId == a.Co.Id));   // ยังไม่มีบริษัทเลขนี้
 
-        var late = await CompanyAsync(db, "คู่ค้าสมัครทีหลัง 280", taxId: tax);
+        // ผู้ที่สมัคร/ตั้งเลขนี้ทีหลัง (ระบบยืนยันเลขภาษีไม่ได้) เปิดหน้า + กดรับ ⇒ ไม่เห็นคำขอที่ส่งก่อนตั้งเลข
+        var late = await CompanyAsync(db, "ตั้งเลขทีหลัง 280", taxId: tax);
         var probe = new Probe();
-        var list = await Controller(db, late.Owner, probe).List(late.Co.Id);
-        var json = Body(list);
-        Assert.Contains("\"canRespond\":true", json);
-        Assert.Contains(a.Co.Name, json);
-        var row = await db.TradingPartnerships.AsNoTracking().SingleAsync(p => p.InvitedByCompanyId == a.Co.Id);
-        Assert.NotNull(row.InviteNoticeDueAt);                                        // แจ้งในระบบของคู่ค้าผ่าน outbox เดิม
-        // เปิดซ้ำไม่สร้างแถวซ้ำ
-        await Controller(db, late.Owner, probe).List(late.Co.Id);
-        Assert.Equal(1, await db.TradingPartnerships.CountAsync(p => p.InvitedByCompanyId == a.Co.Id));
-        // บริษัทอื่นที่เลขไม่ตรงไม่ได้แถว (ทิศตรงข้าม)
-        var stranger = await CompanyAsync(db, "เลขอื่น 280");
-        await Controller(db, stranger.Owner, probe).List(stranger.Co.Id);
-        Assert.False(await db.TradingPartnerships.AnyAsync(p => p.CompanyAId == stranger.Co.Id || p.CompanyBId == stranger.Co.Id));
+        await Controller(db, late.Owner, probe).RefreshIncomingRequests(late.Co.Id);
+        Assert.False(await PairAsync(a.Co.Id, late.Co.Id));
+        Assert.DoesNotContain("\"canRespond\":true", Body(await Controller(db, late.Owner, probe).List(late.Co.Id)));
+        // GET รายการคู่ค้าไม่สร้างแถวอีกต่อไป (เดิมไม่มีด่านสิทธิ์)
+        Assert.False(await PairAsync(a.Co.Id, late.Co.Id));
 
+        // ผู้ขอกด "ส่งแจ้งอีกครั้ง" = เสนอคำขอนี้ใหม่ถึงบริษัทที่ตรงเลขตอนนี้ (เหมือนส่งคำขอใหม่) · คำตอบไม่บอกจำนวน
+        var re = await Controller(db, a.Owner, probe).Renotify(a.Co.Id, reqId, new CrossTenantWorkflowController.NotifyRequest(null, null));
+        Assert.DoesNotContain("\"created\"", Body(re));
+        Assert.True(await PairAsync(a.Co.Id, late.Co.Id));
+        Assert.Contains("\"canRespond\":true", Body(await Controller(db, late.Owner, probe).List(late.Co.Id)));
+        var row = await db.TradingPartnerships.AsNoTracking().SingleAsync(p => p.InvitedByCompanyId == a.Co.Id);
         using (var acc = DbTestDatabase.TryCreateContext()!)
             await new CrossTenantWorkflowService(acc, NullLogger<CrossTenantWorkflowService>.Instance).AcceptPartnershipAsync(late.Co.Id, row.Id, late.Owner);
         var state = JsonSerializer.Serialize(await new CrossTenantWorkflowService(db, NullLogger<CrossTenantWorkflowService>.Instance)
             .ListOutgoingLinkRequestsAsync(a.Co.Id, DateTime.UtcNow), Json);
         Assert.Contains("\"state\":\"Accepted\"", state);
+    }
+
+    [Fact]
+    public async Task ฝ่ายค้านMED1_คำขอที่ส่งหลังตั้งเลข_เปิดให้ได้_บริษัทเลขอื่นไม่ได้แถว()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var a = await CompanyAsync(db, "ผู้ขอ 280 หลังตั้งเลข");
+        var b = await CompanyAsync(db, "ปลายทาง 280 หลังตั้งเลข");
+        var stranger = await CompanyAsync(db, "เลขอื่น 280");
+        // คำขอที่ส่งหลังปลายทางตั้งเลข แต่ยังไม่มีแถวคู่ (เช่น ส่งพร้อมกับตอนตั้งเลข) ⇒ เปิดให้เมื่อปลายทางกดรับ
+        db.PartnerLinkRequests.Add(new PartnerLinkRequest
+        {
+            CompanyId = a.Co.Id, PartnerTaxId = b.Co.TaxId!, PartnerBranchCode = "00000", RequestedByUserId = a.Owner,
+            ExpiresAt = DateTime.UtcNow.AddDays(30), CreatedAt = DateTime.UtcNow.AddMinutes(1),
+        });
+        await db.SaveChangesAsync();
+        var probe = new Probe();
+        await Controller(db, b.Owner, probe).RefreshIncomingRequests(b.Co.Id);
+        await Controller(db, b.Owner, probe).RefreshIncomingRequests(b.Co.Id);   // ซ้ำไม่สร้างแถวซ้ำ
+        Assert.Equal(1, await db.TradingPartnerships.CountAsync(p => p.InvitedByCompanyId == a.Co.Id));
+        await Controller(db, stranger.Owner, probe).RefreshIncomingRequests(stranger.Co.Id);
+        Assert.False(await PairAsync(a.Co.Id, stranger.Co.Id));
+    }
+
+    [Fact]
+    public async Task ฝ่ายค้านMED1ค_เปลี่ยนเลขภาษี_ยกเลิกคำขอรอยอมรับของเลขเดิม_คู่ที่เชื่อมแล้วไม่ถูกแตะ_ประทับเวลาตั้งเลขใหม่()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var a = await CompanyAsync(db, "ผู้ขอ 280 เปลี่ยนเลข");
+        var b = await CompanyAsync(db, "ปลายทาง 280 เปลี่ยนเลข");
+        await InviteOnlyAsync(db, a, b.Co.TaxId!);
+        Assert.True(await PairAsync(a.Co.Id, b.Co.Id));
+        var setBefore = (await db.Companies.AsNoTracking().SingleAsync(c => c.Id == b.Co.Id)).TaxIdSetAt;
+        Assert.NotNull(setBefore);
+
+        using (var u = DbTestDatabase.TryCreateContext()!)
+        {
+            var co = await u.Companies.SingleAsync(c => c.Id == b.Co.Id);
+            var oldTax = co.TaxId;
+            co.TaxId = RandTax();
+            Assert.Equal(1, await CrossTenantWorkflowService.VoidIncomingRequestsForOldTaxIdAsync(u, b.Co.Id, oldTax, co.TaxId, b.Owner, DateTime.UtcNow));
+            await u.SaveChangesAsync();
+        }
+        using var check = DbTestDatabase.TryCreateContext()!;
+        var row = await check.TradingPartnerships.AsNoTracking().SingleAsync(p => p.InvitedByCompanyId == a.Co.Id);
+        Assert.Equal(TradingPartnershipStatus.Rejected, row.Status);
+        Assert.Equal(CrossTenantWorkflowService.TaxIdChangedReason, row.RejectionReason);
+        Assert.Null(row.InviteNoticeDueAt);
+        Assert.True((await check.Companies.AsNoTracking().SingleAsync(c => c.Id == b.Co.Id)).TaxIdSetAt > setBefore);
+        Assert.True(await check.AuditLogs.AnyAsync(x => x.CompanyId == b.Co.Id && x.EntityType == "TradingPartnerRequestsVoidedByTaxIdChange"));
+        // ผู้ขอยังเห็น "รอตอบ" (ไม่บอกการยกเลิก — 264-1-2)
+        Assert.Contains("\"state\":\"Awaiting\"", JsonSerializer.Serialize(await new CrossTenantWorkflowService(check, NullLogger<CrossTenantWorkflowService>.Instance)
+            .ListOutgoingLinkRequestsAsync(a.Co.Id, DateTime.UtcNow), Json));
+        // ทิศตรงข้าม: เลขเดิม (ไม่เปลี่ยน) ⇒ ไม่แตะอะไร
+        Assert.Equal(0, await CrossTenantWorkflowService.VoidIncomingRequestsForOldTaxIdAsync(check, b.Co.Id, "0105556000245", "0105556000245", b.Owner, DateTime.UtcNow));
+    }
+
+    // ═══════════ (6) ฝ่ายค้าน MED-2 + LOW-1 ═══════════
+
+    [Fact]
+    public async Task ฝ่ายค้านMED2_สร้างคำขอใหม่เลี่ยงเพดานไม่ได้_3ครั้งต่อผู้ติดต่อใน7วัน_ผู้ติดต่อไม่มีเลขภาษีไม่ส่ง()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var a = await CompanyAsync(db, "ผู้ขอ 280 เพดานผู้ติดต่อ", lineOa: true);
+        var tax = RandTax();
+        var c = await ContactAsync(db, a.Co.Id, tax, null, group: true);
+        var probe = new Probe();
+        for (var i = 0; i < 4; i++)
+            await Controller(db, a.Owner, probe).Invite(a.Co.Id, new CrossTenantWorkflowController.InviteRequest(tax, null, null, c.ContactId, new List<string> { "LineGroup" }));
+        Assert.Equal(3, probe.Pushes.Count);                                          // คำขอที่ 4 ถูกกัน (ทุกคำขอนับรวม)
+        var last = (await NoticesAsync(a.Co.Id)).Where(n => n.Channel == PartnerLinkRequestChannels.LineGroup).Last();
+        Assert.Equal(PartnerLinkRequestChannels.StatusRefused, last.Status);
+        Assert.Contains("7 วัน", last.Reason);
+        // ทิศตรงข้าม: พ้นหน้าต่าง 7 วัน ⇒ ส่งได้
+        await db.Database.ExecuteSqlRawAsync("UPDATE \"PartnerLinkRequestNotices\" SET \"AttemptedAt\" = \"AttemptedAt\" - interval '8 days' WHERE \"CompanyId\" = {0}", a.Co.Id);
+        await Controller(db, a.Owner, probe).Invite(a.Co.Id, new CrossTenantWorkflowController.InviteRequest(tax, null, null, c.ContactId, new List<string> { "LineGroup" }));
+        Assert.Equal(4, probe.Pushes.Count);
+
+        // ผู้ติดต่อไม่มีเลขภาษี ⇒ ไม่ส่ง (เดิมส่งได้ ⇒ ช่องส่งข้อความถึงใครก็ได้)
+        var noTax = await ContactAsync(db, a.Co.Id, null, null, group: true);
+        await Controller(db, a.Owner, probe).Invite(a.Co.Id, new CrossTenantWorkflowController.InviteRequest(RandTax(), null, null, noTax.ContactId, new List<string> { "LineGroup" }));
+        Assert.Equal(4, probe.Pushes.Count);
+        Assert.Equal(PartnerLinkRequestChannels.ContactNoTaxIdReason,
+            (await NoticesAsync(a.Co.Id)).Where(n => n.Channel == PartnerLinkRequestChannels.LineGroup).Last().Reason);
+    }
+
+    [Fact]
+    public async Task ฝ่ายค้านLOW1_ส่งได้บางกลุ่ม_สถานะส่งได้บางส่วนพร้อมรายการที่ล้ม()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var a = await CompanyAsync(db, "ผู้ขอ 280 บางส่วน", lineOa: true);
+        var tax = RandTax();
+        var c = await ContactAsync(db, a.Co.Id, tax, null, group: true, groupName: "กลุ่มหนึ่ง");
+        // กลุ่มที่สองของผู้ติดต่อเดียวกัน
+        var consentId = await db.PdpaConsentRecords.Where(x => x.SubjectContactId == c.ContactId).Select(x => x.Id).FirstAsync();
+        var gid2 = "C" + Guid.NewGuid().ToString("N");
+        db.ContactNotifyEndpoints.Add(new ContactNotifyEndpoint
+        {
+            CompanyId = a.Co.Id, ContactId = c.ContactId, Kind = NotifyEndpointKind.LineGroup, LineGroupId = Secrets.Protect(gid2),
+            LineIdHash = NotifyEndpointKind.LineIdHash(Bot, gid2), OaScope = NotifyEndpointKind.ScopeCompany, OaDestination = Bot,
+            MemberCountSnapshot = 4, Verified = true, Source = "test", ConsentRecordId = consentId, GroupNameSnapshot = "กลุ่มสอง", Label = "กลุ่มสอง",
+            TopicsJson = NotifyTopics.Serialize(NotifyTopics.DefaultsFor(NotifyEndpointKind.LineGroup)),
+        });
+        await db.SaveChangesAsync();
+        db.ChangeTracker.Clear();
+        var probe = new Probe();
+        var n = 0;
+        probe.LineResult = () => ++n == 1 ? LinePushResult.Success : new LinePushResult(false, "LINE ตอบ 400: bad group", HttpStatus: 400);
+        await Controller(db, a.Owner, probe).Invite(a.Co.Id, new CrossTenantWorkflowController.InviteRequest(tax, null, null, c.ContactId, new List<string> { "LineGroup" }));
+        Assert.Equal(2, probe.Pushes.Count);
+        var row = Assert.Single(await NoticesAsync(a.Co.Id), x => x.Channel == PartnerLinkRequestChannels.LineGroup);
+        Assert.Equal(PartnerLinkRequestChannels.StatusPartial, row.Status);
+        Assert.Contains("bad group", row.Reason);
     }
 }

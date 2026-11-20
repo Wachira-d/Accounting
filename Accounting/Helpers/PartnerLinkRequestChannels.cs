@@ -51,6 +51,8 @@ public static class PartnerLinkRequestChannels
     public const string StatusQueued = "Queued";
     public const string StatusSending = "Sending";
     public const string StatusSent = "Sent";
+    /// <summary>ฝ่ายค้าน LOW-1: ส่งได้บางปลายทาง (หลายกลุ่ม) — ไม่ใช่ "ส่งสำเร็จ" · เหตุ = รายการที่ล้ม</summary>
+    public const string StatusPartial = "Partial";
     public const string StatusFailed = "Failed";
     public const string StatusRefused = "Refused";
 
@@ -59,13 +61,14 @@ public static class PartnerLinkRequestChannels
         StatusQueued => "เข้าคิวแจ้งแล้ว — ถ้าเลขนี้ใช้ NextAcc ผู้ดูแลของเขาได้รับแจ้งในระบบ (ระบบไม่แสดงผลเพื่อคุ้มครองข้อมูลคู่ค้า)",
         StatusSending => "กำลังส่ง / ไม่ทราบผล (เครื่องหยุดกลางทาง)",
         StatusSent => "ส่งสำเร็จ",
+        StatusPartial => "ส่งได้บางส่วน",
         StatusFailed => "ส่งไม่สำเร็จ",
         StatusRefused => "ไม่ได้ส่ง",
         _ => string.IsNullOrWhiteSpace(status) ? "-" : status!,
     };
 
     /// <summary>ครั้งที่ "ลองส่งจริง" (นับเพดาน) — ไม่ได้ส่งเพราะช่องปิด/ถูกจำกัดไม่นับ</summary>
-    public static bool CountsAsAttempt(string? status) => status is StatusQueued or StatusSending or StatusSent or StatusFailed;
+    public static bool CountsAsAttempt(string? status) => status is StatusQueued or StatusSending or StatusSent or StatusPartial or StatusFailed;
 
     // ── กันส่งถี่ (ต่อคำขอต่อช่อง) ──
     public const int MaxAttemptsPerChannel = 3;
@@ -86,6 +89,20 @@ public static class PartnerLinkRequestChannels
         return null;
     }
 
+    // ── ฝ่ายค้าน MED-2 (คำตัดสิน 280-11): เพดานต่อ (บริษัทผู้ส่ง × ผู้ติดต่อ) ข้ามทุกคำขอ — กันสร้างคำขอใหม่เพื่อเลี่ยงเพดานต่อคำขอ/ใช้เป็นช่องส่งข้อความซ้ำ ──
+    public const int MaxContactSendsPerWindow = 3;
+    public const int ContactWindowDays = 7;
+
+    /// <summary>ส่งทาง LINE/อีเมลถึงผู้ติดต่อนี้ได้อีกไหม · <paramref name="attemptsInWindowUtc"/> = ครั้งที่ลองส่งจริงทาง LINE/อีเมลถึงผู้ติดต่อนี้ (ทุกคำขอ · Invite + Renotify)
+    /// ภายใน <see cref="ContactWindowDays"/> วัน รวมที่วางแผนในการกดเดียวกัน · null = ได้</summary>
+    public static string? ContactWindowProblem(IEnumerable<DateTime> attemptsInWindowUtc, DateTime nowUtc)
+    {
+        var list = attemptsInWindowUtc.Where(t => t > nowUtc.AddDays(-ContactWindowDays)).ToList();
+        if (list.Count < MaxContactSendsPerWindow) return null;
+        var next = list.OrderByDescending(t => t).Skip(MaxContactSendsPerWindow - 1).First().AddDays(ContactWindowDays);
+        return $"แจ้งผู้ติดต่อนี้ทาง LINE/อีเมลครบ {MaxContactSendsPerWindow} ครั้งใน {ContactWindowDays} วันแล้ว (นับทุกคำขอ) — ส่งได้อีกหลัง {ThaiTime(next)} หรือติดต่อคู่ค้าโดยตรง";
+    }
+
     /// <summary>คำขอยังแจ้งได้ไหม (ตามสถานะที่ผู้ขอเห็นอยู่แล้ว — ไม่รั่ว) · null = ได้</summary>
     public static string? RequestProblem(DateTime? acceptedAt, DateTime expiresAt, DateTime nowUtc)
         => PartnerLinkRequestRules.OutgoingStateOf(acceptedAt, expiresAt, nowUtc) switch
@@ -98,14 +115,16 @@ public static class PartnerLinkRequestChannels
     // ── ผู้ติดต่อ ──
     public const string NoContactReason = "ยังไม่ได้เลือกผู้ติดต่อ — เลือกผู้ติดต่อของคู่ค้ารายนี้ (หรือเพิ่มผู้ติดต่อด้วยเลขผู้เสียภาษีนี้) เพื่อใช้กลุ่ม LINE/อีเมลที่ผูกไว้";
     public const string ContactNotFoundReason = "ไม่พบผู้ติดต่อนี้ในบริษัทของคุณ (อาจถูกลบแล้ว) — เลือกผู้ติดต่อใหม่";
+    /// <summary>ฝ่ายค้าน MED-2: ผู้ติดต่อไม่มีเลขภาษี ⇒ ไม่ส่ง (เดิมยอม — ผู้ใช้เลือกผู้ติดต่อใดก็ได้ ⇒ ใช้เป็นช่องส่งข้อความถึงใครก็ได้)</summary>
+    public const string ContactNoTaxIdReason = "ผู้ติดต่อนี้ยังไม่มีเลขผู้เสียภาษี — กรอกเลขให้ตรงกับเลขในคำขอที่หน้าผู้ติดต่อก่อน (ส่งทาง LINE/อีเมลได้เฉพาะผู้ติดต่อเลขเดียวกับคำขอ)";
     public const string ContactTaxMismatchReason = "เลขผู้เสียภาษีของผู้ติดต่อนี้ไม่ตรงกับเลขในคำขอ — ไม่ส่งเรื่องของเลขหนึ่งถึงผู้ติดต่ออีกเลขหนึ่ง (แก้เลขที่หน้าผู้ติดต่อ หรือเลือกผู้ติดต่อที่ถูก)";
 
-    /// <summary>ผู้ติดต่อใช้กับคำขอเลขนี้ได้ไหม · null = ได้ · เลขของผู้ติดต่อว่าง ⇒ ได้ (ผู้ใช้เลือกเองว่าเป็นคู่ค้ารายนี้)</summary>
+    /// <summary>ผู้ติดต่อใช้กับคำขอเลขนี้ได้ไหม · null = ได้ · ต้องมีเลขภาษีและตรงกับคำขอ (ฝ่ายค้าน MED-2 — เลขว่างไม่ผ่าน)</summary>
     public static string? ContactProblem(bool found, string? contactTaxId, string requestTaxId)
     {
         if (!found) return ContactNotFoundReason;
         var t = ThaiTaxId.Normalize(contactTaxId);
-        if (t.Length == 0) return null;
+        if (t.Length == 0) return ContactNoTaxIdReason;
         return t == ThaiTaxId.Normalize(requestTaxId) ? null : ContactTaxMismatchReason;
     }
 
@@ -161,24 +180,33 @@ public static class PartnerLinkRequestChannels
         var o = origin.TrimEnd('/');
         var link = o + LandingPath;
         var register = o + RegisterPath;
-        var subject = $"{sender} ขอเชื่อมระบบบัญชีกับบริษัทของคุณผ่าน NextAcc";
-        var text = $"{sender} ส่งคำขอเชื่อมระบบบัญชีผ่าน NextAcc ถึงบริษัทของคุณ (เลขผู้เสียภาษี {masked}{branch})\n"
+        // ฝ่ายค้าน MED-2: หัวเรื่องคงที่ (ชื่อบริษัท = ข้อความที่ผู้ส่งตั้งเอง ⇒ ไม่อยู่ในหัวเรื่อง) · บรรทัดแรกคงที่จาก NextAcc บอกผู้ส่งจริง
+        var subject = Subject;
+        var text = SenderLine(sender) + "\n"
+                 + $"{sender} ส่งคำขอเชื่อมระบบบัญชีผ่าน NextAcc ถึงบริษัทของคุณ (เลขผู้เสียภาษี {masked}{branch})\n"
                  + "เมื่อเชื่อมแล้ว เอกสารซื้อ-ขายระหว่างกันส่งเข้าระบบของแต่ละฝ่ายได้โดยไม่ต้องพิมพ์ซ้ำ — ยังไม่มีข้อมูลใดของคุณถูกส่งจนกว่าคุณจะกดยอมรับ\n"
                  + $"• ใช้ NextAcc อยู่แล้ว: เข้าสู่ระบบด้วยบริษัทเลขนี้ แล้วเปิด {link} ดูที่ \"คำขอที่รอเรายอมรับ\"\n"
-                 + $"• ยังไม่ใช้ NextAcc: สมัครที่ {register} และตั้งบริษัทด้วยเลขผู้เสียภาษีนี้ คำขอจะรออยู่ที่หน้า \"คู่ค้าที่ใช้ NextAcc\"\n"
+                 + $"• ยังไม่ใช้ NextAcc: สมัครที่ {register} และตั้งบริษัทด้วยเลขผู้เสียภาษีนี้ แล้วแจ้ง {sender} ให้กด \"ส่งแจ้งอีกครั้ง\" — คำขอจะขึ้นที่หน้า \"คู่ค้าที่ใช้ NextAcc\"\n"
                  + $"คำขอหมดอายุ {until}";
         var e = (Func<string, string>)WebUtility.HtmlEncode;
         var html = $@"<div style='font-family:sans-serif;font-size:14px;color:#1f2937'>
+<p style='color:#64748b;font-size:12px'>{e(SenderLine(sender))}</p>
 <p><strong>{e(sender)}</strong> ส่งคำขอเชื่อมระบบบัญชีผ่าน NextAcc ถึงบริษัทของคุณ (เลขผู้เสียภาษี {e(masked)}{e(branch)})</p>
 <p>เมื่อเชื่อมแล้ว เอกสารซื้อ-ขายระหว่างกันส่งเข้าระบบของแต่ละฝ่ายได้โดยไม่ต้องพิมพ์ซ้ำ — ยังไม่มีข้อมูลใดของคุณถูกส่งจนกว่าคุณจะกดยอมรับ</p>
 <ul>
 <li>ใช้ NextAcc อยู่แล้ว: เข้าสู่ระบบด้วยบริษัทเลขนี้ แล้วเปิด <a href='{e(link)}'>หน้าคู่ค้าที่ใช้ NextAcc</a> ดูที่ ""คำขอที่รอเรายอมรับ""</li>
-<li>ยังไม่ใช้ NextAcc: <a href='{e(register)}'>สมัคร</a> และตั้งบริษัทด้วยเลขผู้เสียภาษีนี้ คำขอจะรออยู่ที่หน้า ""คู่ค้าที่ใช้ NextAcc""</li>
+<li>ยังไม่ใช้ NextAcc: <a href='{e(register)}'>สมัคร</a> และตั้งบริษัทด้วยเลขผู้เสียภาษีนี้ แล้วแจ้ง {e(sender)} ให้กด ""ส่งแจ้งอีกครั้ง"" — คำขอจะขึ้นที่หน้า ""คู่ค้าที่ใช้ NextAcc""</li>
 </ul>
 <p style='color:#64748b'>คำขอหมดอายุ {e(until)}</p>
 </div>";
         return new Message(subject, text, html);
     }
+
+    /// <summary>หัวเรื่องอีเมลคงที่ (ไม่มีข้อความที่ผู้ส่งตั้งเอง)</summary>
+    public const string Subject = "คำขอเชื่อมระบบบัญชีผ่าน NextAcc";
+
+    /// <summary>บรรทัดคงที่จาก NextAcc ว่าใครเป็นผู้ส่ง (อีเมล + LINE)</summary>
+    public static string SenderLine(string sender) => $"ข้อความนี้ส่งโดยบริษัท {sender} ผ่าน NextAcc — NextAcc ไม่ได้ตรวจสอบเนื้อหาธุรกิจของผู้ส่ง";
 
     public const string NoBaseUrlReason = "ยังไม่ได้ตั้ง URL ของระบบ (แอดมิน → ตั้งค่าระบบ / App:BaseUrl) — ข้อความต้องมีลิงก์ให้คู่ค้ากด จึงยังไม่ส่ง";
 

@@ -1,3 +1,4 @@
+using Accounting.Data;
 using Accounting.Helpers;
 using Accounting.Models.Entities;
 using Accounting.Models.Enums;
@@ -93,47 +94,58 @@ public partial class CrossTenantWorkflowService
     }
 
     /// <summary>
-    /// รอบ 280 (คำตัดสิน 280-5) — คำขอที่ส่งถึงเลขภาษีของ <paramref name="companyId"/> <b>ก่อน</b>บริษัทนี้มีในระบบ (หรือก่อนตั้งเลขนี้) ⇒ เปิดแถวคู่ "รอเรายอมรับ"
-    /// เหมือนตอนส่งคำขอ (ตัวจับคู่เดียว <see cref="Accounting.Helpers.PartnerCompanyMatch.InviteTargets"/> · ล็อกต่อคู่เดียวกับ <see cref="InvitePartnerAsync"/>) ·
-    /// คู่ที่มีแถวอยู่แล้ว (ทุกสถานะ — ปฏิเสธ/บล็อก/ระงับ) ไม่ถูกแตะ · ผู้ขอไม่ได้รับข้อมูลใดจนกว่าจะยอมรับ (264-1-2 คงเดิม) · ผู้เรียก: GET trading-partners (ลิงก์ในข้อความ LINE/อีเมลพามา)
+    /// รอบ 280 (คำตัดสิน 280-5 · แก้ตามฝ่ายค้าน MED-1 = 280-10) — คำขอที่ยังรอถึงเลขภาษีของ <paramref name="companyId"/> ซึ่งยังไม่มีแถวคู่ ⇒ เปิดแถว "รอเรายอมรับ"
+    /// (ตัวสร้างเดียว <see cref="OfferLinkRequestAsync"/>) · <b>เฉพาะคำขอที่ส่งหลัง <c>Company.TaxIdSetAt</c></b> — ระบบยังไม่มีขั้นยืนยันเลขภาษี ⇒ สมัคร/เปลี่ยนเลขเป็นของคนอื่น
+    /// แล้วเก็บคำขอย้อนหลังไม่ได้ (คำขอก่อนหน้า ⇒ ผู้ขอกด "ส่งแจ้งอีกครั้ง" = เสนอใหม่) · ผู้เรียก: <c>POST …/trading-partners/requests/incoming/refresh</c> (สิทธิ์ตั้งค่าบริษัท)
     /// </summary>
     public async Task<int> MaterializeIncomingLinkRequestsAsync(Guid companyId, DateTime nowUtc, CancellationToken ct = default)
     {
         var me = await _db.Companies.AsNoTracking().Where(c => c.Id == companyId && !c.IsDeleted)
-            .Select(c => new { c.TaxId }).FirstOrDefaultAsync(ct);
+            .Select(c => new { c.TaxId, c.TaxIdSetAt }).FirstOrDefaultAsync(ct);
         var tax = Accounting.Helpers.PartnerCompanyMatch.NormalizeTaxId(me?.TaxId);
-        if (tax == null) return 0;
+        if (tax == null || me!.TaxIdSetAt is not DateTime setAt) return 0;
         var open = await _db.PartnerLinkRequests.AsNoTracking()
-            .Where(r => r.PartnerTaxId == tax && r.AcceptedAt == null && r.ExpiresAt > nowUtc && r.CompanyId != companyId)
+            .Where(r => r.PartnerTaxId == tax && r.AcceptedAt == null && r.ExpiresAt > nowUtc && r.CompanyId != companyId && r.CreatedAt >= setAt)
             .OrderByDescending(r => r.CreatedAt).Take(50)
             .ToListAsync(ct);
-        if (open.Count == 0) return 0;
-        var rawTax = (me!.TaxId ?? "").Trim();
-        var candidatesAll = await _db.Companies.AsNoTracking()
-            .Where(c => !c.IsDeleted && (c.TaxId == tax || c.TaxId == rawTax))
-            .Select(c => new Accounting.Helpers.PartnerCompanyCandidate(c.Id, c.BranchCode)).ToListAsync(ct);
         var created = 0;
         foreach (var r in open.GroupBy(x => x.CompanyId).Select(g => g.First()))   // คำขอล่าสุดต่อผู้ขอ
+            created += await OfferLinkRequestAsync(_db, r, nowUtc, onlyCompanyId: companyId, ct);
+        return created;
+    }
+
+    /// <summary>
+    /// รอบ 280 — ตัวสร้างแถวคู่ "รอยอมรับ" จากคำขอที่มีอยู่ (ตัวเดียว: เปิดเมื่อปลายทางเปิดหน้า · ผู้ขอ "ส่งแจ้งอีกครั้ง") · ตัวจับคู่เดียวกับตอนส่ง
+    /// (<see cref="Accounting.Helpers.PartnerCompanyMatch.InviteTargets"/>) · ล็อกต่อคู่เดียวกับ <see cref="InvitePartnerAsync"/> · คู่ที่มีแถวแล้ว (ทุกสถานะ — ปฏิเสธ/บล็อก/ระงับ) ไม่ถูกแตะ ·
+    /// อายุนับจากวันที่ผู้ขอส่ง · แจ้งในระบบผ่าน outbox เดิม · <paramref name="onlyCompanyId"/> = จำกัดปลายทาง (null = ทุกบริษัทที่ตรง) · คืนจำนวนแถวที่สร้าง (ผู้เรียกห้ามส่งต่อถึงผู้ขอ)
+    /// </summary>
+    internal static async Task<int> OfferLinkRequestAsync(AccountingDbContext db, PartnerLinkRequest r, DateTime nowUtc, Guid? onlyCompanyId, CancellationToken ct)
+    {
+        if (!await db.Companies.AsNoTracking().AnyAsync(c => c.Id == r.CompanyId && !c.IsDeleted, ct)) return 0;
+        var candidates = await db.Companies.AsNoTracking()
+            .Where(c => !c.IsDeleted && c.Id != r.CompanyId && c.TaxId.Replace("-", "").Replace(" ", "") == r.PartnerTaxId)
+            .Select(c => new Accounting.Helpers.PartnerCompanyCandidate(c.Id, c.BranchCode)).ToListAsync(ct);
+        var targets = Accounting.Helpers.PartnerCompanyMatch.InviteTargets(candidates, r.PartnerBranchCode)
+            .Where(t => onlyCompanyId == null || t == onlyCompanyId).ToList();
+        var created = 0;
+        foreach (var target in targets)
         {
-            if (!Accounting.Helpers.PartnerCompanyMatch.InviteTargets(candidatesAll.Where(c => c.Id != r.CompanyId), r.PartnerBranchCode).Contains(companyId)) continue;
-            if (!await _db.Companies.AsNoTracking().AnyAsync(c => c.Id == r.CompanyId && !c.IsDeleted, ct)) continue;
-            var (a, b) = OrderPair(r.CompanyId, companyId);
-            var ownTx = _db.Database.CurrentTransaction == null ? await _db.Database.BeginTransactionAsync(ct) : null;
+            var (a, b) = OrderPair(r.CompanyId, target);
+            var ownTx = db.Database.CurrentTransaction == null ? await db.Database.BeginTransactionAsync(ct) : null;
             try
             {
-                await _db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})",
+                await db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})",
                     new object[] { Accounting.Helpers.AdvisoryLockKey.For(a, Accounting.Helpers.AdvisoryLockKey.TradingPartnerInvite, "invite:" + b.ToString("N")) }, ct);
-                if (!await _db.TradingPartnerships.AnyAsync(p => p.CompanyAId == a && p.CompanyBId == b, ct))
+                if (!await db.TradingPartnerships.AnyAsync(p => p.CompanyAId == a && p.CompanyBId == b, ct))
                 {
-                    _db.TradingPartnerships.Add(new TradingPartnership
+                    db.TradingPartnerships.Add(new TradingPartnership
                     {
                         CompanyAId = a, CompanyBId = b, Status = TradingPartnershipStatus.Pending,
                         InvitedByCompanyId = r.CompanyId, InvitedByUserId = r.RequestedByUserId, InvitationMessage = r.Message,
                         CreatedBy = r.RequestedByUserId.ToString(),
-                        // อายุคำขอนับจากวันที่ผู้ขอส่ง (ไม่ต่ออายุให้เอง) · แจ้งในระบบของเราผ่าน outbox เดิม
                         InvitedAt = r.CreatedAt, InviteNoticeDueAt = nowUtc, LinkRequestId = r.Id,
                     });
-                    await _db.SaveChangesAsync(ct);
+                    await db.SaveChangesAsync(ct);
                     created++;
                 }
                 if (ownTx != null) await ownTx.CommitAsync(ct);
@@ -144,6 +156,43 @@ public partial class CrossTenantWorkflowService
             }
         }
         return created;
+    }
+
+    /// <summary>ฝ่ายค้าน MED-1 (ค) — ข้อความบนแถวคู่ที่ถูกยกเลิกเพราะบริษัทปลายทางเปลี่ยนเลขภาษี (ผู้ขอไม่เห็น — สถานะของผู้ขอยังเป็น "รอตอบ" จนหมดอายุ)</summary>
+    public const string TaxIdChangedReason = "ยกเลิกอัตโนมัติ — บริษัทปลายทางเปลี่ยนเลขผู้เสียภาษี (คำขอนี้ส่งถึงเลขเดิม)";
+
+    /// <summary>
+    /// ฝ่ายค้าน MED-1 (ค · คำตัดสิน 280-10): บริษัทเปลี่ยนเลขภาษี ⇒ ยกเลิกคำขอที่ "รอเรายอมรับ" ซึ่งส่งถึง<b>เลขเดิม</b> (สถานะ Rejected + เหตุ · ล้าง outbox) + audit chain ·
+    /// คู่ที่เชื่อมแล้วไม่ถูกแตะ (เชื่อมด้วยความยินยอมแล้ว — ระงับเองได้) · ผู้เรียก: <c>CompanyService.UpdateAsync</c> ก่อน SaveChanges (ธุรกรรมเดียวกัน) · คืนจำนวนแถว
+    /// </summary>
+    internal static async Task<int> VoidIncomingRequestsForOldTaxIdAsync(AccountingDbContext db, Guid companyId, string? oldTaxId, string? newTaxId, Guid actorUserId,
+        DateTime nowUtc, CancellationToken ct = default)
+    {
+        var oldTax = Accounting.Helpers.PartnerCompanyMatch.NormalizeTaxId(oldTaxId);
+        if (oldTax == null || oldTax == Accounting.Helpers.PartnerCompanyMatch.NormalizeTaxId(newTaxId)) return 0;
+        var oldRequestIds = db.PartnerLinkRequests.Where(r => r.PartnerTaxId == oldTax).Select(r => r.Id);
+        var rows = await db.TradingPartnerships
+            .Where(p => (p.CompanyAId == companyId || p.CompanyBId == companyId) && p.InvitedByCompanyId != companyId
+                && p.Status == TradingPartnershipStatus.Pending && p.LinkRequestId != null && oldRequestIds.Contains(p.LinkRequestId!.Value))
+            .ToListAsync(ct);
+        foreach (var p in rows)
+        {
+            p.Status = TradingPartnershipStatus.Rejected;
+            p.RejectedAt = nowUtc;
+            p.RejectionReason = TaxIdChangedReason;
+            p.InviteNoticeDueAt = null;
+            p.UpdatedAt = nowUtc;
+            p.UpdatedBy = actorUserId.ToString();
+        }
+        if (rows.Count > 0)
+            db.AddChainedAuditLog(new AuditLog
+            {
+                CompanyId = companyId, UserId = actorUserId, Action = AuditAction.Update, EntityType = "TradingPartnerRequestsVoidedByTaxIdChange",
+                EntityId = companyId.ToString(),
+                NewValues = System.Text.Json.JsonSerializer.Serialize(new { partnerships = rows.Select(x => x.Id), reason = TaxIdChangedReason, ruleCode = PartnerLinkRequestChannels.RuleCode }),
+                Timestamp = nowUtc,
+            });
+        return rows.Count;
     }
 
     /// <summary>การ์ดยอมรับของปลายทาง (<c>partners.html?request=</c>) — เฉพาะบริษัทที่เป็นสมาชิกของคู่ <b>และไม่ใช่ผู้ขอ</b> · อื่น ๆ = null (ไม่พบ · ไม่บอกว่ามีแถว) ·

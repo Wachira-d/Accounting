@@ -1505,7 +1505,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **972 ไฟล์ · 10,581 `[Fact]` + 1,437 `[Theory]` (6,829 `InlineData`)** ณ 2026-11-20 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`) | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)**, **ReceiptFormRule (รูปแบบกระดาษหลักฐานรับเงิน · รอบ 203)** |
+| เทสต์ที่มี | **972 ไฟล์ · 10,589 `[Fact]` + 1,437 `[Theory]` (6,829 `InlineData`)** ณ 2026-11-20 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`) | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)**, **ReceiptFormRule (รูปแบบกระดาษหลักฐานรับเงิน · รอบ 203)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
 | CI | ✅ `.github/workflows/ci.yml` — static check → restore → build → test; รันบน PR/push เข้า main/master + `workflow_dispatch` (branch `claude/**` ปิดไว้ กัน mail spam ระหว่างพัฒนา) |
@@ -9248,6 +9248,13 @@ H2 (OCR ไม่พร้อม ⇒ แถวเข้าคิว) ล็อ�
 | T280-06 | Db `ส่งแจ้งอีกครั้งทันที_ถูกจำกัด_พ้น12ชมส่งได้_บริษัทอื่นแตะไม่ได้` — ผู้ติดต่อจำไว้บนคำขอ · tenant 404 · ผู้ติดต่อของบริษัทอื่น = ไม่พบ | ทั้งสองทิศ |
 | T280-07 | Db `คู่ค้าสมัครทีหลังด้วยเลขเดิม_เปิดหน้าคู่ค้าแล้วเห็นคำขอรอยอมรับ_*` — แถวเดียว (เปิดซ้ำไม่ซ้ำ) · บริษัทเลขอื่นไม่ได้แถว · ยอมรับ ⇒ ผู้ขอเห็นเชื่อมแล้ว | ทั้งสองทิศ |
 | T280-08 | กติกา `_R280_*` (+8 · เคสฝ่ายค้าน R280-1…2) — ถอด Classify / ด่านคู่ที่มีแถวแล้ว ⇒ checker ฟ้อง | negative |
+| T280-09 | ฝ่ายค้าน MED-1 Db `ฝ่ายค้านMED1_สมัครด้วยเลขของคนอื่นแล้วเปิดหน้า_ไม่เห็นคำขอเก่า_ผู้ขอส่งแจ้งอีกครั้งจึงเสนอใหม่` · `ฝ่ายค้านMED1_คำขอที่ส่งหลังตั้งเลข_เปิดให้ได้_บริษัทเลขอื่นไม่ได้แถว` | ทั้งสองทิศ |
+| T280-10 | ฝ่ายค้าน MED-1 (ค) Db `ฝ่ายค้านMED1ค_เปลี่ยนเลขภาษี_ยกเลิกคำขอรอยอมรับของเลขเดิม_*` — Rejected + เหตุ + audit · TaxIdSetAt ใหม่ · ผู้ขอยังเห็นรอตอบ · เลขไม่เปลี่ยน = ไม่แตะ | ทั้งสองทิศ |
+| T280-11 | ฝ่ายค้าน MED-2 pure `ฝ่ายค้านMED2_เพดานต่อผู้ติดต่อ*` · `ผู้ติดต่อ_*` (เลขว่างไม่ผ่าน) · ข้อความ (หัวเรื่องคงที่ · บรรทัดผู้ส่ง) · Db `ฝ่ายค้านMED2_สร้างคำขอใหม่เลี่ยงเพดานไม่ได้_*` | ทั้งสองทิศ (พ้น 7 วันส่งได้) |
+| T280-12 | ฝ่ายค้าน LOW-1 pure `ฝ่ายค้านLOW1_*` · Db `ฝ่ายค้านLOW1_ส่งได้บางกลุ่ม_สถานะส่งได้บางส่วนพร้อมรายการที่ล้ม` | |
+| T280-13 | ฝ่ายค้าน LOW-2 (การ์ด 279) pure `ฝ่ายค้านLOW2_*` · Db `LineGroupStatusRound279DbTests.R280_LOW2_กลุ่มผูกหลายผู้ติดต่อ_*` (รายเดียว = ตามเดิม · ไม่มี GUID) | ทั้งสองทิศ |
+| T280-14 | กติกา `_R280_*` ชุดแก้ (+11 · R280-3…4) — ถอดเงื่อนไข TaxIdSetAt / การ์ดหลายผู้ติดต่อ ⇒ checker ฟ้อง | negative |
+
 ## รอบ 281 — เส้นคู่ค้า A↔B ครบเส้น (`erp-review/2026-11-20/dev-281-partner-e2e.md` · คำตัดสิน 281-1…281-5)
 
 | ID | เทสต์ | ทิศ |

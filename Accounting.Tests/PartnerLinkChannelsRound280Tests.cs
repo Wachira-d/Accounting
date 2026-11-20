@@ -55,7 +55,9 @@ public class PartnerLinkChannelsRound280Tests
     {
         const string tax = "0203562005871";
         Assert.Null(PartnerLinkRequestChannels.ContactProblem(true, "0-2035-62005-87-1", tax));
-        Assert.Null(PartnerLinkRequestChannels.ContactProblem(true, null, tax));
+        // ฝ่ายค้าน MED-2: เลขว่างไม่ผ่าน (เดิมผ่าน ⇒ เลือกผู้ติดต่อใดก็ได้เป็นช่องส่งข้อความ)
+        Assert.Equal(PartnerLinkRequestChannels.ContactNoTaxIdReason, PartnerLinkRequestChannels.ContactProblem(true, null, tax));
+        Assert.Equal(PartnerLinkRequestChannels.ContactNoTaxIdReason, PartnerLinkRequestChannels.ContactProblem(true, "  ", tax));
         Assert.Equal(PartnerLinkRequestChannels.ContactTaxMismatchReason, PartnerLinkRequestChannels.ContactProblem(true, "0105556000245", tax));
         Assert.Equal(PartnerLinkRequestChannels.ContactNotFoundReason, PartnerLinkRequestChannels.ContactProblem(false, null, tax));
     }
@@ -99,6 +101,43 @@ public class PartnerLinkChannelsRound280Tests
         Assert.DoesNotContain("<b>ร้าน</b>", m.Html);                 // XSS: ชื่อบริษัทผู้ส่งถูก encode
         Assert.Contains("&lt;b&gt;", m.Html);
         Assert.Contains("หมดอายุ", m.Text);
+        // ฝ่ายค้าน MED-2: หัวเรื่องคงที่ (ไม่มีชื่อที่ผู้ส่งตั้งเอง) · บรรทัดคงที่จาก NextAcc บอกผู้ส่งจริงทั้งข้อความและ HTML
+        Assert.Equal(PartnerLinkRequestChannels.Subject, m.Subject);
+        Assert.DoesNotContain("ร้าน", m.Subject);
+        Assert.StartsWith("ข้อความนี้ส่งโดยบริษัท <b>ร้าน</b> & co ผ่าน NextAcc", m.Text);
+        Assert.Contains("ข้อความนี้ส่งโดยบริษัท &lt;b&gt;ร้าน&lt;/b&gt; &amp; co ผ่าน NextAcc", m.Html);
+    }
+
+    [Fact]
+    public void ฝ่ายค้านMED2_เพดานต่อผู้ติดต่อข้ามทุกคำขอ_3ครั้งใน7วัน_พ้นหน้าต่างส่งได้()
+    {
+        Assert.Null(PartnerLinkRequestChannels.ContactWindowProblem(new[] { Now.AddDays(-1), Now.AddDays(-2) }, Now));
+        var full = PartnerLinkRequestChannels.ContactWindowProblem(new[] { Now.AddDays(-1), Now.AddDays(-2), Now.AddHours(-1) }, Now);
+        Assert.NotNull(full);
+        Assert.Contains("ครบ 3 ครั้งใน 7 วัน", full);
+        // ทิศตรงข้าม: ครั้งที่เก่ากว่า 7 วันไม่นับ
+        Assert.Null(PartnerLinkRequestChannels.ContactWindowProblem(new[] { Now.AddDays(-8), Now.AddDays(-9), Now.AddHours(-1) }, Now));
+    }
+
+    [Fact]
+    public void ฝ่ายค้านLOW1_ส่งได้บางส่วนเป็นสถานะแยก_นับเป็นครั้งที่ลองส่ง()
+    {
+        Assert.Equal("ส่งได้บางส่วน", PartnerLinkRequestChannels.StatusLabel(PartnerLinkRequestChannels.StatusPartial));
+        Assert.True(PartnerLinkRequestChannels.CountsAsAttempt(PartnerLinkRequestChannels.StatusPartial));
+    }
+
+    [Fact]
+    public void ฝ่ายค้านLOW2_ลิงก์ในกลุ่มไม่มีidบริษัทลูกค้า_การ์ดหลายผู้ติดต่อไม่มีชื่อรายผู้ติดต่อ()
+    {
+        var link = ProviderConsent.GroupGrantLinkOrMenu("https://app.nextacc.test/");
+        Assert.Equal("https://app.nextacc.test/pages/billing.html#provider-consent", link);
+        Assert.DoesNotMatch("[0-9a-f]{8}-[0-9a-f]{4}-", link);
+        Assert.Contains(ProviderConsent.ClientMenuPath, ProviderConsent.GroupGrantLinkOrMenu(null));
+        var card = LineGroupBindRule.Replies.StatusMulti("บริษัท เน็ก แอค", "กลุ่มรวม", 2, new[] { "เอกสาร", "ทวงชำระ/ใบแจ้งยอด" });
+        Assert.Contains("ผู้ติดต่อ 2 ราย", card);
+        Assert.Contains("เรื่องที่ส่ง: เอกสาร, ทวงชำระ/ใบแจ้งยอด", card);
+        Assert.Contains(LineGroupBindRule.Replies.MultiContactWebHint, card);
+        Assert.DoesNotContain("บันทึกการชำระภาษีจากสลิป", card);
     }
 
     [Fact]

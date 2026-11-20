@@ -140,6 +140,16 @@ public static class LineGroupBindRule
             sb.Append($"\nผูกผู้ติดต่ออื่นเพิ่ม: พิมพ์ {AddCommandText} · ยกเลิกการผูกทั้งกลุ่ม: พิมพ์ #ByeNextAcc");
             return sb.ToString();
         }
+        /// <summary>รอบ 280 (ฝ่ายค้าน LOW-2 ของการ์ด 279): กลุ่มเดียวผูกกับผู้ติดต่อ<b>หลายราย</b> ⇒ ไม่แสดงชื่อ/สถานะความยินยอมรายผู้ติดต่อในกลุ่ม
+        /// (ลูกค้ารายหนึ่งต้องไม่เห็นสถานะของอีกราย) — แสดงเฉพาะ บริษัทที่ผูก · จำนวนผู้ติดต่อ · เรื่องที่ส่ง (รวม) · ทางดูรายละเอียดบนเว็บ</summary>
+        public static string StatusMulti(string? companyName, string? groupName, int contactCount, IReadOnlyList<string> topicLabels)
+            => $"📋 สถานะกลุ่ม \"{(string.IsNullOrWhiteSpace(groupName) ? "กลุ่มนี้" : groupName!.Trim())}\" — ผูกแล้ว (ไม่ต้องขอรหัสใหม่)\n"
+               + $"ผูกกับ {(string.IsNullOrWhiteSpace(companyName) ? "บริษัท" : companyName!.Trim())} · ผู้ติดต่อ {contactCount} ราย\n"
+               + $"เรื่องที่ส่ง: {(topicLabels.Count == 0 ? "-" : string.Join(", ", topicLabels))}\n"
+               + MultiContactWebHint + "\n"
+               + $"ผูกผู้ติดต่ออื่นเพิ่ม: พิมพ์ {AddCommandText} · ยกเลิกการผูกทั้งกลุ่ม: พิมพ์ #ByeNextAcc";
+        public const string MultiContactWebHint =
+            "รายละเอียดผู้ติดต่อและความยินยอม: ดูที่หน้าเว็บ (ผู้ติดต่อ › ช่องทางแจ้งเตือน) — ไม่แสดงในกลุ่มเพราะกลุ่มนี้ผูกกับผู้ติดต่อหลายราย";
         public const string Bye = "ยกเลิกการผูกกลุ่มนี้แล้ว — บอทจะไม่ส่งการแจ้งเอกสารเข้ากลุ่มนี้อีกและจะออกจากกลุ่ม";
         public const string ByeNothing = "กลุ่มนี้ยังไม่ได้ผูกกับผู้ติดต่อใด";
         /// <summary>รอบ 256: คำสั่งกลุ่มที่ส่งถึง LINE OA กลางของ NextAcc — เดิม webhook กลางทิ้ง event กลุ่มเงียบ ⇒ ผู้ใช้พิมพ์แล้วไม่มีอะไรตอบ ·

@@ -158,6 +158,9 @@ public class PartnerLinkRequestNotifier
                             && t.InviteNotifiedAt != null)
                         .ExecuteUpdateAsync(s => s.SetProperty(t => t.InviteNoticeDueAt, (DateTime?)now).SetProperty(t => t.InviteNotifiedAt, (DateTime?)null)
                             .SetProperty(t => t.InviteNoticeResult, (string?)null), ct);
+                    // ฝ่ายค้าน MED-1 (280-10): คำขอที่ส่งก่อนคู่ค้าตั้งเลขนี้ไม่ถูกเปิดย้อนหลังฝั่งปลายทาง ⇒ ผู้ขอส่งแจ้งอีกครั้ง = เสนอคำขอนี้ใหม่ถึงบริษัทที่ตรงเลขตอนนี้
+                    // (ตัวสร้างเดียว · คู่ที่มีแถวแล้วไม่ถูกแตะ · จำนวนไม่ไหลถึงผู้ขอ — คำตอบเท่ากันทุกกรณี)
+                    await CrossTenantWorkflowService.OfferLinkRequestAsync(_db, req, now, onlyCompanyId: null, ct);
                     plans.Add(new Plan(NewRow(PartnerLinkRequestChannels.InApp, PartnerLinkRequestChannels.StatusQueued, null), new()));
                 }
                 else plans.Add(new Plan(NewRow(PartnerLinkRequestChannels.InApp, PartnerLinkRequestChannels.StatusRefused, p), new()));
@@ -175,10 +178,25 @@ public class PartnerLinkRequestNotifier
                     if (contactProblem == null && req.ContactId != cid) { req.ContactId = cid; req.UpdatedAt = now; req.UpdatedBy = userId.ToString(); }
                 }
                 else contactProblem = PartnerLinkRequestChannels.NoContactReason;
+                // ฝ่ายค้าน MED-2 (280-11): เพดานต่อ (บริษัทผู้ส่ง × ผู้ติดต่อ) ข้ามทุกคำขอ — ล็อกต่อผู้ติดต่อ (สองคำขอพร้อมกันไม่ผ่านเพดานพร้อมกัน)
+                var contactAttempts = new List<DateTime>();
+                if (contactProblem == null)
+                {
+                    await _db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})",
+                        new object[] { AdvisoryLockKey.For(companyId, AdvisoryLockKey.PartnerLinkNotify, "contact:" + effectiveContact!.Value.ToString("N")) }, ct);
+                    var since = now.AddDays(-PartnerLinkRequestChannels.ContactWindowDays);
+                    var cidv = effectiveContact.Value;
+                    contactAttempts = (await _db.PartnerLinkRequestNotices.AsNoTracking()
+                        .Where(n => n.CompanyId == companyId && n.ContactId == cidv && n.AttemptedAt > since
+                            && (n.Channel == PartnerLinkRequestChannels.LineGroup || n.Channel == PartnerLinkRequestChannels.Email))
+                        .Select(n => new { n.Status, n.AttemptedAt }).ToListAsync(ct))
+                        .Where(n => PartnerLinkRequestChannels.CountsAsAttempt(n.Status)).Select(n => n.AttemptedAt).ToList();
+                }
                 var origin = await SystemBaseUrl.ResolveAsync(_db, _config, ct);
                 foreach (var ch in selected)
                 {
-                    var p = requestProblem ?? contactProblem ?? PartnerLinkRequestChannels.ThrottleProblem(Attempts(ch), now);
+                    var p = requestProblem ?? contactProblem ?? PartnerLinkRequestChannels.ThrottleProblem(Attempts(ch), now)
+                        ?? PartnerLinkRequestChannels.ContactWindowProblem(contactAttempts, now);
                     if (p != null) { plans.Add(new Plan(NewRow(ch, PartnerLinkRequestChannels.StatusRefused, p), new())); continue; }
                     var opt = await AvailabilityAsync(companyId, effectiveContact!.Value, ch, origin, ct);
                     if (!opt.Available) { plans.Add(new Plan(NewRow(ch, PartnerLinkRequestChannels.StatusRefused, opt.Reason), new())); continue; }
@@ -187,6 +205,7 @@ public class PartnerLinkRequestNotifier
                     var targets = set.Options.Where(o => o.Available && o.Kind == kind).ToList();
                     var label = string.Join(", ", targets.Select(t => PartnerLinkRequestChannels.RecipientLabel(ch, t.Display)).Distinct());
                     plans.Add(new Plan(NewRow(ch, PartnerLinkRequestChannels.StatusSending, null, Trunc(label, 200)), targets.Select(t => t.EndpointId).ToList()));
+                    contactAttempts.Add(now);   // ช่องถัดไปในการกดเดียวกันนับครั้งนี้ด้วย
                 }
             }
             foreach (var p in plans) _db.PartnerLinkRequestNotices.Add(p.Row);
@@ -205,9 +224,16 @@ public class PartnerLinkRequestNotifier
             var (ok, reason) = p.Row.Channel == PartnerLinkRequestChannels.LineGroup
                 ? await PushGroupsAsync(companyId, effectiveContact!.Value, p.EndpointIds, message.Text, ct)
                 : await SendEmailAsync(companyId, effectiveContact!.Value, message, userId, ct);
-            p.Row.Status = ok switch { true => PartnerLinkRequestChannels.StatusSent, false => PartnerLinkRequestChannels.StatusFailed, null => PartnerLinkRequestChannels.StatusRefused };
+            // ฝ่ายค้าน LOW-1: สำเร็จบางกลุ่ม (มีเหตุ) = "ส่งได้บางส่วน" ไม่ใช่ "ส่งสำเร็จ"
+            p.Row.Status = ok switch
+            {
+                true when reason != null => PartnerLinkRequestChannels.StatusPartial,
+                true => PartnerLinkRequestChannels.StatusSent,
+                false => PartnerLinkRequestChannels.StatusFailed,
+                null => PartnerLinkRequestChannels.StatusRefused,
+            };
             p.Row.Reason = reason == null ? null : Trunc(reason, 1000);
-            p.Row.RuleCode = ok == true ? null : PartnerLinkRequestChannels.RuleCode;
+            p.Row.RuleCode = p.Row.Status == PartnerLinkRequestChannels.StatusSent ? null : PartnerLinkRequestChannels.RuleCode;
             p.Row.CompletedAt = DateTime.UtcNow;
             if (ok == false) _logger.LogError("แจ้งคำขอเชื่อมคู่ค้า {Request} ทาง {Channel} ไม่สำเร็จ: {Reason}", requestId, p.Row.Channel, reason);
         }
@@ -261,7 +287,7 @@ public class PartnerLinkRequestNotifier
         }
         await _db.SaveChangesAsync(ct);
         if (sent > 0 && failures.Count == 0) return (true, null);
-        if (sent > 0) return (true, "ส่งไม่ครบทุกกลุ่ม — " + string.Join(" · ", failures));
+        if (sent > 0) return (true, "ส่งไม่ครบทุกกลุ่ม — ล้ม: " + string.Join(" · ", failures));   // ผู้เรียกประทับ Partial
         return (false, string.Join(" · ", failures));
     }
 
