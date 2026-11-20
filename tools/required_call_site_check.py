@@ -21497,7 +21497,7 @@ RULES += [
     dict(file="Helpers/EncryptedColumnConverter.cs", method="Unwrap",
          must=["UserCipherMarker", "layers < MaxNestedDepth", "TryDecryptAny(", "AcceptsUnwrapped(inner, kind)", "NestedUnresolved = true"],
          why=_R274_10_WHY + "แกะไม่เกินความลึกสูงสุด · ค่าที่ผู้ใช้ส่งมา (มีเครื่องหมาย) ไม่แกะ (oracle) · ค่าที่แกะได้ต้องผ่านเกณฑ์ชนิดคอลัมน์ ไม่งั้นคงเป็นใช้ไม่ได้"),
-    # ── ผลตรวจฝ่ายค้าน 274-10 ──
+    # ── ผลตรวจฝ่ายค้าน 274-10 (ชุดแก้ commit 55b251d9) ──
     dict(file="Helpers/EncryptedColumnConverter.cs", method="Unwrap",
          must=["kind == PiiValueKind.NoUnwrap"],
          before=[("plain.StartsWith(UserCipherMarker", "kind == PiiValueKind.NoUnwrap"), ("kind == PiiValueKind.NoUnwrap", "TryDecryptAny(")],
