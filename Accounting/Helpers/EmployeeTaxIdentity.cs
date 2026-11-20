@@ -49,8 +49,9 @@ public static class EmployeeTaxIdentity
         /// <summary>เหตุเป็นภาษาไทย (null เมื่อใช้ได้) — บอกทางไปต่อของผู้ใช้</summary>
         public string? Reason => Problem switch
         {
-            TaxIdProblem.Undecryptable => UndecryptableText + " (ข้อมูลเข้ารหัสด้วยคีย์อื่น — ตั้ง ENCRYPTION_KEY_PREVIOUS เป็นคีย์เดิมแล้วรีสตาร์ต "
-                + "หรือกรอกเลขบัตรประชาชนใหม่ที่ทะเบียนพนักงาน)",
+            // รอบ 275 แพ็ก A (T4 M-1): ผู้ใช้ของบริษัทตั้ง env ของแพลตฟอร์มไม่ได้ ⇒ ทางไปต่อของผู้ใช้ + ชี้หน้าจอ (ชื่อ env อยู่ใน log/หน้าผู้ดูแลเท่านั้น)
+            TaxIdProblem.Undecryptable => UndecryptableText + " (ข้อมูลเข้ารหัสด้วยคีย์อื่น — กรอกเลขบัตรประชาชนใหม่ที่ทะเบียนพนักงาน "
+                + "หรือแจ้งผู้ดูแลระบบ · ดู " + EncryptionHealthText.PageName + ")",
             TaxIdProblem.Invalid => InvalidText + $" ({Masked} — ต้องเป็นเลข 13 หลักที่หลักสุดท้ายถูกต้อง · แก้ที่ทะเบียนพนักงาน/ผู้ติดต่อ)",
             TaxIdProblem.Missing => "ยังไม่ได้กรอกเลขบัตรประชาชนหรือเลขประจำตัวผู้เสียภาษี",
             _ => null,

@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>สุขภาพข้อมูลเข้ารหัส — Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <!--
+    รอบ 275 แพ็ก A (T4 M-1): หน้าจอของผู้ใช้บริษัทแทนข้อความเดิมที่ชี้ไป "GET payroll/tax-identity-health" / ENCRYPTION_KEY_PREVIOUS
+    ส่วนที่ 1 = ความลับของบริษัท (GET encryption-health/secrets · สิทธิ์ตั้งค่าบริษัท) · ส่วนที่ 2 = เลขประจำตัวพนักงาน/ผู้รับ 50 ทวิ (GET payroll/tax-identity-health เดิม · สิทธิ์เงินเดือน)
+    หน้านี้แสดงผลอย่างเดียว — ป้าย/เหตุ/ทางไปต่อ/สถานะมาจากเซิร์ฟเวอร์ทั้งหมด (F2 ข้อ 5) · ไม่มีค่าความลับหรือ ciphertext ในคำตอบ
+  -->
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div>
+        <h2 class="page-title">สุขภาพข้อมูลเข้ารหัส</h2>
+        <p class="page-subtitle">รหัสผ่าน/คีย์ที่บันทึกไว้ และเลขประจำตัวพนักงานที่ระบบถอดรหัสไม่ได้ — อ่านอย่างเดียว · แก้โดยกรอกค่าใหม่ในหน้าที่เกี่ยวข้อง</p>
+      </div>
+      <div><button class="btn btn-primary" id="btnRun">🔎 ตรวจอีกครั้ง</button></div>
+    </div>
+    <div id="keyBox"></div>
+    <div id="secretBox"></div>
+    <div id="piiBox"></div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    const Page = {
+      init() {
+        if (!Layout.init('settings')) return;
+        Layout.setTitle('สุขภาพข้อมูลเข้ารหัส');
+        document.getElementById('btnRun').addEventListener('click', () => this.run());
+        this.run();
+      },
+      esc(v) { return Layout.esc(v == null ? '' : String(v)); },
+      card(title, body) {
+        return `<div class="card" style="margin-bottom:12px"><div class="card-header"><h3 class="card-title">${this.esc(title)}</h3></div>${body}</div>`;
+      },
+      note(text, color) { return `<div style="padding:12px 18px;color:${color || '#64748b'};font-size:13px">${this.esc(text)}</div>`; },
+      job(j, name) {
+        // undefined/null = ยังไม่เคยรัน (ไม่ใช่ "ไม่มีปัญหา")
+        if (!j) return this.note(name + ': ยังไม่มีผลรันบนระบบนี้');
+        return this.note(`${name} รอบล่าสุด ${Layout.date(j.finishedAt)} — ${j.success ? 'สำเร็จ' : '⛔ ไม่สำเร็จ'} · ${j.message || ''}`, j.success ? '#64748b' : '#b91c1c');
+      },
+      async run() {
+        const cid = encodeURIComponent(Layout.getCompanyId());
+        document.getElementById('secretBox').innerHTML = this.card('รหัสผ่านและคีย์ที่บันทึกไว้', this.note('กำลังตรวจ…'));
+        document.getElementById('piiBox').innerHTML = this.card('เลขประจำตัวพนักงาน / ผู้รับ 50 ทวิ', this.note('กำลังตรวจ…'));
+        document.getElementById('keyBox').innerHTML = '';
+        try {
+          const res = await API.get(`/api/companies/${cid}/encryption-health/secrets`);
+          this.renderSecrets(res && res.data);
+        } catch (e) {
+          document.getElementById('secretBox').innerHTML = this.card('รหัสผ่านและคีย์ที่บันทึกไว้', this.note('ตรวจไม่ได้: ' + e.message, '#b91c1c'));
+        }
+        try {
+          const res = await API.get(`/api/companies/${cid}/payroll/tax-identity-health`);
+          this.renderPii(res && res.data);
+        } catch (e) {
+          document.getElementById('piiBox').innerHTML = this.card('เลขประจำตัวพนักงาน / ผู้รับ 50 ทวิ', this.note('ตรวจไม่ได้: ' + e.message + ' (ส่วนนี้ต้องมีสิทธิ์งานเงินเดือน)', '#b91c1c'));
+        }
+      },
+      renderSecrets(d) {
+        const box = document.getElementById('secretBox');
+        if (d == null) { box.innerHTML = this.card('รหัสผ่านและคีย์ที่บันทึกไว้', this.note('ไม่ได้รับผลตรวจจากเซิร์ฟเวอร์', '#b91c1c')); return; }
+        if (d.keyMessage) document.getElementById('keyBox').innerHTML = `<div class="card" style="margin-bottom:12px;border:1px solid #fcd34d"><div style="padding:12px 18px;color:#92400e">${this.esc(d.keyMessage)}</div></div>`;
+        const rows = Array.isArray(d.rows) ? d.rows : [];
+        const body = rows.length === 0
+          ? this.note(`✓ ตรวจ ${d.scanned} ค่า — ใช้ได้ทั้งหมด`, '#15803d')
+          : `<div style="padding:0 18px 18px;overflow-x:auto"><table class="data-table" style="font-size:13px;min-width:640px">
+              <thead><tr><th>ช่อง</th><th>สถานะ</th><th>เหตุ</th><th>ทางแก้</th></tr></thead>
+              <tbody>${rows.map(r => `<tr><td>${this.esc(r.label)}</td>
+                <td style="white-space:nowrap;color:${r.blocking ? '#b91c1c' : '#92400e'}">${r.blocking ? '⛔ ใช้ไม่ได้' : 'ℹ️ ใช้ได้ (ควรตรวจ)'}</td>
+                <td style="font-size:12px">${this.esc(r.reason)}</td><td style="font-size:12px">${this.esc(r.action)}</td></tr>`).join('')}</tbody></table></div>`;
+        box.innerHTML = this.card(`รหัสผ่านและคีย์ที่บันทึกไว้ (ใช้ไม่ได้ ${d.unusable})`, body + this.job(d.job, 'งานย้ายคีย์ของความลับ'));
+      },
+      renderPii(d) {
+        const box = document.getElementById('piiBox');
+        if (d == null) { box.innerHTML = this.card('เลขประจำตัวพนักงาน / ผู้รับ 50 ทวิ', this.note('ไม่ได้รับผลตรวจจากเซิร์ฟเวอร์', '#b91c1c')); return; }
+        const rows = Array.isArray(d.rows) ? d.rows : [];
+        const body = rows.length === 0
+          ? this.note('✓ ไม่พบเลขประจำตัวที่ต้องแก้', '#15803d')
+          : `<div style="padding:0 18px 18px;overflow-x:auto"><table class="data-table" style="font-size:13px;min-width:640px">
+              <thead><tr><th>ที่มา</th><th>รหัส/เลขที่</th><th>ชื่อ</th><th>ช่อง</th><th>เลข (ปิดบัง)</th><th>ทางแก้</th></tr></thead>
+              <tbody>${rows.map(r => `<tr><td>${this.esc(r.source)}</td><td>${this.esc(r.ref)}</td><td>${this.esc(r.name)}</td>
+                <td>${this.esc(r.field)}</td><td>${this.esc(r.masked)}</td>
+                <td style="font-size:12px;color:${r.blocksFiling ? '#b91c1c' : '#64748b'}">${r.blocksFiling ? '⛔ กันการยื่นแบบ · ' : ''}${this.esc(r.action)}</td></tr>`).join('')}</tbody></table></div>`;
+        box.innerHTML = this.card(`เลขประจำตัวพนักงาน / ผู้รับ 50 ทวิ (กันการยื่นแบบ ${d.blocking})`, body
+          + (d.rekeyJobStatusText ? this.note('งานย้ายคีย์ของข้อมูลพนักงาน: ' + d.rekeyJobStatusText) : ''));
+      },
+    };
+    Page.init();
+  </script>
+</body>
+</html>

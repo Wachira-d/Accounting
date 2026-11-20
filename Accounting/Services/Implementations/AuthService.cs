@@ -1293,7 +1293,7 @@ public class AuthService : IAuthService, ILineSignerLoginVerifier
         var enc = await _db.SiteSettings.AsNoTracking()
             .Select(s => s.LineLoginChannelSecret).FirstOrDefaultAsync();
         if (!string.IsNullOrWhiteSpace(enc))
-            return (_secrets != null ? _secrets.Unprotect(enc) : enc) ?? "";
+            return OpenLoginSecret("LINE Login Channel Secret", enc);
         return _config["OAuth:Line:ChannelSecret"] ?? "";
     }
 
@@ -1304,8 +1304,19 @@ public class AuthService : IAuthService, ILineSignerLoginVerifier
         var enc = await _db.SiteSettings.AsNoTracking()
             .Select(s => s.FacebookAppSecret).FirstOrDefaultAsync();
         if (!string.IsNullOrWhiteSpace(enc))
-            return (_secrets != null ? _secrets.Unprotect(enc) : enc) ?? "";
+            return OpenLoginSecret("Facebook App Secret", enc);
         return _config["OAuth:Facebook:AppSecret"] ?? "";
+    }
+
+    /// <summary>รอบ 275 แพ็ก A (T4 M-5): ความลับเข้าสู่ระบบที่ผู้ดูแลตั้งไว้ใน DB แต่ถอดไม่ได้ ⇒ ปฏิเสธพร้อมเหตุ (401) — เดิมคืน "" ⇒
+    /// Google/LINE บอก "ยังไม่ได้ตั้ง" (เหตุไม่ตรง) และ <b>Facebook ข้ามการตรวจ app id ของ token</b> (fail-open) · ไม่ถอยไป appsettings เงียบ ๆ (อาจเป็นคนละแอป)</summary>
+    private string OpenLoginSecret(string label, string enc)
+    {
+        if (_secrets == null) return enc;
+        var o = SecretUse.Open(_secrets, label, enc);
+        if (o.Ok) return o.Value!;
+        _logger.LogError("เข้าสู่ระบบด้วยบัญชีภายนอก: {Problem}", o.Problem);
+        throw new UnauthorizedAccessException("เข้าสู่ระบบด้วยบัญชีนี้ใช้ไม่ได้ชั่วคราว — ผู้ดูแลระบบต้องตั้งค่า " + label + " ใหม่ (ค่าที่บันทึกไว้ถอดรหัสไม่ได้)");
     }
 
     private static string HmacSha256Hex(string key, string message)
@@ -1325,7 +1336,7 @@ public class AuthService : IAuthService, ILineSignerLoginVerifier
         var enc = await _db.SiteSettings.AsNoTracking()
             .Select(s => s.GoogleClientSecret).FirstOrDefaultAsync();
         if (!string.IsNullOrWhiteSpace(enc))
-            return (_secrets != null ? _secrets.Unprotect(enc) : enc) ?? "";
+            return OpenLoginSecret("Google Client Secret", enc);
         return _config["OAuth:Google:ClientSecret"] ?? "";
     }
 

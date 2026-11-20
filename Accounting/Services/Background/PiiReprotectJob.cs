@@ -154,10 +154,31 @@ public static class PiiReprotectPass
         return new Result(scanned, per.Values.Sum(), undecryptable, skipped, per, unwrapped, nestedUnresolved);
     }
 
+    /// <summary>ฝ่ายค้าน 274-10 LOW-3: ลายนิ้วมือของชุดคีย์ (ปัจจุบัน + เดิมตามลำดับ) — SHA-256 ตัด 16 ตัว (ไม่เผยคีย์) · เปลี่ยนคีย์ใด ⇒ เปลี่ยนค่า</summary>
+    public static string KeySetFingerprint(string currentKey, IReadOnlyList<string> previousKeys)
+        => Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(
+            "pii-keyset-v1\n" + currentKey + "\n" + string.Join("\n", previousKeys))))[..16];
+
+    /// <summary>ป้ายใน JobRunLog ของรอบที่<b>สแกนครบทุกแถวสำเร็จ</b>ภายใต้ชุดคีย์นี้ (วางต้นข้อความ — ข้อความถูกตัดที่ 1,000 ตัว)</summary>
+    public static string FullScanTag(string fingerprint) => $"[pii-keyset:{fingerprint} full]";
+
+    /// <summary>สแกนเต็มซ้ำอย่างน้อยทุก 7 วัน แม้ชุดคีย์ไม่เปลี่ยน (ตาข่ายสำหรับแถวที่เขียนนอกแอป เช่น SQL มือ)</summary>
+    public static readonly TimeSpan FullRescanEvery = TimeSpan.FromDays(7);
+
+    /// <summary>ฝ่ายค้าน 274-10 LOW-3 — <b>ข้ามการสแกนได้ไหม</b> (pure): มีรอบสแกนครบสำเร็จภายใต้ชุดคีย์เดียวกันภายใน <see cref="FullRescanEvery"/> ⇒ ข้าม ·
+    /// ถูกต้องเพราะหลังสแกนครบ ทุกแถวที่ย้าย/แกะได้ถูกเขียนแล้ว และแถวที่แอปเขียนใหม่ (EF converter) อยู่บนคีย์ปัจจุบันชั้นเดียวเสมอ (ค่าที่ห่อพร้อมเครื่องหมาย = ไม่แกะอยู่แล้ว) ·
+    /// แถวถอดไม่ออก/แกะไม่ได้ จะเปลี่ยนผลได้ก็ต่อเมื่อชุดคีย์เปลี่ยน ⇒ ลายนิ้วมือเปลี่ยน ⇒ สแกนใหม่</summary>
+    public static bool CanSkipScan(DateTime? lastFullScanAtUtc, DateTime utcNow)
+        => lastFullScanAtUtc is DateTime t && utcNow - t < FullRescanEvery && t <= utcNow;
+
     /// <summary>แถวที่อาจเป็น ciphertext — enc1 หรือรุ่นก่อนไม่มีคำนำหน้า (base64 ล้วน ≥ 40 ตัว · ฝ่ายค้าน MED-1 เดิมเลือกแค่ enc1) ·
-    /// ตัดสินจริงด้วย <see cref="EncryptedColumnConverter.Inspect"/> ตัวเดียว</summary>
+    /// ตัดสินจริงด้วย <see cref="EncryptedColumnConverter.Inspect"/> ตัวเดียว
+    /// <para>ฝ่ายค้าน 274-10 LOW-2: กติการูปเดียวกับ <see cref="EncryptedColumnConverter.IsUnreadable"/> — ค่าที่มีช่องว่าง/ขึ้นบรรทัดไม่ใช่ ciphertext (<c>!~ '\s'</c>) ·
+    /// SQL เป็นตัวกรองหยาบเท่านั้น ตัวตัดสินจริงคือ <c>Inspect</c> (ซึ่งเรียก IsUnreadable)</para></summary>
     public static string CandidateSql(string column)
-        => $"(\"{column}\" LIKE 'enc1:%' OR (length(\"{column}\") >= 40 AND \"{column}\" ~ '^[A-Za-z0-9+/]+={{0,2}}$'))";
+    {
+        return $"(\"{column}\" !~ '\\s' AND (\"{column}\" LIKE 'enc1:%' OR (length(\"{column}\") >= 40 AND \"{column}\" ~ '^[A-Za-z0-9+/]+={{0,2}}$')))";
+    }
 
     private static void AddParam(DbCommand cmd, string name, object value)
     {
@@ -202,15 +223,39 @@ public class PiiReprotectJob : BackgroundService
             using var scope = _scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<AccountingDbContext>();
             recorder = scope.ServiceProvider.GetService<IJobRunRecorder>();
+            // รอบ 275 แพ็ก A (T4 M-4): คีย์ของเครื่องนี้ไม่ตรงกับที่ระบบใช้ ⇒ ไม่ย้ายแถว (ย้าย = เขียนด้วยคีย์ที่เครื่องอื่นอ่านไม่ได้) · ตัวตัดสินเดียวกับฝั่งความลับ
+            if (scope.ServiceProvider.GetService<ISecretProtector>() is { } keyProbe)
+            {
+                var key = await Accounting.Services.Implementations.Security.EncryptionKeyFingerprintService.CheckAsync(db, keyProbe, persist: true, _logger, stoppingToken);
+                if (!key.AllowsRekey)
+                {
+                    if (recorder != null) await recorder.RecordAsync(JobName, false, "ไม่ย้ายคีย์: " + key.AdminMessage, 0, startedAt);
+                    return;
+                }
+            }
             await JobLock.RunExclusiveAsync(db, AdvisoryLockKey.BackgroundJob, nameof(PiiReprotectJob), async () =>
             {
-                var r = await PiiReprotectPass.RunAsync(db, stoppingToken);
-                var summary = $"ตรวจ PII ที่เข้ารหัส {r.Scanned} ค่า · เข้ารหัสใหม่ด้วยคีย์ปัจจุบัน {r.Rekeyed} ค่า"
+                // ฝ่ายค้าน 274-10 LOW-3: ชุดคีย์เดิมที่สแกนครบแล้ว (≤ 7 วัน) ⇒ ไม่ถอดทุกแถวซ้ำทุก 6 ชม.
+                var (cur, prev) = EncryptedColumnConverter.Keys;
+                var tag = PiiReprotectPass.FullScanTag(PiiReprotectPass.KeySetFingerprint(cur, prev));
+                var lastFull = await db.Set<JobRunLog>().AsNoTracking()
+                    .Where(j => j.JobName == JobName && j.Success && j.Message != null && j.Message.StartsWith(tag))
+                    .MaxAsync(j => (DateTime?)(j.FinishedAt ?? j.StartedAt), stoppingToken);
+                if (PiiReprotectPass.CanSkipScan(lastFull, DateTime.UtcNow))
+                {
+                    if (recorder != null)
+                        await recorder.RecordAsync(JobName, true,
+                            $"ข้ามการสแกน — ชุดคีย์นี้สแกนครบแล้วเมื่อ {lastFull!.Value.AddHours(7):dd/MM/yyyy HH:mm} (สแกนเต็มซ้ำทุก {PiiReprotectPass.FullRescanEvery.TotalDays:0} วัน หรือเมื่อเปลี่ยนคีย์)",
+                            0, startedAt);
+                    return;
+                }
+                var r = await PiiReprotectPass.RunAsync(db, stoppingToken, currentKey: cur, previousKeys: prev);
+                var summary = tag + $" ตรวจ PII ที่เข้ารหัส {r.Scanned} ค่า · เข้ารหัสใหม่ด้วยคีย์ปัจจุบัน {r.Rekeyed} ค่า"
                     + (r.PerColumn.Count == 0 ? "" : " (" + string.Join(", ", r.PerColumn.Select(kv => $"{kv.Key}={kv.Value}")) + ")")
                     + (r.Undecryptable == 0 ? "" : $" · ⛔ ถอดไม่ออกทุกคีย์ {r.Undecryptable} ค่า — ตั้ง {EncryptionKeyResolver.PreviousKeyEnv} เป็นคีย์เดิม หรือให้ผู้ใช้กรอกใหม่ "
-                        + "(รายงาน: GET payroll/tax-identity-health)")
+                        + "(หน้า " + EncryptionHealthText.PageName + ")")
                     + (r.Unwrapped == 0 ? "" : $" · แกะค่าเข้ารหัสซ้อนเป็นชั้นเดียว {r.Unwrapped} ค่า")
-                    + (r.NestedUnresolved == 0 ? "" : $" · ⛔ เข้ารหัสซ้อนแต่ชั้นในใช้ไม่ได้ {r.NestedUnresolved} ค่า — ให้ผู้ใช้กรอกใหม่ (รายงาน: GET payroll/tax-identity-health)")
+                    + (r.NestedUnresolved == 0 ? "" : $" · ⛔ เข้ารหัสซ้อนแต่ชั้นในใช้ไม่ได้ {r.NestedUnresolved} ค่า — ให้ผู้ใช้กรอกใหม่ (หน้า " + EncryptionHealthText.PageName + ")")
                     + (r.SkippedConcurrent == 0 ? "" : $" · ข้าม {r.SkippedConcurrent} ค่าที่ผู้ใช้เพิ่งแก้");
                 if (r.Rekeyed > 0 || r.Undecryptable > 0 || r.NestedUnresolved > 0) _logger.LogWarning("PiiReprotect: {Summary}", summary);
                 // สำเร็จ = งานรันจบ (ค่าที่ถอดไม่ออกเป็นงานของผู้ใช้ — อยู่ในข้อความ + รายงานรายแถว)

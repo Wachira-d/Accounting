@@ -69,7 +69,7 @@ public static class PayrollBankTransfer
                 + "ถ้าจะโอนจริงให้เปลี่ยนแหล่งจ่ายเป็นบัญชีธนาคารก่อนกดจ่าย" + (note != null ? " · " + note : ""));
         if (undecryptable)
             return new(amount, digits, false, UndecryptableStatus,
-                "เลขบัญชีถอดรหัสไม่ได้ (คีย์เข้ารหัสไม่ตรงกับตอนบันทึก) — ตั้ง ENCRYPTION_KEY_PREVIOUS เป็นคีย์เดิมแล้วรีสตาร์ต หรือกรอกเลขบัญชีใหม่ที่ข้อมูลพนักงาน"
+                "เลขบัญชีถอดรหัสไม่ได้ (คีย์เข้ารหัสไม่ตรงกับตอนบันทึก) — กรอกเลขบัญชีใหม่ที่ข้อมูลพนักงาน หรือแจ้งผู้ดูแลระบบ (ดู " + EncryptionHealthText.PageName + ")"
                 + (note != null ? " · " + note : ""));
         if (digits.Length == 0)
             return new(amount, digits, false, "ขาดเลขบัญชี", "เพิ่มธนาคาร/เลขบัญชีที่ข้อมูลพนักงานก่อนโอน" + (note != null ? " · " + note : ""));

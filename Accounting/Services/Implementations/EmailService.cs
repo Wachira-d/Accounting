@@ -40,13 +40,16 @@ public class EmailService : IEmailService
             var s = await db.SiteSettings.FirstOrDefaultAsync();
             if (s != null && !string.IsNullOrWhiteSpace(s.SystemSmtpHost))
             {
+                // รอบ 275 แพ็ก A (T4 M-5): รหัสผ่านตั้งไว้แต่ถอดไม่ได้ ⇒ เก็บเหตุไว้ แล้ว SendInternalAsync ล้มพร้อมเหตุ (ไม่ส่งรหัสว่าง · ไม่ถอยไป appsettings เงียบ ๆ)
+                var smtpPw = SecretUse.Open(_secrets, "รหัสผ่าน SMTP ของระบบ", s.SystemSmtpPassword);
                 return new SystemEmailConfig
                 {
                     Provider = s.SystemEmailProvider,
                     SmtpHost = s.SystemSmtpHost,
                     SmtpPort = s.SystemSmtpPort,
                     SmtpUsername = s.SystemSmtpUsername,
-                    SmtpPassword = _secrets.Unprotect(s.SystemSmtpPassword),
+                    SmtpPassword = smtpPw.Value,
+                    SecretProblem = smtpPw.Unusable ? smtpPw.Problem : null,
                     SmtpUseSsl = s.SystemSmtpUseSsl,
                     FromAddress = s.SystemEmailFromAddress ?? "noreply@nextacc.com",
                     FromName = s.SystemEmailFromName ?? s.SiteName ?? "Next Acc",
@@ -127,6 +130,7 @@ public class EmailService : IEmailService
     {
         try
         {
+            if (cfg.SecretProblem != null) throw new BusinessRuleException(cfg.SecretProblem, SecretUse.RuleCode);
             using var client = new SmtpClient(cfg.SmtpHost!)
             {
                 Port = cfg.SmtpPort,
@@ -261,6 +265,8 @@ public class EmailService : IEmailService
         public int SmtpPort { get; set; } = 587;
         public string? SmtpUsername { get; set; }
         public string? SmtpPassword { get; set; }
+        /// <summary>รอบ 275 แพ็ก A: ความลับที่ตั้งไว้แต่ถอดไม่ได้ (null = ไม่มีปัญหา) — ผู้ส่งล้มพร้อมเหตุนี้</summary>
+        public string? SecretProblem { get; set; }
         public bool SmtpUseSsl { get; set; } = true;
         public string? FromAddress { get; set; }
         public string? FromName { get; set; }

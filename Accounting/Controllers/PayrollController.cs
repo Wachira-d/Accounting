@@ -191,7 +191,8 @@ public class PayrollController : ControllerBase
         var block = await RequirePayrollWriteAsync(companyId, "sync ข้อมูลพนักงาน", Models.Constants.PermissionKeys.PayrollRun); if (block != null) return block;
         var r = await _service.SyncEmployeesAsync(companyId, request);
         return Ok(new ApiResponse<SyncEmployeesResponse>(true, r,
-            $"sync เสร็จ — เพิ่ม {r.Inserted} · อัปเดต {r.Updated} · ข้าม {r.Skipped}"));
+            $"sync {r.Status} — เพิ่ม {r.Inserted} · อัปเดต {r.Updated} · ข้าม {r.Skipped}"
+            + (r.Warnings is { Count: > 0 } w ? $" · ⚠️ เตือน {w.Count} รายการ (สร้างแล้วแต่ไม่เก็บบางช่อง)" : "")));
     }
 
     [HttpPost("employees/{employeeId:guid}/terminate")]
