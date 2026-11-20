@@ -185,7 +185,7 @@ subscription เดิมโดยสิ้นเชิง — โควตา�
 **ทีม/คำเชิญ (รอบ 277 · คำตัดสิน 277-2…7)**: ที่นั่ง (`QuotaResources.Users`) = สมาชิก + คำเชิญ Pending ที่**ยังไม่หมดอายุ** (`CompanyInvitationPolicy.HoldsSeat` ·
 `QuotaGateService.UsersUsedAsync` · เดิมคำเชิญหมดอายุล็อกที่นั่งถาวร) · เชิญ/ส่งซ้ำตรวจใต้ล็อกเดียว (`CompanyService.EnsureSeatAsync`) · ตอบรับตรวจซ้ำ (`adding 0`)
 ⇒ ลดแพ็กเกจหลังเชิญ = ตอบรับไม่ได้พร้อมเหตุ · ผู้ใช้หลายบริษัทสลับได้ตามเดิม (`CompanyUser` ต่อบริษัท) · สมาชิกที่ตอบรับโดยไม่กำหนดบทบาท (`AccessPending`) นับที่นั่งแล้ว
-แต่ใช้งานอะไรไม่ได้จนเจ้าของตั้งบทบาท · ไม่มีการคิดเงินต่อที่นั่งเพิ่มในรอบนี้ (ราคาที่นั่งเสริมเดิม §6.1b-Q) — commit PENDING277
+แต่ใช้งานอะไรไม่ได้จนเจ้าของตั้งบทบาท · ไม่มีการคิดเงินต่อที่นั่งเพิ่มในรอบนี้ (ราคาที่นั่งเสริมเดิม §6.1b-Q) — commit a1ae70d2 + d93800f2
 
 **ภาษีรายงานข้ามบริษัท (B-03/B-04)**: `ITaxComplianceChecker.CheckAsync(companyId, taxReportId)` ค้นผ่าน `Helpers/TaxReportTenantScope.ById` (ไม่พบ = 404) ·
 `TaxController` endpoint เขียน 12 จุด ⇒ `Tax.File` (+ `Tax.Export` สำหรับ e-filing · `Tax.File` **และ** `Journal.Manage` สำหรับ unlock-filing/reject-reverse)

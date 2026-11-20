@@ -49,4 +49,4 @@
 - เทสต์: `MenuInviteRound277Tests` (21) + Db `TeamInvitationDbTests` (8) ผ่าน · ชุดเดิมที่เกี่ยว (RegistrationPolicy · GW201 · QuotaAddOnPayment · DocumentRestriction) ผ่าน
 - sim `tools/menu_landing_sim.js` + `payment_menu_gate_sim.js` ผ่าน (negative test ในตัว)
 - กติกา `_R277_` (+17 · เคส R277-1…4) · `required_call_site_check` ผ่าน
-- commit: PENDING277
+- commit: a1ae70d2 (WIP) + d93800f2 (ครบ)

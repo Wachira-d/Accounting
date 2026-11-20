@@ -7392,4 +7392,4 @@ _รอบ 277 (2026-11-20 · `erp-review/2026-11-20/dev-277-menu-invite.md` · 
 (B) คำเชิญ — ทุกอีเมลได้คำเชิญ (เดิมผู้มีบัญชีถูกยัดเข้าบริษัท) · แถวรอตอบรับ + ส่งซ้ำ/ยกเลิกในหน้าทีม · token เก็บ SHA-256 (Round277Migration ย้ายค่าดิบ) ·
 ตอบรับตัวเดียว `CompanyInvitationService` (ปุ่ม/ฟอร์ม/SSO) · ไม่สร้างบริษัท · ไม่เลือกบทบาท ⇒ `CompanyUser.AccessPending` (ทุก API 403 ที่ `TenantAccessMiddleware`) จนเจ้าของตั้ง ·
 แจ้ง `team.invitation_accepted` · ที่นั่งไม่นับคำเชิญหมดอายุ · อีเมลคำเชิญ HtmlEncode + บอก "ไม่ต้องสร้างบริษัท" · เทสต์ `MenuInviteRound277Tests` + Db `TeamInvitationDbTests` +
-sim `menu_landing_sim.js` · กติกา `_R277_` — commit PENDING277_
+sim `menu_landing_sim.js` · กติกา `_R277_` — commit a1ae70d2 + d93800f2_
