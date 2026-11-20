@@ -153,7 +153,7 @@ public static class SettlementTaxInvoiceRole
 
     /// <summary>แบ่งยอดรวม VAT ของงวด (<paramref name="grossThis"/>) เป็นบรรทัดตามอัตราของใบตามสัดส่วนยอดรวมของแต่ละอัตรา · VAT ต่อบรรทัด = มูลค่า × อัตรา (ปัด 2 ตำแหน่ง) ·
     /// ผลต่างเศษสตางค์/ยอดงวดปิดไปที่บรรทัดที่ถือ VAT มากที่สุด (มูลค่าบรรทัดนั้นปรับให้ยอดรวมเท่าเดิม) · ไม่มีกลุ่ม ⇒ บรรทัดเดียว 7%</summary>
-    public static IReadOnlyList<RateLine> SplitByRate(IReadOnlyList<RateLine>? groups, decimal grossThis, decimal vatTotal)
+    private static IReadOnlyList<RateLine> SplitByRate(IReadOnlyList<RateLine>? groups, decimal grossThis, decimal vatTotal)
     {
         var g = (groups ?? Array.Empty<RateLine>()).Where(x => x.Base + x.Vat > Eps).ToList();
         if (g.Count == 0) g = new List<RateLine> { new(7m, 100m, 7m) };
