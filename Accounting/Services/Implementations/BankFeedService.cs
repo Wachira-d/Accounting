@@ -235,7 +235,8 @@ public class BankFeedService : IBankFeedService
         try
         {
             var client = _httpClientFactory.CreateClient();
-            var token = _secrets.Unprotect(conn.AccessToken);
+            // รอบ 275 แพ็ก A (T4 M-5): token ตั้งไว้แต่ถอดไม่ได้ ⇒ throw พร้อมเหตุ (catch ข้างล่างประทับ LastError บนการเชื่อมต่อ) — เดิมยิงแบบไม่ยืนยันตัวตนเงียบ ๆ
+            var token = SecretUse.Optional(_secrets, "Access Token ของธนาคาร", conn.AccessToken);
             if (!string.IsNullOrEmpty(token))
                 client.DefaultRequestHeaders.Authorization =
                     new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
@@ -270,7 +271,8 @@ public class BankFeedService : IBankFeedService
     {
         var client = _httpClientFactory.CreateClient();
 
-        var token = _secrets.Unprotect(conn.AccessToken);
+        // รอบ 275 แพ็ก A (T4 M-5): ตั้งไว้แต่ถอดไม่ได้ ⇒ throw (ผู้เรียกประทับ LastSyncStatus=Failed + LastError) ไม่ยิงแบบไม่ยืนยันตัวตน
+        var token = SecretUse.Optional(_secrets, "Access Token ของธนาคาร", conn.AccessToken);
         if (!string.IsNullOrEmpty(token))
             client.DefaultRequestHeaders.Authorization =
                 new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);

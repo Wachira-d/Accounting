@@ -114,7 +114,8 @@ public class EncryptionFormatRound231Tests
         Assert.Null(SecretWarnings.FieldWarning(p, "Channel Access Token", LineShapedToken));
         Assert.Null(SecretWarnings.Build(p, ("Channel Access Token", LineShapedToken)));
         var hint = SecretWarnings.FieldHint(p, "Channel Access Token", LineShapedToken)!;
-        Assert.Contains("ENCRYPTION_KEY", hint);
+        Assert.Contains("คีย์เข้ารหัส", hint);   // รอบ 275 แพ็ก A (M-1): ข้อความถึงผู้ใช้ไม่มีชื่อ env
+        Assert.DoesNotContain("ENCRYPTION_KEY", hint);
         Assert.DoesNotContain("คีย์เข้ารหัสของระบบถูกเปลี่ยน", hint);
         Assert.Contains("Channel Access Token", SecretWarnings.BuildHints(p, ("Channel Access Token", LineShapedToken), ("Channel Secret", p.Protect("s"))));
         Assert.DoesNotContain("Channel Secret", SecretWarnings.BuildHints(p, ("Channel Access Token", LineShapedToken), ("Channel Secret", p.Protect("s"))));

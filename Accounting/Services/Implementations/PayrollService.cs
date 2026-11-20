@@ -532,6 +532,7 @@ public class PayrollService : IPayrollService
     {
         var inserted = 0; var updated = 0; var skipped = 0;
         var errors = new List<string>();
+        var syncWarnings = new List<string>();   // ฝ่ายค้าน 274-10 LOW-4
 
         foreach (var r in request.Rows)
         {
@@ -580,12 +581,12 @@ public class PayrollService : IPayrollService
                     // แต่**ไม่เก็บเลขนั้น** (ไฟล์ สปส. ใช้เลขบัตรแทน) และบอกในผลลัพธ์ — ไม่ล้มทั้งแถวเพราะช่องรอง
                     var syncSsoNo = EmployeeRecordEdit.SsoInsuredNumber(r.SocialSecurityNumber, null);
                     if (syncSsoNo.Error != null)
-                        errors.Add($"{r.EmployeeCode}: สร้างพนักงานแล้วแต่ไม่บันทึกเลขประกันสังคม — {syncSsoNo.Error}");
+                        syncWarnings.Add($"{r.EmployeeCode}: สร้างพนักงานแล้วแต่ไม่บันทึกเลขประกันสังคม — {syncSsoNo.Error}");
                     // รอบ 274-10: ciphertext จากระบบต้นทาง (เช่นข้อมูลที่ดึงจากเราไปตอนถอดรหัสไม่ได้) ห้ามเก็บเป็นค่า — สร้างพนักงานได้ แต่ไม่เก็บช่องนั้น + บอกในผลลัพธ์
                     var syncCitizenCipher = EmployeeRecordEdit.CipherInputProblem(r.CitizenId, "เลขบัตรประชาชน");
-                    if (syncCitizenCipher != null) errors.Add($"{r.EmployeeCode}: สร้างพนักงานแล้วแต่ไม่บันทึกเลขบัตร — {syncCitizenCipher}");
+                    if (syncCitizenCipher != null) syncWarnings.Add($"{r.EmployeeCode}: สร้างพนักงานแล้วแต่ไม่บันทึกเลขบัตร — {syncCitizenCipher}");
                     var syncBankCipher = EmployeeRecordEdit.CipherInputProblem(r.BankAccountNumber, "เลขบัญชีธนาคาร");
-                    if (syncBankCipher != null) errors.Add($"{r.EmployeeCode}: สร้างพนักงานแล้วแต่ไม่บันทึกเลขบัญชี — {syncBankCipher}");
+                    if (syncBankCipher != null) syncWarnings.Add($"{r.EmployeeCode}: สร้างพนักงานแล้วแต่ไม่บันทึกเลขบัญชี — {syncBankCipher}");
                     var newEmp = new Employee
                     {
                         CompanyId = companyId,
@@ -627,7 +628,10 @@ public class PayrollService : IPayrollService
         }
 
         await _db.SaveChangesAsync();
-        return new SyncEmployeesResponse(inserted, updated, skipped, errors);
+        // ฝ่ายค้าน 274-10 LOW-4: สร้างแล้วแต่ไม่เก็บบางช่อง = "เตือน" ที่สถานะงาน (คงอยู่ใน errors ด้วยเพื่อจอเดิมที่แสดง errors)
+        errors.AddRange(syncWarnings);
+        return new SyncEmployeesResponse(inserted, updated, skipped, errors,
+            EmployeeRecordEdit.SyncStatus(skipped, syncWarnings.Count), syncWarnings);
     }
 
     public async Task<EmployeeResponse?> GetEmployeeByExternalAsync(Guid companyId, string externalSystem, string externalId)
@@ -5071,12 +5075,16 @@ public class PayrollService : IPayrollService
     /// masked (deny by default). controller ต้อง opt-in.</summary>
     private static EmployeeResponse MapToEmployeeResponse(Employee e, bool includePii = false, bool includeSalary = true)
     {
-        var citizenId = includePii ? e.CitizenId : Accounting.Helpers.PiiMask.CitizenId(e.CitizenId);
+        // รอบ 275 แพ็ก A (T4 M-2): ค่าที่ถอดรหัสไม่ได้ ⇒ ป้าย "⛔ ถอดรหัสไม่ได้" (ตัวเดียวกับไฟล์ส่งออก) ไม่ใช่ ciphertext ดิบ (ผู้มี Pii.View เดิมเห็น enc1:…)
+        // และไม่ใช่ XXXX ที่ดูเหมือนเลขปกติ (ผู้ไม่มีสิทธิ์) · ฟอร์มส่งป้ายกลับมา = ไม่ได้แก้ (EmployeeRecordEdit.IsEchoOfStoredUnreadable)
+        var citizenId = Accounting.Helpers.EmployeeRecordEdit.ForEmployeeDto(e.CitizenId, includePii, Accounting.Helpers.PiiMask.CitizenId);
         // เลขผู้เสียภาษีของ "บุคคล" = เลขบัตรประชาชน ⇒ ปิดบังแบบเลขบัตร (เปิดหลักแรก+หลักท้าย)
         // ไม่ใช่แบบ PiiMask.TaxId ที่เปิด 7 หลักแรก (ใช้กับนิติบุคคล) · ตัวปิดบังต้องเป็น
         // ตัวเดียวกับที่ EmployeeRecordEdit.ThaiIdNumber ใช้จับ "ค่าปิดบังที่ส่งกลับมา"
-        var taxId = includePii ? e.TaxId : Accounting.Helpers.PiiMask.CitizenId(e.TaxId);
-        var bankAccountNo = includePii ? e.BankAccountNumber : Accounting.Helpers.PiiMask.BankAccountNo(e.BankAccountNumber);
+        var taxId = Accounting.Helpers.EmployeeRecordEdit.ForEmployeeDto(e.TaxId, includePii, Accounting.Helpers.PiiMask.CitizenId);
+        var bankAccountNo = Accounting.Helpers.EmployeeRecordEdit.ForEmployeeDto(e.BankAccountNumber, includePii, Accounting.Helpers.PiiMask.BankAccountNo);
+        var identity = Accounting.Helpers.EmployeeTaxIdentity.Inspect(e.TaxId, e.CitizenId);
+        var bankUnreadable = Accounting.Helpers.EncryptedColumnConverter.IsUnreadable(e.BankAccountNumber);
         var phone = includePii ? e.Phone : Accounting.Helpers.PiiMask.Phone(e.Phone);
         var email = includePii ? e.Email : Accounting.Helpers.PiiMask.Email(e.Email);
         // เงินเดือน = ข้อมูลอ่อนไหว (payroll sensitivity) — ผู้ไม่มีสิทธิ์ดูเงินเดือน
@@ -5108,7 +5116,10 @@ public class PayrollService : IPayrollService
             BankAccountNumber: bankAccountNo,
             BankAccountName: e.BankAccountName,
             // A-PR1: เลขที่กรอกไว้เท่านั้น (ไม่แต่งจากเลขบัตร — ช่องว่าง = ใช้เลขบัตร) · ปิดบังแบบเลข 13 หลักของบุคคล
-            SocialSecurityNumber: includePii ? e.SocialSecurityNumber : Accounting.Helpers.PiiMask.CitizenId(e.SocialSecurityNumber));
+            SocialSecurityNumber: Accounting.Helpers.EmployeeRecordEdit.ForEmployeeDto(e.SocialSecurityNumber, includePii, Accounting.Helpers.PiiMask.CitizenId),
+            IdentityProblem: identity.Ok ? null : identity.Problem.ToString(),
+            BankAccountProblem: bankUnreadable ? Accounting.Helpers.TaxIdProblem.Undecryptable.ToString() : null,
+            PiiProblemText: Accounting.Helpers.EmployeeRecordEdit.PiiProblemText(identity, bankUnreadable));
     }
 
     private static PayrollItemResponse MapToPayrollItemResponse(PayrollItem i)

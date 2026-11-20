@@ -71,7 +71,7 @@ public static class Pnd1FilingData
             + $"(ภาษีรวม {blocked.Sum(b => b.TaxAmount):N2} บาท จะขาดจากแบบถ้าออกไฟล์ตอนนี้):\n"
             + string.Join("\n", blocked.Select(b => $"• {b.SourceRef}{(string.IsNullOrWhiteSpace(b.Name) ? "" : " " + b.Name)} "
                 + $"[{b.MaskedTaxId ?? "-"}]: {b.Reason}"))
-            + "\nแก้ทุกแถวแล้วดาวน์โหลดใหม่ (ดูรายการทั้งหมด: GET payroll/tax-identity-health)";
+            + "\nแก้ทุกแถวแล้วดาวน์โหลดใหม่ (ดูรายการทั้งหมดที่ " + EncryptionHealthText.PageName + ")";   // รอบ 275 แพ็ก A (M-1): ชี้หน้าจอ ไม่ใช่ URL ดิบ
 
     /// <summary>รอบ 274: แถวที่ถูกกันออกจากไฟล์ — <paramref name="SourceRef"/> = รหัสพนักงาน/เลขที่ใบ · <paramref name="MaskedTaxId"/> ปิดบังเสมอ ·
     /// <paramref name="Reason"/> = เหตุ + ทางไปต่อ (<see cref="EmployeeTaxIdentity.Result.Reason"/>)</summary>

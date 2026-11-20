@@ -25,6 +25,7 @@
       <div class="flex gap-2">
         <button class="btn btn-secondary" onclick="Page.openCompDefaults()">⚙️ ค่าจ้างมาตรฐานบริษัท</button>
         <button class="btn btn-secondary" onclick="Page.openSync()">🔁 Sync จากระบบ HR</button>
+        <a class="btn btn-secondary" href="/pages/encryption-health.html" title="เลขประจำตัว/เลขบัญชีที่ถอดรหัสไม่ได้หรือไม่ถูกต้อง">🔐 สุขภาพข้อมูลเข้ารหัส</a>
         <button class="btn btn-primary" onclick="Page.openCreate()">+ เพิ่มพนักงาน</button>
       </div>
     </div>
@@ -80,8 +81,11 @@
             <div class="form-group"><label class="form-label">ชื่อ (Eng)</label><input type="text" class="form-input" id="fFirstNameEn"></div>
             <div class="form-group"><label class="form-label">นามสกุล (Eng)</label><input type="text" class="form-input" id="fLastNameEn"></div>
           </div>
+          <!-- รอบ 275 แพ็ก A (T4 M-2 · 274-10 MED-2): ข้อความจากเซิร์ฟเวอร์ (piiProblemText) — ช่องที่ถอดรหัสไม่ได้ได้ป้าย ⛔ แทน ciphertext ·
+               ไม่แตะช่อง = ค่าเดิมคงไว้ (เซิร์ฟเวอร์รู้จักป้ายที่ส่งกลับ) · พิมพ์ทับ = กรอกค่าใหม่ -->
+          <div id="fPiiProblem" style="display:none;margin-bottom:10px;padding:10px 12px;border-radius:8px;background:#fef2f2;border:1px solid #fecaca;color:#991b1b;font-size:13px"></div>
           <div class="form-row">
-            <div class="form-group"><label class="form-label">เลขบัตรประชาชน (13 หลัก)</label><input type="text" class="form-input" id="fCitizenId" maxlength="13"></div>
+            <div class="form-group"><label class="form-label">เลขบัตรประชาชน (13 หลัก)</label><input type="text" class="form-input" id="fCitizenId" maxlength="17"></div>
             <div class="form-group"><label class="form-label">เลขประจำตัวผู้เสียภาษี</label><input type="text" class="form-input" id="fTaxId" maxlength="17">
               <div style="font-size:11px;color:#64748b;margin-top:4px">เว้นว่าง = ใช้เลขบัตรประชาชน (บุคคลไทย) · กรอกเฉพาะผู้ที่ไม่มีบัตรไทย — ใช้ออก 50 ทวิ / ภ.ง.ด.1</div>
             </div>
@@ -392,7 +396,7 @@
               const sync = e.externalSystem ? `<span class="badge b-Sync">${e.externalSystem}</span>` : '<span style="color:#cbd5e1">—</span>';
               return `<tr>
                 <td><b>${e.employeeCode}</b></td>
-                <td>${Layout.esc([e.titleTh, e.firstNameTh, e.lastNameTh].filter(Boolean).join(' '))}</td>
+                <td>${Layout.esc([e.titleTh, e.firstNameTh, e.lastNameTh].filter(Boolean).join(' '))}${e.piiProblemText ? `<div style="font-size:11px;color:#dc2626" title="${Layout.esc(e.piiProblemText)}">⛔ เลขประจำตัว/บัญชีใช้ไม่ได้ — เปิดแก้ไข</div>` : ''}</td>
                 <td>${e.departmentName || e.department || '-'}<div style="font-size:11px;color:#64748b">${e.positionTitle || e.position || ''}</div></td>
                 <td>${e.employmentType || '-'}</td>
                 <td style="text-align:right">${this._fmt(e.baseSalary)}<div style="font-size:11px;color:#64748b">${e.salaryType}${salaryUnit}</div></td>
@@ -418,12 +422,29 @@
           tbody.innerHTML = `<tr><td colspan="9" style="color:#dc2626;text-align:center;padding:30px">${e.message}</td></tr>`;
         }
       },
+      // รอบ 275 แพ็ก A (T4 M-2): ป้าย "ถอดรหัสไม่ได้" — ข้อความ/สถานะมาจากเซิร์ฟเวอร์ (piiProblemText · identityProblem · bankAccountProblem) ไม่มีกติกาในหน้า
+      _UNREADABLE: '⛔ ถอดรหัสไม่ได้',
+      _setPiiProblem(e) {
+        const box = document.getElementById('fPiiProblem');
+        const msg = e && e.piiProblemText;
+        ['fCitizenId', 'fTaxId', 'fSsoNumber', 'fBankAcct'].forEach(id => {
+          const el = document.getElementById(id);
+          const bad = !!e && el.value === Page._UNREADABLE;
+          el.style.borderColor = bad ? '#dc2626' : '';
+          el.style.color = bad ? '#991b1b' : '';
+          el.title = bad ? 'ค่าที่บันทึกไว้ถอดรหัสไม่ได้ — ไม่แตะช่องนี้ = คงค่าเดิมไว้ · พิมพ์ทับเพื่อกรอกใหม่' : '';
+        });
+        if (!msg) { box.style.display = 'none'; box.textContent = ''; return; }
+        box.textContent = msg + ' · ช่องที่ขึ้น “' + Page._UNREADABLE + '”: ถ้าไม่แก้ ค่าเดิมคงไว้ตามเดิม (ระบบกู้คืนได้เมื่อผู้ดูแลตั้งคีย์เดิม) · พิมพ์ทับเพื่อกรอกค่าใหม่ — ดูทั้งหมดที่ ตั้งค่า › สุขภาพข้อมูลเข้ารหัส';
+        box.style.display = '';
+      },
       openCreate() {
         document.getElementById('formTitle').textContent = '+ เพิ่มพนักงาน';
         document.getElementById('fId').value = '';
         ['fCode','fFirstNameTh','fLastNameTh','fFirstNameEn','fLastNameEn','fCitizenId',
          'fTaxId','fSsoNumber','fPhone','fEmail','fDept','fPos','fBankName','fBankAcct','fBankAcctName',
          'fExtSys','fExtId'].forEach(id => document.getElementById(id).value = '');
+        Page._setPiiProblem(null);   // ห้ามค้างป้ายของคนก่อน
         Page._setCodeLock(false, null);
         document.getElementById('fStart').dataset.orig = '';
         document.getElementById('fTitle').value = 'นาย';
@@ -476,6 +497,7 @@
           document.getElementById('fBankAcctName').value = e.bankAccountName || '';
           document.getElementById('fExtSys').value = e.externalSystem || '';
           document.getElementById('fExtId').value = e.externalId || '';
+          Page._setPiiProblem(e);
           Layout.openModal('formModal');
         } catch (err) { Layout.toast(err.message, 'error'); }
       },

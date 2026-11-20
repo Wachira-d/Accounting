@@ -7330,9 +7330,28 @@ ciphertext ของแถวนั้นเองส่งกลับมา = 
 `PiiValueKind` ต่อคอลัมน์ (เลขบัตร/ผู้เสียภาษี = 13 หลัก mod-11) · `PiiReprotectPass` เขียนชั้นเดียว + audit `PiiNestedUnwrapped` (ไม่ตัดจบเมื่อไม่มีคีย์เดิม) ·
 รายงาน: แกะได้ = รอย้ายคีย์ · แกะไม่ได้ = `NestedCipher` · คำตัดสิน 274-10 · เทสต์ `PiiNestedCipherRound274_10Tests` (pure ×8) · Db `PiiNestedCipherDbTests` · กติกา `_R274_10_WHY` ×14 — commit 7c75b438_
 
+_รอบ 274-11 ผลตรวจฝ่ายค้าน 274-10 (2026-11-20): MED-1 การแกะชั้นซ้อนเปิด oracle ย้อนหลังที่ `CustomerSignerProfile` (ผู้ลงนามนิรนามเขียนแล้วอ่านกลับผ่าน Prefill) ⇒
+converter ค่าตั้งต้น `NoUnwrap` · allow-list 5 คอลัมน์พนักงาน · LOW-1 ด่านเข้าปฏิเสธเครื่องหมายภายใน + converter ห่อค่าที่ขึ้นต้นด้วยเครื่องหมาย (อ่านกลับตรงตัว) ·
+LOW-2 `IsUnreadable` ไม่ trim · มีช่องว่าง = ไม่ใช่ ciphertext · `CandidateSql` กติกาเดียวกัน · LOW-3 งานย้ายคีย์ข้ามการสแกนเมื่อชุดคีย์เดิมสแกนครบแล้ว (≤ 7 วัน) ·
+LOW-4 HRIS sync `Status`/`Warnings` · คำตัดสิน 274-11 · เทสต์ pure +5 · Db +ผู้ลงนาม · กติกา `_R274_10_WHY` +8 — commit 55b251d9_
+_รอบ 275 แพ็ก B (2026-11-20 · ผลตรวจรายสัปดาห์ T2 — รายงาน ภ.ง.ด. ↔ ทะเบียน 50 ทวิ · คำตัดสิน 275-B-1…6): **H1** สร้างใหม่คืนติ๊กเฉพาะแถวระบบที่ผู้ใช้ติ๊กเข้า
+(`Helpers/WhtReportLineRule.RestoreKey` — เดิมติ๊กแถวใบร่างของเอกสารเดียวกันเข้าเอง ⇒ ยอดไฟล์ 300 ≠ หัว 150 · ด่านยังไม่ออกใบไม่บล็อก) + คำนวณยอดหัว
+`RecalcWhtTotals`/`RecalcPp36Totals` หลังคืนติ๊ก (เดิมค้าง 178.65 vs 357.65) · **H2** `TaxReportLine.WhtCertId` (migration ADD COLUMN) + ลายเซ็น ภ.ง.ด. ต่อใบ
+(`TaxReportDraftFreshness.WhtSignature` — ออก/ยกเลิก/ผูก/เปลี่ยนผูก/ใบมือ/ผู้ถูกหัก) ตัวเทียบเดียว `TaxService.DraftFreshnessAsync` ของแถบและด่านยื่น ·
+**M1** ด่านยื่นฝั่งเซิร์ฟเวอร์ `EnsureReportFileableAsync` (ตัวตรวจก่อนยื่น Error + ทะเบียน) ที่บันทึกการยื่นและไฟล์ e-Filing ของรายงาน · **M2/L4** ตัวตรวจครอบ ภ.ง.ด.54
+(ไม่ฟ้องเลขของผู้รับ ตปท.) + ภ.พ.36 · **M3** ชุดตรวจร่าง `CheckedTaxTypes` แยกจากชุดสร้างอัตโนมัติ (+ ภ.ง.ด.1 รุ่นเก่า CanRegenerate=false) · **M4** ลายเซ็นเทียบเลข/สาขา/ชื่อผู้ถูกหัก
++ ทางแก้ RD-WHT-005 ที่ทำได้จริง · **M5** ข้อความด่านยังไม่ออกใบชี้ทางจริง · คำนำหน้าแถวระบบ/ยอดจาก 50 ทวิ ล็อก · ติ๊กเข้าต้องมีเหตุผล + audit chain · **L1** ค่าคลาดเคลื่อน 0.00 ·
+**L2** แถวสรุปหลัง JE ล้วน + คีย์สาขา · เลื่อน: L3 · M4 ครึ่งหลัง (275-B-6) · เทสต์ `WhtReportRound275Tests` (pure) · Db `WhtReportRound275DbTests` (×11) · กติกา `_R275B_*` (12) + R275B-1…6 — commit 33b2c7de_
+
 _รอบ 275 แพ็ก D (2026-11-20 · โต๊ะสลิปภาษี · ผลตรวจ T1): ปิด H1 (บันทึกเอง/ผูกกับรายการนำส่งที่มีอยู่จากโต๊ะ — ยอดเท่าสลิปทุกสตางค์ · คำตัดสิน 4.3 · "ไม่บันทึก" ไม่ลบหลักฐานทันที) ·
 H2 (ApplyAsync/LinkAsync ล็อกแล้ว Reload · ทางล้มไม่เขียนทับ Remitted · claim ปุ่มเลือก/ปุ่มไม่บันทึกแบบ atomic · Db test สองการเชื่อมต่อ) · M1 (ยกเลิกรายการนำส่ง ⇒ สลิปกลับคิว + ใบขอชำระกลับเปิด) ·
 M2 (ผู้สมัครที่ล้มแน่นอนเลือกไม่ได้ · พนักงานกดล้ม = 409 ไม่ส่งการ์ด) · M3 (ไฟล์เดิมจากกลุ่มอื่น ⇒ ประมวลแถวเดิมใหม่) · M4 (เตือน/ปิดแถวรอนาน · ลบไฟล์ครบ 90 วันทำงานจริง · อ่านใหม่เมื่อ OCR กลับมา) ·
 M5/M6 (เส้น 260 ไม่จับสลิปรัฐกับใบแจ้งหนี้ · สลิปโอนทั่วไปในกลุ่มตอบตามจริง + กระดิ่ง) · M7 (วงจรใบขอชำระ Paid/Expired/ยกเลิกแจ้งกลุ่ม/ทีละใบต่องวด) · M8 (ไม่พบเงินออกตรวจซ้ำได้) ·
 L2 L3 L4 L5 L6 L8 L9 · เลื่อน L1 L7 (dev-275-D.md) · ตัวตัดสิน `Helpers/TaxSlipDeskRule.cs` (TaxSlipDeskRule · TaxSlipChannelRedirect · TaxPaymentRequestLifecycle · TaxSlipOpenAge) · กติกา `_R275D_` ·
 คอลัมน์ใหม่ `TaxSlipEvidences.StaffRemindedAt` (Round272Migration) · commit 2c247bd4_
+
+_รอบ 275 แพ็ก A (2026-11-20 · คีย์และความลับ · T4 H-1/M-1/M-2/M-4/M-5): `SecretProtector` ใช้ห่วงโซ่คีย์เดียวกับ PII (`DecryptKeyChain` — รวม `ENCRYPTION_KEY_PREVIOUS` + `_2`…`_9` + หลายบรรทัด) ·
+`SecretReprotectJob` เป็นระยะ + ล้ม = JobRunLog + watermark · ลายนิ้วมือคีย์ใน `SiteSettings` (งานย้ายคีย์ทั้งสองหยุดเมื่อไม่ตรง · ยืนยันคีย์โดยผู้ดูแล + audit) ·
+`Helpers/SecretUse` ที่ webhook ขาออก/CMS ขาเข้า/e-Tax/อีเมล/login ภายนอก/Omise/ธนาคาร/LINE OA/ลงนาม callback (ห้ามใช้ค่าว่างเงียบ · ห้ามส่งไม่เซ็น · ห้ามตรวจด้วยกุญแจว่าง) ·
+DTO พนักงานส่งป้าย ⛔ แทน ciphertext + ฟอร์มบอกชัด (ฝ่ายค้าน 274-10 MED-2) · หน้า `/pages/encryption-health.html` + มุมผู้ดูแล · runbook `docs/runbooks/encryption-key-rotation.md` ·
+คำตัดสิน 275-A-1…7 · pure + Db `KeysSecretsRound275A*` · กติกา `_R275A_` — commit (เติมในคอมมิตตามหลัง)_

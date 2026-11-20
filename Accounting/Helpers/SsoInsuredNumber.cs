@@ -36,7 +36,7 @@ public static class SsoInsuredNumber
         throw new BusinessRuleException(
             $"{formName}: ไม่ออกไฟล์ — เลขบัตรประชาชนของผู้ประกันตน {bad.Count} รายใช้ไม่ได้:\n"
             + string.Join("\n", bad.Select(b => $"• {b.Code} {b.Name} [{b.Id.Masked ?? "-"}]: {b.Id.Reason}"))
-            + "\nแก้ที่ทะเบียนพนักงาน (หรือตั้ง ENCRYPTION_KEY_PREVIOUS) แล้วดาวน์โหลดใหม่", UnusableRuleCode, 422);
+            + "\nแก้ที่ทะเบียนพนักงาน (ถอดรหัสไม่ได้: แจ้งผู้ดูแลระบบ — ดู " + EncryptionHealthText.PageName + ") แล้วดาวน์โหลดใหม่", UnusableRuleCode, 422);
     }
 
     /// <summary>รอบ 274: เลขบัตรที่ลงไฟล์ สปส. — ค่า enc1:… (ถอดรหัสไม่ได้) ⇒ ว่าง (ไม่ลง ciphertext ทั้งก้อน · ไม่ตัดตัวเลขจากมัน) · อื่น ๆ คงเดิม ·

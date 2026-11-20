@@ -367,6 +367,20 @@ public class WebhookService : IWebhookService
                 return delivery;
             }
 
+            // รอบ 275 แพ็ก A (T4 M-5 · S4): ตั้ง secret ไว้แต่ถอดไม่ได้ (คีย์ถูกหมุน/ค่าเสีย) ⇒ <b>ไม่ส่ง</b> — เดิม Unprotect คืน "" แล้วส่งแบบไม่มีลายเซ็นเงียบ ๆ
+            // (ผู้รับที่ไม่ตรวจลายเซ็นรับ event ปลอมได้ · ผู้รับที่ตรวจปฏิเสธโดยเราไม่รู้เหตุ) · ล้มดัง: แถวส่ง (ErrorMessage — หน้าประวัติการส่ง) · คำตอบผู้เรียก (delivery ล้ม) · หน้า "สุขภาพข้อมูลเข้ารหัส"
+            var signing = SecretUse.Open(_secrets, "รหัสลับลงนาม webhook", registration.Secret);
+            if (signing.Unusable)
+            {
+                stopwatch.Stop();
+                delivery.IsSuccess = false;
+                delivery.ErrorMessage = signing.Problem;
+                delivery.DurationMs = (decimal)stopwatch.Elapsed.TotalMilliseconds;
+                _db.Set<WebhookDelivery>().Add(delivery);
+                await _db.SaveChangesAsync();
+                return delivery;
+            }
+
             var request = new HttpRequestMessage(HttpMethod.Post, registration.Url)
             {
                 Content = content
@@ -392,7 +406,7 @@ public class WebhookService : IWebhookService
             // encrypted at rest — sign with the cleartext.
             // รอบ 240: ลายเซ็นผ่านฟังก์ชัน canonical ตัวเดียว (Helpers/WebhookSignature) — หัวเดิม (body ล้วน) คงไว้ให้ผู้เชื่อมต่อเดิม +
             // หัวใหม่ที่มีเวลาในลายเซ็น (กันยิงซ้ำ) ให้ผู้เชื่อมต่อใหม่ตรวจ
-            var clearSecret = _secrets.Unprotect(registration.Secret);
+            var clearSecret = signing.Value;
             if (!string.IsNullOrWhiteSpace(clearSecret))
             {
                 request.Headers.TryAddWithoutValidation(WebhookSignature.LegacyHeaderName, WebhookSignature.LegacySign(clearSecret, jsonPayload));
