@@ -4926,7 +4926,7 @@ RULES += [
     dict(file=ROLE_PERM, method="GetMyPermissionsAsync", must=["PermissionDeniedMenuIdsAsync("],
          why="A-GW10: เมนูรับชำระออนไลน์ซ่อนเมื่อไม่มีสิทธิ์ (เดิมเห็นแล้วกด 403)"),
     dict(file=ROLE_PERM, method="PermissionDeniedMenuIdsAsync",
-         must=["MenuPermissionMap.DeniedMenuIdsAsync(", "_permissions.HasPermissionAsync("],
+         must=["MenuPermissionMap.DeniedMenuIdsAsync(", "_permissions.HasPermissionAsync(", "DocumentPermissionHelper.VisibleDirectionsAsync("],
          why="A-GW10 + รอบ 277 (_R277_): ตารางเมนู→สิทธิ์ตัวเดียว (MenuPermissionMap รวมหน้ารับชำระ) · ตรวจด้วยด่านเดียวกับ endpoint"),
     # ── ฝ่ายค้านรอบ 201 ทีม GW (GWO-1..7) ──
     dict(file=GW_CTL, method="Receive",
@@ -21934,7 +21934,7 @@ _R277_CO = "Services/Implementations/CompanyService.cs"
 _R277_AUTH = "Services/Implementations/AuthService.cs"
 RULES += [
     dict(file="Middleware/TenantAccessMiddleware.cs", method="InvokeAsync",
-         must=["cu.AccessPending", "row.AccessPending", "PendingMemberAccess.IsAllowed(context.Request.Method, path)", "PendingMemberAccess.DeniedMessage"],
+         must=["cu.AccessPending", "row.AccessPending", "fallback.AccessPending", "PendingMemberAccess.IsAllowed(context.Request.Method, path)", "PendingMemberAccess.DeniedMessage"],
          why=_R277_WHY + "สมาชิกที่ตอบรับคำเชิญแบบไม่กำหนดบทบาท = ทุก API ของบริษัท 403 (ผ่านเฉพาะรายการของ PendingMemberAccess)"),
     dict(file=ROLE_PERM, method="GetMyPermissionsAsync",
          must=["cu.AccessPending", "AccessPending: true", "PendingMemberAccess.Notice("],
@@ -21986,13 +21986,41 @@ RULES += [
          must=["CompanyInvitationPolicy.HashToken(rawToken)", "AddChainedAuditLog("], forbid=["inv.Token)"],
          why=_R277_WHY + "แอดมินส่งซ้ำ = token ใหม่ (ฐานไม่มี token ดิบ) · audit"),
 ]
+RULES += [
+    # ฝ่ายค้านรอบ 277 HIGH-1/HIGH-2: ทางเข้าที่ไม่ผ่าน TenantAccessMiddleware ใช้ตัวกรองสมาชิกเดียว (ตัดสมาชิกรอสิทธิ์)
+    dict(file="Helpers/CompanyMembership.cs", method="ActiveMemberIdsAsync", must=["!cu.AccessPending"],
+         why=_R277_WHY + "ฝ่ายค้าน HIGH: สมาชิกรอสิทธิ์ไม่ใช่ผู้อนุมัติ/ผู้ลงนามที่ทำหน้าที่ได้"),
+    dict(file="Helpers/CompanyMembership.cs", method="Active", must=["!cu.AccessPending"],
+         why=_R277_WHY + "ฝ่ายค้าน HIGH: ตัวกรองสมาชิกที่ใช้งานได้ตัวเดียว"),
+    dict(file="Services/Implementations/LineBotService.cs", method="HandleMessageAsync", must=["CompanyMembership.ActiveOf(_db, user.Id)"],
+         forbid=[".Where(cu => cu.UserId == user.Id)"],
+         why=_R277_WHY + "ฝ่ายค้าน HIGH-1: บอท LINE (ดูยอด/ถาม/บันทึก) เลือกเฉพาะบริษัทที่ใช้งานได้"),
+    dict(file="Services/Implementations/LineBotService.cs", method="HandleImageAsync", must=["CompanyMembership.ActiveOf(_db, user.Id)"],
+         forbid=[".Where(cu => cu.UserId == user.Id)"],
+         why=_R277_WHY + "ฝ่ายค้าน HIGH-1: ส่งรูปบิลผ่าน LINE เลือกเฉพาะบริษัทที่ใช้งานได้"),
+    dict(file="Controllers/AccountantWorkspaceController.cs", method="GetWorkspace", must=["CompanyMembership.ActiveOf(_db, userId)"],
+         forbid=[".Where(cu => cu.UserId == userId)"],
+         why=_R277_WHY + "ฝ่ายค้าน HIGH-2: หน้าสำนักงานบัญชีไม่แสดงบริษัทที่ผู้ใช้รอสิทธิ์ (เลขภาษี/ยอด)"),
+    dict(file="Controllers/MeController.cs", method="GetMyPermissions", must=["CompanyMembership.ActiveRow(_db, companyId, userId)"],
+         why=_R277_WHY + "ฝ่ายค้าน: companyId ทาง query ไม่ผ่าน TenantAccessMiddleware"),
+    dict(file="Hubs/NotificationHub.cs", method="JoinCompanyGroup", must=["CompanyMembership.ActiveRow(_db, companyGuid, userGuid)"],
+         why=_R277_WHY + "ฝ่ายค้าน: SignalR ไม่ผ่าน middleware"),
+    dict(file="Services/Implementations/Security/TenantGuard.cs", method="CheckAsync", must=["CompanyMembership.ActiveRow("],
+         why=_R277_WHY + "ฝ่ายค้าน: ด่าน tenant ตัวเดียวกันตัดสมาชิกรอสิทธิ์"),
+    dict(file=_R277_CO, method="GetUserCompaniesAsync", must=["CompanyMembership.ActiveOf(_db, userId)", "AccessPending = true"], must_lit=['TaxId = ""'],
+         why=_R277_WHY + "ฝ่ายค้าน HIGH-2: รายชื่อบริษัทของสมาชิกรอสิทธิ์มีแค่ id/ชื่อ"),
+    dict(file=_R277_INV, method="AcceptAsync", must=["CompanyInvitationPolicy.ConfirmsEmail(verdict)", "trackedUser.EmailVerified = true"],
+         why=_R277_WHY + "ฝ่ายค้าน MED-3: ตอบรับด้วย token = ยืนยันอีเมล (คำตัดสิน 277-8)"),
+]
 REVIEWER_CASES += [
     ("R277-1", "InvokeAsync", "if (row.AccessPending && !PendingMemberAccess.IsAllowed(context.Request.Method, path))",
-     "if (row.AccessPending && false)", True),
+     "if (false && !PendingMemberAccess.IsAllowed(context.Request.Method, path))", True),
     ("R277-2", "AcceptAsync", "var (role, pending) = CompanyInvitationPolicy.MembershipFor(inv.RoleChosen && customRoleOk, inv.Role);",
      "var (role, pending) = (inv.Role, false);", True),
     ("R277-3", "FindAsync", "i.TokenHash == hash", "i.Token == rawToken", True),
     ("R277-4", "AddUserAsync", "await EnsureSeatAsync(companyId, adding);", "_ = adding;", True),
+    ("R277-5", "GetWorkspace", "Accounting.Helpers.CompanyMembership.ActiveOf(_db, userId).AsNoTracking()", "_db.CompanyUsers.AsNoTracking().Where(cu => cu.UserId == userId)", True),
+    ("R277-6", "Active", "rows.Where(cu => !cu.AccessPending)", "rows", True),
 ]
 
 if __name__ == "__main__":

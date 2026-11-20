@@ -27,7 +27,12 @@ public class RolePermissionService : IRolePermissionService
     private async Task<List<string>?> PermissionDeniedMenuIdsAsync(Guid companyId, Guid userId)
     {
         if (_permissions == null) return null;
-        return await Accounting.Helpers.MenuPermissionMap.DeniedMenuIdsAsync(key => _permissions.HasPermissionAsync(companyId, userId, key));
+        return await Accounting.Helpers.MenuPermissionMap.DeniedMenuIdsAsync(key => _permissions.HasPermissionAsync(companyId, userId, key),
+            async () =>
+            {
+                var v = await Accounting.Helpers.DocumentPermissionHelper.VisibleDirectionsAsync(_permissions, companyId, userId);
+                return (v.Revenue, v.Purchase);
+            });
     }
 
     public async Task<List<CompanyRoleResponse>> GetRolesAsync(Guid companyId, Guid userId)

@@ -133,7 +133,7 @@ public class TeamInvitationDbTests
         var r = await Company(db).AddUserAsync(s.CompanyId, s.Owner, new AddCompanyUserRequest(u.Email, UserRole.Accountant, OwnDocumentsOnly: true));
         Assert.False(await db.CompanyUsers.AnyAsync(cu => cu.CompanyId == s.CompanyId && cu.UserId == u.Id));   // เดิม: เข้าทันที
         var preview = await Inv(db).PreviewAsync(TokenOf(r));
-        Assert.True(preview.AccountExists);
+        Assert.DoesNotContain(typeof(InvitationPreviewResponse).GetProperties(), p => p.Name.Contains("Exist"));   // ฝ่ายค้าน LOW: ไม่บอกการมีบัญชี
         Assert.Equal(InvitationStatus.Pending, preview.Status);
 
         var cap = new Captured();
@@ -325,6 +325,69 @@ public class TeamInvitationDbTests
         var u = await UserAsync(db, email);
         var res = await Inv(db).AcceptAsync(u.Id, raw);
         Assert.False(res.AccessPending);
+    }
+
+    [Fact]
+    public async Task ฝ่ายค้านHIGH_สมาชิกรอสิทธิ์_ไม่อยู่ในตัวกรองสมาชิก_หน้าสำนักงานบัญชีไม่เห็น_รายชื่อบริษัทไม่มีเลขภาษี_ตั้งบทบาทแล้วเห็น()
+    {
+        await using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน — ข้าม"); return; }
+        var s = await SeedAsync(db);
+        var u = await UserAsync(db);
+        var r = await Company(db).AddUserAsync(s.CompanyId, s.Owner, new AddCompanyUserRequest(u.Email));
+        await Inv(db).AcceptAsync(u.Id, TokenOf(r));
+
+        Assert.False(await CompanyMembership.ActiveOf(db, u.Id).AnyAsync());                       // บอท LINE เลือกบริษัทจากตัวนี้
+        Assert.False(await CompanyMembership.ActiveRow(db, s.CompanyId, u.Id).AnyAsync());           // me/permissions · SignalR
+        Assert.False(await CompanyMembership.IsActiveMemberAsync(db, s.CompanyId, u.Id));            // ผู้อนุมัติ/ผู้ลงนาม
+        Assert.True(await CompanyMembership.IsActiveMemberAsync(db, s.CompanyId, s.Owner));          // ทิศตรงข้าม
+
+        var ws = await Workspace(db, u.Id);
+        Assert.DoesNotContain(s.CompanyId.ToString(), ws);
+
+        var list = await Company(db).GetUserCompaniesAsync(u.Id);
+        var row = Assert.Single(list, c => c.Id == s.CompanyId);
+        Assert.True(row.AccessPending);
+        Assert.True(string.IsNullOrEmpty(row.TaxId));
+        Assert.Null(row.Subscription);
+
+        await Company(db).UpdateUserRoleAsync(s.CompanyId, s.Owner, u.Id, UserRole.Staff);
+        Assert.True(await CompanyMembership.ActiveOf(db, u.Id).AnyAsync());
+        Assert.Contains(s.CompanyId.ToString(), await Workspace(db, u.Id));
+        var after = Assert.Single(await Company(db).GetUserCompaniesAsync(u.Id), c => c.Id == s.CompanyId);
+        Assert.False(after.AccessPending);
+        Assert.Equal("0105556000041", after.TaxId);
+    }
+
+    [Fact]
+    public async Task ฝ่ายค้านMED3_ตอบรับด้วยtoken_ประทับยืนยันอีเมล_อีเมลไม่ตรงไม่ประทับ()
+    {
+        await using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน — ข้าม"); return; }
+        var s = await SeedAsync(db);
+        var u = await UserAsync(db);
+        Assert.False(u.EmailVerified);
+        var stranger = await UserAsync(db);
+        var r = await Company(db).AddUserAsync(s.CompanyId, s.Owner, new AddCompanyUserRequest(u.Email, UserRole.Staff));
+        await Assert.ThrowsAsync<BusinessRuleException>(() => Inv(db).AcceptAsync(stranger.Id, TokenOf(r)));
+        Assert.False(await db.Users.AsNoTracking().Where(x => x.Id == stranger.Id).Select(x => x.EmailVerified).SingleAsync());
+        await Inv(db).AcceptAsync(u.Id, TokenOf(r));
+        Assert.True(await db.Users.AsNoTracking().Where(x => x.Id == u.Id).Select(x => x.EmailVerified).SingleAsync());
+    }
+
+    private static async Task<string> Workspace(AccountingDbContext db, Guid userId)
+    {
+        var ctl = new Accounting.Controllers.AccountantWorkspaceController(db);
+        ctl.ControllerContext = new Microsoft.AspNetCore.Mvc.ControllerContext
+        {
+            HttpContext = new DefaultHttpContext
+            {
+                User = new ClaimsPrincipal(new ClaimsIdentity(new[] { new Claim(ClaimTypes.NameIdentifier, userId.ToString()) }, "test")),
+            },
+        };
+        var res = await ctl.GetWorkspace();
+        var ok = (Microsoft.AspNetCore.Mvc.OkObjectResult)res.Result!;
+        return System.Text.Json.JsonSerializer.Serialize(ok.Value);
     }
 
     // ── ตัวช่วย ──

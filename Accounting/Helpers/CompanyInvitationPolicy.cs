@@ -54,6 +54,11 @@ public static class CompanyInvitationPolicy
     public static InvitationStatus DisplayStatus(InvitationStatus status, DateTime expiresAtUtc, DateTime nowUtc)
         => status == InvitationStatus.Pending && expiresAtUtc <= nowUtc ? InvitationStatus.Expired : status;
 
+    /// <summary>รอบ 277 ฝ่ายค้าน MED-3 (คำตัดสิน 277-8): ตอบรับผ่าน (token จากอีเมล + อีเมลบัญชีตรงอีเมลที่เชิญ) = ยืนยันอีเมลของบัญชีแล้ว — ใช้ได้กับทุกทาง
+    /// (ฟอร์ม · LINE ที่กรอกอีเมลเอง · SSO ที่ provider ไม่ยืนยันอีเมล) เพราะหลักฐานคือการถือ token ที่ส่งถึงกล่องจดหมายนั้น ไม่ใช่คำบอกของ provider ·
+    /// ผลอื่นทุกแบบ = ไม่ยืนยัน</summary>
+    public static bool ConfirmsEmail(Verdict v) => v == Verdict.Ok;
+
     /// <summary>คำเชิญใบนี้ "กินที่นั่ง" ไหม — Pending ที่ยังไม่หมดอายุ (คำเชิญหมดอายุไม่ล็อกที่นั่งถาวร · ตัวนับเดียวของ QuotaGateService/CompanyService)</summary>
     public static bool HoldsSeat(InvitationStatus status, DateTime expiresAtUtc, DateTime nowUtc)
         => status == InvitationStatus.Pending && expiresAtUtc > nowUtc;

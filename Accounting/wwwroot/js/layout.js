@@ -424,7 +424,9 @@ const Layout = {
     const p = this.myPermissions;
     if (!p) return this.dashboardUrl();
     if (p.accessPending) return '/pages/no-access.html';
-    if (this.hasMenuAccess('dashboard')) return this.dashboardUrl();
+    // โหมดง่าย: หน้าหลัก = /simple.html (สิทธิ์ "simple-home") · โหมดเต็ม: แดชบอร์ด (Reports.Dashboard)
+    const simpleMode = (localStorage.getItem('uiMode') || 'simple') !== 'advanced';
+    if (this.hasMenuAccess(simpleMode ? 'simple-home' : 'dashboard')) return this.dashboardUrl();
     const hidden = this.getHiddenMenuItems();
     // คู่มือเริ่มต้นใช้งาน (ตั้งค่าบริษัท) ไม่ใช่หน้าทำงานของพนักงาน — ข้ามเป็นหน้าแรก (ยังเปิดจากเมนูได้)
     const first = this.navItems.find(it => it.id && it.href && it.id !== 'dashboard' && it.id !== 'getting-started'
@@ -912,6 +914,10 @@ const Layout = {
     if (!this.myPermissions) return true;
     // รอบ 277: ตอบรับคำเชิญแล้วแต่เจ้าของยังไม่ตั้งบทบาท — ไม่มีเมนูใด (ทุก API ของบริษัทปิด · เซิร์ฟเวอร์ตัดสิน)
     if (this.myPermissions.accessPending) return false;
+    // รอบ 277 ฝ่ายค้าน MED-2: "หน้าหลักโหมดง่าย" (/simple.html) ใช้สิทธิ์เมนูเดียวกับแดชบอร์ดของบทบาท แต่ข้อมูลของหน้า (month-snapshot) ไม่ตรวจ
+    // Reports.Dashboard ⇒ ไม่ถูกตัดด้วยรายการ permissionDeniedMenuIds ของ "dashboard" (เดิมพนักงานโหมดง่ายใช้หน้านี้ได้ — ห้ามถดถอย)
+    const simpleHome = menuId === 'simple-home';
+    if (simpleHome) menuId = 'dashboard';
 
     // รอบ 276: ผู้ใช้ "เห็นเฉพาะเอกสารที่ตัวเองสร้าง" — เห็นเฉพาะเมนูที่เซิร์ฟเวอร์ส่งมา (DocumentRestrictionPolicy.OwnScopeMenuIds) ·
     // หน้าอื่นแสดงข้อมูลรวมของบริษัท — API ปฏิเสธอยู่แล้ว ตรงนี้กันเมนูโผล่แล้วกดได้ 403
@@ -925,7 +931,7 @@ const Layout = {
     // รอบ 201 ทีม GW (A-GW10) + รอบ 277: เมนูที่เซิร์ฟเวอร์บอกว่าไม่มีสิทธิ์ตามคีย์ perm:* ที่ API ของหน้านั้นตรวจ (ตาราง MenuPermissionMap — รวมแดชบอร์ด/
     // รายงานผู้บริหาร/FP&A/งบรวม/รอบโอน/ที่พัก) — ตัดก่อน "*" (ผู้ใช้ไม่ผูกบทบาทเห็นทุกเมนู แต่เปิดแล้วเจอ "ไม่มีสิทธิ์" · ที่มา: เจ้าของรายงาน
     // "ไม่มีสิทธิ์ ดูแดชบอร์ดภาพรวม (Reports.Dashboard)" 2026-11-20) · เจ้าของ/แอดมินไม่ถูกตัด (กลับไปข้างบนแล้ว)
-    if ((this.myPermissions.permissionDeniedMenuIds || []).includes(menuId)) return false;
+    if (!simpleHome && (this.myPermissions.permissionDeniedMenuIds || []).includes(menuId)) return false;
     const allowed = this.myPermissions.allowedMenuIds || [];
     // "*" = backend sentinel = "no custom CompanyRole assigned, show all"
     // (preserves legacy access for plain Employee / Manager UserRoles).
@@ -961,7 +967,7 @@ const Layout = {
       return;
     }
     // รอบ 277: แดชบอร์ดคือปลายทางอัตโนมัติหลังล็อกอิน/โลโก้/ลิงก์ "กลับหน้าหลัก" — ไม่มีสิทธิ์ ⇒ ไปหน้าแรกที่เข้าได้เงียบ ๆ (ไม่ใช่ error)
-    if (this.currentPage === 'dashboard' && !this.hasMenuAccess('dashboard')) {
+    if ((this.currentPage === 'dashboard' || this.currentPage === 'simple-home') && !this.hasMenuAccess(this.currentPage)) {
       const target = this.landingUrl();
       if (target.split('?')[0] !== location.pathname) location.replace(target);
       return;
@@ -1110,7 +1116,7 @@ const Layout = {
     // applies without bespoke selectors.
     if (uiMode === 'simple') {
       // รอบ 277: "หน้าหลัก (โหมดง่าย)" = แดชบอร์ด — ไม่มีสิทธิ์ ⇒ ไม่แสดง (เดิมกดแล้ว "ไม่มีสิทธิ์ ดูแดชบอร์ดภาพรวม")
-      if (this.hasMenuAccess('dashboard'))
+      if (this.hasMenuAccess('simple-home'))
         html.push(`<a class="nav-item" href="/simple.html"><span class="icon">🏠</span><span class="label">หน้าหลัก (โหมดง่าย)</span></a>`);
       html.push(`<a class="nav-item" href="/pages/quick-sale.html"><span class="icon">⚡</span><span class="label">ขายเร็ว</span></a>`);
       // quick-expense was removed 2026 — it bypassed VAT controls,
@@ -2077,7 +2083,7 @@ const Layout = {
         const bn = document.createElement('nav');
         bn.id = 'mobileBottomNav';
         bn.innerHTML = `
-          <a href="/simple.html" data-menu="dashboard"><span>🏠</span><span>หน้าหลัก</span></a>
+          <a href="/simple.html" data-menu="simple-home"><span>🏠</span><span>หน้าหลัก</span></a>
           <a href="/pages/quick-sale.html" data-menu="documents"><span>💰</span><span>ขาย</span></a>
           <a href="/pages/expense.html" data-menu="expense"><span>🧾</span><span>เบิก</span></a>
           <a href="/pages/bank.html" data-menu="bank"><span>🏦</span><span>เงิน</span></a>

@@ -7398,3 +7398,8 @@ _รอบ 277 (2026-11-20 · `erp-review/2026-11-20/dev-277-menu-invite.md` · 
 ตอบรับตัวเดียว `CompanyInvitationService` (ปุ่ม/ฟอร์ม/SSO) · ไม่สร้างบริษัท · ไม่เลือกบทบาท ⇒ `CompanyUser.AccessPending` (ทุก API 403 ที่ `TenantAccessMiddleware`) จนเจ้าของตั้ง ·
 แจ้ง `team.invitation_accepted` · ที่นั่งไม่นับคำเชิญหมดอายุ · อีเมลคำเชิญ HtmlEncode + บอก "ไม่ต้องสร้างบริษัท" · เทสต์ `MenuInviteRound277Tests` + Db `TeamInvitationDbTests` +
 sim `menu_landing_sim.js` · กติกา `_R277_` — commit a1ae70d2 + d93800f2_
+
+_รอบ 277 ชุดแก้ฝ่ายค้าน (2026-11-20 · คำตัดสิน 277-8…12): HIGH-1/2 ตัวกรองสมาชิกเดียว `CompanyMembership` (ตัดสมาชิกรอสิทธิ์) ต่อสายบอท LINE ×3 ·
+หน้าสำนักงานบัญชี · `api/me/permissions` · SignalR · `TenantGuard` · ผู้อนุมัติ/ผู้ลงนาม · รายชื่อบริษัทของผู้ใช้ (รอสิทธิ์ = id/ชื่อเท่านั้น) · เส้นสำรอง middleware fail closed ·
+MED-1 ทะเบียนเมนูครบทุกตัว (คีย์ any-of · ทิศเอกสาร · สิทธิ์เมนูอย่างเดียว + เทสต์ inventory) · MED-2 หน้าหลักโหมดง่าย "simple-home" ไม่ผูก Reports.Dashboard ·
+ที่พัก = LodgingManage หรือ LodgingSettings · MED-3 ตอบรับด้วย token = ยืนยันอีเมล · LOW หน้ารับคำเชิญไม่บอกการมีบัญชี — commit PENDING277B_

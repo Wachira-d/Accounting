@@ -51,8 +51,8 @@ public class MeController : ControllerBase
         // Look up the user's role + assigned CompanyRole(s) on this
         // company. Owner / SystemAdmin auto-pass = all menus + all
         // perms; everyone else gets the union of their roles' grants.
-        var cu = await _db.CompanyUsers.AsNoTracking()
-            .Where(x => x.CompanyId == companyId && x.UserId == userId)
+        // รอบ 277: companyId มาทาง query (TenantAccessMiddleware ไม่เห็น) ⇒ ตัดสมาชิกรอสิทธิ์ด้วยตัวกรองเดียว CompanyMembership
+        var cu = await Accounting.Helpers.CompanyMembership.ActiveRow(_db, companyId, userId).AsNoTracking()
             .Select(x => new { x.Role, x.CompanyRoleId })
             .FirstOrDefaultAsync(ct);
         if (cu == null)
