@@ -7330,6 +7330,13 @@ ciphertext ของแถวนั้นเองส่งกลับมา = 
 `PiiValueKind` ต่อคอลัมน์ (เลขบัตร/ผู้เสียภาษี = 13 หลัก mod-11) · `PiiReprotectPass` เขียนชั้นเดียว + audit `PiiNestedUnwrapped` (ไม่ตัดจบเมื่อไม่มีคีย์เดิม) ·
 รายงาน: แกะได้ = รอย้ายคีย์ · แกะไม่ได้ = `NestedCipher` · คำตัดสิน 274-10 · เทสต์ `PiiNestedCipherRound274_10Tests` (pure ×8) · Db `PiiNestedCipherDbTests` · กติกา `_R274_10_WHY` ×14 — commit 7c75b438_
 
+_รอบ 275 แพ็ก D (2026-11-20 · โต๊ะสลิปภาษี · ผลตรวจ T1): ปิด H1 (บันทึกเอง/ผูกกับรายการนำส่งที่มีอยู่จากโต๊ะ — ยอดเท่าสลิปทุกสตางค์ · คำตัดสิน 4.3 · "ไม่บันทึก" ไม่ลบหลักฐานทันที) ·
+H2 (ApplyAsync/LinkAsync ล็อกแล้ว Reload · ทางล้มไม่เขียนทับ Remitted · claim ปุ่มเลือก/ปุ่มไม่บันทึกแบบ atomic · Db test สองการเชื่อมต่อ) · M1 (ยกเลิกรายการนำส่ง ⇒ สลิปกลับคิว + ใบขอชำระกลับเปิด) ·
+M2 (ผู้สมัครที่ล้มแน่นอนเลือกไม่ได้ · พนักงานกดล้ม = 409 ไม่ส่งการ์ด) · M3 (ไฟล์เดิมจากกลุ่มอื่น ⇒ ประมวลแถวเดิมใหม่) · M4 (เตือน/ปิดแถวรอนาน · ลบไฟล์ครบ 90 วันทำงานจริง · อ่านใหม่เมื่อ OCR กลับมา) ·
+M5/M6 (เส้น 260 ไม่จับสลิปรัฐกับใบแจ้งหนี้ · สลิปโอนทั่วไปในกลุ่มตอบตามจริง + กระดิ่ง) · M7 (วงจรใบขอชำระ Paid/Expired/ยกเลิกแจ้งกลุ่ม/ทีละใบต่องวด) · M8 (ไม่พบเงินออกตรวจซ้ำได้) ·
+L2 L3 L4 L5 L6 L8 L9 · เลื่อน L1 L7 (dev-275-D.md) · ตัวตัดสิน `Helpers/TaxSlipDeskRule.cs` (TaxSlipDeskRule · TaxSlipChannelRedirect · TaxPaymentRequestLifecycle · TaxSlipOpenAge) · กติกา `_R275D_` ·
+คอลัมน์ใหม่ `TaxSlipEvidences.StaffRemindedAt` (Round272Migration) · commit (เติมในคอมมิตตามหลัง)_
+
 _รอบ 275 แพ็ก A (2026-11-20 · คีย์และความลับ · T4 H-1/M-1/M-2/M-4/M-5): `SecretProtector` ใช้ห่วงโซ่คีย์เดียวกับ PII (`DecryptKeyChain` — รวม `ENCRYPTION_KEY_PREVIOUS` + `_2`…`_9` + หลายบรรทัด) ·
 `SecretReprotectJob` เป็นระยะ + ล้ม = JobRunLog + watermark · ลายนิ้วมือคีย์ใน `SiteSettings` (งานย้ายคีย์ทั้งสองหยุดเมื่อไม่ตรง · ยืนยันคีย์โดยผู้ดูแล + audit) ·
 `Helpers/SecretUse` ที่ webhook ขาออก/CMS ขาเข้า/e-Tax/อีเมล/login ภายนอก/Omise/ธนาคาร/LINE OA/ลงนาม callback (ห้ามใช้ค่าว่างเงียบ · ห้ามส่งไม่เซ็น · ห้ามตรวจด้วยกุญแจว่าง) ·

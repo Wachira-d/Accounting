@@ -53,6 +53,8 @@ public static class GovPaymentSlip
     };
 
     /// <summary>คำที่บอกว่าเป็นการชำระหน่วยงานรัฐ (ใช้แยก "ไม่รู้จัก" ออกจาก "ไม่ใช่สลิปรัฐ")</summary>
+    private const string WeakGovWord = "สมทบ";
+    private static readonly string[] BillLabels = { "Biller", "Comp Code", "Comp. Code", "Bill Payment", "จ่ายบิล", "ชำระบิล", "ชําระบิล" };
     private static readonly string[] GovWords = { "Revenue Department", "กรมสรรพากร", "สรรพากร", "Revenue Dept", "สำนักงานประกันสังคม", "Social Security", "ประกันสังคม", "สมทบ", "e-Payment ภาษี" };
 
     /// <param name="TaxId">Ref1 = เลขผู้เสียภาษี 13 หลัก (checksum ผ่านแล้ว) — เฉพาะ Identified</param>
@@ -75,7 +77,9 @@ public static class GovPaymentSlip
         var t = text ?? reading.Text ?? "";
         var bill = reading.Bill;
         var bank = PayerBank(reading, t);
-        var anyGovWord = GovWords.Any(w => Has(t, w));
+        // รอบ 275 แพ็ก D (L8): "สมทบ" คำเดียวพบในบันทึกช่วยจำของการโอนทั่วไปได้ ("เงินสมทบงานบุญ") ⇒ นับเป็นคำของรัฐเฉพาะเมื่ออยู่คู่ป้ายจ่ายบิล (Comp Code/Biller)
+        var anyGovWord = GovWords.Where(w => w != WeakGovWord).Any(w => Has(t, w))
+            || (Has(t, WeakGovWord) && (bill?.CompCode != null || BillLabels.Any(l => Has(t, l))));
         if (bill?.CompCode is string comp)
         {
             var byComp = Billers.Where(b => b.CompCode == comp).ToList();
