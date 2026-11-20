@@ -8902,13 +8902,13 @@ RULES += [
 # ฝั่ง DTO (MapToResponse เป็น expression-bodied — checker อ่านไม่ได้) ล็อกใน WhtCertFormTextTests.PartyName_IsTheOnlyNameComposer_InAllThreeRenderers
 RULES += [
     dict(file="Services/Implementations/PdfGenerationService.WhtCert.cs", method="BuildWhtCertPdf",
-         must=["WhtCertFormText.PartyName(null, company.Name,", "WhtCertFormText.PartyName(cert.PayeeContact.TitleTh,"],
+         must=["WhtCertFormText.PartyName(null, company.Name,", "WhtCertFormText.PartyName(payee.TitleTh,"],
          forbid=["CertBranchSuffix(", "ThaiTitleHelper.WithTitle("],
          why="50 ทวิ QuestPDF: ชื่อผู้หัก/ผู้ถูกหักจากตัวตัดสินเดียวกับ HTML + หน้าพิมพ์ (2026-10-14)"),
     # การเรียกอยู่ใน interpolated string ⇒ must_lit/forbid_lit (checker ตัด string ออกจาก must/forbid)
     dict(file="Services/Implementations/PdfGenerationService.cs", method="BuildWithholdingTaxCertHtml",
          must_lit=["{WebUtility.HtmlEncode(WhtCertFormText.PartyName(null, company.Name,",
-                   "{WebUtility.HtmlEncode(WhtCertFormText.PartyName(cert.PayeeContact.TitleTh,"],
+                   "{WebUtility.HtmlEncode(WhtCertFormText.PartyName(payee.TitleTh,"],
          forbid_lit=["CertBranchSuffix(", "cert.PayeeContact.Name +"],
          why="50 ทวิ HTML: ชื่อผู้ถูกหักมีคำนำหน้าเหมือน QuestPDF (เดิมขาด) — ตัวตัดสินเดียว WhtCertFormText.PartyName (2026-10-14)"),
 ]
@@ -21377,7 +21377,8 @@ _R275B_TAX = "Services/Implementations/TaxService.cs"
 _R275B_GATE = "Services/Implementations/TaxService.FilingGate.cs"
 RULES += [
     dict(file=_R275B_TAX, method="RegenerateTaxReportUnlockedAsync",
-         must=["WhtReportLineRule.RestoreKey(", "whtTickSnapshot.Contains(", "RecalcWhtTotals(fresh)", "RecalcPp36Totals(fresh)"],
+         must=["WhtReportLineRule.RestoreKey(", "whtTickSnapshot.Contains(", "RecalcWhtTotals(fresh)", "RecalcPp36Totals(fresh)",
+               "RegenerateUntick.Matches(untickSnapshot"],
          before=[("RecalcWhtTotals(fresh)", "await _db.SaveChangesAsync();\n                    return MapToResponse(fresh);")],
          why=_R275B_WHY + "H1 สร้างใหม่: คืนติ๊กเฉพาะแถวระบบที่ผู้ใช้ติ๊กเข้าเอง (ไม่ใช่ทุกแถวของเอกสารเดียวกัน) + ยอดหัวผ่านตัวตั้งเดียวหลังคืนติ๊ก"),
     dict(file=_R275B_TAX, method="UpdateTaxReportUnlockedAsync",
@@ -21390,14 +21391,15 @@ RULES += [
     dict(file=_R275B_TAX, method="FileTaxReportUnlockedAsync", must=["EnsureReportFileableAsync(companyId, report)"],
          before=[("EnsureReportFileableAsync(companyId, report)", "report.Status = judgement.Status;")],
          why=_R275B_WHY + "M1 ตัวตรวจก่อนยื่น + เทียบทะเบียน 50 ทวิ ฝั่งเซิร์ฟเวอร์ ก่อนประทับสถานะ (ห้ามพึ่งหน้าเว็บ)"),
-    dict(file="Services/Implementations/TaxService.EFiling.cs", method="BuildPndAsync", must=["EnsureReportFileableAsync(companyId, report)"],
-         before=[("EnsureReportFileableAsync(companyId, report)", "PndTextFileFormat.Build(")],
-         why=_R275B_WHY + "M1 ไฟล์ e-Filing จากรายงานเดินด่านเดียวกับบันทึกการยื่น"),
-    dict(file="Services/Implementations/TaxService.EFiling.cs", method="BuildPp36Async", must=["EnsureReportFileableAsync(companyId, report)"],
-         why=_R275B_WHY + "M1/M2 ไฟล์ ภ.พ.36 จากรายงานเดินด่านเดียวกัน"),
+    dict(file="Services/Implementations/TaxService.EFiling.cs", method="GenerateEFilingAsync",
+         must=["EnsureReportFileableAsync(companyId, gateReport)", "ReviewNote = gateNote"],
+         before=[("EnsureReportFileableAsync(companyId, gateReport)", "BuildPndAsync("), ("EnsureReportFileableAsync(companyId, gateReport)", "BuildPp36Async(")],
+         why=_R275B_WHY + "M1 ไฟล์ e-Filing จากรายงาน (ภ.ง.ด./ภ.พ.36) เดินด่านเดียวกับบันทึกการยื่น ก่อนสร้างไฟล์ · ยื่นแล้ว = คำเตือน (HIGH-1)"),
     dict(file=_R275B_GATE, method="EnsureReportFileableAsync",
          must=["TaxComplianceChecker(_db).CheckAsync(companyId, report.Id)", "f.Severity ==", "DraftFreshnessAsync(companyId, report)",
-               "TaxReportDraftFreshness.FileRuleCode", "TaxType.VatPp36", "TaxType.WithholdingTax1"],
+               "TaxReportDraftFreshness.FileRuleCode", "TaxType.VatPp36", "TaxType.WithholdingTax1", "TaxFilingLockPolicy.DeclaredOrFiled(report.Status)",
+               "TaxComplianceChecker.ServerBlockingCodes.Contains(f.Code)", "TaxReportDraftFreshness.FiledDriftNote("],
+         before=[("TaxFilingLockPolicy.DeclaredOrFiled(report.Status)", "TaxComplianceChecker(_db).CheckAsync(")],
          forbid=["SaveChangesAsync(", "catch"],
          why=_R275B_WHY + "M1 H2(3) ด่านเดียว: Error ของตัวตรวจ ⇒ บล็อก · ร่างไม่ตรงทะเบียน ⇒ 409 สร้างใหม่ · ไม่กลืน error"),
     dict(file=_R275B_TAX, method="GenerateWhtReport", must=["WhtCertId = cert.Id", "WhtReportTotals.SummaryBranchKey(", "TaxPayerBranchCode = group.Key.Branch"],
@@ -21414,6 +21416,18 @@ RULES += [
          why=_R275B_WHY + "L1 ยอดหัว = Σ บรรทัด ตรงทุกสตางค์ · L4"),
     dict(file="Services/Implementations/Tax/TaxComplianceChecker.cs", method="CheckPp36", must=["WhtReportTotals.Of(r.Lines)", "> HeaderTolerance"],
          why=_R275B_WHY + "M2 ภ.พ.36 ยอดหัว = Σ บรรทัดที่นับ"),
+    dict(file="Services/Implementations/DocumentService.cs", method="VoidDocumentAsync",
+         must=["WhtCertVoidCascade.UnlinkInsteadOfVoid(lc.LinkedAt)", "WhtCertVoidCascade.UnlinkRuleCode", "WhtCertVoidCascade.VoidFailedNotice(", "whtVoidNotices"],
+         why=_R275B_WHY + "275-B-6 (ก) ใบที่ผูกด้วยมือหลุดการผูก (audit + แจ้งผู้กด) · ใบที่ระบบสร้างยกเลิกตาม · ยกเลิกตามล้ม ⇒ แจ้งผู้กด (ไม่เงียบ)"),
+    dict(file="Data/AccountingDbContext.cs", method="StampWhtPayeeSnapshots", must=["WhtPayeeSnapshot.ShouldStamp(", "WhtPayeeSnapshot.Serialize(", "x.CompanyId == w.CompanyId"],
+         why=_R275B_WHY + "275-B-6 (ข) สำเนาผู้ถูกหัก ณ วันออก ประทับที่จุดเดียวที่ทุกทางออกใบผ่าน"),
+    dict(file="Data/AccountingDbContext.cs", method="SaveChangesAsync", must=["StampWhtPayeeSnapshots()"], why=_R275B_WHY + "275-B-6 (ข)"),
+    dict(file="Services/Implementations/PdfGenerationService.cs", method="BuildWithholdingTaxCertHtml", must=["WhtPayeeSnapshot.Of(cert)"],
+         forbid=["cert.PayeeContact."], why=_R275B_WHY + "275-B-6 (ข) HTML renderer อ่านสำเนา ณ วันออก"),
+    dict(file="Services/Implementations/PdfGenerationService.WhtCert.cs", method="BuildWhtCertPdf", must=["WhtPayeeSnapshot.Of(cert)"],
+         forbid=["cert.PayeeContact."], why=_R275B_WHY + "275-B-6 (ข) QuestPDF renderer อ่านสำเนาเดียวกับ HTML"),
+    dict(file="Services/Implementations/TaxFilingExportService.cs", method="BuildPndRows", must=["WhtPayeeSnapshot.Of(cert)"],
+         forbid=["var contact = cert.PayeeContact;"], why=_R275B_WHY + "275-B-6 (ข) ไฟล์ยื่นจากทะเบียนใช้ตัวตน ณ วันออก"),
     dict(file="Services/Implementations/DocumentService.cs", method="VoidDocumentAsync", must=["WhtReportLineRule.VoidedDocumentPrefix"],
          forbid_lit=['"⚠️ [เอกสารถูกยกเลิก] "'],
          why=_R275B_WHY + "คำนำหน้าแถวเอกสารยกเลิกเป็นของ Helpers/WhtReportLineRule ตัวเดียว (ล็อก/ต้องมีเหตุผล)"),
@@ -21431,6 +21445,12 @@ REVIEWER_CASES += [
     ("R275B-5", "CheckPnd3_53", "if (Math.Abs(sumWht - r.TotalTaxWithheld) > HeaderTolerance)", "if (Math.Abs(sumWht - r.TotalTaxWithheld) > 0.50m)", True),
     # ทิศตรงข้าม: เปลี่ยนแค่ข้อความคอมเมนต์ ⇒ ต้องไม่ฟ้อง
     ("R275B-6", "EnsureReportFileableAsync", "ด่านเดียวของ", "ด่านเดียวของ ", False),
+    # HIGH-1: กลับไปเทียบทะเบียนกับรายงานที่ยื่นแล้ว (บล็อกไฟล์ของงวดที่ยื่นแล้ว) ⇒ ต้องฟ้อง
+    ("R275B-7", "EnsureReportFileableAsync", "if (Accounting.Helpers.TaxFilingLockPolicy.DeclaredOrFiled(report.Status))", "if (false)", True),
+    # MED-3: บล็อก Error ทุกแบบ ⇒ ต้องฟ้อง
+    ("R275B-8", "EnsureReportFileableAsync", " && Tax.TaxComplianceChecker.ServerBlockingCodes.Contains(f.Code)", "", True),
+    # 275-B-6 (ก): กลับไปยกเลิกใบที่ผูกด้วยมือ ⇒ ต้องฟ้อง
+    ("R275B-9", "VoidDocumentAsync", "Accounting.Helpers.WhtCertVoidCascade.UnlinkInsteadOfVoid(lc.LinkedAt)", "false", True),
 ]
 
 def main() -> int:

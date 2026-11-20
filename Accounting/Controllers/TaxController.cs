@@ -341,10 +341,13 @@ public class TaxController : ControllerBase
                 .ToListAsync(ct);
             var rows = Helpers.WhtUnissuedCertGate.Evaluate(
                 lines.Select(l => (l.Description, l.IsExcluded, l.TaxAmount)));
-            if (rows.Any)
+            if (rows.Any || export.ReviewNote != null)
                 // header ต้องเป็น ASCII — encode ฝั่งนี้ หน้าเว็บ decodeURIComponent
-                Response.Headers["X-Filing-Review-Note"] = Uri.EscapeDataString(rows.ReviewNote);
+                Response.Headers["X-Filing-Review-Note"] = Uri.EscapeDataString(
+                    string.Join(" · ", new[] { rows.Any ? rows.ReviewNote.TrimStart(' ', '·') : null, export.ReviewNote }.Where(x => !string.IsNullOrEmpty(x))));
         }
+        else if (export.ReviewNote != null)
+            Response.Headers["X-Filing-Review-Note"] = Uri.EscapeDataString(export.ReviewNote);   // ภ.พ.36 ที่ยื่นแล้ว · ทะเบียนขยับหลังยื่น
 
         var fileName = $"{formType}_{year}{month:D2}.txt";
         var bytes = System.Text.Encoding.UTF8.GetBytes(export.FileContent);

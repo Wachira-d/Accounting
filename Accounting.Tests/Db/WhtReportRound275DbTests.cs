@@ -312,12 +312,13 @@ public class WhtReportRound275DbTests
     }
 
     [Fact]
-    public async Task R275B_M4_แก้เลขผู้เสียภาษีผู้ถูกหักหลังสร้างร่าง_แถบขึ้น_สร้างใหม่ได้เลขใหม่()
+    public async Task R275B_M4_แก้เลขผู้เสียภาษีผู้ถูกหักหลังสร้างร่าง_ใบร่าง_แถบขึ้น_สร้างใหม่ได้เลขใหม่()
     {
+        // ใบที่ออกแล้วใช้ตัวตน ณ วันออก (275-B-6 (ข) · เทสต์ R275BF_B6ข_…) ⇒ กรณีที่ผู้ติดต่อสดมีผลคือใบร่าง/แถวเอกสาร
         using var db = DbTestDatabase.TryCreateContext();
         if (db == null) { _out.WriteLine("ไม่มีฐาน — ข้าม"); return; }
         var s = await SeedAsync(db);
-        db.WithholdingTaxCerts.Add(Cert(s.CompanyId, s.PayeeId, "WT-275-M4", WithholdingTaxCertStatus.Issued, 1_000m, 30m));
+        db.WithholdingTaxCerts.Add(Cert(s.CompanyId, s.PayeeId, "WT-275-M4", WithholdingTaxCertStatus.Draft, 1_000m, 30m));
         await db.SaveChangesAsync();
         var gen = await GenerateAsync(s.CompanyId);
         using (var w = DbTestDatabase.TryCreateContext()!)
@@ -434,5 +435,142 @@ public class WhtReportRound275DbTests
         var ex = await Assert.ThrowsAsync<BusinessRuleException>(() => FileAsync(s.CompanyId, r.Id));
         Assert.Equal(TaxReportDraftFreshness.LegacyPnd1RuleCode, ex.RuleCode);
         Assert.Contains("Export ยื่นภาษี", ex.Message);
+    }
+
+    // ═════ ชุดแก้ฝ่ายค้านรอบ 275 แพ็ก B ═════
+
+    [Fact]
+    public async Task R275BF_HIGH1_รายงานยื่นแล้วรุ่นเก่า_ไม่มีตัวอ้างใบ_สร้างไฟล์ได้_ทะเบียนขยับเตือนไม่บล็อก_backfillแล้วไม่เตือน()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน — ข้าม"); return; }
+        var s = await SeedAsync(db);
+        db.WithholdingTaxCerts.Add(Cert(s.CompanyId, s.PayeeId, "WT-275F-H1", WithholdingTaxCertStatus.Issued, 5_955m, 178.65m));
+        await db.SaveChangesAsync();
+        var gen = await GenerateAsync(s.CompanyId);
+        await FileAsync(s.CompanyId, gen.Id);
+        // จำลองรายงานที่ยื่นก่อนรอบ 275: บรรทัดไม่มีตัวอ้างใบ (คีย์เอกสาร ≠ คีย์ใบ ⇒ ลายเซ็นไม่ตรงตลอดไป)
+        await db.Database.ExecuteSqlRawAsync("UPDATE \"TaxReportLines\" SET \"WhtCertId\" = NULL WHERE \"TaxReportId\" = {0}", gen.Id);
+        Accounting.Models.Entities.EFilingExport ex1;
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            ex1 = await new TaxService(req).GenerateEFilingAsync(s.CompanyId, "PND.53", Y, M, "db-test");   // เดิม 409 ตลอดไป
+        Assert.Contains("178.65", ex1.FileContent);
+        Assert.NotNull(ex1.ReviewNote);
+        Assert.Contains("ยื่นแบบเพิ่มเติม", ex1.ReviewNote);
+        // migration เติมตัวอ้างใบที่จับคู่ได้แน่นอน ⇒ ลายเซ็นตรง ⇒ ไม่เตือน
+        var n = await db.Database.ExecuteSqlRawAsync(Round275BMigration.BackfillLineCertSql);
+        Assert.True(n >= 1);
+        using (var read = DbTestDatabase.TryCreateContext()!)
+            Assert.All(await read.TaxReportLines.AsNoTracking().Where(l => l.TaxReportId == gen.Id).ToListAsync(), l => Assert.NotNull(l.WhtCertId));
+        Accounting.Models.Entities.EFilingExport ex2;
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            ex2 = await new TaxService(req).GenerateEFilingAsync(s.CompanyId, "PND.53", Y, M, "db-test");
+        Assert.Null(ex2.ReviewNote);
+        // ทะเบียนขยับหลังยื่น ⇒ ยังสร้างไฟล์จากยอดที่ยื่นได้ + เตือน
+        await MutateCertAsync(s.CompanyId, "WT-275F-H1", c => c.Status = WithholdingTaxCertStatus.Voided);
+        Accounting.Models.Entities.EFilingExport ex3;
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            ex3 = await new TaxService(req).GenerateEFilingAsync(s.CompanyId, "PND.53", Y, M, "db-test");
+        Assert.Contains("178.65", ex3.FileContent);
+        Assert.NotNull(ex3.ReviewNote);
+    }
+
+    [Fact]
+    public async Task R275BF_MED3_ภพ30ยอดภาษีขายติดลบ_ใบลดหนี้มากกว่ายอดขาย_ยื่นได้()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน — ข้าม"); return; }
+        var s = await SeedAsync(db);
+        var r = new TaxReport { CompanyId = s.CompanyId, TaxType = TaxType.VAT, Year = Y, Month = M, Status = TaxReportStatus.Draft };
+        r.Lines.Add(new TaxReportLine { TaxReportId = r.Id, LineOrder = 1, Description = "ลดหนี้ขาย CN-1", IncomeAmount = -1_000m, TaxRate = 7, TaxAmount = -70m,
+            IncomeTypeCode = "OUTPUT", TransactionDate = Day(5) });
+        TaxService.RecalcVatTotals(r);
+        db.TaxReports.Add(r);
+        await db.SaveChangesAsync();
+        using (var req = DbTestDatabase.TryCreateContext()!)
+        {
+            var check = await new TaxComplianceChecker(req).CheckAsync(s.CompanyId, r.Id);
+            Assert.Contains(check.Findings, f => f.Code == "RD-VAT-002");   // หน้าตรวจยังแสดง
+        }
+        var filed = await FileAsync(s.CompanyId, r.Id);                       // เซิร์ฟเวอร์ไม่บล็อก (ไม่อยู่ใน ServerBlockingCodes)
+        Assert.Equal(TaxReportStatus.Submitted, filed.Status);
+    }
+
+    [Fact]
+    public async Task R275BF_MED4_ติ๊กบรรทัด50ทวิออก_สร้างใหม่_ยังติ๊กออก_ไม่กลับเข้าไฟล์()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน — ข้าม"); return; }
+        var s = await SeedAsync(db);
+        db.WithholdingTaxCerts.Add(Cert(s.CompanyId, s.PayeeId, "WT-275F-M4a", WithholdingTaxCertStatus.Issued, 5_955m, 178.65m));
+        db.WithholdingTaxCerts.Add(Cert(s.CompanyId, s.OtherPayeeId, "WT-275F-M4b", WithholdingTaxCertStatus.Issued, 1_000m, 30m));
+        await db.SaveChangesAsync();
+        var gen = await GenerateAsync(s.CompanyId);
+        var b = gen.Lines.Single(l => (l.Description ?? "").StartsWith("WT-275F-M4b"));
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            await new TaxService(req).UpdateTaxReportAsync(s.CompanyId, gen.Id,
+                new UpdateTaxReportRequest(null, new List<UpdateTaxReportLineRequest> { new(b.Id, null, null, null, null, Excluded: true) }));
+        await RegenerateAsync(s.CompanyId, gen.Id);
+        var after = await LatestAsync(s.CompanyId);
+        Assert.True(after.Lines.Single(l => (l.Description ?? "").StartsWith("WT-275F-M4b")).IsExcluded);   // เดิมกลับเข้าเงียบ ๆ
+        Assert.False(after.Lines.Single(l => (l.Description ?? "").StartsWith("WT-275F-M4a")).IsExcluded);   // ทิศตรงข้าม: ใบอื่นไม่ถูกแตะ
+        Assert.Equal(178.65m, after.TotalTaxWithheld);
+    }
+
+    [Fact]
+    public async Task R275BF_MED2_แก้ยอดแถวยังไม่ออกใบถูกปฏิเสธ_ร่างไม่ล้าสมัยถาวร()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน — ข้าม"); return; }
+        var s = await SeedAsync(db);
+        db.Documents.Add(Pv(s.CompanyId, s.PayeeId, "PV-275F-M2", 17_900m, 179m));
+        await db.SaveChangesAsync();
+        var gen = await GenerateAsync(s.CompanyId);
+        var warn = Assert.Single(gen.Lines, l => (l.Description ?? "").StartsWith(WhtUnissuedCertGate.UnissuedCertMarker));
+        Assert.True(warn.AmountsLocked);
+        using (var req = DbTestDatabase.TryCreateContext()!)
+        {
+            var ex = await Assert.ThrowsAsync<BusinessRuleException>(() => new TaxService(req).UpdateTaxReportAsync(s.CompanyId, gen.Id,
+                new UpdateTaxReportRequest(null, new List<UpdateTaxReportLineRequest> { new(warn.Id, null, null, 150m, null) })));
+            Assert.Equal(WhtReportLineRule.EditLockRuleCode, ex.RuleCode);
+        }
+        Assert.DoesNotContain(await StaleAsync(s.CompanyId), r => r.ReportId == gen.Id);
+    }
+
+    [Fact]
+    public async Task R275BF_B6ข_ออกใบแล้วแก้ผู้ติดต่อ_รายงานใช้ตัวตนณวันออก_ใบร่างใช้ผู้ติดต่อสด_backfillใบเก่า()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน — ข้าม"); return; }
+        var s = await SeedAsync(db);
+        db.WithholdingTaxCerts.Add(Cert(s.CompanyId, s.PayeeId, "WT-275F-SN", WithholdingTaxCertStatus.Issued, 1_000m, 30m));
+        db.WithholdingTaxCerts.Add(Cert(s.CompanyId, s.PayeeId, "WT-275F-SD", WithholdingTaxCertStatus.Draft, 1_000m, 30m));
+        await db.SaveChangesAsync();
+        using (var read = DbTestDatabase.TryCreateContext()!)
+        {
+            var issued = await read.WithholdingTaxCerts.AsNoTracking().FirstAsync(c => c.CompanyId == s.CompanyId && c.CertificateNumber == "WT-275F-SN");
+            Assert.Contains("0105556000017", issued.PayeeSnapshotJson);   // ประทับตอนบันทึก (ทางสร้างใบใดก็ได้)
+            Assert.Null((await read.WithholdingTaxCerts.AsNoTracking().FirstAsync(c => c.CompanyId == s.CompanyId && c.CertificateNumber == "WT-275F-SD")).PayeeSnapshotJson);
+        }
+        using (var w = DbTestDatabase.TryCreateContext()!)
+        {
+            var c = await w.Contacts.FirstAsync(x => x.Id == s.PayeeId && x.CompanyId == s.CompanyId);
+            c.TaxId = "0105556000033"; c.Name = "บริษัท ชื่อใหม่ จำกัด";
+            await w.SaveChangesAsync();
+        }
+        var gen = await GenerateAsync(s.CompanyId);
+        var issuedRow = Assert.Single(gen.Lines, l => (l.Description ?? "").StartsWith("WT-275F-SN"));
+        Assert.Equal("0105556000017", issuedRow.TaxPayerId);                 // ใบที่ออกแล้ว: ตัวตน ณ วันออก
+        Assert.Equal("บริษัท ขนส่งและบริการ จำกัด", issuedRow.TaxPayerName);
+        var draftRow = Assert.Single(gen.Lines, l => (l.Description ?? "").Contains("WT-275F-SD"));
+        Assert.Equal("0105556000033", draftRow.TaxPayerId);                  // ร่าง: ผู้ติดต่อสด
+        // ใบเก่าก่อนมีคอลัมน์ ⇒ migration เติมจากผู้ติดต่อ (ใบร่างไม่ถูกเติม)
+        await db.Database.ExecuteSqlRawAsync("UPDATE \"WithholdingTaxCerts\" SET \"PayeeSnapshotJson\" = NULL WHERE \"CompanyId\" = {0}", s.CompanyId);
+        await db.Database.ExecuteSqlRawAsync(WhtPayeeSnapshot.BackfillSql);
+        using (var read = DbTestDatabase.TryCreateContext()!)
+        {
+            Assert.Contains("0105556000033", (await read.WithholdingTaxCerts.AsNoTracking().FirstAsync(c => c.CompanyId == s.CompanyId && c.CertificateNumber == "WT-275F-SN")).PayeeSnapshotJson);
+            Assert.Null((await read.WithholdingTaxCerts.AsNoTracking().FirstAsync(c => c.CompanyId == s.CompanyId && c.CertificateNumber == "WT-275F-SD")).PayeeSnapshotJson);
+        }
     }
 }

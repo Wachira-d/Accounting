@@ -73,8 +73,9 @@ public static class TaxReportDraftFreshness
     public readonly record struct WhtLine(Guid? WhtCertId, Guid? DocumentId, string? Description, string? IncomeTypeCode,
         decimal IncomeAmount, decimal TaxAmount, string? TaxPayerId, string? BranchCode, string? TaxPayerName);
 
+    /// <summary>ค่าของลายเซ็นต่อคีย์ — <c>DocumentId</c> อยู่ในค่า (ฝ่ายค้าน LOW: เปลี่ยนผูกใบเดิมจากเอกสาร X ไป Y ยอดเท่าเดิม ⇒ ต้องเห็น)</summary>
     public readonly record struct WhtEntry(WhtReportLineKind Kind, decimal IncomeAmount, decimal TaxAmount,
-        string TaxPayerId, string BranchCode, string TaxPayerName);
+        string TaxPayerId, string BranchCode, string TaxPayerName, Guid? DocumentId = null);
 
     public sealed record WhtVerdict(bool Stale, int Added, int Removed, int Changed, int LegacyLines);
 
@@ -93,7 +94,7 @@ public static class TaxReportDraftFreshness
             var type = (l.IncomeTypeCode ?? "").Trim();
             var key = l.WhtCertId is Guid c ? $"C:{c}|{type}" : $"D:{l.DocumentId}|{kind}|{type}";
             var add = new WhtEntry(kind, Round(l.IncomeAmount), Round(l.TaxAmount),
-                (l.TaxPayerId ?? "").Trim(), NormalizeBranch(l.BranchCode), (l.TaxPayerName ?? "").Trim());
+                (l.TaxPayerId ?? "").Trim(), NormalizeBranch(l.BranchCode), (l.TaxPayerName ?? "").Trim(), l.DocumentId);
             result[key] = result.TryGetValue(key, out var e)
                 ? e with { IncomeAmount = e.IncomeAmount + add.IncomeAmount, TaxAmount = e.TaxAmount + add.TaxAmount }
                 : add;
@@ -117,6 +118,11 @@ public static class TaxReportDraftFreshness
               + "ออก/ยกเลิก/ผูกใบ · ยอด · ประเภทเงินได้ · เลขผู้เสียภาษี/สาขา/ชื่อผู้ถูกหัก)"
               + (v.LegacyLines > 0 ? $" · ร่างนี้สร้างก่อนรอบ 275 ({v.LegacyLines} บรรทัดยังไม่อ้างเลข 50 ทวิ) — สร้างใหม่หนึ่งครั้ง" : "")
               + " · กด \"สร้างใหม่\" (คืนติ๊กที่ผู้ใช้ติ๊กเข้าเองให้ · บันทึก audit) · ไม่ได้เทียบบรรทัด JE ล้วน";
+
+    /// <summary>รายงานที่ยื่นแล้วแต่ข้อมูลสดต่างจากที่ยื่น (ฝ่ายค้าน HIGH-1) — เตือน ไม่บล็อก · ทางไปต่อคือยื่นเพิ่มเติม (ไม่แก้ตัวเลขที่ยื่นไปแล้ว)</summary>
+    public static string FiledDriftNote(string staleMessage)
+        => "⚠️ รายงานนี้ยื่นแล้ว — ไฟล์สร้างจากยอดที่ยื่นไว้ · ข้อมูลปัจจุบันต่างจากที่ยื่น: " + staleMessage
+           + " · ถ้าเป็นการเปลี่ยนจริงหลังยื่น ให้พิจารณายื่นแบบเพิ่มเติมของงวดนี้ (ห้ามสร้างรายงานที่ยื่นแล้วใหม่)";
 
     /// <summary>ข้อความบล็อกตอนยื่น/สร้างไฟล์ยื่น — ด่านทะเบียน (H2 (3)) ใช้ผลเทียบเดียวกับแถบ</summary>
     public static string FileBlockMessage(string staleMessage)
