@@ -526,25 +526,35 @@ public class DocumentRestrictionDbTests
         db.Documents.Add(inv);
         await db.SaveChangesAsync();
 
-        // ผ่านด่านคำขอจริง (ทางเขียน ⇒ ยกตัวกรองแถว) แล้ว service แปลง
+        // ผ่านด่านคำขอจริง (ทางเขียน ⇒ ยกตัวกรองแถว) แล้ว service แปลง · ข้อความเหตุผ่านตัวช่วยกลาง (ไม่มีเลข/ยอดของใบคนอื่น)
         Exception? thrown = null;
+        string? reply = null;
         using (var req = DbTestDatabase.TryCreateContext()!)
         {
             var ctx = Ctx(req, s.CompanyId, s.Clerk, "POST", C + "Document/{documentId:guid}/convert/{targetType}",
                 new Dictionary<string, string> { ["documentId"] = qt.Id.ToString() });
             var called = false;
+            ActionExecutedContext? done = null;
             await new DocumentRestrictionFilter(req).OnActionExecutionAsync(ctx, async () =>
             {
                 called = true;
                 Assert.Null(req.DocumentOwnerScopeUserId);                // ด่านระดับบริษัทเห็นทั้งบริษัท
                 Assert.True(req.DocumentDraftOnlyRequest);
+                done = new ActionExecutedContext(ctx, new List<IFilterMetadata>(), new object());
                 try { await Docs(req).ConvertDocumentAsync(s.CompanyId, qt.Id, DocumentType.Invoice, s.Clerk.ToString()); }
-                catch (Exception ex) { thrown = ex; }
-                return new ActionExecutedContext(ctx, new List<IFilterMetadata>(), new object());
+                catch (Exception ex) { thrown = ex; done.Exception = ex; }
+                return done;
             });
             Assert.True(called);
+            reply = done!.ExceptionHandled
+                ? ((done.Result as ObjectResult)?.Value as Accounting.Models.DTOs.ApiResponse<object>)?.Message
+                : done.Exception?.Message;
         }
         Assert.NotNull(thrown);
+        _out.WriteLine("ข้อความถึงผู้ใช้: " + reply);
+        Assert.NotNull(reply);
+        Assert.DoesNotContain(inv.DocumentNumber, reply);
+        Assert.DoesNotContain("1,000", reply);
         using (var check = DbTestDatabase.TryCreateContext()!)
             Assert.Equal(1, await check.Documents.CountAsync(d => d.CompanyId == s.CompanyId && d.RelatedDocumentId == qt.Id));
 
@@ -650,6 +660,35 @@ public class DocumentRestrictionDbTests
         Assert.Equal((false, (int?)404), await Clerk("POST", C + "ocr/{scanId:guid}/create-document", "scanId", theirScan.Id));
         Assert.Equal((false, (int?)404), await Clerk("GET", C + "ocr/{scanId:guid}", "scanId", theirScan.Id));
         Assert.Equal((false, (int?)403), await Clerk("POST", C + "ocr/{scanId:guid}/import-stock", "scanId", myScan.Id));
+    }
+
+    [Fact]
+    public async Task ฝ่ายค้าน_ข้อความตอบกลับ_ใบซ้ำของคนอื่นคืนแค่ผลตัดสิน_ทิศตรงข้ามใบของตัวเองเห็นครบ()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var s = await SeedAsync(db);
+        var theirs = Doc(s.CompanyId, s.ContactId, s.Other.ToString(), DocumentStatus.Approved);
+        theirs.DocumentType = DocumentType.PurchaseInvoice; theirs.SupplierInvoiceNumber = "IV-777";
+        var mine = Doc(s.CompanyId, s.ContactId, s.Clerk.ToString(), DocumentStatus.Approved);
+        mine.DocumentType = DocumentType.PurchaseInvoice; mine.SupplierInvoiceNumber = "IV-888";
+        db.Documents.AddRange(theirs, mine);
+        await db.SaveChangesAsync();
+        using var req = await RequestAsAsync(s.CompanyId, s.Clerk);
+        var dupTheirs = await Docs(req).CheckDuplicateAsync(s.CompanyId, s.ContactId, "IV-777", DocumentType.PurchaseInvoice, 500m, DateTime.UtcNow.Date);
+        Assert.True(dupTheirs.HasStrongMatch);                         // ตรวจทั้งบริษัท (ไม่ตาบอดเพราะตัวกรองแถว)
+        var c = Assert.Single(dupTheirs.Candidates);
+        Assert.Equal(Guid.Empty, c.Id);
+        Assert.DoesNotContain(theirs.DocumentNumber, c.DocumentNumber);
+        Assert.Null(c.ContactName);
+        Assert.Equal(500m, c.TotalAmount);                               // ยอดที่ผู้ใช้กรอกเอง ไม่ใช่ยอดของใบนั้น
+        var dupMine = await Docs(req).CheckDuplicateAsync(s.CompanyId, s.ContactId, "IV-888", DocumentType.PurchaseInvoice, 500m, DateTime.UtcNow.Date);
+        Assert.Equal(mine.DocumentNumber, Assert.Single(dupMine.Candidates).DocumentNumber);
+        // ผลสำเร็จที่อ้างเลขของคนอื่น (เช่นหมายเหตุ OCR) ⇒ ถูกแทนด้วยตัวช่วยกลาง
+        var resp = new Accounting.Models.DTOs.ApiResponse<object>(true, null, "ซ้ำกับ " + theirs.DocumentNumber + " · ของฉัน " + mine.DocumentNumber);
+        await RestrictedResponseRedactor.RedactValueAsync(req, s.CompanyId, s.Clerk, resp);
+        Assert.DoesNotContain(theirs.DocumentNumber, resp.Message);
+        Assert.Contains(mine.DocumentNumber, resp.Message);
     }
 
     private sealed record DocumentApprovalSubmitResultShape(string Route, int ApproverCount);

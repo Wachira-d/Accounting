@@ -279,11 +279,6 @@ public static class DocumentRestrictionPolicy
         };
     }
 
-    /// <summary>ฝ่ายค้าน MED-4: ผลตรวจใบซ้ำที่ชี้ใบของผู้ใช้อื่น — คืนแค่ "มีใบซ้ำ + เหตุ" (ไม่มี id/เลข/ผู้ติดต่อ/ยอดของใบนั้น)</summary>
-    public static Accounting.Models.DTOs.Document.DuplicateDocumentCandidate RedactDuplicate(
-        Accounting.Models.DTOs.Document.DuplicateDocumentCandidate c, DateTime enteredDate, decimal enteredAmount) =>
-        new(Guid.Empty, "(ใบของผู้ใช้อื่น — แจ้งผู้ดูแล/บัญชีตรวจ)", c.DocumentType, enteredDate.Date, enteredAmount, "", null, null, c.MatchReason, c.IsStrong);
-
     /// <summary>สถานะที่ผู้ "เฉพาะร่าง" แก้/ลบ/แนบไฟล์ได้</summary>
     public static bool IsEditableDraftStatus(DocumentStatus s) => s is DocumentStatus.Draft or DocumentStatus.Rejected;
 

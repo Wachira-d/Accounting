@@ -8244,7 +8244,7 @@ public partial class DocumentService : IDocumentService
             var ids = candidates.Select(c => c.Id).ToList();
             var visible = (await _db.Documents.AsNoTracking().Where(d => ids.Contains(d.Id)).Select(d => d.Id).ToListAsync()).ToHashSet();
             candidates = candidates.Select(c => visible.Contains(c.Id) ? c
-                : Accounting.Helpers.DocumentRestrictionPolicy.RedactDuplicate(c, documentDate, amount)).ToList();
+                : Accounting.Helpers.RestrictedResponseRedactor.RedactDuplicate(c, documentDate, amount)).ToList();
         }
         return new DuplicateCheckResult(candidates.Any(c => c.IsStrong), candidates);
     }
