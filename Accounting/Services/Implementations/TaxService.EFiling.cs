@@ -144,6 +144,9 @@ public partial class TaxService
                 && r.Year == year && r.Month == month)
             ?? throw new InvalidOperationException(
                 $"ไม่พบรายงาน {formType} ของงวด {year}/{month:D2} — กรุณา generate ก่อน");
+        // รอบ 275 แพ็ก B (T2 M1 · H2): ไฟล์ยื่นจากรายงานเดินด่านเดียวกับ "บันทึกการยื่น" (ตัวตรวจก่อนยื่น + เทียบทะเบียน 50 ทวิ) —
+        // แถว "ยังไม่ออก 50 ทวิ" คงเป็นคำเตือนบนไฟล์ (X-Filing-Review-Note · D2-B1a) และบล็อกที่ตัวบันทึกการยื่น
+        await EnsureReportFileableAsync(companyId, report);
 
         // เฉพาะบรรทัดรายการจริง — บรรทัด "[สรุป]" (IncomeTypeCode=SUMMARY เป็น
         // ยอดรวมซ้ำต่อผู้ขาย) และบรรทัดที่ผู้ทำบัญชีติ๊กออก (IsExcluded เช่น
@@ -247,6 +250,7 @@ public partial class TaxService
                 && r.Year == year && r.Month == month)
             ?? throw new InvalidOperationException(
                 $"ไม่พบรายงาน ภพ.36 ของงวด {year}/{month:D2}");
+        await EnsureReportFileableAsync(companyId, report);   // รอบ 275 แพ็ก B (T2 M1 · M2) — ด่านเดียวกับบันทึกการยื่น
 
         // เฉพาะบรรทัดที่ผู้ทำบัญชียัง "ใช้" — เดิมวนทุกบรรทัด + header ใช้ยอด
         // persist ⇒ บรรทัดที่ติ๊กออกยังถูกส่ง RD และยอด H-row ไม่ตรงรายละเอียด.

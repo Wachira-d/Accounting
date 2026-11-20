@@ -20511,9 +20511,15 @@ RULES += [
          forbid=["TaxReports.Remove(", "TaxReportLines.RemoveRange(", "TraceWarning(", "RegenerateTaxReportUnlockedAsync("],
          why="รอบ 269 ชุดสอง H1 (269-3-1): เปิดหน้าสร้างเฉพาะร่างที่ยังไม่มี — ห้ามลบ/สร้างทับร่างเดิม (บรรทัดที่ดึงเข้า/ติ๊กหาย) · ล้มดัง · ≤ 12 เดือน"),
     dict(file="Services/Implementations/TaxService.cs", method="GetStaleDraftReportsAsync",
-         must=["Math.Clamp(", "TaxReportDraftFreshness.Signature(", "TaxReportDraftFreshness.Compare(", "ComputeVatReportAsync("],
-         forbid=["SaveChangesAsync("],
-         why="รอบ 269 ชุดสอง H1 (269-3-1): ร่างล้าสมัยตรวจอย่างเดียว"),
+         must=["Math.Clamp(", "DraftFreshnessAsync(", "TaxReportDraftFreshness.CheckedTaxTypes"],
+         forbid=["SaveChangesAsync(", "AutoDraftTaxTypes.Contains("],
+         why="รอบ 269 ชุดสอง H1 (269-3-1): ร่างล้าสมัยตรวจอย่างเดียว · รอบ 275 B (T2 M3): ชุดตรวจแยกจากชุดสร้างอัตโนมัติ"),
+    dict(file="Services/Implementations/TaxService.cs", method="DraftFreshnessAsync",
+         must=["TaxReportDraftFreshness.Signature(", "TaxReportDraftFreshness.Compare(", "ComputeVatReportAsync(",
+               "TaxReportDraftFreshness.WhtSignature(", "TaxReportDraftFreshness.CompareWht(", "GeneratePp36Report(", "GenerateWhtReport(",
+               "l.WhtCertId", "l.TaxPayerBranchCode", "LegacyPnd1Message("],
+         forbid=["SaveChangesAsync(", "_db.TaxReports.Add("],
+         why="รอบ 275 B (T2 H2 · M3 · M4): ตัวเทียบร่างกับข้อมูลสดตัวเดียว (แถบ + ด่านยื่น) — ภ.ง.ด. คีย์ด้วยใบ 50 ทวิ + ผู้ถูกหัก · อ่านอย่างเดียว"),
     dict(file="Services/Implementations/TaxService.cs", method="RegenerateTaxReportAsync",
          must=["WithVatReportLockAsync(", "BeginTransactionAsync(", "CommitAsync("],
          why="รอบ 269 ชุดสอง H1 (269-3-1): สร้างใหม่ = ลบ + สร้าง + คืนติ๊ก/บรรทัดดึง + audit ในธุรกรรมเดียวใต้ล็อก"),
@@ -21363,6 +21369,68 @@ REVIEWER_CASES += [
     ("R272F-5", "PurgeClosedFilesAsync", "s.StatutoryRemittanceId == null && ", "", True),
 ]
 
+
+# ═══ รอบ 275 แพ็ก B (erp-review/2026-11-20/audit-T2-wht-pnd-vat.md · H1 H2 M1–M5 L1 L2 L4 · คำตัดสิน 275-B-1…4) ═══
+_R275B_WHY = "รอบ 275 แพ็ก B (T2): "
+_R275B_TAX = "Services/Implementations/TaxService.cs"
+_R275B_GATE = "Services/Implementations/TaxService.FilingGate.cs"
+RULES += [
+    dict(file=_R275B_TAX, method="RegenerateTaxReportUnlockedAsync",
+         must=["WhtReportLineRule.RestoreKey(", "whtTickSnapshot.Contains(", "RecalcWhtTotals(fresh)", "RecalcPp36Totals(fresh)"],
+         before=[("RecalcWhtTotals(fresh)", "await _db.SaveChangesAsync();\n                    return MapToResponse(fresh);")],
+         why=_R275B_WHY + "H1 สร้างใหม่: คืนติ๊กเฉพาะแถวระบบที่ผู้ใช้ติ๊กเข้าเอง (ไม่ใช่ทุกแถวของเอกสารเดียวกัน) + ยอดหัวผ่านตัวตั้งเดียวหลังคืนติ๊ก"),
+    dict(file=_R275B_TAX, method="UpdateTaxReportUnlockedAsync",
+         must=["WhtReportLineRule.LockReason(", "WhtReportLineRule.DescriptionLocked(", "WhtReportLineRule.AmountsLocked(",
+               "WhtReportLineRule.IncludeNeedsReason(", "lineUpdate.IncludeReason", "AddChainedAuditLog(", "WhtReportLineRule.IncludeRuleCode",
+               "RecalcPp36Totals(report)"],
+         before=[("WhtReportLineRule.IncludeNeedsReason(", "if (lineUpdate.Excluded.HasValue) line.IsExcluded = lineUpdate.Excluded.Value;"),
+                 ("WhtReportLineRule.LockReason(", "if (lineUpdate.Description != null) line.Description = lineUpdate.Description;")],
+         why=_R275B_WHY + "M5 คำนำหน้าแถวระบบ/ยอดจาก 50 ทวิ แก้ไม่ได้ (ปฏิเสธดัง) · ติ๊กแถวที่ระบบตัดออกเข้ายอดต้องมีเหตุผล + audit chain"),
+    dict(file=_R275B_TAX, method="FileTaxReportUnlockedAsync", must=["EnsureReportFileableAsync(companyId, report)"],
+         before=[("EnsureReportFileableAsync(companyId, report)", "report.Status = judgement.Status;")],
+         why=_R275B_WHY + "M1 ตัวตรวจก่อนยื่น + เทียบทะเบียน 50 ทวิ ฝั่งเซิร์ฟเวอร์ ก่อนประทับสถานะ (ห้ามพึ่งหน้าเว็บ)"),
+    dict(file="Services/Implementations/TaxService.EFiling.cs", method="BuildPndAsync", must=["EnsureReportFileableAsync(companyId, report)"],
+         before=[("EnsureReportFileableAsync(companyId, report)", "PndTextFileFormat.Build(")],
+         why=_R275B_WHY + "M1 ไฟล์ e-Filing จากรายงานเดินด่านเดียวกับบันทึกการยื่น"),
+    dict(file="Services/Implementations/TaxService.EFiling.cs", method="BuildPp36Async", must=["EnsureReportFileableAsync(companyId, report)"],
+         why=_R275B_WHY + "M1/M2 ไฟล์ ภ.พ.36 จากรายงานเดินด่านเดียวกัน"),
+    dict(file=_R275B_GATE, method="EnsureReportFileableAsync",
+         must=["TaxComplianceChecker(_db).CheckAsync(companyId, report.Id)", "f.Severity ==", "DraftFreshnessAsync(companyId, report)",
+               "TaxReportDraftFreshness.FileRuleCode", "TaxType.VatPp36", "TaxType.WithholdingTax1"],
+         forbid=["SaveChangesAsync(", "catch"],
+         why=_R275B_WHY + "M1 H2(3) ด่านเดียว: Error ของตัวตรวจ ⇒ บล็อก · ร่างไม่ตรงทะเบียน ⇒ 409 สร้างใหม่ · ไม่กลืน error"),
+    dict(file=_R275B_TAX, method="GenerateWhtReport", must=["WhtCertId = cert.Id", "WhtReportTotals.SummaryBranchKey(", "TaxPayerBranchCode = group.Key.Branch"],
+         before=[("ExtractTaxpayerFromJournalEntry(je)", "WhtReportTotals.SummaryBranchKey(")],
+         why=_R275B_WHY + "H2 บรรทัดอ้างใบ 50 ทวิ · L2 แถวสรุปสร้างหลังบรรทัด JE ล้วน + คีย์สาขา"),
+    dict(file=_R275B_TAX, method="LineResponseOf",
+         must=["WhtReportLineRule.DescriptionLocked(", "WhtReportLineRule.AmountsLocked(", "WhtReportLineRule.IncludeNeedsReason(", "WhtCertId: l.WhtCertId"],
+         why=_R275B_WHY + "server computes · page displays — ป้ายล็อก/ต้องมีเหตุผลมาจากตัวตัดสินเดียว"),
+    dict(file="Services/Implementations/Tax/TaxComplianceChecker.cs", method="CheckAsync",
+         must=["case TaxType.WithholdingTax54: CheckPnd3_53(report, findings, foreignPayees: true)", "case TaxType.VatPp36: CheckPp36("],
+         why=_R275B_WHY + "M2 ตัวตรวจครอบ ภ.ง.ด.54 (ยกเว้นเลขไทยของผู้รับ ตปท. · L4) + ภ.พ.36"),
+    dict(file="Services/Implementations/Tax/TaxComplianceChecker.cs", method="CheckPnd3_53",
+         must=["> HeaderTolerance", "foreignPayees ? 0"], forbid=["> 0.50m"],
+         why=_R275B_WHY + "L1 ยอดหัว = Σ บรรทัด ตรงทุกสตางค์ · L4"),
+    dict(file="Services/Implementations/Tax/TaxComplianceChecker.cs", method="CheckPp36", must=["WhtReportTotals.Of(r.Lines)", "> HeaderTolerance"],
+         why=_R275B_WHY + "M2 ภ.พ.36 ยอดหัว = Σ บรรทัดที่นับ"),
+    dict(file="Services/Implementations/DocumentService.cs", method="VoidDocumentAsync", must=["WhtReportLineRule.VoidedDocumentPrefix"],
+         forbid_lit=['"⚠️ [เอกสารถูกยกเลิก] "'],
+         why=_R275B_WHY + "คำนำหน้าแถวเอกสารยกเลิกเป็นของ Helpers/WhtReportLineRule ตัวเดียว (ล็อก/ต้องมีเหตุผล)"),
+]
+REVIEWER_CASES += [
+    # H1: กลับไปไม่คำนวณยอดหัวหลังคืนติ๊ก ⇒ ต้องฟ้อง
+    ("R275B-1", "RegenerateTaxReportUnlockedAsync", "                    RecalcWhtTotals(fresh);\n", "", True),
+    # H1: กลับไปคืนติ๊กทุกแถวของเอกสาร ⇒ ต้องฟ้อง
+    ("R275B-2", "RegenerateTaxReportUnlockedAsync", "whtTickSnapshot.Contains((line.DocumentId, line.WhtCertId, line.Description ?? \"\"))", "true", True),
+    # M1: ถอดด่านฝั่งเซิร์ฟเวอร์ ⇒ ต้องฟ้อง
+    ("R275B-3", "FileTaxReportUnlockedAsync", "        await EnsureReportFileableAsync(companyId, report);\n", "", True),
+    # M5: ติ๊กเข้าไม่ต้องมีเหตุผล ⇒ ต้องฟ้อง
+    ("R275B-4", "UpdateTaxReportUnlockedAsync", "var reason = (lineUpdate.IncludeReason ?? \"\").Trim();", "var reason = \"x\";", True),
+    # L1: ค่าคลาดเคลื่อนกลับเป็น 0.50 ⇒ ต้องฟ้อง
+    ("R275B-5", "CheckPnd3_53", "if (Math.Abs(sumWht - r.TotalTaxWithheld) > HeaderTolerance)", "if (Math.Abs(sumWht - r.TotalTaxWithheld) > 0.50m)", True),
+    # ทิศตรงข้าม: เปลี่ยนแค่ข้อความคอมเมนต์ ⇒ ต้องไม่ฟ้อง
+    ("R275B-6", "EnsureReportFileableAsync", "ด่านเดียวของ", "ด่านเดียวของ ", False),
+]
 
 def main() -> int:
     errs = []

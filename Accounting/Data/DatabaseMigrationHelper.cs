@@ -453,6 +453,8 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "TaxReportLines" ADD COLUMN IF NOT EXISTS "TaxPayerTitle" varchar(50) NULL;""",
             """ALTER TABLE "TaxReportLines" ADD COLUMN IF NOT EXISTS "TaxPayerBranchCode" varchar(5) NULL;""",
             """ALTER TABLE "TaxReportLines" ADD COLUMN IF NOT EXISTS "WhtCondition" integer NULL;""",
+            // รอบ 275 แพ็ก B (T2 H2): บรรทัดรายงาน ภ.ง.ด. อ้างใบ 50 ทวิ ที่มา — บรรทัดเก่า null (ร่างเก่าขึ้นแถบล้าสมัยหนึ่งครั้ง ⇒ "สร้างใหม่")
+            """ALTER TABLE "TaxReportLines" ADD COLUMN IF NOT EXISTS "WhtCertId" uuid NULL;""",
             """ALTER TABLE "Contacts" ADD COLUMN IF NOT EXISTS "NameEn" varchar(300) NULL;""",
             """ALTER TABLE "Contacts" ADD COLUMN IF NOT EXISTS "AddressEn" varchar(500) NULL;""",
             // ร่องรอยการ sync/ตรวจข้อมูลจากระบบภายนอก — **ภายในเท่านั้น** ห้ามพิมพ์ลงเอกสาร
