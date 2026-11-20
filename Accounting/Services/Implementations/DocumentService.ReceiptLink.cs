@@ -423,8 +423,9 @@ public partial class DocumentService
                 }
 
                 // ── ภาษีขายฝั่งถอน: ใบเดิมไม่เหลือเงินรับ ⇒ ถอยภาษีขายถึงกำหนด (ตัวเดียวกับยกเลิกการรับชำระ) · งวดปิด/ยื่นแล้ว = throw ⇒ ทั้งธุรกรรม rollback ──
+                //    รอบ 275 แพ็ก C (ต่อ): ใบเดิมยังเหลือการรับอื่น + การรับนี้ย้ายภาษีตามส่วนของงวด (JE ผูกการรับ) ⇒ ถอยเฉพาะ VAT ของงวดนี้ (เดิมไม่ส่งการรับ ⇒ ค้าง 21911)
                 if (await UndoOutputVatOnPaymentVoidAsync(companyId, fromDoc, receiptDecision, oldReceipt, PaymentVoidCause.User,
-                        "ย้ายการรับชำระ", payment.PaymentNumber) is string fromVatNotice)
+                        "ย้ายการรับชำระ", payment.PaymentNumber, voidedPaymentId: payment.Id) is string fromVatNotice)
                     notices.Add(fromVatNotice);
                 await _db.SaveChangesAsync();
 

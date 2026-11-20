@@ -53,9 +53,9 @@ public class SettlementTaxInvoiceRoleDbTests
     }
 
     /// <summary>ใบแจ้งหนี้ (ไม่ใช่ใบกำกับ) 700,000 + VAT 49,000 อนุมัติแล้ว + JE ตั้งลูกหนี้ · <paramref name="service"/> = ภาษีขายพัก 21913 (งานบริการ) · false = ลง 21911 (ขายสินค้า)</summary>
-    private static async Task<Document> InvoiceAsync(Accounting.Data.AccountingDbContext db, Seed s, DateTime date, bool service = true)
+    private static async Task<Document> InvoiceAsync(Accounting.Data.AccountingDbContext db, Seed s, DateTime date, bool service = true, decimal baseAmt = 700_000m)
     {
-        const decimal baseAmt = 700_000m, vat = 49_000m;
+        var vat = Math.Round(baseAmt * 0.07m, 2, MidpointRounding.AwayFromZero);
         var no = "INV-275C-" + Guid.NewGuid().ToString("N")[..8];
         var d = new Document
         {
@@ -110,6 +110,24 @@ public class SettlementTaxInvoiceRoleDbTests
             .SumAsync(l => l.CreditAmount - l.DebitAmount);
     }
 
+    /// <summary>ยอดสุทธิ Cr−Dr บน 21911 (ภาษีขายถึงกำหนด) ของ JE ที่ใบเป็นต้นทาง</summary>
+    private static async Task<decimal> Due21911Async(Seed s, Guid invoiceId)
+    {
+        using var db = DbTestDatabase.TryCreateContext()!;
+        return await db.JournalEntryLines.AsNoTracking()
+            .Where(l => !l.IsDeleted && l.AccountId == s.VatDueId && l.JournalEntry.CompanyId == s.CompanyId && l.JournalEntry.SourceDocumentId == invoiceId
+                && (l.JournalEntry.Status == JournalEntryStatus.Posted || l.JournalEntry.Status == JournalEntryStatus.Reversed))
+            .SumAsync(l => l.CreditAmount - l.DebitAmount);
+    }
+
+    /// <summary>ภาษีขายของเอกสารชุดนี้ในรายงาน ภ.พ.30 ของเดือน (แถวที่ไม่ถูกตัดออก)</summary>
+    private static async Task<decimal> Pp30VatAsync(Seed s, DateTime month, params Guid[] docIds)
+    {
+        using var db = DbTestDatabase.TryCreateContext()!;
+        var report = await new TaxService(db).ComputeVatReportAsync(s.CompanyId, month.Year, month.Month);
+        return report.Lines.Where(l => !l.IsExcluded && l.DocumentId is Guid id && docIds.Contains(id)).Sum(l => l.TaxAmount);
+    }
+
     [Fact]
     public async Task HIGH1_ใบแจ้งหนี้บริการจ่ายเต็มหักค่าธรรมเนียม30_ใบเสร็จเป็นใบกำกับเต็มใบ_ภาษีย้ายทั้งก้อน()
     {
@@ -159,6 +177,73 @@ public class SettlementTaxInvoiceRoleDbTests
         Assert.True(gone.Status == DocumentStatus.Voided || gone.IsDeleted);
         var kept = await after.Documents.AsNoTracking().SingleAsync(d => d.Id == r1.Id);
         Assert.Equal((false, 24_500m), (kept.Status == DocumentStatus.Voided, kept.VatAmount));
+        // รอบ 275 แพ็ก C (ต่อ): ภาษีถึงกำหนดเหลือเฉพาะงวด 1 · ภ.พ.30 เดือนงวด 1 = 24,500 · เดือนงวด 2 (ยกเลิกแล้ว) = 0
+        Assert.Equal(24_500m, await Due21911Async(s, inv.Id));
+        Assert.Equal(24_500m, await Pp30VatAsync(s, Today.AddDays(-30), inv.Id, r1.Id, r2.Id));
+        if (Today.AddDays(-30).Month != Today.Month)
+            Assert.Equal(0m, await Pp30VatAsync(s, Today, inv.Id, r1.Id, r2.Id));
+    }
+
+    /// <summary>รอบ 275 แพ็ก C (ต่อ): ย้ายการรับงวด 1 ออกจากใบแจ้งหนี้ที่ยังเหลือการรับงวด 2 ⇒ ใบเดิมถอย VAT ที่ย้ายตามส่วนของงวด 1 (เดิมเส้นย้ายไม่ส่งการรับ
+    /// ⇒ JE ผูกงวด 1 ค้าง: 21911 ของใบเดิม 49,000 ทั้งที่ใบเดิมเหลือเงินรับ 374,500) · ทิศตรงข้าม: งวด 2 ไม่ถูกแตะ</summary>
+    [Fact]
+    public async Task MED3_ย้ายการรับงวดแรกออกจากใบที่ยังเหลืองวดสอง_ใบเดิมถอยเฉพาะ24500ของงวดแรก()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var s = await SeedAsync(db);
+        var inv = await InvoiceAsync(db, s, Today.AddDays(-40));
+        var target = await InvoiceAsync(db, s, Today.AddDays(-40), baseAmt: 350_000m);   // ปลายทางรับครบในครั้งเดียว (ด่านรับบางส่วนของปลายทางคงเดิม)
+        var (p1, _) = await PayAsync(s, inv.Id, 374_500m, Today.AddDays(-30));
+        var (_, r2) = await PayAsync(s, inv.Id, 374_500m, Today);
+        Assert.Equal(49_000m, await Due21911Async(s, inv.Id));
+
+        db.ChartOfAccounts.Add(Acc(s.CompanyId, "21630", "เงินรับจากลูกค้ารอจัดสรร", AccountType.Liability));   // ทางผ่านของการย้าย
+        await db.SaveChangesAsync();
+        using (var m = DbTestDatabase.TryCreateContext()!)
+            await Docs(m).MoveSettlementAsync(s.CompanyId, new SettlementMoveCommand(p1.Id, target.Id, inv.Id, "โอนผิดใบ"), "tester");
+
+        Assert.Equal((24_500m, 24_500m), (await Undue21913Async(s, inv.Id), await Due21911Async(s, inv.Id)));
+        using var c = DbTestDatabase.TryCreateContext()!;
+        var kept = await c.Documents.AsNoTracking().SingleAsync(d => d.Id == r2!.Id);
+        Assert.Equal((false, 24_500m), (kept.Status == DocumentStatus.Voided, kept.VatAmount));
+    }
+
+    /// <summary>รอบ 275 แพ็ก C (ต่อ · กติกา _R275C_ ที่ไม่เคยถูกรัน): ยกเลิก<b>งวด 1</b> ขณะงวด 2 (งวดปิด) ยังมีผล ⇒ เส้นยกเลิกการรับใบเดียว
+    /// (<c>VoidPaymentAsync → ReversePaymentInternalAsync</c>) ส่งการรับที่ยกเลิกถึงตัวกลับของงวด ⇒ ถอย JE ที่ผูกงวด 1 (24,500 ลงวันที่ของ JE เอง) ·
+    /// งวด 2 ไม่ถูกแตะ · 21911 / 21913 / ภ.พ.30 ตรงตัวเลข</summary>
+    [Fact]
+    public async Task MED3_บริการรับสองงวด_ยกเลิกงวดแรกขณะงวดปิดยังมีผล_ถอยเฉพาะ24500ของงวดแรก_ภพ30ตรง()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var s = await SeedAsync(db);
+        var inv = await InvoiceAsync(db, s, Today.AddDays(-40));
+        var month1 = Today.AddDays(-30);
+        var (p1, r1) = await PayAsync(s, inv.Id, 374_500m, month1);
+        var (_, r2) = await PayAsync(s, inv.Id, 374_500m, Today);
+        Assert.Equal((0m, 49_000m), (await Undue21913Async(s, inv.Id), await Due21911Async(s, inv.Id)));
+
+        using (var v = DbTestDatabase.TryCreateContext()!)
+            await Docs(v).VoidPaymentAsync(s.CompanyId, p1.Id);
+
+        Assert.Equal(24_500m, await Undue21913Async(s, inv.Id));   // เดิม (ถ้าไม่ส่งการรับที่ยกเลิก) = 0 — ภาษีของเงินที่ยกเลิกค้าง 21911
+        Assert.Equal(24_500m, await Due21911Async(s, inv.Id));
+        using (var c = DbTestDatabase.TryCreateContext()!)
+        {
+            var je1 = await c.JournalEntries.AsNoTracking().SingleAsync(j => j.CompanyId == s.CompanyId && j.SourceDocumentId == inv.Id
+                && j.Note == SettlementTaxInvoiceLoader.InstallmentReclassTag(p1.Id) && j.OriginalEntryId == null);
+            Assert.NotNull(je1.ReversedByEntryId);
+            var rev = await c.JournalEntries.AsNoTracking().SingleAsync(j => j.Id == je1.ReversedByEntryId);
+            Assert.Equal(je1.EntryDate.Date, rev.EntryDate.Date);   // ตัวกลับลงเดือนของ JE เอง
+            var gone = await c.Documents.AsNoTracking().IgnoreQueryFilters().SingleAsync(d => d.Id == r1!.Id);
+            Assert.True(gone.Status == DocumentStatus.Voided || gone.IsDeleted);
+            var kept = await c.Documents.AsNoTracking().SingleAsync(d => d.Id == r2!.Id);
+            Assert.Equal((false, 24_500m), (kept.Status == DocumentStatus.Voided, kept.VatAmount));
+        }
+        Assert.Equal(24_500m, await Pp30VatAsync(s, Today, inv.Id, r1!.Id, r2!.Id));
+        if (month1.Month != Today.Month)
+            Assert.Equal(0m, await Pp30VatAsync(s, month1, inv.Id, r1.Id, r2.Id));
     }
 
     [Fact]

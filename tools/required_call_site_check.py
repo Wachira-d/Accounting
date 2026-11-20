@@ -5952,7 +5952,20 @@ def method_body(masked: str, name: str):
         j += 1
     k = masked.find("{", j)
     arrow = masked.find("=>", j)
-    if k < 0 or (0 <= arrow < k):
+    if 0 <= arrow and (k < 0 or arrow < k) and not masked[j + 1:arrow].strip(" \t\r\n").startswith(("where", ":")):
+        # รอบ 275 แพ็ก C (ต่อ): เมธอด expression-bodied (`=> ...;`) — เดิมคืน None ⇒ "ไม่พบเมธอด" ทั้งที่เมธอดอยู่ (TaxService.LoadInvoiceIdsOwnedByVatReceiptAsync)
+        # ตัว = ตั้งแต่ `=>` ถึง `;` ที่ระดับวงเล็บ/ปีกกาศูนย์ (masked ⇒ `;` ในสตริง/คอมเมนต์ไม่นับ)
+        depth = 0
+        for e in range(arrow + 2, len(masked)):
+            ch = masked[e]
+            if ch in "({[":
+                depth += 1
+            elif ch in ")}]":
+                depth -= 1
+            elif ch == ";" and depth == 0:
+                return (arrow, e + 1)
+        return None
+    if k < 0:
         return None
     depth = 0
     for e in range(k, len(masked)):
@@ -22041,8 +22054,16 @@ RULES += [
                "DocumentVoidPreconditions.OutputVatUndoOnPaymentVoid(", "OutputVatPeriodLockReasonAsync(", "reversalDate: je.EntryDate.Date"],
          before=[("DocumentVoidPreconditions.OutputVatUndoOnPaymentVoid(", "ReverseJournalEntryAsync(")],
          why=_R275C_WHY + "MED-3 ตัวกลับของงวด: ใบกำกับรายงวดที่ถึงกรมสรรพากรแล้วยังถือความรับผิด · ด่านงวดเดียวกับการถอยทั้งก้อน · ลงวันที่ของ JE เอง · tenant"),
-    dict(file=DOC, method="VoidPaymentAsync", must=["voidedPaymentId: payment.Id"],
-         why=_R275C_WHY + "MED-3 เส้นยกเลิกการรับใบเดียวส่งการรับที่ยกเลิก (ตัวกลับของงวดหา JE ที่ผูกได้)"),
+    # รอบ 275 แพ็ก C (ต่อ): VoidPaymentAsync ไม่ได้เรียกตัวถอยภาษีเอง — ส่งต่อ ReversePaymentInternalAsync (ตัวเดียวกับ cascade ยกเลิกเอกสาร) ⇒ ล็อกทั้งสองชั้น
+    dict(file=DOC, method="VoidPaymentAsync", must=["ReversePaymentInternalAsync(companyId, locked, doc,"],
+         why=_R275C_WHY + "MED-3 เส้นยกเลิกการรับใบเดียวเดินตัวกลับเดียว (ReversePaymentInternalAsync) ที่ส่งการรับที่ยกเลิกถึงตัวกลับของงวด"),
+    dict(file=DOC, method="ReversePaymentInternalAsync", must=["UndoOutputVatOnPaymentVoidAsync(", "voidedPaymentId: payment.Id"],
+         call_args=[("UndoOutputVatOnPaymentVoidAsync(", "voidedPaymentId")],
+         why=_R275C_WHY + "MED-3 เส้นยกเลิกการรับใบเดียว/cascade ส่งการรับที่ยกเลิก (ตัวกลับของงวดหา JE ที่ผูกได้ — ไม่ส่ง ⇒ VAT ของงวดที่ยกเลิกค้าง 21911)"),
+    dict(file="Services/Implementations/DocumentService.ReceiptLink.cs", method="MoveSettlementAsync",
+         must=["UndoOutputVatOnPaymentVoidAsync(", "voidedPaymentId: payment.Id"],
+         call_args=[("UndoOutputVatOnPaymentVoidAsync(", "voidedPaymentId")],
+         why=_R275C_WHY + "MED-3 ย้ายการรับงวดหนึ่งออกจากใบที่ยังเหลือการรับอื่น ⇒ ถอย VAT ที่ย้ายตามส่วนของงวดนั้นจากใบเดิม (เดิมค้าง 21911)"),
     dict(file=DOC, method="CreateSettlementReceiptAsync",
          must=["taxInvoicePlan", "labels.SettlementReceiptNote(", "labels.SettlementReceiptLine(", "SettlementTaxInvoiceRole.InstallmentAuditNote("],
          forbid_lit=['"รับชำระเงินตาม', '"รายการ"', '"ใบกำกับภาษี" : invoice.DocumentType'],
@@ -22055,7 +22076,7 @@ RULES += [
          must=["SettlementReceiptTotalsLoader.LedgerEventsAsync(", "d.CompanyId == companyId", "r.CompanyId == companyId", "VatParkedUntilPaymentAsync("],
          forbid=["SaveChangesAsync("],
          why=_R275C_WHY + "ข้อเท็จจริงจากตัวโหลดรายการตัดยอดเดียวกับแถวยอดใบเสร็จ · tenant · อ่านอย่างเดียว"),
-    dict(file="Services/Implementations/SettlementTaxInvoiceLoader.cs", method="QueueAsync",
+    dict(file="Services/Implementations/SettlementTaxInvoiceLoader.cs", method="QueueCoreAsync",   # QueueAsync สองตัวเป็น => ส่งต่อตัวนี้
          must=["d.CompanyId == companyId", "p.CompanyId == companyId", "DecideAsync(", "HasTrackedGoodsAsync("],
          forbid=["SaveChangesAsync("],
          why=_R275C_WHY + "คิวรับเงินแล้วยังไม่มีใบกำกับ: ตัวตัดสินเดียว · ขายสินค้าไม่เข้า (4.1) · tenant · อ่านอย่างเดียว"),
@@ -22083,12 +22104,18 @@ RULES += [
          why=_R275C_WHY + "ฝ่ายค้าน HIGH-1 ใบลดหนี้ที่ลดภาษีที่พัก — ผลอยู่ในใบกำกับงวดปิดแล้ว ไม่นับซ้ำ"),
 ]
 REVIEWER_CASES += [
-    ("R275C-1", "CreatePaymentAsync", "taxInvoicePlan: tiDecision", "carryVatFromSource: false", True),
+    # old ต้องอยู่ในเมธอดเป้าหมาย (replace ตัวแรกของทั้งไฟล์) — เดิม "taxInvoicePlan: tiDecision" ตัวแรกอยู่ใน IssueReceiptForPaymentCoreAsync ⇒ ไม่เคยแตะ CreatePaymentAsync
+    ("R275C-1", "CreatePaymentAsync", "taxInvoicePlan: tiDecision, installmentTaxPointDate: payment.PaymentDate",
+     "carryVatFromSource: false, installmentTaxPointDate: payment.PaymentDate", True),
     ("R275C-2", "IssueReceiptForPaymentCoreAsync", "SettlementTaxInvoiceLoader.DecideAsync(", "SettlementReceiptPolicy.CarriesTaxInvoiceRole(", True),
     ("R275C-3", "TryReclassifyUndueOutputVatAsync", "inv.OutputVatDueAt ??= when", "inv.OutputVatDueAt = when", True),
     ("R275C-4", "CreateSettlementReceiptAsync", "labels.SettlementReceiptLine(invoice.DocumentType, invoice.DocumentNumber, installment: false)",
      "$\"รับชำระเงินตามใบแจ้งหนี้เลขที่ {invoice.DocumentNumber}\"", True),
-    ("R275C-5", "UndoInstallmentReclassOnPaymentVoidAsync", "DocumentVoidPreconditions.ReceiptHoldsTaxPointFor(", "false && Equals(", True),
+    # เดิม ReceiptHoldsTaxPointFor ตัวแรกของไฟล์อยู่ใน UndoOutputVatOnPaymentVoidAsync ⇒ ไม่เคยแตะเมธอดเป้าหมาย
+    ("R275C-5", "UndoInstallmentReclassOnPaymentVoidAsync", "if (receiptDoc != null && DocumentVoidPreconditions.ReceiptHoldsTaxPointFor(",
+     "if (receiptDoc != null && false && Equals(", True),
+    ("R275C-6", "ReversePaymentInternalAsync", "voidedPaymentId: payment.Id);", "voidedPaymentId: null);", True),
+    ("R275C-7", "MoveSettlementAsync", "\"ย้ายการรับชำระ\", payment.PaymentNumber, voidedPaymentId: payment.Id)", "\"ย้ายการรับชำระ\", payment.PaymentNumber)", True),
 ]
 
 

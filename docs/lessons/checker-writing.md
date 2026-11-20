@@ -78,6 +78,7 @@
 
 ```
 python3 tools/di_cycle_check.py        # วงกลม DI (dotnet build จับไม่ได้)
+python3 tools/main_guard_tail_check.py # โค้ดระดับโมดูลหลัง `if __name__ == "__main__"` (กติกาไม่เคยถูกรัน — รอบ 275 แพ็ก C `_R275C_`)
 python3 tools/nullable_arg_check.py    # CS1503 nullable→non-nullable
 python3 tools/using_check.py           # CS0246 ลืม using ของ type ในเรพ
 python3 tools/record_arg_check.py      # CS1739 named arg ที่ record ไม่มี

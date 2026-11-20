@@ -5252,6 +5252,9 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
   `JournalEntry.Note = R275C-INSTALLMENT-PAY:{paymentId}`) · `OutputVatDueAt` ประทับงวดแรกเท่านั้น · ใบเสร็จรายงวดเป็นเจ้าของภาษีของงวดตัวเอง (`OutputVatOwnership` Receipt branch ·
   ใบแจ้งหนี้ `OwnedByVatReceipt` ⇒ ไม่นับซ้ำ) ณ `TaxPointDate` = วันรับเงินของงวด · ยกเลิกการรับงวดหนึ่ง (ยังเหลืองวดอื่น) ⇒ กลับเฉพาะ JE ที่ผูก
   (`UndoInstallmentReclassOnPaymentVoidAsync` — ด่านงวด/ใบกำกับที่ถึงกรมสรรพากรเดียวกับการถอยทั้งก้อน) · รับครบ/ไม่ออกใบกำกับ ⇒ ย้ายทั้งก้อนตามเดิม
+  · ทางเข้าที่ส่งการรับถึงตัวกลับของงวด (`voidedPaymentId`): ยกเลิกการรับใบเดียว/cascade (`VoidPaymentAsync` → `ReversePaymentInternalAsync`) · ยกเลิกการรับหลายใบ ·
+    **ย้ายการรับชำระ** (`MoveSettlementAsync` — เดิมไม่ส่ง ⇒ ย้ายงวดหนึ่งออกจากใบที่ยังเหลือการรับอื่นแล้ว VAT ของงวดนั้นค้าง 21911 ของใบเดิม) ·
+    ยกเลิกการจัดสรรเงินรอจัดสรรไม่ต้องส่ง (ย้ายทั้งก้อน ไม่มี JE ผูกการรับ)
 - **วันที่ (MED-4 — ยืนยันจากโค้ด)**: `CreatePaymentAsync`/`CreateMultiDocPaymentAsync` normalize `PaymentDate` ด้วย `ThaiDate.CalendarDateUtc` ที่ต้นทาง (gateway ส่ง instant UTC ⇒
   เงินเข้า 00:00–06:59 น. วันที่ 1 เดิมลงวันสุดท้ายของเดือนก่อน) · การรับที่บันทึกไปแล้วไม่ถูกแก้ (ไม่แก้ย้อนหลัง)
 - **คิว "รับเงินแล้วยังไม่มีใบกำกับภาษี"** (คำตัดสิน 4.1: ใบเก่าไม่แก้ย้อนหลัง) — `SettlementTaxInvoiceLoader.QueueAsync` (อ่านอย่างเดียว · tenant) ⇒ `GET api/companies/{cid}/document/received-without-tax-invoice` ·
@@ -9977,3 +9980,7 @@ _Last verified against codebase: 2026-11-20 (รอบ 276 ชุดแก้ฝ
 
 _Last verified against codebase: 2026-11-20 (รอบ 277 — §6.277 เมนูตามสิทธิ์จากเซิร์ฟเวอร์ (`MenuPermissionMap` · `landingUrl` · หน้าต้อนรับ) + คำเชิญเข้าบริษัท
 (ทุกอีเมลได้คำเชิญ · แถวรอตอบรับ/ส่งซ้ำ/ยกเลิก · token hash · ตอบรับตัวเดียว · ไม่สร้างบริษัท · ยังไม่มีสิทธิ์จนเจ้าของตั้ง) — commit a1ae70d2 + d93800f2)_
+
+_Last verified against codebase: 2026-11-20 (รอบ 275 แพ็ก C ต่อ — กติกา `_R275C_` ที่อยู่หลัง `__main__` รันจริงแล้ว: `VoidPaymentAsync` ส่งการรับที่ยกเลิกผ่าน
+`ReversePaymentInternalAsync` อยู่แล้ว (ไม่ใช่บั๊ก — กติกาชี้ผิดชั้น) · **ย้ายการรับชำระไม่ส่ง `voidedPaymentId` (บั๊กจริง แก้แล้ว)** · ตัวตรวจรองรับเมธอด `=>` ·
+checker ใหม่ `main_guard_tail_check.py` — commit <sha-r275c2>)_

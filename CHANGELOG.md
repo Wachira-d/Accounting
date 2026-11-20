@@ -7398,3 +7398,11 @@ _รอบ 277 (2026-11-20 · `erp-review/2026-11-20/dev-277-menu-invite.md` · 
 ตอบรับตัวเดียว `CompanyInvitationService` (ปุ่ม/ฟอร์ม/SSO) · ไม่สร้างบริษัท · ไม่เลือกบทบาท ⇒ `CompanyUser.AccessPending` (ทุก API 403 ที่ `TenantAccessMiddleware`) จนเจ้าของตั้ง ·
 แจ้ง `team.invitation_accepted` · ที่นั่งไม่นับคำเชิญหมดอายุ · อีเมลคำเชิญ HtmlEncode + บอก "ไม่ต้องสร้างบริษัท" · เทสต์ `MenuInviteRound277Tests` + Db `TeamInvitationDbTests` +
 sim `menu_landing_sim.js` · กติกา `_R277_` — commit a1ae70d2 + d93800f2_
+
+_รอบ 275 แพ็ก C (ต่อ — กติกาที่ไม่เคยถูกรัน): กติกา `_R275C_` ใน `tools/required_call_site_check.py` ต่อท้ายไฟล์หลัง `if __name__ == "__main__"` จึงไม่ถูกประเมิน
+(ย้าย guard แล้ว `234d5b3e`) · รันจริงล้ม 5 จุด: (1) `VoidPaymentAsync` — ไม่ใช่บั๊ก: ส่ง `voidedPaymentId` ผ่าน `ReversePaymentInternalAsync` อยู่แล้ว (กติกาชี้ผิดชั้น ⇒ ล็อกทั้งสองชั้น) ·
+แต่ไล่ทุกทางเข้าของ `UndoOutputVatOnPaymentVoidAsync` แล้วพบ **ย้ายการรับชำระ (`MoveSettlementAsync`) ไม่ส่ง** ⇒ ย้ายงวดหนึ่งออกจากใบงานบริการที่ยังเหลือการรับอื่น
+VAT ของงวดนั้นค้าง 21911 ของใบเดิม (ภ.พ.30 เกิน) — แก้ + Db test · (2) `QueueAsync` เป็น `=>` ส่งต่อ ⇒ ชี้ `QueueCoreAsync` · (3) ตัวตรวจไม่รู้จักเมธอด `=>`
+(`TaxService.LoadInvoiceIdsOwnedByVatReceiptAsync` มีด่าน 275-C-10 อยู่จริง) ⇒ `method_body` รองรับ expression body · (4) เคส R275C-1/5 แทนข้อความตัวแรกของไฟล์ที่อยู่ในเมธอดอื่น
+⇒ ใช้ข้อความเฉพาะเมธอด + เคส R275C-6/7 · (5) checker ใหม่ `tools/main_guard_tail_check.py` ฟ้องโค้ดระดับโมดูลหลัง guard ทุกไฟล์ใน `tools/` (81 ไฟล์ · พบ 0 จุดอื่น) —
+commit <sha-r275c2>_
