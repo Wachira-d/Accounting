@@ -177,10 +177,15 @@ subscription เดิมโดยสิ้นเชิง — โควตา�
 เพดานวันขยาย trial ที่ server `Helpers/TrialExtensionPolicy.ResolveDays` (ขอเกิน `TrialConfig.ExtensionDays` = ปฏิเสธพร้อมบอกเพดาน ไม่ตัดเงียบ · แอดมินแพลตฟอร์ม
 กำหนดเองได้ด้วย `allowCustomDays: true`)
 
-**ปิดรับสมัคร (`SiteSettings.RegistrationEnabled`) กันที่ server** (S-08 · `Helpers/RegistrationPolicy`): `IsOpen` (ไม่มีแถว = เปิด) · `IsInvitationUsable`
+**ปิดรับสมัคร (`SiteSettings.RegistrationEnabled`) กันที่ server** (S-08 · `Helpers/RegistrationPolicy`): `IsOpen` (ไม่มีแถว = เปิด) · คำเชิญใช้ได้ = `CompanyInvitationPolicy.Check` (รอบ 277 · เดิม `IsInvitationUsable` ลบแล้ว)
 (predicate เดียวกับ `AuthService.ConsumeInvitationAsync`) · `EvaluateNewAccount` (ปิด + มีคำเชิญของอีเมลนี้ = สมัครได้แต่ `MayCreateCompany=false`) ·
 `EvaluateNewCompany` (แอดมินแพลตฟอร์มยังเปิดบริษัทให้ลูกค้าได้) · ทางเข้า: `AuthService.RegisterAsync` · SSO บัญชีใหม่ (ตรวจก่อนพาไปหน้าสมัคร) ·
 `CompanyService.CreateAsync` (ผู้ใช้เดิมเปิดบริษัทเพิ่มไม่ได้เมื่อปิด) · `register.html` ไม่ซ่อนฟอร์มเมื่อมี `?invite=`
+
+**ทีม/คำเชิญ (รอบ 277 · คำตัดสิน 277-2…7)**: ที่นั่ง (`QuotaResources.Users`) = สมาชิก + คำเชิญ Pending ที่**ยังไม่หมดอายุ** (`CompanyInvitationPolicy.HoldsSeat` ·
+`QuotaGateService.UsersUsedAsync` · เดิมคำเชิญหมดอายุล็อกที่นั่งถาวร) · เชิญ/ส่งซ้ำตรวจใต้ล็อกเดียว (`CompanyService.EnsureSeatAsync`) · ตอบรับตรวจซ้ำ (`adding 0`)
+⇒ ลดแพ็กเกจหลังเชิญ = ตอบรับไม่ได้พร้อมเหตุ · ผู้ใช้หลายบริษัทสลับได้ตามเดิม (`CompanyUser` ต่อบริษัท) · สมาชิกที่ตอบรับโดยไม่กำหนดบทบาท (`AccessPending`) นับที่นั่งแล้ว
+แต่ใช้งานอะไรไม่ได้จนเจ้าของตั้งบทบาท · ไม่มีการคิดเงินต่อที่นั่งเพิ่มในรอบนี้ (ราคาที่นั่งเสริมเดิม §6.1b-Q) — commit PENDING277
 
 **ภาษีรายงานข้ามบริษัท (B-03/B-04)**: `ITaxComplianceChecker.CheckAsync(companyId, taxReportId)` ค้นผ่าน `Helpers/TaxReportTenantScope.ById` (ไม่พบ = 404) ·
 `TaxController` endpoint เขียน 12 จุด ⇒ `Tax.File` (+ `Tax.Export` สำหรับ e-filing · `Tax.File` **และ** `Journal.Manage` สำหรับ unlock-filing/reject-reverse)

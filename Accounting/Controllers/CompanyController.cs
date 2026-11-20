@@ -106,6 +106,7 @@ public class CompanyController : ControllerBase
 
     /// <summary>รอบ 277 — ส่งคำเชิญซ้ำ (ออกลิงก์ใหม่ · ลิงก์เดิมใช้ไม่ได้ · ต่ออายุ 7 วัน)</summary>
     [HttpPost("{companyId:guid}/invitations/{invitationId:guid}/resend")]
+    [Accounting.Filters.RequireOwner("ส่งคำเชิญซ้ำ")]
     public async Task<ActionResult<ApiResponse<object>>> ResendInvitation(Guid companyId, Guid invitationId)
     {
         var userId = JwtHelper.GetUserIdFromClaims(User);
@@ -116,6 +117,7 @@ public class CompanyController : ControllerBase
 
     /// <summary>รอบ 277 — ยกเลิกคำเชิญ (คืนที่นั่ง)</summary>
     [HttpDelete("{companyId:guid}/invitations/{invitationId:guid}")]
+    [Accounting.Filters.RequireOwner("ยกเลิกคำเชิญ")]
     public async Task<ActionResult<ApiResponse<bool>>> CancelInvitation(Guid companyId, Guid invitationId)
     {
         var userId = JwtHelper.GetUserIdFromClaims(User);

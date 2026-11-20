@@ -16,6 +16,9 @@ namespace Accounting.Tests;
 /// </summary>
 public class RegistrationPolicyTests
 {
+    private static bool Usable(InvitationStatus st, DateTime exp, string? inv, string? email, DateTime now)
+        => CompanyInvitationPolicy.Check(st, exp, inv, email, now) == CompanyInvitationPolicy.Verdict.Ok;
+
     private static readonly DateTime Now = new(2026, 9, 24, 3, 0, 0, DateTimeKind.Utc);
 
     // ════════ ครึ่งแรก: ปิดรับสมัคร ════════
@@ -55,19 +58,19 @@ public class RegistrationPolicyTests
     [InlineData(InvitationStatus.Expired)]
     [InlineData(InvitationStatus.Cancelled)]
     public void คำเชิญที่ใช้ไปแล้วหรือยกเลิก_ไม่ใช่ใบผ่าน(InvitationStatus status)
-        => Assert.False(RegistrationPolicy.IsInvitationUsable(status, Now.AddDays(3), "a@x.com", "a@x.com", Now));
+        => Assert.False(Usable(status, Now.AddDays(3), "a@x.com", "a@x.com", Now));
 
     [Fact]
     public void คำเชิญหมดอายุ_ไม่ใช่ใบผ่าน()
-        => Assert.False(RegistrationPolicy.IsInvitationUsable(InvitationStatus.Pending, Now, "a@x.com", "a@x.com", Now));
+        => Assert.False(Usable(InvitationStatus.Pending, Now, "a@x.com", "a@x.com", Now));
 
     [Fact]
     public void คำเชิญของอีเมลอื่น_ไม่ใช่ใบผ่าน_กันเอาลิงก์คนอื่นมาสมัครบัญชีตัวเอง()
-        => Assert.False(RegistrationPolicy.IsInvitationUsable(InvitationStatus.Pending, Now.AddDays(3), "a@x.com", "b@x.com", Now));
+        => Assert.False(Usable(InvitationStatus.Pending, Now.AddDays(3), "a@x.com", "b@x.com", Now));
 
     [Fact]
     public void อีเมลว่าง_ไม่ใช่ใบผ่าน()
-        => Assert.False(RegistrationPolicy.IsInvitationUsable(InvitationStatus.Pending, Now.AddDays(3), "a@x.com", " ", Now));
+        => Assert.False(Usable(InvitationStatus.Pending, Now.AddDays(3), "a@x.com", " ", Now));
 
     // ════════ ครึ่งหลัง (ทิศตรงข้าม): เปิดอยู่ = เหมือนเดิม · คำเชิญยังใช้ได้ ════════
 
@@ -86,7 +89,7 @@ public class RegistrationPolicyTests
 
     [Fact]
     public void คำเชิญที่ยังใช้ได้_อีเมลตรงไม่สนตัวพิมพ์_เป็นใบผ่าน()
-        => Assert.True(RegistrationPolicy.IsInvitationUsable(
+        => Assert.True(Usable(
             InvitationStatus.Pending, Now.AddDays(3), "Staff@Example.com ", "staff@example.com", Now));
 
     [Fact]

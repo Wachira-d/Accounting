@@ -9075,6 +9075,20 @@ retention ช่วงนี้เทียบช่วงก่อน + เส�
 
 **ตาราง**: CreditPackages · CreditPasses · CreditLedgerEntries · CreditClassSessions · CreditClassBookings (`DatabaseMigrationHelper.CourseCreditStatements`) · CreditPassFreezes + คอลัมน์สมาชิก/ค่าตอบแทน (`Helpers/CourseCreditMembershipMigration` · รอบ 209 P5)
 
+### 6.277 เมนูตามสิทธิ์ + คำเชิญเข้าบริษัท (รอบ 277 · คำตัดสิน 277-1…7 · `erp-review/2026-11-20/dev-277-menu-invite.md`)
+- **เมนู**: `GET api/company/{id}/roles/my-permissions` ส่ง `permissionDeniedMenuIds` จากตารางเดียว `Helpers/MenuPermissionMap` (แดชบอร์ด/บริหารการเงิน/รายงานผู้บริหาร/FP&A = Reports.Dashboard ·
+  งบรวม = Reports.Financial · รอบโอน = Settlement.View · ที่พัก = Lodging.Manage · + หน้ารับชำระของรอบ 201) ตรวจด้วย `IPermissionService.HasPermissionAsync` ตัวเดียวกับ API ·
+  `layout.js` `hasMenuAccess` ตัด · `landingUrl()` = แดชบอร์ดถ้ามีสิทธิ์ ไม่งั้นเมนูแรกที่เข้าได้ ไม่มีเลย = `/pages/no-access.html` · `ensurePageAccess('dashboard')` ใน app.html/simple.html
+  ก่อนยิง API · `_enforceRoleAccess` บนแดชบอร์ดพาไปหน้าแรกเงียบ ๆ · ช่องค้นหา/command palette/แถบล่างมือถือ (`data-menu`)/ลิงก์ "หน้าหลัก" กรองด้วย `hasMenuAccess` · เปิด URL ตรงหน้าอื่นยังได้ข้อความเหตุจาก API
+- **เชิญ** `POST api/company/{id}/users {email, role?, companyRoleId?, ownDocumentsOnly, draftDocumentsOnly}` (เจ้าของ) ⇒ **ทุกอีเมลได้คำเชิญ** (ผู้มีบัญชีไม่ถูกยัดเข้าบริษัท) ·
+  ด่านที่นั่ง `EnsureSeatAsync` ใต้ล็อก · เชิญซ้ำ = แถวเดิม (token ใหม่) · `GET …/invitations` (แถวรอตอบรับ/หมดอายุ) · `POST …/invitations/{id}/resend` · `DELETE …/invitations/{id}` · audit chain
+- **token**: สุ่ม 32 ไบต์ เก็บ `CompanyInvitations.TokenHash` (SHA-256 · `CompanyInvitationPolicy.HashToken`) · `Token` ดิบ = null (Round277Migration ย้ายค่าเดิม) · อายุ 7 วัน · ใช้ครั้งเดียว
+- **ตอบรับ** ตัวเดียว `CompanyInvitationService.AcceptAsync` (ปุ่มรับ `POST api/invitations/accept` · สมัครฟอร์ม/SSO ผ่าน `AuthService.ConsumeInvitationAsync`): ล็อกที่นั่งบริษัท → ตรวจ (สถานะ/อายุ/อีเมลตรง) →
+  P2-2 บทบาทแพลตฟอร์ม → ที่นั่งซ้ำ → `CompanyUser` (บทบาท/บทบาทกำหนดเอง/จำกัดเอกสาร หรือ `AccessPending` เมื่อไม่เลือกบทบาท) → audit → แจ้ง `team.invitation_accepted` ถึงเจ้าของ ·
+  สมัครผ่านลิงก์ **ไม่สร้างบริษัท** แม้ส่งชื่อบริษัทมา · หน้า `accept-invitation.html` แยก "มีบัญชีแล้ว ⇒ เข้าสู่ระบบ" / "ยังไม่มี ⇒ สมัคร (ไม่ต้องสร้างบริษัท)" จาก `accountExists`
+- **ยังไม่มีสิทธิ์** (`CompanyUser.AccessPending`): `TenantAccessMiddleware` ปฏิเสธทุก API ของบริษัท 403 `TEAM-ACCESS-PENDING` ยกเว้น `PendingMemberAccess.IsAllowed` (GET my-permissions) ·
+  หน้าเว็บอยู่ที่ `/pages/no-access.html` · เจ้าของ `PUT users/{id}/role` หรือผูกบทบาทกำหนดเอง ⇒ ปลด + audit
+
 ## 7. Validation gates (compliance — กฎเหล็ก #2)
 
 | Gate | Where | กระทำ |
@@ -9953,3 +9967,6 @@ _Last verified against codebase: 2026-11-20 (รอบ 275 แพ็ก A ผล
 _Last verified against codebase: 2026-11-20 (รอบ 276 — ผู้ใช้เห็นเฉพาะเอกสารที่ตัวเองสร้าง/สร้าง-แก้ได้เฉพาะร่าง: ตัวกรองแถว EF ของ Documents ·
 `DocumentRestrictionFilter` รายการอนุญาต + 404 · ด่าน Approve/Void ชั้น service · ส่งขออนุมัติพื้นฐาน/ถอน/ตีกลับ + แจ้งผ่านเครื่องแจ้งเตือนกลาง ·
 คำตัดสิน 276-1…8 — commit 69740aef + 4456de7a)_
+
+_Last verified against codebase: 2026-11-20 (รอบ 277 — §6.277 เมนูตามสิทธิ์จากเซิร์ฟเวอร์ (`MenuPermissionMap` · `landingUrl` · หน้าต้อนรับ) + คำเชิญเข้าบริษัท
+(ทุกอีเมลได้คำเชิญ · แถวรอตอบรับ/ส่งซ้ำ/ยกเลิก · token hash · ตอบรับตัวเดียว · ไม่สร้างบริษัท · ยังไม่มีสิทธิ์จนเจ้าของตั้ง) — commit PENDING277)_

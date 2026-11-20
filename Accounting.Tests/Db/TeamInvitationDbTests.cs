@@ -249,14 +249,14 @@ public class TeamInvitationDbTests
         var s = await SeedAsync(db);
         var email = $"r277-reg-{Guid.NewGuid():N}@test.local";
         var r = await Company(db).AddUserAsync(s.CompanyId, s.Owner, new AddCompanyUserRequest(email, UserRole.Staff));
-        var companiesBefore = await db.Companies.CountAsync();
+        var stubName = "บริษัทที่ไม่ควรเกิด " + Guid.NewGuid().ToString("N")[..8];
 
         var auth = Auth(db);
         await auth.RegisterAsync(new RegisterRequest(email, "Passw0rd!x", "ผู้สมัครใหม่", null, null, null,
-            CompanyName: "บริษัทที่ไม่ควรเกิด", InvitationToken: TokenOf(r), AcceptedTerms: true));
+            CompanyName: stubName, InvitationToken: TokenOf(r), AcceptedTerms: true));
 
         var user = await db.Users.AsNoTracking().SingleAsync(x => x.Email == email);
-        Assert.Equal(companiesBefore, await db.Companies.CountAsync());
+        Assert.False(await db.Companies.AnyAsync(c => c.Name == stubName));   // เทสต์อื่นรันขนาน — ไม่นับจำนวนบริษัททั้งฐาน
         var memberships = await db.CompanyUsers.AsNoTracking().Where(x => x.UserId == user.Id).ToListAsync();
         var m = Assert.Single(memberships);
         Assert.Equal(s.CompanyId, m.CompanyId);

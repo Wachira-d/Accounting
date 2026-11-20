@@ -15,6 +15,9 @@ namespace Accounting.Tests;
 /// </summary>
 public class MenuInviteRound277Tests
 {
+    private static bool Usable(InvitationStatus st, DateTime exp, string? inv, string? email, DateTime now)
+        => CompanyInvitationPolicy.Check(st, exp, inv, email, now) == CompanyInvitationPolicy.Verdict.Ok;
+
     private static readonly DateTime Now = new(2026, 11, 20, 5, 0, 0, DateTimeKind.Utc);
 
     // ── A: เมนูตามสิทธิ์ ──
@@ -117,8 +120,8 @@ public class MenuInviteRound277Tests
     [Fact]
     public void สมัครด้วยคำเชิญ_ตัวตัดสินเดิมของด่านเปิดรับสมัครใช้กติกาเดียวกัน()
     {
-        Assert.True(RegistrationPolicy.IsInvitationUsable(InvitationStatus.Pending, Now.AddDays(1), "a@x.com", "A@x.com", Now));
-        Assert.False(RegistrationPolicy.IsInvitationUsable(InvitationStatus.Pending, Now.AddDays(1), "a@x.com", "b@x.com", Now));
+        Assert.True(Usable(InvitationStatus.Pending, Now.AddDays(1), "a@x.com", "A@x.com", Now));
+        Assert.False(Usable(InvitationStatus.Pending, Now.AddDays(1), "a@x.com", "b@x.com", Now));
     }
 
     [Theory]
