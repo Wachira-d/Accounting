@@ -53,10 +53,6 @@ public class User : BaseEntity
     /// <summary>Job title shown under the signature name (e.g. "ผู้จัดการ").</summary>
     public string? SignatureTitle { get; set; }
 
-    /// <summary>รอบ 278: ชื่ออื่นที่ระบบภายนอกใช้เรียกผู้ใช้คนนี้ในช่องผู้จัดทำ (เช่น "K.นัท") — ผู้ใช้ประกาศเองในหน้าลายเซ็นของฉัน ·
-    /// คั่นด้วยขึ้นบรรทัด · ใช้เป็นกุญแจ "ตรงทั้งคำ" ให้ <c>Helpers/SignatureSlotIdentity</c> (ไม่ใช่เทียบความคล้าย) · เขียนผ่าน SanitizeForStore เท่านั้น</summary>
-    public string? SignerAliases { get; set; }
-
     /// <summary>LINE user ID (the "U" prefix one) from the LINE Login /
     /// Messaging API webhook binding. Set when the user links their LINE
     /// account; used by the notification engine to push personalised
@@ -87,6 +83,10 @@ public class CompanyUser
     public CompanyRole? CompanyRole { get; set; }
     public bool IsDefault { get; set; } = false;
     public DateTime JoinedAt { get; set; } = DateTime.UtcNow;
+
+    /// <summary>รอบ 278 (ฝ่ายค้าน HIGH-1): ผู้ใช้เปิดเอง — "อนุญาตให้ระบบภายนอก (API key ของคนอื่น) ระบุฉันเป็นผู้จัดทำ" ·
+    /// ปิด (ค่าตั้งต้น) ⇒ <c>preparerUserId</c>/<c>preparerEmail</c> ผูกได้เฉพาะผู้เรียกเอง (ผู้ออกคีย์)</summary>
+    public bool AllowExternalPreparerBinding { get; set; }
 
     /// <summary>สาขาที่ผู้ใช้คนนี้ทำงานได้ — CSV ของ Guid · **null/ว่าง = ทุกสาขา**
     /// (พฤติกรรมเดิมทุกประการ สำหรับบริษัทสาขาเดียวและเจ้าของ)

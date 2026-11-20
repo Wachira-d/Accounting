@@ -7436,3 +7436,12 @@ HTML + QuestPDF + พรีวิว + หน้าลูกค้าได้�
 คอลัมน์ใหม่ `Documents.PreparerUserId` · `Users.SignerAliases` (ADD COLUMN IF NOT EXISTS) · ใบเก่าใช้ทันทีเมื่อตั้งชื่อเล่น (ไม่มี migration ข้อมูล) ·
 เทสต์ `SignatureSlotIdentityR278Tests` · Db `SignatureSlotsR278DbTests` · กติกา `_R278_WHY` ×6 — commit 5304acd3
 
+### รอบ 278 ชุดแก้ฝ่ายค้าน (HIGH-1/2/3 + MED — ปลอมลายเซ็นได้)
+- HIGH-1: เดิมรูปจาก payload ถูกคัดลอกเข้าช่องผู้มีอำนาจลงนาม (ใครถือ API key ก็ใส่รูปใต้ชื่อกรรมการได้) ⇒ ช่องผู้มีอำนาจลงนามรับเฉพาะรูปโปรไฟล์ของตัวเอง ·
+  `preparerUserId`/`preparerEmail` ผูกได้เฉพาะผู้เรียกเอง/ผู้ที่เปิด `AllowExternalPreparerBinding`
+- HIGH-2: ชื่อเล่นระดับ User (ตั้งเองมีผลทันที · ข้ามบริษัท) ⇒ ตาราง `SignerAliases` ต่อบริษัท · เจ้าของอนุมัติ · ห้ามคำกลาง/ชื่อของคนอื่น · audit
+- HIGH-3: เดิมกติกาใหม่เปลี่ยนเอกสารที่ออกแล้วย้อนหลัง ⇒ แช่แข็งผู้ลงนามตอนออก (`StampSignerFreeze`) · ใบเก่า snapshot ว่าง (`Round278Migration`) · ปุ่มปรับผู้ลงนามของเจ้าของ (เหตุผล · audit ·
+  ไม่ใช่หลักฐานภาษี/เงิน · ลูกค้ายังไม่เซ็น)
+- MED: ถอด `SignerAliases` จากรายการ redact · audit เพิ่ม/ลบ/อนุมัติชื่อเล่น · snapshot อยู่ใน audit ของเอกสาร พร้อม RuleCode
+- คำตัดสิน 278-5…278-8 — commit SHA278B
+

@@ -1449,7 +1449,7 @@ public partial class DocumentService : IDocumentService
             // รอบ 267 P4 (267-1-44): ค่าตั้งหลังรับชำระต่อใบ — ตัวตัดสินเดียวกับตอนแก้ไข/ปุ่มบนหน้าเอกสาร (รหัสไม่รู้จัก/ชนิดที่ตั้งไม่ได้ = ปฏิเสธก่อนสร้าง)
             var postPayLayer = PostPayDocumentLayerOrThrow(request.DocumentType, null, null, request.PostPayReceiptMode, request.PostPayPartialMode);
             // รอบ 278: ผูกผู้จัดทำกับผู้ใช้ด้วยกุญแจ (Id/อีเมลของสมาชิกบริษัท) — ไม่พบ ⇒ ปฏิเสธก่อนสร้าง (ไม่ผูกเงียบ ๆ ไม่เดาจากชื่อ)
-            var preparerUserId = await ResolvePreparerUserIdAsync(companyId, request.PreparerUserId, request.PreparerEmail);
+            var preparerUserId = await ResolvePreparerUserIdAsync(companyId, request.PreparerUserId, request.PreparerEmail, createdBy);
 
             var doc = new Document
             {
@@ -2941,8 +2941,10 @@ public partial class DocumentService : IDocumentService
                 .Select(l => (l.Quantity, l.UnitPrice, l.Amount, l.VatAmount)));
 
     /// <summary>รอบ 278: กุญแจผูก "ผู้จัดทำ" กับผู้ใช้ในระบบ (Helpers/SignatureSlotIdentity) — รับ Id หรืออีเมลของ<b>สมาชิกบริษัทนี้</b> ·
-    /// ไม่ระบุ ⇒ null · ไม่พบ/ไม่ใช่สมาชิก/ส่งทั้งคู่แต่คนละคน ⇒ <see cref="Accounting.Helpers.BusinessRuleException"/> (ผู้เรียกแก้ payload ได้ทันที)</summary>
-    internal async Task<Guid?> ResolvePreparerUserIdAsync(Guid companyId, Guid? userId, string? email)
+    /// ไม่ระบุ ⇒ null · ไม่พบ/ไม่ใช่สมาชิก/ส่งทั้งคู่แต่คนละคน ⇒ <see cref="Accounting.Helpers.BusinessRuleException"/> (ผู้เรียกแก้ payload ได้ทันที) ·
+    /// ฝ่ายค้าน HIGH-1: ผูกได้เฉพาะ (ก) ผู้เรียกเอง (API key = ผู้ออกคีย์ · เว็บ = ผู้ล็อกอิน) หรือ (ข) ผู้ใช้ที่เปิด
+    /// "อนุญาตให้ระบบภายนอกระบุฉันเป็นผู้จัดทำ" (<c>CompanyUser.AllowExternalPreparerBinding</c>) · อื่น ๆ ⇒ 400 พร้อมเหตุ</summary>
+    internal async Task<Guid?> ResolvePreparerUserIdAsync(Guid companyId, Guid? userId, string? email, string? actor)
     {
         var id = userId is { } g && g != Guid.Empty ? g : (Guid?)null;
         var mail = string.IsNullOrWhiteSpace(email) ? null : email.Trim().ToLowerInvariant();
@@ -2968,7 +2970,15 @@ public partial class DocumentService : IDocumentService
                 throw new Accounting.Helpers.BusinessRuleException(
                     "preparerUserId กับ preparerEmail เป็นคนละคน — ส่งอย่างใดอย่างหนึ่ง", Accounting.Helpers.SignatureSlotIdentity.RuleCode);
         }
-        return id ?? byMail;
+        var target = (id ?? byMail)!.Value;
+        if (Guid.TryParse(actor, out var actorId) && actorId == target) return target;
+        var optedIn = await _db.Set<CompanyUser>().AsNoTracking()
+            .AnyAsync(cu => cu.CompanyId == companyId && cu.UserId == target && cu.AllowExternalPreparerBinding);
+        if (!optedIn)
+            throw new Accounting.Helpers.BusinessRuleException(
+                "preparerUserId/preparerEmail: ระบุผู้อื่นเป็นผู้จัดทำได้เฉพาะเมื่อผู้ใช้คนนั้นเปิด \"อนุญาตให้ระบบภายนอกระบุฉันเป็นผู้จัดทำ\" ในหน้าลายเซ็นของฉัน — หรือส่งเฉพาะ preparerName",
+                Accounting.Helpers.SignatureSlotIdentity.RuleCode);
+        return target;
     }
 
     public async Task<DocumentResponse> UpdateDocumentAsync(Guid companyId, Guid documentId, UpdateDocumentRequest request, string? actor = null)
@@ -3421,7 +3431,12 @@ public partial class DocumentService : IDocumentService
         if (request.PreparerUserId != null || request.PreparerEmail != null)
         {
             var unbind = (request.PreparerUserId ?? Guid.Empty) == Guid.Empty && string.IsNullOrWhiteSpace(request.PreparerEmail);
-            doc.PreparerUserId = unbind ? null : await ResolvePreparerUserIdAsync(companyId, request.PreparerUserId, request.PreparerEmail);
+            // ใบที่ออกแล้ว: ผู้ลงนามถูกแช่แข็ง (ฝ่ายค้าน HIGH-3) — เปลี่ยนกุญแจทีหลังจะไม่มีผล ⇒ ปฏิเสธพร้อมเหตุ (ไม่เงียบ)
+            if (Accounting.Helpers.DocumentStatusRules.IsIssued(doc.Status))
+                throw new Accounting.Helpers.BusinessRuleException(
+                    "ใบที่ออกแล้วเปลี่ยนการผูกผู้จัดทำไม่ได้ (ผู้ลงนามถูกแช่แข็งตอนออก) — ออกใบใหม่ หรือใช้ปุ่ม \"ปรับผู้ลงนามตามข้อมูลปัจจุบัน\" เมื่อชนิดเอกสารอนุญาต",
+                    Accounting.Helpers.SignatureSlotIdentity.RuleCode);
+            doc.PreparerUserId = unbind ? null : await ResolvePreparerUserIdAsync(companyId, request.PreparerUserId, request.PreparerEmail, actor);
         }
 
         // Project re-assignment (only allowed while Draft, which is enforced above)
@@ -22189,6 +22204,7 @@ public partial class DocumentService : IDocumentService
         PreparerName: d.PreparerName,
         PreparerSignatureBase64: d.PreparerSignatureBase64,
         PreparerUserId: d.PreparerUserId,
+        SignerRefreshBlockedReason: Accounting.Helpers.SignatureSlotIdentity.RefreshBlockedReason(d),
         DepositAppliedRef: d.DepositAppliedRef,
         DepositAppliedDrivesJournal: d.DepositAppliedDrivesJournal,
         // หมายเหตุภายใน (ไม่พิมพ์ลงกระดาษ) — ที่เก็บ "คำเตือนที่กดรับทราบแล้ว"

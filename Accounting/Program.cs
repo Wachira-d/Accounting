@@ -353,6 +353,7 @@ builder.Services.AddScoped<Accounting.Services.Interfaces.ILineBotService, Accou
 builder.Services.AddScoped<ICompanyService, CompanyService>();
 // รอบ 277 — ฝั่งตอบรับคำเชิญเข้าบริษัทตัวเดียว (ลิงก์อีเมล · ล็อกอินแล้วกดรับ · สมัครด้วยฟอร์ม/SSO ผ่านลิงก์)
 builder.Services.AddScoped<Accounting.Services.Implementations.ICompanyInvitationService, CompanyInvitationService>();
+builder.Services.AddScoped<Accounting.Services.Implementations.SignerIdentityService>();   // รอบ 278 — ชื่อเล่นช่องลายเซ็น (เจ้าของอนุมัติ) + ปรับผู้ลงนาม
 builder.Services.AddScoped<ISubscriptionService, SubscriptionService>();
 // ออกเอกสารค่าบริการผ่าน tenant ของผู้ให้บริการเอง (ACCOUNT_STRUCTURE §6.1) —
 // ต้อง register ก่อน SaasBillingDocumentService ที่รับตัวนี้เป็น optional dependency

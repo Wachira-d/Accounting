@@ -1,110 +1,158 @@
+using System.Text.Json;
+using Accounting.Models.Entities;
+using Accounting.Models.Enums;
+
 namespace Accounting.Helpers;
 
 /// <summary>
-/// รอบ 278 (คำตัดสิน 278-1..278-4) — ตัวตัดสินเดียว "ช่องลายเซ็นฝั่งบริษัทสองช่อง (ช่อง 0 ผู้จัดทำ/ผู้เสนอราคา/ผู้รับเงิน ·
-/// ช่อง 1 ผู้มีอำนาจลงนาม) เป็นคนเดียวกันไหม" + แผนรวมชื่อ/ลายเซ็นเมื่อเป็นคนเดียวกัน
+/// รอบ 278 (คำตัดสิน 278-1…278-8) — ตัวตัดสินเดียว "ช่องลายเซ็นฝั่งบริษัทสองช่อง (ช่อง 0 ผู้จัดทำ/ผู้เสนอราคา/ผู้รับเงิน ·
+/// ช่อง 1 ผู้มีอำนาจลงนาม) เป็นคนเดียวกันไหม" + แผนรวม + กติกาชื่อเล่น + กติกาปุ่ม "ปรับผู้ลงนามตามข้อมูลปัจจุบัน"
 ///
-/// <para>ที่มา (เจ้าของ · QT-20261119-0001 ที่ระบบภายนอกสร้างผ่าน API key): ช่อง 0 = <c>PreparerName</c> "K.นัท" +
-/// <c>PreparerSignatureBase64</c> ที่ payload ส่งมา · ช่อง 1 = ผู้ออก API key (CreatedBy/UpdatedBy) "ณัฐพล ทรัพย์บวรโรจน์" ซึ่งไม่ได้อัปโหลด
-/// ลายเซ็นในโปรไฟล์ ⇒ ช่อง 1 ว่าง ทั้งที่เป็นคนเดียวกัน</para>
+/// <para>ที่มา (เจ้าของ · QT-20261119-0001 ที่ระบบภายนอกสร้างผ่าน API key): ช่อง 0 = <c>PreparerName</c> "K.นัท" + รูปจาก payload ·
+/// ช่อง 1 = ผู้ออก API key ที่ไม่ได้อัปโหลดลายเซ็นในโปรไฟล์ ⇒ ช่องว่าง ทั้งที่เป็นคนเดียวกัน</para>
 ///
-/// <para><b>ตัดสินด้วยกุญแจเท่านั้น — ห้ามเทียบความคล้ายชื่อ</b> (DECISION_DOCTRINE · "K.นัท" กับ "ณัฐพล" เทียบด้วยชื่อไม่ได้) ·
-/// กุญแจที่รับ (ลำดับ): (1) <c>Document.PreparerUserId</c> ที่ผู้เรียก API ระบุ (ตรวจสมาชิกบริษัทตอนรับ) = ผู้ใช้ช่อง 1 ·
-/// ระบุไว้เป็นคนอื่น ⇒ ไม่รวมเด็ดขาด (ไม่ตกไปเทียบชื่อเล่น) · (2) ช่อง 0 เป็นผู้ใช้ในระบบคนเดียวกับช่อง 1 (UserId เดียวกัน) ·
-/// (3) ชื่อที่ payload ส่งมาตรง "ชื่ออื่นของฉัน" ที่ผู้ใช้ช่อง 1 <b>ประกาศเองในโปรไฟล์</b> (<c>User.SignerAliases</c> — ตรงทั้งคำหลังตัดช่องว่าง/
-/// ตัวพิมพ์ ไม่ใช่ fuzzy) · ไม่เข้าข้อใด ⇒ คนละคน ไม่แตะ</para>
+/// <para><b>ตัดสินด้วยกุญแจเท่านั้น — ห้ามเทียบความคล้ายชื่อ</b> · กุญแจ: (1) <c>Document.PreparerUserId</c> (ผูกได้เฉพาะผู้เรียกเอง หรือผู้ใช้ที่เปิด
+/// "อนุญาตให้ระบบภายนอกระบุฉันเป็นผู้จัดทำ") · (2) ชื่อเล่นต่อบริษัทที่<b>เจ้าของบริษัทอนุมัติแล้ว</b> (<see cref="SignerAlias"/>) ตรงทั้งคำกับ
+/// <c>PreparerName</c> · กุญแจถูก <b>แช่แข็งตอนเอกสารออก</b> (<see cref="Snapshot"/> ใน <c>Document.SignerSnapshotJson</c>) — เปลี่ยนชื่อเล่น/โปรไฟล์ทีหลัง
+/// ไม่แก้เอกสารที่ออกแล้ว · ไม่มี snapshot (ใบร่าง · ใบที่ออกก่อนรอบนี้) ⇒ ไม่รวม</para>
 ///
-/// <para>ช่องลูกค้า (เซ็นรับของ/ยอมรับออนไลน์) ไม่ผ่านตัวนี้เลย · ช่อง 1 ที่เป็นผู้มีอำนาจลงนามที่บริษัทตั้งเอง (ไม่ใช่ผู้ใช้) ไม่มีกุญแจ ⇒ ไม่รวม</para>
+/// <para><b>ทิศของรูป (ฝ่ายค้าน HIGH-1)</b>: ช่องผู้มีอำนาจลงนามใช้ได้เฉพาะรูปในโปรไฟล์ของผู้ใช้ที่ระบบยืนยันตัว — <b>ไม่รับรูปจาก payload เด็ดขาด</b> ·
+/// ช่องผู้จัดทำรับรูปโปรไฟล์ของผู้ใช้ที่ผูกด้วยกุญแจได้ (เมื่อตัวเองไม่มีรูป)</para>
 /// </summary>
 public static class SignatureSlotIdentity
 {
     public const string RuleCode = "SIGNER-SAME-PERSON";
+    public const string RuleCodeRefresh = "SIGNER-REFRESH";
     public const int MaxAliases = 10;
     public const int MaxAliasLength = 100;
+    public const string KindPreparerUserId = "PreparerUserId";
+    public const string KindApprovedAlias = "ApprovedAlias";
 
-    /// <summary>เหตุที่ถือว่าเป็นคนเดียวกัน (None = คนละคน/ไม่รู้)</summary>
-    public enum LinkKind { None, SameUser, PreparerUserId, ProfileAlias }
+    // ===================== snapshot (แช่แข็งตอนออกเอกสาร) =====================
 
-    /// <summary>ช่อง 0 — <paramref name="UserId"/> = ผู้ใช้เจ้าของช่อง <b>เมื่อตัวตนไม่ได้มาจาก payload</b> (มี payload ⇒ ส่ง null) ·
-    /// <paramref name="BoundUserId"/> = <c>Document.PreparerUserId</c> · <paramref name="PayloadName"/> = ชื่อที่ระบบภายนอกส่งมา</summary>
-    public readonly record struct Slot0(Guid? UserId, Guid? BoundUserId, string? PayloadName, bool IsCustomer = false);
+    /// <summary>ผู้ใช้ที่ช่อง 0 ผูกด้วยกุญแจ ณ วันออกเอกสาร + ชื่อ/ตำแหน่งตามโปรไฟล์วันนั้น (ชื่อที่พิมพ์ทั้งสองช่องเมื่อรวม)</summary>
+    public sealed record Candidate(Guid UserId, string Kind, string? Name, string? Title);
 
-    /// <summary>ช่อง 1 — ผู้ใช้ในระบบเจ้าของช่อง (null = ไม่ใช่ผู้ใช้ เช่น ผู้มีอำนาจลงนามที่บริษัทตั้ง) + ชื่ออื่นที่ประกาศในโปรไฟล์</summary>
-    public readonly record struct Slot1(Guid? UserId, string? StoredAliases, bool IsCustomer = false);
+    /// <summary><c>C</c> ว่าง = แช่แข็งแบบ "ไม่รวม" (เช่น ใบที่ออกก่อนรอบ 278 — Round278Migration)</summary>
+    public sealed record Snapshot(int V, List<Candidate> C, string Rule = RuleCode);
 
-    /// <summary>ตัวตัดสิน "คนเดียวกันไหม" — คืนผู้ใช้ที่เป็นเจ้าของทั้งสองช่อง</summary>
-    public static (LinkKind Kind, Guid? UserId) Link(Slot0 s0, Slot1 s1)
+    public const string EmptySnapshotJson = "{\"V\":1,\"C\":[],\"Rule\":\"SIGNER-SAME-PERSON\"}";
+
+    public static string Serialize(Snapshot s) => JsonSerializer.Serialize(s);
+
+    public static Snapshot? Parse(string? json)
     {
-        if (s0.IsCustomer || s1.IsCustomer || s1.UserId is not { } u || u == Guid.Empty) return (LinkKind.None, null);
-        if (s0.BoundUserId is { } bound && bound != Guid.Empty)
-            return bound == u ? (LinkKind.PreparerUserId, u) : (LinkKind.None, null);
-        if (s0.UserId is { } a && a == u) return (LinkKind.SameUser, u);
-        var n = NormalizeName(s0.PayloadName);
-        if (s0.UserId == null && n != null && ParseAliases(s1.StoredAliases).Any(x => NormalizeName(x) == n))
-            return (LinkKind.ProfileAlias, u);
-        return (LinkKind.None, null);
+        if (string.IsNullOrWhiteSpace(json)) return null;
+        try { return JsonSerializer.Deserialize<Snapshot>(json); }
+        catch (JsonException) { return null; }
     }
 
-    /// <summary>หน้าตาของช่องก่อนรวม</summary>
+    /// <summary>ผู้สมัครตอนออกเอกสาร: PreparerUserId ⇒ คนนั้นคนเดียว (ชื่อเล่นไม่ถูกใช้) · ไม่มี ⇒ เจ้าของชื่อเล่นที่อนุมัติแล้วซึ่งตรง <c>PreparerName</c>
+    /// ทั้งคำ — <b>ตรงมากกว่าหนึ่งคน = กำกวม ⇒ ไม่มีผู้สมัคร</b> (ไม่เดา)</summary>
+    public static Snapshot BuildSnapshot(Guid? preparerUserId, (string? Name, string? Title)? preparerProfile,
+        IEnumerable<(Guid UserId, string? Name, string? Title)> approvedAliasOwners)
+    {
+        if (preparerUserId is { } p && p != Guid.Empty)
+            return new Snapshot(1, preparerProfile is { } pp ? new() { new Candidate(p, KindPreparerUserId, pp.Name, pp.Title) } : new());
+        var owners = approvedAliasOwners.GroupBy(o => o.UserId).Select(g => g.First()).ToList();
+        return new Snapshot(1, owners.Count == 1 ? new() { new Candidate(owners[0].UserId, KindApprovedAlias, owners[0].Name, owners[0].Title) } : new());
+    }
+
+    // ===================== ตัดสินตอนพิมพ์ =====================
+
+    /// <summary>ผู้ใช้ช่อง 1 (null = ไม่ใช่ผู้ใช้ เช่น ผู้มีอำนาจลงนามที่บริษัทตั้ง) ตรงผู้สมัครใน snapshot ⇒ คนเดียวกัน · ช่องลูกค้า/ไม่มี snapshot ⇒ ไม่รวม</summary>
+    public static Candidate? Link(Snapshot? snap, Guid? slot1UserId, bool slot0IsCustomer = false, bool slot1IsCustomer = false)
+    {
+        if (snap == null || slot0IsCustomer || slot1IsCustomer || slot1UserId is not { } u || u == Guid.Empty) return null;
+        return snap.C.FirstOrDefault(c => c.UserId == u);
+    }
+
     public readonly record struct SlotFace(string? Name, string? Title, bool HasImage);
 
-    /// <summary>ผลรวม — ชื่อ/ตำแหน่งของแต่ละช่อง + คัดลอกรูปทิศไหน (รูปของคนเดียวกันเท่านั้น — ผู้เรียกต้องผ่าน <see cref="Link"/> ก่อน)</summary>
-    public readonly record struct MergePlan(string? Name0, string? Name1, string? Title0, string? Title1, bool CopyImage0To1, bool CopyImage1To0);
+    /// <summary>ผลรวม — ชื่อ/ตำแหน่งของแต่ละช่อง + ช่อง 0 ใช้รูปโปรไฟล์ของผู้ใช้ที่ผูกไหม · <b>ไม่มีทางคัดลอกรูปเข้าช่อง 1</b></summary>
+    public readonly record struct MergePlan(string? Name0, string? Name1, string? Title0, string? Title1, bool Slot0UsesProfileImage);
 
-    /// <summary>ชื่อแสดงของผู้ใช้ตามโปรไฟล์ (ตัวเดียวกับที่ช่องลายเซ็นใช้มาตลอด): ชื่อที่ตั้งสำหรับลายเซ็น → ชื่อ-สกุลของบัญชี</summary>
+    /// <summary>ชื่อแสดงตามโปรไฟล์ (ตัวเดียวกับที่ช่องลายเซ็นใช้มาตลอด): ชื่อใต้ลายเซ็น → ชื่อ-สกุลบัญชี</summary>
     public static string? ProfileDisplayName(string? signatureName, string? fullName)
         => !string.IsNullOrWhiteSpace(signatureName) ? signatureName!.Trim()
          : !string.IsNullOrWhiteSpace(fullName) ? fullName!.Trim() : null;
 
-    /// <summary>
-    /// แผนรวมเมื่อสองช่องเป็นคนเดียวกัน (คำตัดสิน 278-2):
-    /// <list type="bullet">
-    /// <item><b>ชื่อ "ครบกว่า" = ชื่อตามโปรไฟล์ของผู้ใช้ที่ผูก</b> (<see cref="ProfileDisplayName"/>) ทั้งสองช่อง — เจ้าตัวรับรองชื่อนี้เอง ·
-    /// ชื่อที่ payload ส่งมาเป็นแค่ชื่อเรียก · <b>ไม่เลือกจากความยาวสตริง</b> · โปรไฟล์ไม่มีชื่อ ⇒ แต่ละช่องคงชื่อเดิม (ช่องว่างรับชื่อของอีกช่อง)</item>
-    /// <item>ตำแหน่ง: คงของช่องตัวเอง · ว่าง ⇒ ตำแหน่งในโปรไฟล์</item>
-    /// <item>รูป: ช่องที่ไม่มีรูปรับรูปของอีกช่อง (คนเดียวกัน) · ทั้งสองมีรูป ⇒ คงของใครของมัน</item>
-    /// </list></summary>
-    public static MergePlan Merge(SlotFace s0, SlotFace s1, string? profileName, string? profileTitle)
+    /// <summary>คำตัดสิน 278-2: ชื่อ "ครบกว่า" = ชื่อตามโปรไฟล์ที่แช่แข็งไว้ (ไม่ใช่ความยาวสตริง) ทั้งสองช่อง · ไม่มี ⇒ คงชื่อเดิมของแต่ละช่อง ·
+    /// ตำแหน่งคงของช่องตัวเอง (ว่าง ⇒ ตำแหน่งในโปรไฟล์) · ช่อง 0 ที่ไม่มีรูปใช้รูปโปรไฟล์ของผู้ใช้ที่ผูก (ทิศที่อนุญาต)</summary>
+    public static MergePlan Merge(SlotFace s0, SlotFace s1, string? frozenName, string? frozenTitle)
     {
-        var p = string.IsNullOrWhiteSpace(profileName) ? null : profileName!.Trim();
-        string? n0 = p ?? Blank(s0.Name) ?? Blank(s1.Name);
-        string? n1 = p ?? Blank(s1.Name) ?? Blank(s0.Name);
-        var t = Blank(profileTitle);
-        return new MergePlan(n0, n1, Blank(s0.Title) ?? t, Blank(s1.Title) ?? t,
-            CopyImage0To1: s0.HasImage && !s1.HasImage,
-            CopyImage1To0: s1.HasImage && !s0.HasImage);
+        var p = Blank(frozenName);
+        var t = Blank(frozenTitle);
+        return new MergePlan(p ?? Blank(s0.Name) ?? Blank(s1.Name), p ?? Blank(s1.Name) ?? Blank(s0.Name),
+            Blank(s0.Title) ?? t, Blank(s1.Title) ?? t, Slot0UsesProfileImage: !s0.HasImage);
     }
 
-    /// <summary>ตัดช่องว่างหัวท้าย · ยุบช่องว่างกลาง · ตัวพิมพ์เล็ก — สำหรับเทียบ "ตรงทั้งคำ" เท่านั้น (ไม่ใช่วัดความคล้าย) · ว่าง ⇒ null</summary>
-    public static string? NormalizeName(string? s)
+    // ===================== ชื่อเล่นต่อบริษัท (ต้องเจ้าของอนุมัติ) =====================
+
+    /// <summary>คำกลางที่เป็นชื่อเล่นไม่ได้ (ใช้ร่วมกันหลายคน ⇒ กุญแจปลอม) · ขึ้นต้นด้วย "ฝ่าย"/"แผนก" ถือเป็นคำกลางทั้งหมด</summary>
+    public static readonly string[] GenericWords =
     {
-        if (string.IsNullOrWhiteSpace(s)) return null;
-        var parts = s.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
-        return string.Join(' ', parts).ToLowerInvariant();
+        "บัญชี", "การเงิน", "แอดมิน", "admin", "administrator", "staff", "sales", "account", "accounting", "finance", "system", "ระบบ",
+        "ผู้จัดการ", "ผู้จัดทำ", "ผู้อนุมัติ", "เจ้าหน้าที่", "พนักงาน", "ผู้รับเงิน", "ผู้จ่ายเงิน", "ผู้มีอำนาจลงนาม", "กรรมการ", "เจ้าของ", "owner", "manager",
+        "หัวหน้า", "แคชเชียร์", "cashier", "api", "bot", "test", "ทดสอบ",
+    };
+    private static readonly string[] GenericPrefixes = { "ฝ่าย", "แผนก", "ทีม" };
+
+    /// <summary>ตรวจชื่อเล่นหนึ่งชื่อ (ฝั่งเขียนตัวเดียว · ตอนยื่นและตอนอนุมัติ): ว่าง/ยาวเกิน · คำกลาง · ซ้ำชื่อ-สกุล/ชื่อใต้ลายเซ็น/ชื่อเล่นของ<b>สมาชิกคนอื่น
+    /// ในทุกบริษัทที่ผู้ขอเป็นสมาชิก</b> (<paramref name="otherMembersNames"/>) ⇒ ข้อความเหตุ · ผ่าน ⇒ null</summary>
+    public static string? AliasProblem(string alias, IEnumerable<string?> otherMembersNames)
+    {
+        var n = NormalizeName(alias);
+        if (n == null) return "ชื่อเล่นว่าง";
+        if (alias.Trim().Length > MaxAliasLength) return $"ชื่อเล่นยาวเกิน {MaxAliasLength} ตัวอักษร";
+        if (GenericWords.Any(w => NormalizeName(w) == n) || GenericPrefixes.Any(p => n.StartsWith(p, StringComparison.Ordinal)))
+            return $"\"{alias.Trim()}\" เป็นคำกลางที่หลายคนใช้ร่วมกัน — ใช้เป็นกุญแจผูกลายเซ็นไม่ได้";
+        if (otherMembersNames.Any(o => NormalizeName(o) == n))
+            return $"\"{alias.Trim()}\" ตรงกับชื่อหรือชื่อเล่นของสมาชิกคนอื่น — ใช้ไม่ได้ (กันใช้ลายเซ็นแทนคนอื่น)";
+        return null;
     }
 
-    /// <summary>อ่านรายชื่อที่เก็บ (คั่นด้วยขึ้นบรรทัด/จุลภาค/อัฒภาค)</summary>
-    private static IReadOnlyList<string> ParseAliases(string? stored)
-        => string.IsNullOrWhiteSpace(stored) ? Array.Empty<string>()
-         : stored.Split(new[] { '\n', '\r', ',', ';' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                 .Where(x => x.Length > 0).ToArray();
-
-    /// <summary>ทำความสะอาดก่อนเก็บ (ฝั่งเขียนตัวเดียว · AuthService.UpdateProfileAsync): ตัดซ้ำ (ตามรูปที่เทียบ) · เกิน <see cref="MaxAliases"/> ชื่อ
-    /// หรือชื่อยาวเกิน <see cref="MaxAliasLength"/> ⇒ <see cref="BusinessRuleException"/> (บอกเหตุ — ไม่ตัดทิ้งเงียบ) · ว่าง ⇒ null</summary>
-    public static string? SanitizeForStore(string? input)
+    /// <summary>อ่านรายการที่ผู้ใช้ยื่น (คั่นขึ้นบรรทัด/จุลภาค/อัฒภาค) · ตัดซ้ำตามรูปที่เทียบ · เกินเพดาน ⇒ <see cref="BusinessRuleException"/></summary>
+    public static IReadOnlyList<string> ParseRequested(string? input)
     {
         var seen = new HashSet<string>();
         var kept = new List<string>();
-        foreach (var raw in ParseAliases(input))
-        {
-            var display = string.Join(' ', raw.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
-            if (display.Length > MaxAliasLength)
-                throw new BusinessRuleException($"ชื่ออื่นสำหรับช่องลายเซ็นยาวเกิน {MaxAliasLength} ตัวอักษร: \"{display[..Math.Min(30, display.Length)]}…\"", RuleCode);
-            if (seen.Add(NormalizeName(display)!)) kept.Add(display);
-        }
+        if (!string.IsNullOrWhiteSpace(input))
+            foreach (var raw in input.Split(new[] { '\n', '\r', ',', ';' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                var display = string.Join(' ', raw.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+                if (display.Length == 0) continue;
+                if (seen.Add(NormalizeName(display)!)) kept.Add(display);
+            }
         if (kept.Count > MaxAliases)
-            throw new BusinessRuleException($"ตั้งชื่ออื่นสำหรับช่องลายเซ็นได้ไม่เกิน {MaxAliases} ชื่อ", RuleCode);
-        return kept.Count == 0 ? null : string.Join('\n', kept);
+            throw new BusinessRuleException($"ตั้งชื่อเล่นสำหรับช่องลายเซ็นได้ไม่เกิน {MaxAliases} ชื่อต่อบริษัท", RuleCode);
+        return kept;
+    }
+
+    /// <summary>ตัดช่องว่างหัวท้าย · ยุบช่องว่างกลาง · ตัวพิมพ์เล็ก — เทียบ "ตรงทั้งคำ" เท่านั้น (ไม่วัดความคล้าย) · ว่าง ⇒ null</summary>
+    public static string? NormalizeName(string? s)
+    {
+        if (string.IsNullOrWhiteSpace(s)) return null;
+        return string.Join(' ', s.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)).ToLowerInvariant();
+    }
+
+    // ===================== ปุ่ม "ปรับผู้ลงนามตามข้อมูลปัจจุบัน" =====================
+
+    /// <summary>ชนิดที่ห้ามปรับผู้ลงนามหลังออก (หลักฐานภาษี/การรับ-จ่ายเงิน)</summary>
+    public static readonly DocumentType[] RefreshForbiddenTypes =
+        { DocumentType.TaxInvoice, DocumentType.Receipt, DocumentType.CreditNote, DocumentType.DebitNote, DocumentType.PaymentVoucher,
+          DocumentType.ReceiptVoucher, DocumentType.CertificateInLieu };
+
+    /// <summary>เหตุที่ปรับผู้ลงนามไม่ได้จากข้อมูลบนใบ (ผู้เรียกตรวจลายเซ็นลูกค้าในขั้นอนุมัติเพิ่ม) · null = ปรับได้</summary>
+    public static string? RefreshBlockedReason(Document d)
+    {
+        if (!DocumentStatusRules.IsIssued(d.Status)) return "ใบที่ยังไม่ออกใช้ข้อมูลปัจจุบันอยู่แล้ว";
+        if (d.Status == DocumentStatus.Voided) return "ใบที่ยกเลิกแล้วปรับไม่ได้";
+        if (RefreshForbiddenTypes.Contains(d.DocumentType) || d.IssuedAsCashReceipt || d.IsSettlementReceipt)
+            return "ใบกำกับภาษี/ใบเสร็จ/ใบลด-เพิ่มหนี้/ใบสำคัญจ่าย ห้ามเปลี่ยนผู้ลงนามหลังออก";
+        if (d.QuotationAcceptedAt != null || !string.IsNullOrWhiteSpace(d.DeliverySignatureBase64))
+            return "ลูกค้าเซ็นยอมรับใบนี้แล้ว — คงผู้ลงนามตามที่ลูกค้าเห็นตอนเซ็น";
+        return null;
     }
 
     private static string? Blank(string? s) => string.IsNullOrWhiteSpace(s) ? null : s!.Trim();

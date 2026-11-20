@@ -69,6 +69,7 @@ public class AccountingDbContext : DbContext
     public DbSet<Company> Companies => Set<Company>();
     public DbSet<CompanyUser> CompanyUsers => Set<CompanyUser>();
     public DbSet<CompanyInvitation> CompanyInvitations => Set<CompanyInvitation>();
+    public DbSet<SignerAlias> SignerAliases => Set<SignerAlias>();   // รอบ 278
     public DbSet<CompanyRole> CompanyRoles => Set<CompanyRole>();
     public DbSet<CompanyRolePermission> CompanyRolePermissions => Set<CompanyRolePermission>();
     public DbSet<SensitivityAccessRule> SensitivityAccessRules => Set<SensitivityAccessRule>();
@@ -679,6 +680,16 @@ public class AccountingDbContext : DbContext
             e.Property(s => s.NotifyDaysAfterExpiry).HasMaxLength(100);
             e.Property(s => s.NotifyDaysBeforeDeactivation).HasMaxLength(100);
             e.HasQueryFilter(s => !s.IsDeleted);
+        });
+
+        // ===== SignerAlias (รอบ 278 — ชื่อเล่นต่อบริษัท · ต้องเจ้าของอนุมัติ) =====
+        modelBuilder.Entity<SignerAlias>(e =>
+        {
+            e.HasOne(a => a.Company).WithMany().HasForeignKey(a => a.CompanyId).OnDelete(DeleteBehavior.Cascade);
+            e.Property(a => a.Alias).HasMaxLength(100);
+            e.Property(a => a.NormalizedAlias).HasMaxLength(100);
+            e.HasIndex(a => new { a.CompanyId, a.NormalizedAlias });
+            e.HasQueryFilter(a => !a.IsDeleted);
         });
 
         // ===== CompanyInvitation =====
@@ -4793,6 +4804,7 @@ public class AccountingDbContext : DbContext
     {
         GuardPayrollJunkPayees();
         StampDocumentCreators();
+        StampSignerFreeze();
         StampWhtPayeeSnapshots();
         UpdateTimestamps();
         if (Accounting.Helpers.PolicyAcceptanceAppendOnly.Violation(ChangeTracker) is string evidenceBad)   // รอบ 219 ส่วน B ฝ่ายค้าน S4
@@ -4863,10 +4875,51 @@ public class AccountingDbContext : DbContext
         }
     }
 
+    /// <summary>รอบ 278 (ฝ่ายค้าน HIGH-3): แช่แข็งผู้ลงนามตอนเอกสาร<b>เข้าสถานะออกแล้วครั้งแรก</b> — ทุกทางเข้าที่บันทึกผ่าน SaveChanges (อนุมัติบนเว็บ ·
+    /// API · integration ที่สร้างเป็น Approved · POS · นำเข้า · ออกอัตโนมัติ) · ผลใน <see cref="Document.SignerSnapshotJson"/> (กุญแจ + ชื่อ/ตำแหน่งตาม
+    /// โปรไฟล์วันนั้น + RuleCode) เข้า audit ของเอกสารอัตโนมัติ · ตัวตัดสินผู้สมัคร <c>SignatureSlotIdentity.BuildSnapshot</c> ตัวเดียว</summary>
+    private void StampSignerFreeze()
+    {
+        foreach (var entry in ChangeTracker.Entries<Document>())
+        {
+            var d = entry.Entity;
+            if (d.SignerSnapshotJson != null || !Accounting.Helpers.DocumentStatusRules.IsIssued(d.Status)) continue;
+            var wasIssued = entry.State == EntityState.Modified
+                && Accounting.Helpers.DocumentStatusRules.IsIssued((Models.Enums.DocumentStatus)entry.Property(nameof(Document.Status)).OriginalValue!);
+            if (entry.State is not (EntityState.Added or EntityState.Modified) || wasIssued) continue;
+            d.SignersFrozenAt = DateTime.UtcNow;
+            d.SignerSnapshotJson = Accounting.Helpers.SignatureSlotIdentity.Serialize(ComputeSignerSnapshot(d.CompanyId, d.PreparerUserId, d.PreparerName));
+        }
+    }
+
+    /// <summary>รอบ 278: ผู้สมัคร "คนเดียวกับผู้จัดทำ" ณ ตอนนี้ (ใช้ตอนแช่แข็ง + ปุ่มปรับผู้ลงนาม) — PreparerUserId ⇒ โปรไฟล์คนนั้น ·
+    /// ไม่มี ⇒ เจ้าของชื่อเล่นที่<b>อนุมัติแล้ว ยังไม่ยกเลิก</b> ในบริษัทนี้ซึ่งตรง PreparerName ทั้งคำ (และยังเป็นสมาชิก)</summary>
+    internal Accounting.Helpers.SignatureSlotIdentity.Snapshot ComputeSignerSnapshot(Guid companyId, Guid? preparerUserId, string? preparerName)
+    {
+        if (preparerUserId is { } pu && pu != Guid.Empty)
+        {
+            var prof = Users.AsNoTracking().Where(u => u.Id == pu)
+                .Select(u => new { u.SignatureName, u.FullName, u.SignatureTitle }).FirstOrDefault();
+            return Accounting.Helpers.SignatureSlotIdentity.BuildSnapshot(pu,
+                prof == null ? null : (Accounting.Helpers.SignatureSlotIdentity.ProfileDisplayName(prof.SignatureName, prof.FullName), prof.SignatureTitle),
+                Array.Empty<(Guid, string?, string?)>());
+        }
+        var n = Accounting.Helpers.SignatureSlotIdentity.NormalizeName(preparerName);
+        if (n == null) return Accounting.Helpers.SignatureSlotIdentity.BuildSnapshot(null, null, Array.Empty<(Guid, string?, string?)>());
+        var owners = (from a in Set<SignerAlias>().AsNoTracking()
+                      join cu in Set<CompanyUser>().AsNoTracking() on new { a.CompanyId, a.UserId } equals new { cu.CompanyId, cu.UserId }
+                      join u in Users.AsNoTracking() on a.UserId equals u.Id
+                      where a.CompanyId == companyId && a.NormalizedAlias == n && a.ApprovedAt != null && a.RevokedAt == null
+                      select new { a.UserId, u.SignatureName, u.FullName, u.SignatureTitle }).ToList();
+        return Accounting.Helpers.SignatureSlotIdentity.BuildSnapshot(null, null,
+            owners.Select(o => (o.UserId, Accounting.Helpers.SignatureSlotIdentity.ProfileDisplayName(o.SignatureName, o.FullName), o.SignatureTitle)));
+    }
+
     public override async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
     {
         GuardPayrollJunkPayees();
         StampDocumentCreators();
+        StampSignerFreeze();
         StampWhtPayeeSnapshots();
         UpdateTimestamps();
         if (Accounting.Helpers.PolicyAcceptanceAppendOnly.Violation(ChangeTracker) is string evidenceBad)   // รอบ 219 ส่วน B ฝ่ายค้าน S4

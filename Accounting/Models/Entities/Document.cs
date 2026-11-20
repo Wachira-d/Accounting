@@ -815,6 +815,14 @@ public class Document : TenantEntity
     /// null = ไม่ระบุ (ใช้กุญแจอื่น: ผู้ใช้เดียวกัน / ชื่ออื่นที่ผู้ใช้ประกาศในโปรไฟล์)</summary>
     public Guid? PreparerUserId { get; set; }
 
+    /// <summary>รอบ 278 (ฝ่ายค้าน HIGH-3): เวลาที่ผู้ลงนามถูกแช่แข็ง (เอกสารเข้าสถานะออกแล้วครั้งแรก — ประทับใน <c>AccountingDbContext.StampSignerFreeze</c>
+    /// ทุกทางเข้า) · null บนใบที่ออกแล้ว = ไม่รวมช่อง</summary>
+    public DateTime? SignersFrozenAt { get; set; }
+
+    /// <summary>รอบ 278: ผลแช่แข็งการรวมช่องผู้จัดทำ ↔ ผู้มีอำนาจลงนาม (<c>SignatureSlotIdentity.Snapshot</c> — ผู้ใช้ที่ผูก · ชนิดกุญแจ · ชื่อ/ตำแหน่งตามโปรไฟล์วันนั้น ·
+    /// RuleCode) · ใบที่ออกก่อนรอบนี้ = snapshot ว่าง (ไม่รวม — Round278Migration) · เปลี่ยนได้ทางเดียว: ปุ่มปรับผู้ลงนาม (เจ้าของ · เหตุผล · audit)</summary>
+    public string? SignerSnapshotJson { get; set; }
+
     // ===== Tax Point (จุดความรับผิดในการเสีย VAT) §78 / §78/1 / §78/2 =====
     /// <summary>วันส่งมอบสินค้า (input ของ tax point §78 ขายสินค้า). Null =
     /// ยังไม่ส่งมอบ/ไม่ระบุ.</summary>

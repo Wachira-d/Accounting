@@ -313,6 +313,7 @@ public static class DatabaseMigrationHelper
         list.AddRange(Accounting.Helpers.Round275BMigration.Statements());   // รอบ 275 แพ็ก B — บรรทัดรายงาน ภ.ง.ด. อ้างใบ 50 ทวิ (+ เติมย้อนหลังที่จับคู่ได้แน่นอน) · สำเนาผู้ถูกหัก ณ วันออก   // รอบ 275 แพ็ก A — ลายนิ้วมือคีย์เข้ารหัสบน SiteSettings (กันหลายเครื่องคนละคีย์ · T4 M-4)
         list.AddRange(Accounting.Helpers.Round275EMigration.Statements());   // รอบ 275 แพ็ก E — รับทราบรายคน: พนักงานไม่มีเลขประจำตัว 13 หลัก (คำตัดสิน 4.2)
         list.AddRange(Accounting.Helpers.Round276Migration.Statements());   // รอบ 276 — ผู้ใช้เห็นเฉพาะเอกสารของตัวเอง/เฉพาะร่าง + คำขออนุมัติพื้นฐาน
+        list.AddRange(Accounting.Helpers.Round278Migration.Statements());   // รอบ 278 — ชื่อเล่นต่อบริษัท + แช่แข็งผู้ลงนาม (ใบเก่า = ไม่รวม)
         list.AddRange(Accounting.Helpers.Round277Migration.Statements());   // รอบ 277 — คำเชิญเข้าบริษัท (token เก็บเป็น hash) + สมาชิกยังไม่ได้รับสิทธิ์
         return list;
     }
@@ -3557,9 +3558,6 @@ public static class DatabaseMigrationHelper
             // รอบ 278: กุญแจผูกผู้จัดทำกับผู้ใช้ (Helpers/SignatureSlotIdentity) + ชื่ออื่นที่ผู้ใช้ประกาศสำหรับช่องลายเซ็น
             """
             ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "PreparerUserId" uuid NULL;
-            """,
-            """
-            ALTER TABLE "Users" ADD COLUMN IF NOT EXISTS "SignerAliases" varchar(1100) NULL;
             """,
             // Per-payment GL funding override — pay from เงินทดรองกรรมการ /
             // เงินสดย่อย / clearing instead of the default cash/bank GL.

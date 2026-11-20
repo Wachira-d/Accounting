@@ -2477,7 +2477,7 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   `GetDocumentSignaturesAsync` (ไม่ส่งภาพลายเซ็นที่ไม่นับ) ⑤ `CrossTenantWorkflowService.ApproveIncomingAsync` บทบาท Customer **บันทึก hash** (ทางเข้าที่สาม) ·
   ใบที่อนุมัติก่อนรอบนี้ด้วยลายเซ็นที่ไม่ตรงเนื้อหา ย้อนตรวจไม่ได้ (ไม่มี hash) — คงพิมพ์ตามเดิม
 
-### 2.8a ช่องลายเซ็นฝั่งบริษัท — ผู้จัดทำ ↔ ผู้มีอำนาจลงนาม เป็นคนเดียวกัน (รอบ 278 · คำตัดสิน 278-1…278-4 · สถานะปัจจุบัน)
+### 2.8a ช่องลายเซ็นฝั่งบริษัท — ผู้จัดทำ ↔ ผู้มีอำนาจลงนาม เป็นคนเดียวกัน (รอบ 278 · คำตัดสิน 278-1…278-8 · สถานะปัจจุบัน)
 - **ที่มา**: QT-20261119-0001 (ระบบภายนอกสร้างผ่าน API key ที่ `POST /api/companies/{id}/documents`) ช่อง 0 "ผู้เสนอราคา" = `PreparerName` "K.นัท" +
   `PreparerSignatureBase64` จาก payload · ช่อง 1 "ผู้มีอำนาจลงนาม" = ผู้ออก API key (`ApiKeyMiddleware` ตั้ง NameIdentifier = `ApiKey.CreatedByUserId` ⇒
   CreatedBy/UpdatedBy) ซึ่งไม่ได้อัปโหลดลายเซ็นในโปรไฟล์ ⇒ ช่องว่าง ทั้งที่เป็นคนเดียวกัน
@@ -2486,16 +2486,21 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   integration invoice/expense/PV) · ช่อง 1 (เฉพาะใบอนุมัติแล้ว) = ผู้อนุมัติใน `DocumentApprovals` → UpdatedBy → (ใบ settlement) CreatedBy → ผู้มีอำนาจลงนามที่บริษัทตั้ง
   (`UseCustomAuthorizedSignatory` · ไม่ใช่ผู้ใช้) → ลายเซ็นเจ้าของเมื่อไม่มีชื่อเลย · API v1 (`DocumentsV1Controller`) CreatedBy = `api:v1` ไม่รับผู้จัดทำ ⇒ ช่อง 0 ว่าง ·
   LINE/OCR/convert/clone/recurring: CreatedBy = ผู้กด/ผู้ตั้งรายการ · `PreparerName`/`PreparerUserId` **ไม่สืบทอด** ลงใบลูก (ผู้จัดทำของใบลูกคือผู้แปลง — เดิมเป็นแบบนี้อยู่แล้ว)
-- **ตัวตัดสิน "คนเดียวกัน"**: `Helpers/SignatureSlotIdentity.Link` — **กุญแจเท่านั้น ห้ามเทียบความคล้ายชื่อ**: ① `Document.PreparerUserId` (API ส่ง
-  `preparerUserId`/`preparerEmail` · ตรวจว่าเป็นสมาชิกบริษัทตอนสร้าง/PUT ไม่พบ ⇒ 400 · ระบุเป็นคนอื่น ⇒ ไม่รวมแม้ชื่อเล่นตรง) ② ช่อง 0 เป็นผู้ใช้เดียวกับช่อง 1 ·
-  ③ ชื่อที่ payload ส่งมาตรงทั้งคำ (ตัดช่องว่าง/ตัวพิมพ์) กับ "ชื่ออื่นที่ระบบภายนอกใช้เรียกฉัน" ที่ผู้ใช้ช่อง 1 **ประกาศเองในหน้าลายเซ็นของฉัน** (`User.SignerAliases` ·
-  ≤ 10 ชื่อ × 100 ตัว · ฝั่งเขียน `SanitizeForStore` ตัวเดียว · PDPA ลบบัญชีล้าง) · ช่องลูกค้า/ผู้มีอำนาจลงนามที่บริษัทตั้ง ไม่มีกุญแจ ⇒ ไม่รวม
-- **เมื่อเป็นคนเดียวกัน** (`SignatureSlotIdentity.Merge` · `MergeSameSignerSlotsAsync` ก่อนกฎผู้ลงนาม): ช่องที่ไม่มีรูปรับรูปของอีกช่อง · **ชื่อทั้งสองช่อง = ชื่อตามโปรไฟล์**
-  (`ProfileDisplayName`: ชื่อใต้ลายเซ็น → ชื่อ-สกุลบัญชี — ไม่เลือกจากความยาวสตริง) · ตำแหน่งคงของช่องตัวเอง (ว่าง ⇒ ตำแหน่งในโปรไฟล์) · ช่อง 0 ถือเป็นของผู้ใช้นั้น
-  ⇒ `DocumentStampPolicy`/`DepartedSignerRule` ตัดสินทั้งสองช่องด้วยตัวตนเดียว · **คงสองช่อง ไม่ยุบเป็นช่องเดียว** (ป้ายตามชนิดเอกสาร — ผู้รับเงิน/ผู้จ่ายเงิน/ผู้จัดทำ
-  กับผู้มีอำนาจลงนามเป็นบทบาทคนละหน้าที่ · ช่อง 2 ของลูกค้าอิงตำแหน่ง) · ใบร่าง/รออนุมัติไม่มีผู้ใช้ช่อง 1 ⇒ ไม่รวม (ห้ามมีหลักฐานลงนามก่อนอนุมัติ)
-- **ข้อมูลเก่า**: เป็นการแสดงผล ⇒ ใบที่ออกแล้วใช้ตัวรวมทันทีเมื่อผู้ใช้ตั้งชื่อเล่น — ไม่มี migration ข้อมูล (คอลัมน์ใหม่ `Documents.PreparerUserId` · `Users.SignerAliases`)
-- เทสต์: `SignatureSlotIdentityR278Tests` (pure) · Db `SignatureSlotsR278DbTests` · กติกา `_R278_WHY`
+- **กุญแจ (ห้ามเทียบความคล้ายชื่อ)**: ① `Document.PreparerUserId` — API ส่ง `preparerUserId`/`preparerEmail` (Create/UpdateDocumentRequest) · ต้องเป็นสมาชิกบริษัท **และ**
+  เป็นผู้เรียกเอง (API key = ผู้ออกคีย์) หรือผู้ใช้นั้นเปิด `CompanyUser.AllowExternalPreparerBinding` เอง · อื่น ๆ ⇒ 400 พร้อมเหตุ · ใบที่ออกแล้วเปลี่ยนการผูกไม่ได้ (400) ·
+  ② **ชื่อเล่นต่อบริษัท** (`SignerAliases` · หน้าลายเซ็นของฉัน → `api/companies/{id}/signer-identity/me`) ตรงทั้งคำกับ `PreparerName` · **มีผลเมื่อเจ้าของบริษัทอนุมัติ**
+  (เจ้าของยื่นเอง = อนุมัติในตัว) · ปฏิเสธ: คำกลาง (`SignatureSlotIdentity.GenericWords` + ขึ้นต้น ฝ่าย/แผนก/ทีม) · ชื่อ-สกุล/ชื่อใต้ลายเซ็น/ชื่อเล่นของสมาชิกคนอื่นในทุกบริษัทที่ผู้ขอเป็นสมาชิก ·
+  ตรวจซ้ำตอนอนุมัติ · ลบ = ยกเลิกทันที · เพิ่ม/อนุมัติ/ยกเลิกเป็น audit ของแถว `SignerAlias` · PDPA ลบบัญชีลบแถว · เจ้าของมีชื่อเล่นเดียวกันสองคน = กำกวม ⇒ ไม่รวม
+- **แช่แข็งตอนออกเอกสาร** (`AccountingDbContext.StampSignerFreeze` — ทุกทางเข้าที่บันทึกผ่าน SaveChanges เมื่อสถานะเข้าชุด "ออกแล้ว" ครั้งแรก): `SignersFrozenAt` +
+  `SignerSnapshotJson` (ผู้ใช้ที่ผูก · ชนิดกุญแจ · ชื่อ/ตำแหน่งตามโปรไฟล์วันนั้น · RuleCode — อยู่ใน audit ของเอกสาร) · เปลี่ยนชื่อเล่น/โปรไฟล์ทีหลังไม่แก้ใบที่ออกแล้ว ·
+  **ใบที่ออกก่อนรอบนี้** ⇒ `Round278Migration` เขียน snapshot ว่าง (พิมพ์เหมือนก่อนการรวม) · ใบที่สถานะถูกเปลี่ยนด้วย SQL ตรง = null ⇒ ไม่รวม (บูตถัดไปได้ snapshot ว่าง)
+- **เมื่อเป็นคนเดียวกัน** (`MergeSameSignerSlotsAsync` ก่อนกฎผู้ลงนาม): ชื่อทั้งสองช่อง = ชื่อตามโปรไฟล์ที่แช่แข็ง (ไม่เลือกจากความยาว) · ตำแหน่งคงของช่องตัวเอง (ว่าง ⇒ ตำแหน่งในโปรไฟล์) ·
+  **ช่อง 1 ไม่รับรูปจากแหล่งอื่นนอกจากโปรไฟล์ของตัวเอง — รูปจาก payload อยู่ช่องผู้จัดทำเท่านั้น** (ฝ่ายค้าน HIGH-1) · ช่อง 0 ที่ไม่มีรูปใช้รูปโปรไฟล์ของผู้ใช้ที่ผูก ·
+  ช่อง 0 ถือเป็นของผู้ใช้นั้น ⇒ `DocumentStampPolicy`/`DepartedSignerRule` ตัดสินด้วยตัวตนเดียว · **คงสองช่อง ไม่ยุบ** (ป้ายตามชนิดเอกสารเป็นบทบาทคนละหน้าที่ · ช่อง 2 ของลูกค้าอิงตำแหน่ง)
+- **ปุ่ม "ปรับผู้ลงนาม"** (หน้าพิมพ์ใน documents.html · `POST signer-identity/documents/{id}/refresh`): เจ้าของบริษัท · ต้องมีเหตุผล · ชนิดที่ไม่ใช่ใบกำกับ/ใบเสร็จ/ใบลด-เพิ่มหนี้/ใบสำคัญจ่าย/
+  ใบสำคัญรับ/ใบรับรองแทนใบเสร็จ/ขายเงินสด/ใบเสร็จ settlement · ลูกค้ายังไม่เซ็น/ยอมรับ (`QuotationAcceptedAt` · เซ็นรับของ · ลายเซ็นลูกค้าในขั้นอนุมัติ) ⇒ แช่แข็งใหม่ด้วยกุญแจปัจจุบัน +
+  audit (ก่อน/หลัง · เหตุผล · `SIGNER-REFRESH`) · เงื่อนไขฝั่งใบอยู่ใน `SignatureSlotIdentity.RefreshBlockedReason` (ส่งเป็น `DocumentResponse.SignerRefreshBlockedReason`)
+- เทสต์: `SignatureSlotIdentityR278Tests` (pure) · Db `SignatureSlotsR278DbTests` · กติกา `_R278_WHY` + negative R278-1…3
 
 ### 2.8b Delivery e-sign — ลูกค้าเซ็นรับสินค้าออนไลน์ (Proof of Delivery)
 > **รอบ 267 P1 (สถานะปัจจุบัน):** เหมือน §2.8 — `POST /document/{id}/delivery-sign-link` คืนลิงก์หน้าเอกสารของใบ (§2.12n) · ช่วงเซ็นรับ 14 วันจากวันส่ง ·
@@ -10022,3 +10027,6 @@ _Last verified against codebase: 2026-11-20 (รอบ 275 แพ็ก E — �
 
 _Last verified against codebase: 2026-11-20 (รอบ 278 — ช่องลายเซ็นผู้จัดทำ ↔ ผู้มีอำนาจลงนามคนเดียวกัน: `Helpers/SignatureSlotIdentity` ตัดสินด้วยกุญแจ
 (PreparerUserId · ผู้ใช้เดียวกัน · ชื่อเล่นที่ผู้ใช้ประกาศ) · รวมใน `ResolveSignersAsync` ก่อนกฎผู้ลงนาม · §2.8a — commit 5304acd3)_
+
+_Last verified against codebase: 2026-11-20 (รอบ 278 ชุดแก้ฝ่ายค้าน HIGH-1/2/3 + MED — ช่องผู้มีอำนาจลงนามไม่รับรูป payload · preparerUserId ผูกได้เฉพาะผู้เรียกเอง/ผู้เปิดสิทธิ์ ·
+ชื่อเล่นต่อบริษัทต้องเจ้าของอนุมัติ · แช่แข็งผู้ลงนามตอนออก (`StampSignerFreeze` · ใบเก่า = ไม่รวม) · ปุ่มปรับผู้ลงนามของเจ้าของ · §2.8a — commit SHA278B)_

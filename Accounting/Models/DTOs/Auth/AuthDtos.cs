@@ -150,15 +150,11 @@ public record UserProfileResponse(
     string? Phone,
     string? SignatureImageBase64,
     string? SignatureName,
-    string? SignatureTitle,
-    // รอบ 278: ชื่ออื่นที่ระบบภายนอกใช้เรียกฉันในช่องผู้จัดทำ (คั่นบรรทัด) — Helpers/SignatureSlotIdentity
-    string? SignerAliases = null);
+    string? SignatureTitle);
 
 public record UpdateProfileRequest(
     string? FullName,
     string? Phone,
     string? SignatureImageBase64,  // base64 PNG data URL, or null to clear
     string? SignatureName,
-    string? SignatureTitle,
-    // รอบ 278: null = ไม่แตะ · "" = ล้าง · ค่า = ตั้ง (ผ่าน SignatureSlotIdentity.SanitizeForStore)
-    string? SignerAliases = null);
+    string? SignatureTitle);

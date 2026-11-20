@@ -947,6 +947,9 @@ public record DocumentResponse(
     string? PreparerSignatureBase64 = null,
     /// <summary>รอบ 278: ผู้ใช้ที่ผูกเป็นผู้จัดทำ (กุญแจของ SignatureSlotIdentity) — echo กลับให้ผู้เรียก API เห็นว่าผูกแล้ว</summary>
     Guid? PreparerUserId = null,
+    /// <summary>รอบ 278: เหตุที่ปุ่ม "ปรับผู้ลงนามตามข้อมูลปัจจุบัน" ใช้ไม่ได้กับใบนี้ (null = ใช้ได้ · สิทธิ์เจ้าของ/ลายเซ็นลูกค้าในขั้นอนุมัติตรวจที่ endpoint) —
+    /// เซิร์ฟเวอร์ตัดสิน หน้าเว็บแสดงอย่างเดียว</summary>
+    string? SignerRefreshBlockedReason = null,
     /// <summary>เลขที่ใบมัดจำที่นำมาหัก + ธง "ให้ JE เดินตามการหักมัดจำ"</summary>
     string? DepositAppliedRef = null,
     bool DepositAppliedDrivesJournal = false,

@@ -1690,6 +1690,8 @@
               <option value="th">พิมพ์เป็นไทย</option>
               <option value="en">พิมพ์เป็นอังกฤษ</option>
             </select>
+            <!-- รอบ 278: ปรับผู้ลงนามตามข้อมูลปัจจุบัน — เซิร์ฟเวอร์ตัดสินว่าใบนี้ใช้ได้ไหม (signerRefreshBlockedReason) · เจ้าของเท่านั้น (ตรวจที่ endpoint) -->
+            <button id="pdfRefreshSignersBtn" class="btn btn-sm btn-secondary" style="display:none" onclick="Page.refreshSigners()" title="แช่แข็งผู้ลงนามใหม่ตามชื่อเล่นที่อนุมัติ/โปรไฟล์ปัจจุบัน — เจ้าของบริษัท · ต้องระบุเหตุผล · บันทึกประวัติ">ปรับผู้ลงนาม</button>
             <button class="btn btn-sm btn-primary" onclick="Page.printPdf()" title="พิมพ์ PDF ตัวเดียวกับปุ่ม 'ดาวน์โหลด PDF' (QuestPDF) — หน้าตาเหมือนกันเป๊ะ">🖨️ พิมพ์</button>
             <button class="btn btn-sm btn-success" onclick="Page.downloadServerPdf()" title="ดาวน์โหลด PDF — เอกสารที่ผ่าน e-Tax flow แล้วจะได้ PDF/A-3 ฝัง XML สรรพากรอัตโนมัติ (ใช้ยื่นภาษีได้ทันที), เอกสารอื่นได้ PDF ปกติ">📥 ดาวน์โหลด PDF</button>
             <button class="btn btn-sm btn-secondary" onclick="Page.downloadHtmlPdf()" title="ดาวน์โหลดเป็น HTML (เปิดแล้วกดพิมพ์เลือก 'Save as PDF')">📄 ดาวน์โหลด HTML</button>
@@ -15670,6 +15672,18 @@
       /** override ภาษาเฉพาะการพิมพ์ครั้งนี้ (null = ใช้ภาษาที่ resolve จากเอกสาร/
        *  เทมเพลต/บริษัท ตาม PdfGenerationService.ResolveDocumentLanguage) */
       _pdfLanguage() { return document.getElementById('pdfLangMode')?.value || null; },
+      /** รอบ 278: ปุ่ม "ปรับผู้ลงนามตามข้อมูลปัจจุบัน" — ทุกเงื่อนไข (ชนิดเอกสาร · ลูกค้าเซ็นแล้ว · เจ้าของ · เหตุผล) ตัดสินที่เซิร์ฟเวอร์ */
+      async refreshSigners() {
+        const d = this._currentPdfDoc; if (!d) return;
+        const reason = prompt('เหตุผลที่ปรับผู้ลงนามของเอกสารนี้ (บันทึกในประวัติ)');
+        if (reason == null) return;
+        try {
+          const j = await API.post(`/api/companies/${Layout.getCompanyId()}/signer-identity/documents/${d.id}/refresh`, { reason });
+          if (!j || !j.success) throw new Error((j && j.message) || 'ปรับผู้ลงนามไม่สำเร็จ');
+          Layout.toast(j.message || 'ปรับผู้ลงนามแล้ว');
+          await this._refreshPdfPreview();
+        } catch (e) { Layout.toast(e.message || 'ปรับผู้ลงนามไม่สำเร็จ', 'error'); }
+      },
       async _refreshPdfPreview() {
         const d = this._currentPdfDoc; if (!d) return;
         try {
@@ -15690,6 +15704,7 @@
           const res = await api.getDocument(id);
           const d = res.data;
           this._currentPdfDoc = d;
+          { const rb = document.getElementById('pdfRefreshSignersBtn'); if (rb) rb.style.display = d.signerRefreshBlockedReason == null ? '' : 'none'; }
           const _cm = document.getElementById('pdfCopyMode'); if (_cm) _cm.value = '';   // เปิดใหม่ = ต้นฉบับ
           // ภาษาก็ต้อง reset ด้วย — ไม่งั้นเปิดใบถัดไปแล้วยังค้าง "พิมพ์เป็นอังกฤษ"
           // ของใบก่อนหน้า (เป็น one-off override ไม่ใช่ค่าที่ผูกกับใบ)
