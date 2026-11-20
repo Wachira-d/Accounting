@@ -9835,4 +9835,4 @@ _Last verified against codebase: 2026-11-20 (รอบ 274-10 — เลขท�
 คำตัดสิน 274-10 — commit 7c75b438)_
 
 _Last verified against codebase: 2026-11-20 (รอบ 278 — ช่องลายเซ็นผู้จัดทำ ↔ ผู้มีอำนาจลงนามคนเดียวกัน: `Helpers/SignatureSlotIdentity` ตัดสินด้วยกุญแจ
-(PreparerUserId · ผู้ใช้เดียวกัน · ชื่อเล่นที่ผู้ใช้ประกาศ) · รวมใน `ResolveSignersAsync` ก่อนกฎผู้ลงนาม · §2.8a — commit SHA_PENDING)_
+(PreparerUserId · ผู้ใช้เดียวกัน · ชื่อเล่นที่ผู้ใช้ประกาศ) · รวมใน `ResolveSignersAsync` ก่อนกฎผู้ลงนาม · §2.8a — commit 5304acd3)_

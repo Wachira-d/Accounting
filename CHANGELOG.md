@@ -7340,5 +7340,5 @@ ciphertext ของแถวนั้นเองส่งกลับมา = 
 ชื่อเล่นที่ผู้ใช้ประกาศในหน้าลายเซ็นของฉัน `User.SignerAliases` ตรงทั้งคำ — ห้าม fuzzy) · รวมใน `ResolveSignersAsync` ก่อนกฎผู้ลงนาม (`MergeSameSignerSlotsAsync`) ⇒
 HTML + QuestPDF + พรีวิว + หน้าลูกค้าได้ผลเดียวกัน · ช่องที่ไม่มีรูปรับรูปของคนเดียวกัน · ชื่อทั้งสองช่อง = ชื่อตามโปรไฟล์ · คงสองช่อง · คำตัดสิน 278-1…278-4 ·
 คอลัมน์ใหม่ `Documents.PreparerUserId` · `Users.SignerAliases` (ADD COLUMN IF NOT EXISTS) · ใบเก่าใช้ทันทีเมื่อตั้งชื่อเล่น (ไม่มี migration ข้อมูล) ·
-เทสต์ `SignatureSlotIdentityR278Tests` · Db `SignatureSlotsR278DbTests` · กติกา `_R278_WHY` ×6 — commit SHA_PENDING
+เทสต์ `SignatureSlotIdentityR278Tests` · Db `SignatureSlotsR278DbTests` · กติกา `_R278_WHY` ×6 — commit 5304acd3
 

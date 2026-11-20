@@ -21547,7 +21547,7 @@ RULES += [
 
 # รอบ 278 — ช่องลายเซ็นฝั่งบริษัทสองช่องที่เป็นคนเดียวกัน (QT-20261119-0001: ช่อง 0 "K.นัท"+ลายเซ็นจาก payload · ช่อง 1 ผู้ออกคีย์ไม่มีลายเซ็น) ·
 # ตัวตัดสินเดียว Helpers/SignatureSlotIdentity (กุญแจเท่านั้น ห้ามเทียบความคล้ายชื่อ) · จุดรวมจุดเดียวใน ResolveSignersAsync ก่อนกฎผู้ลงนาม
-_R278_WHY = "รอบ 278 (ช่องลายเซ็นคนเดียวกัน — คำตัดสิน 278-1..278-4): "
+_R278_WHY = "รอบ 278 (ช่องลายเซ็นคนเดียวกัน — คำตัดสิน 278-1..278-4 · commit 5304acd3): "
 RULES += [
     dict(file="Services/Implementations/PdfGenerationService.cs", method="ResolveSignersAsync",
          must=["await MergeSameSignerSlotsAsync(doc, signers, slotUsers, customerSlots, slot0FromPayload, slot0PayloadName);",
