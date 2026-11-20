@@ -49,12 +49,12 @@ public static class EncryptionKeyResolver
     /// <summary>รอบ 274: คีย์ที่<b>คอลัมน์ PII</b> (<c>EncryptedColumnConverter</c>) ใช้ลองถอดต่อจากคีย์ปัจจุบัน — <see cref="PreviousKeyEnv"/> (ดิบ + ตัดช่องว่าง) ก่อน
     /// แล้ว <see cref="LegacyCandidates"/> (config เดิมที่ถูก env ชนะ · dev key ก่อนตั้งคีย์) · ไม่มีคีย์ปัจจุบันซ้ำ · ลำดับคงที่ ·
     /// ใช้ถอดอย่างเดียว (เขียนด้วยคีย์ปัจจุบันเสมอ) ⇒ dev key ในรายการไม่ลดความปลอดภัย (ค่าที่เข้ารหัสด้วยมันเปิดได้อยู่แล้ว)</summary>
-    public static IReadOnlyList<string> PiiPreviousKeys(string currentKey, string? previousEnv, string? envKey, string? configKey)
+    internal static IReadOnlyList<string> PiiPreviousKeys(string currentKey, string? previousEnv, string? envKey, string? configKey)
         => PreviousKeysFrom(currentKey, new[] { previousEnv }, envKey, configKey);
 
     /// <summary>รอบ 275 แพ็ก A (T4 M-4 · K3/K9): คีย์เดิม<b>หลายตัว</b> — แต่ละค่าลองทั้งก้อน (ดิบ + ตัดช่องว่าง) แล้วแยกทีละบรรทัด
     /// (ตัวคั่น = ขึ้นบรรทัดใหม่ — ไม่ชน base64/ตัวอักษรของคีย์) · ลำดับคงที่ตามที่ส่งเข้า · ตัดคีย์ปัจจุบัน/ค่าซ้ำ/ค่าว่าง</summary>
-    public static IReadOnlyList<string> PreviousKeysFrom(string currentKey, IEnumerable<string?> previousInputs, string? envKey, string? configKey)
+    internal static IReadOnlyList<string> PreviousKeysFrom(string currentKey, IEnumerable<string?> previousInputs, string? envKey, string? configKey)
     {
         var list = new List<string>();
         void Add(string? k)
@@ -121,7 +121,7 @@ public static class EncryptionKeyResolver
     /// <summary>ฝ่ายค้านรอบ 219 B2/S3: คีย์ "เดิม" ที่ความลับในฐานอาจถูกเข้ารหัสไว้ — <c>SecretProtector</c> รุ่นก่อนรอบ 219 ใช้
     /// <c>Security:EncryptionKey ?? DevKey</c> (ไม่อ่าน env) ⇒ ลอง config (ดิบ + ตัดช่องว่าง) · env (ตัดช่องว่าง) · dev key ·
     /// ตัดคีย์ปัจจุบันและค่าซ้ำออก · ลำดับคงที่ (ทดสอบได้)</summary>
-    public static IReadOnlyList<string> LegacyCandidates(string currentKey, string? envKey, string? configKey)
+    internal static IReadOnlyList<string> LegacyCandidates(string currentKey, string? envKey, string? configKey)
     {
         var list = new List<string>();
         void Add(string? k)

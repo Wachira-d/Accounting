@@ -7354,4 +7354,4 @@ _รอบ 275 แพ็ก A (2026-11-20 · คีย์และความ�
 `SecretReprotectJob` เป็นระยะ + ล้ม = JobRunLog + watermark · ลายนิ้วมือคีย์ใน `SiteSettings` (งานย้ายคีย์ทั้งสองหยุดเมื่อไม่ตรง · ยืนยันคีย์โดยผู้ดูแล + audit) ·
 `Helpers/SecretUse` ที่ webhook ขาออก/CMS ขาเข้า/e-Tax/อีเมล/login ภายนอก/Omise/ธนาคาร/LINE OA/ลงนาม callback (ห้ามใช้ค่าว่างเงียบ · ห้ามส่งไม่เซ็น · ห้ามตรวจด้วยกุญแจว่าง) ·
 DTO พนักงานส่งป้าย ⛔ แทน ciphertext + ฟอร์มบอกชัด (ฝ่ายค้าน 274-10 MED-2) · หน้า `/pages/encryption-health.html` + มุมผู้ดูแล · runbook `docs/runbooks/encryption-key-rotation.md` ·
-คำตัดสิน 275-A-1…7 · pure + Db `KeysSecretsRound275A*` · กติกา `_R275A_` — commit (เติมในคอมมิตตามหลัง)_
+คำตัดสิน 275-A-1…7 · pure + Db `KeysSecretsRound275A*` · กติกา `_R275A_` — commit 2e7199e0 + bc9b6d73_

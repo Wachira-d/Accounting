@@ -9869,4 +9869,4 @@ _Last verified against codebase: 2026-11-20 (รอบ 274-11 ผลตรวจ
 เครื่องหมายภายในปฏิเสธที่ด่านเข้า + อ่านกลับตรงตัว · รูป ciphertext ตัวเดียว (มีช่องว่าง = ไม่ใช่) ทั้ง Inspect และ SQL · งานย้ายคีย์ข้ามการสแกนเมื่อชุดคีย์เดิมสแกนครบ ≤ 7 วัน ·
 HRIS sync สถานะ "เตือน" — คำตัดสิน 274-11 — commit 55b251d9)_
 _Last verified against codebase: 2026-11-20 (รอบ 275 แพ็ก A — คีย์และความลับ: ห่วงโซ่คีย์ถอดเดียว (PII = ความลับ) · คีย์เดิมหลายตัว · ลายนิ้วมือคีย์กันหลายเครื่อง ·
-`SecretUse` ด่านเดียวของผู้อ่านความลับ · DTO พนักงานไม่ส่ง ciphertext · หน้า "สุขภาพข้อมูลเข้ารหัส" · เทสต์ `KeysSecretsRound275ATests` + Db `KeysSecretsRound275ADbTests` · กติกา `_R275A_` — commit (เติมในคอมมิตตามหลัง))_
+`SecretUse` ด่านเดียวของผู้อ่านความลับ · DTO พนักงานไม่ส่ง ciphertext · หน้า "สุขภาพข้อมูลเข้ารหัส" · เทสต์ `KeysSecretsRound275ATests` + Db `KeysSecretsRound275ADbTests` · กติกา `_R275A_` — commit 2e7199e0 + bc9b6d73)_

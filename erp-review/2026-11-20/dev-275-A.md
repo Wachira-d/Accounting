@@ -7,12 +7,12 @@
 
 | ข้อ | ยืนยันกับโค้ด | สถานะ | สิ่งที่ทำ |
 |---|---|---|---|
-| H-1 `SecretProtector` ไม่อ่าน `ENCRYPTION_KEY_PREVIOUS` | จริง (`SecretProtector` ctor ใช้ `LegacyCandidates` · PII ใช้ `PiiPreviousKeys`) | แก้แล้ว | ห่วงโซ่ตัวเดียว `EncryptionKeyResolver.DecryptKeyChain` ใช้ทั้ง `Program.cs` (PII) และ `SecretProtector` · reproduce: เทสต์ "ห่วงโซ่เดิม = WrongKey" + Db ย้ายจริง |
+| H-1 `SecretProtector` ไม่อ่าน `ENCRYPTION_KEY_PREVIOUS` | จริง (`SecretProtector` ctor ใช้ `LegacyCandidates` · PII ใช้ `PiiPreviousKeys`) | แก้แล้ว 2e7199e0 | ห่วงโซ่ตัวเดียว `EncryptionKeyResolver.DecryptKeyChain` ใช้ทั้ง `Program.cs` (PII) และ `SecretProtector` · reproduce: เทสต์ "ห่วงโซ่เดิม = WrongKey" + Db ย้ายจริง |
 | — งานย้ายคีย์ความลับ | เดิมรันครั้งเดียวต่อบูต · ล้มแล้วไม่ลง JobRunLog | แก้แล้ว | ทุก 6 ชม. (เหมือน PII) · JobLock · audit ต่อแถว (เดิม) · ล้ม = JobRunLog ล้ม · นับค่าใช้ไม่ได้/ค้างคีย์เดิม · watermark |
-| M-1 ข้อความชี้ API ดิบ/ชื่อ env · ไม่มีจอ | จริง (`Pnd1FilingData` · `EmployeeTaxIdentity` · `PayrollBankTransfer` · `SsoInsuredNumber` · `EmployeeIdentityHealth` · `LineFailureAlert` · `SecretWarnings`) | แก้แล้ว | `EncryptionHealthText` (ผู้ใช้ = ชื่อหน้า · ผู้ดูแล = ชื่อ env) · หน้า `/pages/encryption-health.html` (ความลับ + PII จาก endpoint เดิม) · ลิงก์จาก ตั้งค่า/พนักงาน · มุมผู้ดูแลใน admin › งานเบื้องหลัง · runbook |
-| M-2 DTO พนักงานส่ง ciphertext ดิบ (+274-10 MED-2) | จริง (`MapToEmployeeResponse`) | แก้แล้ว | ป้าย `⛔ ถอดรหัสไม่ได้` ทุกสิทธิ์ + `IdentityProblem`/`BankAccountProblem`/`PiiProblemText` · ป้ายที่ส่งกลับ = คงค่าเดิม (echo guard เดิมคงอยู่) · ฟอร์มกล่องเหตุ + ขอบแดง + ป้ายในแถวรายชื่อ |
-| M-4 หลายเครื่อง/หมุนซ้ำ | จริง (ไม่มีลายนิ้วมือ · PREVIOUS รับคีย์เดียว) | แก้แล้ว | `SiteSettings.EncryptionKeyFingerprint*` + `EncryptionKeyFingerprintRule` · งานย้ายคีย์**ทั้งสอง**หยุดเมื่อ Mismatch/RotatedBack · ยืนยันคีย์โดยผู้ดูแล (audit) · PREVIOUS หลายบรรทัด + `_2`…`_9` · ธง "ถอด PREVIOUS ได้" |
-| M-5 ผู้อ่านความลับไม่ถาม `IsUsable` | จริง + พบเพิ่ม (Facebook login ข้ามตรวจ app id เมื่อ secret ถอดไม่ได้ = fail-open) | แก้แล้ว | `Helpers/SecretUse` (Open/Require/Optional) ที่ 22 จุด (ดูด้านล่าง) |
+| M-1 ข้อความชี้ API ดิบ/ชื่อ env · ไม่มีจอ | จริง (`Pnd1FilingData` · `EmployeeTaxIdentity` · `PayrollBankTransfer` · `SsoInsuredNumber` · `EmployeeIdentityHealth` · `LineFailureAlert` · `SecretWarnings`) | แก้แล้ว 2e7199e0 | `EncryptionHealthText` (ผู้ใช้ = ชื่อหน้า · ผู้ดูแล = ชื่อ env) · หน้า `/pages/encryption-health.html` (ความลับ + PII จาก endpoint เดิม) · ลิงก์จาก ตั้งค่า/พนักงาน · มุมผู้ดูแลใน admin › งานเบื้องหลัง · runbook |
+| M-2 DTO พนักงานส่ง ciphertext ดิบ (+274-10 MED-2) | จริง (`MapToEmployeeResponse`) | แก้แล้ว 2e7199e0 | ป้าย `⛔ ถอดรหัสไม่ได้` ทุกสิทธิ์ + `IdentityProblem`/`BankAccountProblem`/`PiiProblemText` · ป้ายที่ส่งกลับ = คงค่าเดิม (echo guard เดิมคงอยู่) · ฟอร์มกล่องเหตุ + ขอบแดง + ป้ายในแถวรายชื่อ |
+| M-4 หลายเครื่อง/หมุนซ้ำ | จริง (ไม่มีลายนิ้วมือ · PREVIOUS รับคีย์เดียว) | แก้แล้ว 2e7199e0 | `SiteSettings.EncryptionKeyFingerprint*` + `EncryptionKeyFingerprintRule` · งานย้ายคีย์**ทั้งสอง**หยุดเมื่อ Mismatch/RotatedBack · ยืนยันคีย์โดยผู้ดูแล (audit) · PREVIOUS หลายบรรทัด + `_2`…`_9` · ธง "ถอด PREVIOUS ได้" |
+| M-5 ผู้อ่านความลับไม่ถาม `IsUsable` | จริง + พบเพิ่ม (Facebook login ข้ามตรวจ app id เมื่อ secret ถอดไม่ได้ = fail-open) | แก้แล้ว 2e7199e0 | `Helpers/SecretUse` (Open/Require/Optional) ที่ 22 จุด (ดูด้านล่าง) |
 
 ## ผู้เรียก `SecretProtector.Unprotect` ทั้ง 44 จุด (callers.py)
 
