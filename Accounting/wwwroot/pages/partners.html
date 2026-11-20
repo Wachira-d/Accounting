@@ -151,7 +151,7 @@ const Page = {
     box.innerHTML = list.map(j => `<details style="margin:6px 0" ${j.currentStep && j.steps.some(s => s.state === 'Blocked') ? 'open' : ''}>
         <summary style="cursor:pointer">${j.direction === 'Seller' ? '📤 เราขายให้' : '📥 เราซื้อจาก'} ${Layout.esc(j.partnerName)} · ${Layout.esc(j.ownDocumentNumber || '-')} · ${Layout.esc(Layout.money(j.total))} บาท
           — ${j.currentStep ? Layout.esc((j.steps.find(s => s.step === j.currentStep) || {}).label || '') : '✅ ครบทั้งเส้น'}</summary>
-        <ol class="pt-steps">${j.steps.map(s => `<li><span class="pt-badge ${cls[s.state] || ''}">${Layout.esc(s.stateLabel)}</span>
+        <ol class="pt-steps">${j.steps.map(s => `<li><span class="pt-badge ${/* html: คลาสจากตารางคงที่ cls */ cls[s.state] || ''}">${Layout.esc(s.stateLabel)}</span>
           <div><div>${Layout.esc(s.label)}${Layout.esc(when(s.at))}</div>${s.detail ? `<div class="pt-muted">${Layout.esc(s.detail)}</div>` : ''}</div></li>`).join('')}</ol>
       </details>`).join('');
   },
@@ -279,7 +279,7 @@ const Page = {
         : this.outgoing.map(o => `<tr><td>${Layout.esc(new Date(o.sentAt).toLocaleDateString('th-TH'))}</td>
             <td>${Layout.esc(o.partnerTaxId)}<div class="pt-muted">${Layout.esc(o.branchLabel || '')}</div>${o.contactName ? `<div class="pt-muted">ผู้ติดต่อ: ${Layout.esc(o.contactName)}</div>` : ''}</td>
             <td><span class="pt-badge ${o.state === 'Accepted' ? 'pt-ok' : o.state === 'Expired' ? 'pt-warn' : ''}">${Layout.esc(o.stateLabel || o.state)}</span></td>
-            <td>${this.noticeCells(o.notices)}</td>
+            <td>${/* html: noticeCells ห่อทุกค่าด้วย Layout.esc แล้ว */ this.noticeCells(o.notices)}</td>
             <td>${o.canNotify ? `<button class="btn btn-secondary btn-sm" data-renotify="${Layout.esc(o.id)}">ส่งแจ้งอีกครั้ง</button>`
               : `<span class="pt-muted">${Layout.esc(o.notifyProblem || '')}</span>`}</td></tr>`).join('');
       ob.querySelectorAll('[data-renotify]').forEach(b => b.addEventListener('click', () => this.openRenotify(b.dataset.renotify)));
@@ -436,7 +436,7 @@ const Page = {
       : `<span class="pt-muted">ยังไม่มีผู้ติดต่อเลขนี้ในบริษัทของคุณ</span>${o.newContactUrl ? ` · <a href="${Layout.esc(o.newContactUrl)}" target="_blank" rel="noopener">เพิ่มผู้ติดต่อ</a>` : ''}`;
     box.innerHTML = `<div class="form-label">แจ้งคู่ค้าทาง</div>
       <div class="pt-ch"><input type="checkbox" checked disabled><div><strong>${Layout.esc(o.inApp.label)}</strong><div class="pt-muted">${Layout.esc(o.inApp.note)}</div></div></div>
-      <div class="pt-ch"><span style="min-width:90px">ผู้ติดต่อ</span><div>${picker}</div></div>
+      <div class="pt-ch"><span style="min-width:90px">ผู้ติดต่อ</span><div>${/* html: picker ประกอบจาก Layout.esc แล้ว */ picker}</div></div>
       ${(o.channels || []).map(c => `<div class="pt-ch"><input type="checkbox" data-ch="${Layout.esc(c.channel)}" ${c.available ? 'checked' : 'disabled'}>
         <div><strong>${Layout.esc(c.label)}</strong>${c.available ? `<div class="pt-muted">ถึง: ${Layout.esc((c.targets || []).join(', '))}</div>`
           : `<div class="pt-muted">ปิด — ${Layout.esc(c.reason || '')}${c.fixUrl ? ` · <a href="${Layout.esc(c.fixUrl)}" target="_blank" rel="noopener">เพิ่ม/แก้ช่องทาง</a>` : ''}</div>`}</div></div>`).join('')}`;
