@@ -59,12 +59,16 @@ public record MyPermissionsResponse(
     /// แต่เป็นการเปิดเผยหน้าจอภายในและอยู่ห่างจากการรั่วจริงแค่ก้าวเดียว)
     /// </summary>
     bool IsSystemAdmin = false,
-    /// <summary>รอบ 201 ทีม GW (A-GW10): เมนูที่ผู้ใช้<b>ไม่มีสิทธิ์</b>ตามคีย์ perm:* ของหน้านั้น (ตาราง <c>PaymentGatewayPermissionScope.MenuPermissionKeys</c>) —
+    /// <summary>รอบ 201 ทีม GW (A-GW10): เมนูที่ผู้ใช้<b>ไม่มีสิทธิ์</b>ตามคีย์ perm:* ของหน้านั้น (ตาราง <c>MenuPermissionMap.Keys</c> · รอบ 277 รวมแดชบอร์ด/รายงานผู้บริหาร) —
     /// layout.js ซ่อนเมนูเหล่านี้ (เดิมเห็นเมนู กดแล้ว 403) · null/ว่าง = ไม่มีเมนูที่ต้องซ่อนด้วยเหตุนี้ · เจ้าของ/แอดมินไม่ถูกตัด</summary>
     List<string>? PermissionDeniedMenuIds = null,
     /// <summary>รอบ 276 — ค่าจำกัดเอกสารที่มีผล (ผู้ใช้ ∪ บทบาท · <c>DocumentRestrictionPolicy</c>) · null = ไม่ถูกจำกัด ·
     /// layout.js: เห็นเฉพาะของตัวเอง ⇒ แสดงเฉพาะเมนูใน <see cref="MyDocumentRestriction.AllowedMenuIds"/> + แถบป้าย</summary>
-    MyDocumentRestriction? DocumentRestriction = null);
+    MyDocumentRestriction? DocumentRestriction = null,
+    /// <summary>รอบ 277 — เข้าร่วมบริษัทแล้วแต่เจ้าของยังไม่ตั้งบทบาท (<c>CompanyUser.AccessPending</c>) ⇒ ทุก API ของบริษัท 403 ·
+    /// layout.js แสดงหน้าต้อนรับ "ยังไม่ได้รับสิทธิ์" (<c>/pages/no-access.html</c>) แทนเมนู · ข้อความจากเซิร์ฟเวอร์</summary>
+    bool AccessPending = false,
+    string? AccessPendingNotice = null);
 
 /// <summary>รอบ 276 — ค่าจำกัดเอกสารของผู้ใช้ที่ล็อกอิน (เซิร์ฟเวอร์ตัดสิน · หน้าเว็บแสดงอย่างเดียว)</summary>
 public sealed record MyDocumentRestriction(bool OwnDocumentsOnly, bool DraftOnly, string Notice, List<string>? AllowedMenuIds);

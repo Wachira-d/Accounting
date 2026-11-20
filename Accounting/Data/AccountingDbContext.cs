@@ -12,6 +12,11 @@ public class AccountingDbContext : DbContext
     /// <c>Filters/DocumentRestrictionFilter</c> (หรือ <c>Helpers/DocumentRestrictionScope.Apply</c>) · null = ไม่จำกัด (ผู้ใช้ทั่วไป · งานเบื้องหลัง) ·
     /// ผู้อ่าน: ตัวกรองแถวของ <see cref="Document"/> ด้านล่าง (ทุก query ผ่าน <c>_db.Documents</c> รวม Include/FromSql ที่ compose)</summary>
     public string? DocumentOwnerScopeUserId { get; set; }
+    /// <summary>id ผู้ใช้ของขอบเขตเดียวกัน (ตัวกรองหลักเทียบ <see cref="Document.CreatedByUserId"/>) — ตั้งคู่กับ <see cref="DocumentOwnerScopeUserId"/> เสมอ</summary>
+    public Guid? DocumentOwnerScopeGuid { get; set; }
+    /// <summary>ผู้ใช้ของคำขอนี้ที่ถูกจำกัด (เห็นเฉพาะของตัวเอง หรือเฉพาะร่าง) — เอกสารที่สร้างในคำขอนี้ประทับ <see cref="Document.CreatedByUserId"/> เป็นคนนี้
+    /// เมื่อ CreatedBy เป็นป้ายระบบ (OCR/LINE) · ตั้งโดย <c>DocumentRestrictionGuard.ApplyScope</c></summary>
+    public Guid? DocumentRestrictedActorId { get; set; }
     /// <summary>อีเมลของผู้ใช้คนเดียวกัน — บางทางเข้า (LINE) ประทับ <c>CreatedBy</c> เป็นอีเมล (คำตัดสิน 276-3)</summary>
     public string? DocumentOwnerScopeEmail { get; set; }
     /// <summary>รอบ 276 — คำขอนี้มาจากผู้ใช้ "เฉพาะร่าง" (ตั้งโดย <c>DocumentRestrictionFilter</c>) · ผู้อ่าน: <c>Helpers/DocumentRestrictionGuard</c>
@@ -682,6 +687,7 @@ public class AccountingDbContext : DbContext
             e.HasOne(i => i.Company).WithMany().HasForeignKey(i => i.CompanyId).OnDelete(DeleteBehavior.Cascade);
             e.HasOne(i => i.InvitedBy).WithMany().HasForeignKey(i => i.InvitedByUserId).OnDelete(DeleteBehavior.Restrict);
             e.HasIndex(i => i.Token).IsUnique();
+            e.HasIndex(i => i.TokenHash).IsUnique();   // รอบ 277 — ค้นคำเชิญด้วย hash เท่านั้น
             // Email-lookup happens during invite acceptance — narrow index.
             e.HasIndex(i => new { i.CompanyId, i.Email });
             e.HasQueryFilter(i => !i.IsDeleted);
@@ -1011,8 +1017,11 @@ public class AccountingDbContext : DbContext
             // ใบที่ลบแล้ว + รอบ 276 "เห็นเฉพาะเอกสารที่ตัวเองสร้าง" (มีผลเฉพาะคำขอที่ DocumentRestrictionFilter ตั้งขอบเขต · ค่าอื่น null ⇒ ไม่กรอง)
             e.HasQueryFilter(d => !d.IsDeleted
                 && (DocumentOwnerScopeUserId == null
-                    || d.CreatedBy == DocumentOwnerScopeUserId
-                    || (DocumentOwnerScopeEmail != null && d.CreatedBy == DocumentOwnerScopeEmail)));
+                    || d.CreatedByUserId == DocumentOwnerScopeGuid
+                    || (d.CreatedByUserId == null
+                        && (d.CreatedBy == DocumentOwnerScopeUserId
+                            || (DocumentOwnerScopeEmail != null && d.CreatedBy == DocumentOwnerScopeEmail)))));
+            e.HasIndex(d => new { d.CompanyId, d.CreatedByUserId }).HasDatabaseName("IX_Documents_CompanyId_CreatedByUserId");
         });
 
         // ===== DocumentLine =====
@@ -4783,6 +4792,7 @@ public class AccountingDbContext : DbContext
     public override int SaveChanges()
     {
         GuardPayrollJunkPayees();
+        StampDocumentCreators();
         StampWhtPayeeSnapshots();
         UpdateTimestamps();
         if (Accounting.Helpers.PolicyAcceptanceAppendOnly.Violation(ChangeTracker) is string evidenceBad)   // รอบ 219 ส่วน B ฝ่ายค้าน S4
@@ -4832,9 +4842,31 @@ public class AccountingDbContext : DbContext
         }
     }
 
+    /// <summary>รอบ 276 (ฝ่ายค้าน LOW-10): ประทับ <see cref="Document.CreatedByUserId"/> ของเอกสารใหม่ — ตัวตัดสินเดียว
+    /// <c>Helpers/DocumentCreatorStamp.Resolve</c> (id ใน CreatedBy · ผู้ใช้ของคำขอที่ถูกจำกัด) · อีเมล (ทาง LINE) จับคู่สมาชิกบริษัทแบบตรงตัวหนึ่งคน</summary>
+    private void StampDocumentCreators()
+    {
+        foreach (var entry in ChangeTracker.Entries<Document>())
+        {
+            if (entry.State != EntityState.Added || entry.Entity.CreatedByUserId != null) continue;
+            var d = entry.Entity;
+            var id = Accounting.Helpers.DocumentCreatorStamp.Resolve(d.CreatedBy, DocumentRestrictedActorId);
+            if (id == null && Accounting.Helpers.DocumentCreatorStamp.LooksLikeEmail(d.CreatedBy))
+            {
+                var email = d.CreatedBy!.Trim();
+                var ids = Set<CompanyUser>().AsNoTracking()
+                    .Where(cu => cu.CompanyId == d.CompanyId && cu.User.Email == email)
+                    .Select(cu => cu.UserId).Take(2).ToList();
+                if (ids.Count == 1) id = ids[0];
+            }
+            d.CreatedByUserId = id;
+        }
+    }
+
     public override async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
     {
         GuardPayrollJunkPayees();
+        StampDocumentCreators();
         StampWhtPayeeSnapshots();
         UpdateTimestamps();
         if (Accounting.Helpers.PolicyAcceptanceAppendOnly.Violation(ChangeTracker) is string evidenceBad)   // รอบ 219 ส่วน B ฝ่ายค้าน S4

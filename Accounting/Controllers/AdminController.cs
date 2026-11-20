@@ -1162,13 +1162,24 @@ public class AdminController : ControllerBase
         if (inv.Status != InvitationStatus.Pending)
             return BadRequest(new ApiResponse<object>(false, null, "คำเชิญนี้ไม่ได้อยู่ในสถานะรอตอบรับ"));
 
-        inv.ExpiresAt = DateTime.UtcNow.AddDays(7);
+        // รอบ 277: ฐานเก็บแต่ hash ของ token ⇒ ส่งซ้ำ = ออก token ใหม่ (ลิงก์เดิมใช้ไม่ได้) · กติกาเดียวกับเจ้าของกดส่งซ้ำ (CompanyInvitationPolicy)
+        var rawToken = Accounting.Helpers.CompanyInvitationPolicy.NewToken();
+        inv.TokenHash = Accounting.Helpers.CompanyInvitationPolicy.HashToken(rawToken);
+        inv.Token = null;
+        inv.ExpiresAt = DateTime.UtcNow.Add(Accounting.Helpers.CompanyInvitationPolicy.Lifetime);
         inv.UpdatedAt = DateTime.UtcNow;
+        _db.AddChainedAuditLog(new AuditLog
+        {
+            CompanyId = inv.CompanyId, UserId = JwtHelper.GetUserIdFromClaims(User), Action = AuditAction.Update,
+            EntityType = "CompanyInvitation", EntityId = inv.Id.ToString(),
+            NewValues = System.Text.Json.JsonSerializer.Serialize(new { action = "admin-resend", inv.ExpiresAt }),
+            Timestamp = DateTime.UtcNow,
+        });
         await _db.SaveChangesAsync();
 
         var baseUrl = (await _db.SiteSettings.AsNoTracking().Select(s => s.AppBaseUrl).FirstOrDefaultAsync())?.TrimEnd('/')
             ?? $"{Request.Scheme}://{Request.Host}";
-        var link = $"{baseUrl}/accept-invitation.html?token={Uri.EscapeDataString(inv.Token)}";
+        var link = $"{baseUrl}/accept-invitation.html?token={Uri.EscapeDataString(rawToken)}";
         var sent = false;
         // ⚠️ เดิมเป็น `catch { }` เปล่า ⇒ SMTP ล้มเหลว (auth ผิด/พอร์ตถูกบล็อก/
         // โดเมนปฏิเสธ) หายไปเงียบสนิท แอดมินเห็นแค่ "ต่ออายุคำเชิญแล้ว" ซึ่ง
@@ -1180,7 +1191,7 @@ public class AdminController : ControllerBase
             {
                 await _email.SendNotificationEmailAsync(inv.Email, inv.Email,
                     $"คำเชิญเข้าใช้งาน {inv.Company.Name}",
-                    $"คุณได้รับคำเชิญเข้าร่วม {inv.Company.Name} (บทบาท {inv.Role}). คลิกเพื่อตอบรับ", link);
+                    $"คุณได้รับคำเชิญเข้าร่วม {inv.Company.Name} (บทบาท {Accounting.Helpers.CompanyInvitationPolicy.RoleLabel(inv.RoleChosen, inv.Role)}) · มีบัญชีแล้วเข้าสู่ระบบเพื่อตอบรับ · ยังไม่มีสมัครได้โดยไม่ต้องสร้างบริษัท", link);
                 sent = true;
             }
             else

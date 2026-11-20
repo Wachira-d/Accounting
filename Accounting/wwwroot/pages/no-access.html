@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ยังไม่ได้รับสิทธิ์ - Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .na-shell { max-width:680px; margin:0 auto; padding:32px 16px 60px; }
+    .na-card { background:#fff; border:1px solid #e5e7eb; border-radius:14px; padding:28px 24px; text-align:center; }
+    .na-card h1 { font-size:22px; margin:8px 0 10px; color:#0f172a; }
+    .na-card p { color:#475569; font-size:14px; line-height:1.7; margin:0 0 14px; }
+    .na-icon { font-size:44px; }
+    .na-actions { display:flex; gap:10px; justify-content:center; flex-wrap:wrap; margin-top:18px; }
+    .btn { padding:9px 18px; border-radius:8px; font-weight:600; font-size:14px; cursor:pointer; border:1px solid transparent; text-decoration:none; }
+    .btn-primary { background:#4f46e5; color:#fff; }
+    .btn-secondary { background:#f1f5f9; color:#334155; border-color:#cbd5e1; }
+  </style>
+</head>
+<body>
+  <!-- รอบ 277: หน้าต้อนรับ "ยังไม่ได้รับสิทธิ์" — (1) ตอบรับคำเชิญแล้วแต่เจ้าของยังไม่ตั้งบทบาท (CompanyUser.AccessPending · ทุก API ของบริษัทปิด)
+       (2) บทบาทไม่มีเมนูใดเข้าได้เลย · ข้อความมาจากเซิร์ฟเวอร์ (my-permissions.accessPendingNotice) · หน้านี้แสดงอย่างเดียว ไม่มีกติกาสิทธิ์ -->
+  <div id="pageContent" class="page-content fade-in">
+    <div class="na-shell">
+      <div class="na-card">
+        <div class="na-icon">🔐</div>
+        <h1 id="naTitle">ยังไม่ได้รับสิทธิ์ใช้งาน</h1>
+        <p id="naMsg">บัญชีของคุณยังไม่มีเมนูที่เปิดใช้ได้ในบริษัทนี้ — ขอให้เจ้าของบริษัทกำหนดบทบาท/สิทธิ์ให้ที่หน้า “จัดการทีม” หรือ “บทบาทและสิทธิ์”</p>
+        <p style="font-size:13px;color:#64748b">ถ้าคุณอยู่หลายบริษัท สลับบริษัทได้จากตัวเลือกบริษัทด้านบน</p>
+        <div class="na-actions">
+          <button class="btn btn-primary" id="naReload" type="button">🔄 ตรวจสิทธิ์อีกครั้ง</button>
+          <a class="btn btn-secondary" href="/pages/my-signature.html" id="naSig" style="display:none">✍️ ลายเซ็นของฉัน</a>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    (async function () {
+      if (!Layout.init('no-access')) return;
+      Layout.setTitle('ยังไม่ได้รับสิทธิ์');
+      const render = () => {
+        const p = Layout.myPermissions;
+        if (!p) return;
+        if (p.accessPending) {
+          document.getElementById('naTitle').textContent = 'เข้าร่วมบริษัทแล้ว — รอเจ้าของตั้งสิทธิ์';
+          document.getElementById('naMsg').textContent = p.accessPendingNotice || 'รอเจ้าของบริษัทกำหนดบทบาทและสิทธิ์ให้คุณ';
+        } else {
+          // ได้รับสิทธิ์แล้ว (หรือมีเมนูที่เข้าได้) ⇒ ไปหน้าแรกที่เข้าได้ทันที
+          const target = Layout.landingUrl();
+          if (target && target.split('?')[0] !== location.pathname) { location.replace(target); return; }
+          document.getElementById('naSig').style.display = '';
+        }
+      };
+      document.addEventListener('layout:permissions', render);
+      document.getElementById('naReload').addEventListener('click', async () => {
+        Layout._permsFresh = false;
+        await Layout.loadMyPermissions();
+        render();
+      });
+      if (Layout.getCompanyId && Layout.getCompanyId()) { await Layout.ensurePageAccess('no-access'); render(); }
+    })();
+  </script>
+</body>
+</html>

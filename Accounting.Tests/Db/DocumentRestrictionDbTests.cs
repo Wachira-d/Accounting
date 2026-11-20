@@ -390,5 +390,267 @@ public class DocumentRestrictionDbTests
         }
     }
 
+
+    // ══════════════════ ชุดแก้ฝ่ายค้าน 276 ══════════════════
+
+    private static DocumentService Docs(AccountingDbContext db) =>
+        new(db, new AccountingService(db), RecurringTransactionDbTests.AllowAll<ISubscriptionService>.Create(), null!, null!,
+            NullLogger<DocumentService>.Instance, null!, null!, null!);
+
+    [Fact]
+    public async Task ฝ่ายค้าน_HIGH1_LINE_ผู้ถูกจำกัดดูยอดและถามไม่ได้_ตอบเหตุ_ผู้อื่นใช้ได้ตามเดิม()
+    {
+        using var seed = DbTestDatabase.TryCreateContext();
+        if (seed == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var s = await SeedAsync(seed);
+        var clerkLine = "U" + Guid.NewGuid().ToString("N");
+        var ownerLine = "U" + Guid.NewGuid().ToString("N");
+        (await seed.Users.SingleAsync(u => u.Id == s.Clerk)).LineUserId = clerkLine;
+        (await seed.Users.SingleAsync(u => u.Id == s.Owner)).LineUserId = ownerLine;
+        await seed.SaveChangesAsync();
+        var asked = 0;
+        LineBotService Bot(AccountingDbContext db) => new(db, new Microsoft.Extensions.Configuration.ConfigurationBuilder().Build(), null!,
+            NullLogger<LineBotService>.Instance, F4Proxy<IDocumentService>.Create((_, _) => null), null!, null!, null!,
+            F4Proxy<IChatbotService>.Create((_, _) => { asked++; throw new InvalidOperationException("ไม่ควรถูกเรียก"); }),
+            new PermissionService(db), null!, null!, null!);
+
+        using (var db = DbTestDatabase.TryCreateContext()!)
+        {
+            var summary = await Bot(db).HandleMessageAsync(clerkLine, "ดูยอด");
+            Assert.StartsWith("⛔", summary);
+            Assert.DoesNotContain("เงินเข้า", summary);
+        }
+        using (var db = DbTestDatabase.TryCreateContext()!)
+            Assert.StartsWith("⛔", await Bot(db).HandleMessageAsync(clerkLine, "ถาม ค่าน้ำมันลงหมวดไหน"));
+        Assert.Equal(0, asked);                                           // ไม่เข้า RAG ของบริษัทเลย
+        // ทิศตรงข้าม: เจ้าของดูยอดได้ตามเดิม
+        using (var db = DbTestDatabase.TryCreateContext()!)
+            Assert.Contains("เงินเข้า", await Bot(db).HandleMessageAsync(ownerLine, "ดูยอด"));
+    }
+
+    [Fact]
+    public async Task ฝ่ายค้าน_HIGH2_ทางเข้าไม่มีบริษัทในroute_ภาพรวมข้ามบริษัท403_แจ้งเตือนของตัวเองผ่าน_ผู้ไม่ถูกจำกัดผ่าน()
+    {
+        using var seedDb = DbTestDatabase.TryCreateContext();
+        if (seedDb == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var s = await SeedAsync(seedDb);
+        async Task<(bool, int?)> Run(Guid user, string m, string t)
+        {
+            using var db = DbTestDatabase.TryCreateContext()!;
+            var ctx = Ctx(db, s.CompanyId, user, m, t);
+            ctx.RouteData.Values.Remove("companyId");
+            return await RunFilterAsync(db, ctx);
+        }
+        Assert.Equal((false, (int?)403), await Run(s.Clerk, "GET", "api/accountant-workspace"));
+        Assert.Equal((false, (int?)403), await Run(s.Clerk, "POST", "api/account-subscription/attach"));
+        Assert.Equal((true, (int?)null), await Run(s.Clerk, "GET", "api/notification"));
+        Assert.Equal((true, (int?)null), await Run(s.Clerk, "POST", "api/auth/change-password"));
+        Assert.Equal((true, (int?)null), await Run(s.Other, "GET", "api/accountant-workspace"));
+    }
+
+    [Fact]
+    public async Task ฝ่ายค้าน_MED3_แจ้งเตือน_ผู้ถูกจำกัดได้เฉพาะเรื่องใบตัวเอง_รายการเก่าถูกกรอง()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var s = await SeedAsync(db);
+        Assert.True(await DocumentRestrictionGuard.MayReceiveAsync(db, s.CompanyId, s.Clerk, "Document", s.ClerkDoc));
+        Assert.False(await DocumentRestrictionGuard.MayReceiveAsync(db, s.CompanyId, s.Clerk, "Document", s.OtherDoc));
+        Assert.False(await DocumentRestrictionGuard.MayReceiveAsync(db, s.CompanyId, s.Clerk, "Payment", Guid.NewGuid()));
+        Assert.True(await DocumentRestrictionGuard.MayReceiveAsync(db, s.CompanyId, s.Other, "Document", s.ClerkDoc));   // ทิศตรงข้าม
+        db.Notifications.AddRange(
+            new Notification { UserId = s.Clerk, CompanyId = s.CompanyId, Title = "ของตัวเอง", Message = "x", EntityType = "Document", EntityId = s.ClerkDoc },
+            new Notification { UserId = s.Clerk, CompanyId = s.CompanyId, Title = "ใบคนอื่น", Message = "x", EntityType = "Document", EntityId = s.OtherDoc },
+            new Notification { UserId = s.Clerk, CompanyId = s.CompanyId, Title = "รับชำระ", Message = "x", EntityType = "Payment", EntityId = Guid.NewGuid() },
+            new Notification { UserId = s.Clerk, CompanyId = null, Title = "ระบบ", Message = "x" });
+        await db.SaveChangesAsync();
+        using var req = DbTestDatabase.TryCreateContext()!;
+        var list = await new NotificationService(req, NullLogger<NotificationService>.Instance).GetUserNotificationsAsync(s.Clerk);
+        Assert.Equal(new[] { "ของตัวเอง", "ระบบ" }.OrderBy(x => x), list.Select(n => n.Title).OrderBy(x => x));
+        Assert.Equal(2, (await new NotificationService(req, NullLogger<NotificationService>.Instance).GetCountAsync(s.Clerk)).Total);
+    }
+
+    [Fact]
+    public async Task ฝ่ายค้าน_MED5_MED6_idใบคนอื่นในbody404_แก้ผู้ติดต่อเดิมไม่ได้_สร้างใหม่ได้()
+    {
+        using var seedDb = DbTestDatabase.TryCreateContext();
+        if (seedDb == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var s = await SeedAsync(seedDb);
+        var otherLine = await seedDb.DocumentLines.Where(l => l.DocumentId == s.OtherDoc).Select(l => (Guid?)l.Id).FirstOrDefaultAsync();
+        if (otherLine == null)
+        {
+            var l = new DocumentLine { DocumentId = s.OtherDoc, LineOrder = 1, Description = "x", Quantity = 1, UnitPrice = 1, Amount = 1 };
+            seedDb.DocumentLines.Add(l); await seedDb.SaveChangesAsync(); otherLine = l.Id;
+        }
+        async Task<(bool, int?)> Post(object body, string t = C + "Document")
+        {
+            using var db = DbTestDatabase.TryCreateContext()!;
+            var ctx = Ctx(db, s.CompanyId, s.Clerk, "POST", t);
+            ctx.ActionArguments["request"] = body;
+            return await RunFilterAsync(db, ctx);
+        }
+        var line = new Accounting.Models.DTOs.Document.DocumentLineRequest("x", 1, null, 100, 0, 7, 0, null);
+        Accounting.Models.DTOs.Document.CreateDocumentRequest Req(Guid? related, Guid? srcLine = null) => new(
+            DocumentType.Invoice, DateTime.UtcNow.Date, null, s.ContactId, null, null,
+            new List<Accounting.Models.DTOs.Document.DocumentLineRequest> { srcLine == null ? line : line with { SourceLineId = srcLine } },
+            RelatedDocumentId: related);
+        Assert.Equal((false, (int?)404), await Post(Req(s.OtherDoc)));
+        Assert.Equal((false, (int?)404), await Post(Req(null, otherLine)));
+        Assert.Equal((false, (int?)404), await Post(new Accounting.Models.DTOs.DocumentTemplate.GeneratePdfRequest(s.OtherDoc, null, null, null, null),
+            C + "document-templates/generate-pdf"));
+        Assert.Equal((true, (int?)null), await Post(Req(s.ClerkDoc)));      // ทิศตรงข้าม: ใบของตัวเอง
+        Assert.Equal((true, (int?)null), await Post(Req(null)));
+        // MED-6: แก้ผู้ติดต่อเดิม 403 · สร้างใหม่ได้
+        using (var db = DbTestDatabase.TryCreateContext()!)
+            Assert.Equal((false, (int?)403), await RunFilterAsync(db, Ctx(db, s.CompanyId, s.Clerk, "PUT", C + "Document/contacts/{contactId:guid}",
+                new Dictionary<string, string> { ["contactId"] = s.ContactId.ToString() })));
+        using (var db = DbTestDatabase.TryCreateContext()!)
+            Assert.Equal((true, (int?)null), await RunFilterAsync(db, Ctx(db, s.CompanyId, s.Clerk, "POST", C + "Document/contacts")));
+    }
+
+    [Fact]
+    public async Task ฝ่ายค้าน_MED4_แปลงซ้ำใบต้นทางที่คนอื่นแปลงไปแล้ว_ถูกกัน_และอนุมัติใบเกินของผู้ถูกจำกัดถูกบล็อก()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var s = await SeedAsync(db);
+        // ใบเสนอราคาของผู้ถูกจำกัด (อนุมัติแล้ว) · ผู้อื่นแปลงเป็นใบแจ้งหนี้ครบแล้ว (อนุมัติแล้ว)
+        var qt = Doc(s.CompanyId, s.ContactId, s.Clerk.ToString(), DocumentStatus.Approved);
+        var qtLine = new DocumentLine { LineOrder = 1, Description = "งานบริการ", Quantity = 1, UnitPrice = 1_000m, Amount = 1_000m, VatRate = 7 };
+        qt.Lines.Add(qtLine);
+        db.Documents.Add(qt);
+        await db.SaveChangesAsync();
+        var inv = Doc(s.CompanyId, s.ContactId, s.Other.ToString(), DocumentStatus.Approved);
+        inv.DocumentType = DocumentType.Invoice; inv.RelatedDocumentId = qt.Id;
+        inv.Lines.Add(new DocumentLine { LineOrder = 1, Description = "งานบริการ", Quantity = 1, UnitPrice = 1_000m, Amount = 1_000m, VatRate = 7, SourceLineId = qtLine.Id });
+        db.Documents.Add(inv);
+        await db.SaveChangesAsync();
+
+        // ผ่านด่านคำขอจริง (ทางเขียน ⇒ ยกตัวกรองแถว) แล้ว service แปลง
+        Exception? thrown = null;
+        using (var req = DbTestDatabase.TryCreateContext()!)
+        {
+            var ctx = Ctx(req, s.CompanyId, s.Clerk, "POST", C + "Document/{documentId:guid}/convert/{targetType}",
+                new Dictionary<string, string> { ["documentId"] = qt.Id.ToString() });
+            var called = false;
+            await new DocumentRestrictionFilter(req).OnActionExecutionAsync(ctx, async () =>
+            {
+                called = true;
+                Assert.Null(req.DocumentOwnerScopeUserId);                // ด่านระดับบริษัทเห็นทั้งบริษัท
+                Assert.True(req.DocumentDraftOnlyRequest);
+                try { await Docs(req).ConvertDocumentAsync(s.CompanyId, qt.Id, DocumentType.Invoice, s.Clerk.ToString()); }
+                catch (Exception ex) { thrown = ex; }
+                return new ActionExecutedContext(ctx, new List<IFilterMetadata>(), new object());
+            });
+            Assert.True(called);
+        }
+        Assert.NotNull(thrown);
+        using (var check = DbTestDatabase.TryCreateContext()!)
+            Assert.Equal(1, await check.Documents.CountAsync(d => d.CompanyId == s.CompanyId && d.RelatedDocumentId == qt.Id));
+
+        // ใบเกินที่ค้างอยู่ (ผู้ถูกจำกัดสร้างก่อนแก้) ⇒ อนุมัติแบบรับทราบคำเตือนผ่านไม่ได้
+        var dup = Doc(s.CompanyId, s.ContactId, s.Clerk.ToString());
+        dup.DocumentType = DocumentType.Invoice; dup.RelatedDocumentId = qt.Id;
+        dup.Lines.Add(new DocumentLine { LineOrder = 1, Description = "งานบริการ", Quantity = 1, UnitPrice = 1_000m, Amount = 1_000m, VatRate = 7 });
+        db.Documents.Add(dup);
+        await db.SaveChangesAsync();
+        Assert.Equal(s.Clerk, dup.CreatedByUserId);
+        using (var req = DbTestDatabase.TryCreateContext()!)
+        {
+            var d = await req.Documents.Include(x => x.Lines).SingleAsync(x => x.Id == dup.Id);
+            Assert.NotNull(await Docs(req).RestrictedCreatorOverConvertAsync(s.CompanyId, d));
+            var ex = await Assert.ThrowsAsync<BusinessRuleException>(() => Docs(req).ApproveDocumentAsync(s.CompanyId, dup.Id, s.Owner.ToString(), true));
+            Assert.Equal(DocumentService.RestrictedOverConvertRuleCode, ex.RuleCode);
+        }
+        // ทิศตรงข้าม: ใบเกินแบบเดียวกันที่ผู้ไม่ถูกจำกัดสร้าง ⇒ ไม่ใช่ด่านนี้ (ยังเป็นคำเตือนก่อนอนุมัติตามข้อ 138)
+        var dup2 = Doc(s.CompanyId, s.ContactId, s.Other.ToString());
+        dup2.DocumentType = DocumentType.Invoice; dup2.RelatedDocumentId = qt.Id;
+        dup2.Lines.Add(new DocumentLine { LineOrder = 1, Description = "งานบริการ", Quantity = 1, UnitPrice = 1_000m, Amount = 1_000m, VatRate = 7 });
+        db.Documents.Add(dup2);
+        await db.SaveChangesAsync();
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            Assert.Null(await Docs(req).RestrictedCreatorOverConvertAsync(s.CompanyId, await req.Documents.Include(x => x.Lines).SingleAsync(x => x.Id == dup2.Id)));
+    }
+
+    [Fact]
+    public async Task ฝ่ายค้าน_LOW10_ผู้สร้างเป็นid_ทั้งid_อีเมล_ป้ายระบบในคำขอที่ถูกจำกัด_migration_เติมแถวเก่า()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var s = await SeedAsync(db);
+        using (var check = DbTestDatabase.TryCreateContext()!)
+        {
+            var map = await check.Documents.IgnoreQueryFilters().Where(d => d.CompanyId == s.CompanyId).ToDictionaryAsync(d => d.Id, d => d.CreatedByUserId);
+            Assert.Equal(s.Clerk, map[s.ClerkDoc]);
+            Assert.Equal(s.Clerk, map[s.ClerkEmailDoc]);                   // อีเมลสมาชิก (ทาง LINE)
+            Assert.Equal(s.Other, map[s.OtherDoc]);
+            Assert.Null(map[s.SystemDoc]);                                  // ป้ายระบบนอกคำขอของผู้ถูกจำกัด
+        }
+        // ป้ายระบบ (OCR) ในคำขอของผู้ถูกจำกัด ⇒ เป็นของเขา
+        using (var req = await RequestAsAsync(s.CompanyId, s.Clerk))
+        {
+            var ocrDoc = Doc(s.CompanyId, s.ContactId, "ocr-auto");
+            req.Documents.Add(ocrDoc);
+            await req.SaveChangesAsync();
+            Assert.Equal(s.Clerk, ocrDoc.CreatedByUserId);
+            Assert.True(await req.Documents.AnyAsync(d => d.Id == ocrDoc.Id));   // เขาเห็นใบนี้
+        }
+        // แถวเก่า (ไม่มี CreatedByUserId) ⇒ migration เติมจาก id/อีเมลที่จับคู่ได้แน่นอน (ทำซ้ำได้)
+        await db.Database.ExecuteSqlInterpolatedAsync($@"UPDATE ""Documents"" SET ""CreatedByUserId"" = NULL WHERE ""CompanyId"" = {s.CompanyId}");
+        foreach (var sql in Round276Migration.Statements()) await db.Database.ExecuteSqlRawAsync(sql);
+        foreach (var sql in Round276Migration.Statements()) await db.Database.ExecuteSqlRawAsync(sql);
+        using (var check = DbTestDatabase.TryCreateContext()!)
+        {
+            var map = await check.Documents.IgnoreQueryFilters().Where(d => d.CompanyId == s.CompanyId).ToDictionaryAsync(d => d.Id, d => d.CreatedByUserId);
+            Assert.Equal(s.Clerk, map[s.ClerkDoc]);
+            Assert.Equal(s.Clerk, map[s.ClerkEmailDoc]);
+            Assert.Equal(s.Other, map[s.OtherDoc]);
+            Assert.Null(map[s.SystemDoc]);
+        }
+    }
+
+    [Fact]
+    public async Task ฝ่ายค้าน_LOW7_ผู้ขออนุมัติผ่านLINE_อีเมล_อนุมัติใบที่ตัวเองขอไม่ได้()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var s = await SeedAsync(db);
+        var otherEmail = await db.Users.Where(u => u.Id == s.Other).Select(u => u.Email).SingleAsync();
+        db.DocumentApprovalRequests.Add(new DocumentApprovalRequest { CompanyId = s.CompanyId, DocumentId = s.OtherDoc, RequestedByUserId = s.Other });
+        await db.SaveChangesAsync();
+        var ex = await Assert.ThrowsAsync<BusinessRuleException>(() =>
+            DocumentApprovalRequestService.EnsureNotSelfApprovalAsync(db, s.CompanyId, s.OtherDoc, otherEmail));
+        Assert.Equal(DocumentApprovalRequestService.SelfApprovalCode, ex.RuleCode);
+        await DocumentApprovalRequestService.EnsureNotSelfApprovalAsync(db, s.CompanyId, s.OtherDoc, "system:recurring");   // ป้ายระบบ = ไม่ใช่ด่านนี้
+    }
+
+    [Fact]
+    public async Task ฝ่ายค้าน_LOW12_OCR_ผู้ถูกจำกัดใช้ได้เฉพาะสแกนของตัวเอง()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var s = await SeedAsync(db);
+        var mine = new FileAttachment { CompanyId = s.CompanyId, EntityType = "OcrScan", EntityId = Guid.NewGuid(), FileName = "a.jpg", OriginalFileName = "a.jpg",
+            StoragePath = "x", ContentType = "image/jpeg", UploadedByUserId = s.Clerk };
+        var theirs = new FileAttachment { CompanyId = s.CompanyId, EntityType = "OcrScan", EntityId = Guid.NewGuid(), FileName = "b.jpg", OriginalFileName = "b.jpg",
+            StoragePath = "y", ContentType = "image/jpeg", UploadedByUserId = s.Other };
+        db.FileAttachments.AddRange(mine, theirs);
+        await db.SaveChangesAsync();
+        var myScan = new OcrScanResult { CompanyId = s.CompanyId, FileAttachmentId = mine.Id };
+        var theirScan = new OcrScanResult { CompanyId = s.CompanyId, FileAttachmentId = theirs.Id };
+        db.OcrScanResults.AddRange(myScan, theirScan);
+        await db.SaveChangesAsync();
+        async Task<(bool, int?)> Clerk(string m, string t, string key, Guid id)
+        {
+            using var r = DbTestDatabase.TryCreateContext()!;
+            return await RunFilterAsync(r, Ctx(r, s.CompanyId, s.Clerk, m, t, new Dictionary<string, string> { [key] = id.ToString() }));
+        }
+        Assert.Equal((true, (int?)null), await Clerk("POST", C + "ocr/scan/{fileAttachmentId:guid}", "fileAttachmentId", mine.Id));
+        Assert.Equal((true, (int?)null), await Clerk("POST", C + "ocr/{scanId:guid}/create-document", "scanId", myScan.Id));
+        Assert.Equal((false, (int?)404), await Clerk("POST", C + "ocr/{scanId:guid}/create-document", "scanId", theirScan.Id));
+        Assert.Equal((false, (int?)404), await Clerk("GET", C + "ocr/{scanId:guid}", "scanId", theirScan.Id));
+        Assert.Equal((false, (int?)403), await Clerk("POST", C + "ocr/{scanId:guid}/import-stock", "scanId", myScan.Id));
+    }
+
     private sealed record DocumentApprovalSubmitResultShape(string Route, int ApproverCount);
 }

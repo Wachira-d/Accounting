@@ -415,7 +415,35 @@ const Layout = {
       ? '/app.html' : '/simple.html';
   },
 
-  goDashboard() { window.location.href = this.dashboardUrl(); },
+  goDashboard() { window.location.href = this.landingUrl(); },
+
+  /** รอบ 277 (งาน A): "หน้าแรกที่ผู้ใช้คนนี้เข้าได้" — แดชบอร์ดถ้ามีสิทธิ์ · ไม่มี ⇒ เมนูแรกตามลำดับแถบเมนูที่เข้าได้ (สิทธิ์จากเซิร์ฟเวอร์
+   *  `hasMenuAccess` + แพ็กเกจ + ที่เจ้าของซ่อน) · ไม่มีเลย/ยังไม่ได้รับสิทธิ์ ⇒ หน้าต้อนรับ `/pages/no-access.html` ·
+   *  ยังไม่รู้สิทธิ์ = แดชบอร์ด (หน้าแดชบอร์ดตรวจซ้ำเองผ่าน ensurePageAccess) · ห้ามคำนวณกติกาสิทธิ์ที่นี่ — อ่านผลของเซิร์ฟเวอร์อย่างเดียว */
+  landingUrl() {
+    const p = this.myPermissions;
+    if (!p) return this.dashboardUrl();
+    if (p.accessPending) return '/pages/no-access.html';
+    if (this.hasMenuAccess('dashboard')) return this.dashboardUrl();
+    const hidden = this.getHiddenMenuItems();
+    // คู่มือเริ่มต้นใช้งาน (ตั้งค่าบริษัท) ไม่ใช่หน้าทำงานของพนักงาน — ข้ามเป็นหน้าแรก (ยังเปิดจากเมนูได้)
+    const first = this.navItems.find(it => it.id && it.href && it.id !== 'dashboard' && it.id !== 'getting-started'
+      && !it.inHub && !it.adminOnly && !it.platformAdmin && !it.navParent
+      && !hidden.includes(it.id) && this.hasMenuAccess(it.id) && this._navLockState(it) === 'open');
+    return first ? first.href : '/pages/no-access.html';
+  },
+
+  /** รอบ 277: หน้าที่เป็น "ปลายทางอัตโนมัติ" (แดชบอร์ด) ตรวจสิทธิ์จากเซิร์ฟเวอร์ก่อนยิง API ข้อมูล — ไม่มีสิทธิ์ ⇒ พาไปหน้าแรกที่เข้าได้
+   *  เงียบ ๆ (ไม่ขึ้น error "ไม่มีสิทธิ์" ให้คนที่แค่ล็อกอินเข้ามา) · คืน false = ผู้เรียกต้องหยุดโหลด · โหลดสิทธิ์ไม่ได้ = ปล่อยผ่าน (API ยังบังคับ) */
+  async ensurePageAccess(menuId) {
+    if (!this._permsFresh) { try { await this.loadMyPermissions(); } catch (_) { /* ปล่อยผ่าน — ด่านจริงอยู่ที่ API */ } }
+    if (!this.myPermissions) return true;
+    if (this.myPermissions.accessPending || !this.hasMenuAccess(menuId)) {
+      const target = this.landingUrl();
+      if (target && target.split('?')[0] !== location.pathname) { location.replace(target); return false; }
+    }
+    return true;
+  },
 
   // Format a Date as YYYY-MM-DD using LOCAL components.
   // Required because `.toISOString()` converts to UTC and shifts the calendar
@@ -822,6 +850,7 @@ const Layout = {
       const res = await API.get(`/api/company/${this.currentCompany.id}/roles/my-permissions`);
       if (res?.success && res.data) {
         this.myPermissions = res.data;
+        this._permsFresh = true;
         try { localStorage.setItem('myPermissions', JSON.stringify(res.data)); } catch {}
         this._refreshNavMenu();
         this._enforceRoleAccess();
@@ -877,8 +906,13 @@ const Layout = {
   },
 
   hasMenuAccess(menuId) {
+    // หน้าต้อนรับ "ยังไม่ได้รับสิทธิ์" เข้าได้ทุกคนเสมอ (รอบ 277)
+    if (menuId === 'no-access') return true;
     // Permissions not loaded yet → don't flicker-hide; allow then re-render.
     if (!this.myPermissions) return true;
+    // รอบ 277: ตอบรับคำเชิญแล้วแต่เจ้าของยังไม่ตั้งบทบาท — ไม่มีเมนูใด (ทุก API ของบริษัทปิด · เซิร์ฟเวอร์ตัดสิน)
+    if (this.myPermissions.accessPending) return false;
+
     // รอบ 276: ผู้ใช้ "เห็นเฉพาะเอกสารที่ตัวเองสร้าง" — เห็นเฉพาะเมนูที่เซิร์ฟเวอร์ส่งมา (DocumentRestrictionPolicy.OwnScopeMenuIds) ·
     // หน้าอื่นแสดงข้อมูลรวมของบริษัท — API ปฏิเสธอยู่แล้ว ตรงนี้กันเมนูโผล่แล้วกดได้ 403
     const dr = this.myPermissions.documentRestriction;
@@ -888,8 +922,9 @@ const Layout = {
     // สิทธิ์เมนูบริษัท. พนักงานที่มีสิทธิ์อนุมัติแต่ไม่มีสิทธิ์เข้า "ตั้งค่าบริษัท"
     // ต้องอัพเดทลายเซ็นตัวเองได้ (ไม่งั้นเอกสารที่เขาอนุมัติจะเว้นช่องลายเซ็น)
     if (menuId === 'my-signature') return true;
-    // รอบ 201 ทีม GW (A-GW10): เมนูที่เซิร์ฟเวอร์บอกว่าไม่มีสิทธิ์ตามคีย์ perm:* ของหน้านั้น (PaymentGatewayPermissionScope.MenuPermissionKeys)
-    // — ตัดก่อน "*" (ผู้ใช้ไม่ผูกบทบาทเห็นทุกเมนู แต่หน้ารับชำระออนไลน์ต้องมีสิทธิ์ดูบัญชีธนาคาร · เดิมเห็นเมนูแล้วกดได้ 403)
+    // รอบ 201 ทีม GW (A-GW10) + รอบ 277: เมนูที่เซิร์ฟเวอร์บอกว่าไม่มีสิทธิ์ตามคีย์ perm:* ที่ API ของหน้านั้นตรวจ (ตาราง MenuPermissionMap — รวมแดชบอร์ด/
+    // รายงานผู้บริหาร/FP&A/งบรวม/รอบโอน/ที่พัก) — ตัดก่อน "*" (ผู้ใช้ไม่ผูกบทบาทเห็นทุกเมนู แต่เปิดแล้วเจอ "ไม่มีสิทธิ์" · ที่มา: เจ้าของรายงาน
+    // "ไม่มีสิทธิ์ ดูแดชบอร์ดภาพรวม (Reports.Dashboard)" 2026-11-20) · เจ้าของ/แอดมินไม่ถูกตัด (กลับไปข้างบนแล้ว)
     if ((this.myPermissions.permissionDeniedMenuIds || []).includes(menuId)) return false;
     const allowed = this.myPermissions.allowedMenuIds || [];
     // "*" = backend sentinel = "no custom CompanyRole assigned, show all"
@@ -920,6 +955,17 @@ const Layout = {
 
   _enforceRoleAccess() {
     if (!this.myPermissions || !this.currentPage) return;
+    // รอบ 277: ยังไม่ได้รับสิทธิ์ (ตอบรับคำเชิญแบบไม่กำหนดบทบาท) ⇒ อยู่ได้เฉพาะหน้าต้อนรับ
+    if (this.myPermissions.accessPending) {
+      if (this.currentPage !== 'no-access') location.replace('/pages/no-access.html');
+      return;
+    }
+    // รอบ 277: แดชบอร์ดคือปลายทางอัตโนมัติหลังล็อกอิน/โลโก้/ลิงก์ "กลับหน้าหลัก" — ไม่มีสิทธิ์ ⇒ ไปหน้าแรกที่เข้าได้เงียบ ๆ (ไม่ใช่ error)
+    if (this.currentPage === 'dashboard' && !this.hasMenuAccess('dashboard')) {
+      const target = this.landingUrl();
+      if (target.split('?')[0] !== location.pathname) location.replace(target);
+      return;
+    }
     // ⚠️ ต้องเช็คก่อน early-return ของ isOwnerOrAdmin — "เจ้าของบริษัท" คือลูกค้า
     // ทุกราย ไม่ใช่แอดมินแพลตฟอร์ม (ต้นเหตุที่เมนูข้ามบริษัทเคยโผล่ให้ลูกค้าเห็น)
     if (this.PLATFORM_ADMIN_PAGES.includes(this.currentPage)
@@ -942,13 +988,22 @@ const Layout = {
       // ปลายทาง fallback: ถ้าไม่มีสิทธิ์แดชบอร์ดด้วย → เด้งไปแดชบอร์ดที่โหลด
       // ไม่ได้ = ค้าง (bounce loop). พาไปหน้าที่ "เข้าได้แน่นอน" แทน — ลายเซ็น
       // ของฉัน (ทุกคนเข้าได้) เพื่อให้ผู้ใช้ที่ถูกจำกัดสิทธิ์ยังอัพลายเซ็นตัวเองได้
-      const target = this.hasMenuAccess('dashboard') ? this.dashboardUrl() : '/pages/my-signature.html';
+      // รอบ 277: ปลายทางตัวเดียว landingUrl() (แดชบอร์ดถ้ามีสิทธิ์ · ไม่งั้นเมนูแรกที่เข้าได้ · ไม่มีเลย = หน้าต้อนรับ)
+      const target = this.landingUrl();
       this.toast('คุณไม่มีสิทธิ์เข้าถึงหน้านี้ — กำลังพาไปหน้าที่คุณเข้าได้', 'error');
       setTimeout(() => { window.location.href = target; }, 1500);
     }
   },
 
+  /** รอบ 277: ลิงก์ลัดนอกแถบเมนู (แถบล่างมือถือ ฯลฯ) ที่ติด `data-menu="<id เมนู>"` — ซ่อนเมื่อไม่มีสิทธิ์เมนูนั้น (hasMenuAccess · เซิร์ฟเวอร์ตัดสิน) */
+  _applyMenuGates(root) {
+    (root || document).querySelectorAll('[data-menu]').forEach(a => {
+      a.style.display = this.hasMenuAccess(a.getAttribute('data-menu')) ? '' : 'none';
+    });
+  },
+
   _refreshNavMenu() {
+    this._applyMenuGates(document);
     const nav = document.querySelector('.sidebar-nav');
     if (!nav) return;
     const hidden = this.getHiddenMenuItems();
@@ -1054,7 +1109,9 @@ const Layout = {
     // Renders as plain nav-items so the existing CSS / active-state styling
     // applies without bespoke selectors.
     if (uiMode === 'simple') {
-      html.push(`<a class="nav-item" href="/simple.html"><span class="icon">🏠</span><span class="label">หน้าหลัก (โหมดง่าย)</span></a>`);
+      // รอบ 277: "หน้าหลัก (โหมดง่าย)" = แดชบอร์ด — ไม่มีสิทธิ์ ⇒ ไม่แสดง (เดิมกดแล้ว "ไม่มีสิทธิ์ ดูแดชบอร์ดภาพรวม")
+      if (this.hasMenuAccess('dashboard'))
+        html.push(`<a class="nav-item" href="/simple.html"><span class="icon">🏠</span><span class="label">หน้าหลัก (โหมดง่าย)</span></a>`);
       html.push(`<a class="nav-item" href="/pages/quick-sale.html"><span class="icon">⚡</span><span class="label">ขายเร็ว</span></a>`);
       // quick-expense was removed 2026 — it bypassed VAT controls,
       // vendor linkage, and approval workflow. Field-bookkeeping
@@ -2020,12 +2077,13 @@ const Layout = {
         const bn = document.createElement('nav');
         bn.id = 'mobileBottomNav';
         bn.innerHTML = `
-          <a href="/simple.html"><span>🏠</span><span>หน้าหลัก</span></a>
-          <a href="/pages/quick-sale.html"><span>💰</span><span>ขาย</span></a>
-          <a href="/pages/expense.html"><span>🧾</span><span>เบิก</span></a>
-          <a href="/pages/bank.html"><span>🏦</span><span>เงิน</span></a>
-          <a href="/pages/tax-calendar.html"><span>🏛️</span><span>ภาษี</span></a>`;
+          <a href="/simple.html" data-menu="dashboard"><span>🏠</span><span>หน้าหลัก</span></a>
+          <a href="/pages/quick-sale.html" data-menu="documents"><span>💰</span><span>ขาย</span></a>
+          <a href="/pages/expense.html" data-menu="expense"><span>🧾</span><span>เบิก</span></a>
+          <a href="/pages/bank.html" data-menu="bank"><span>🏦</span><span>เงิน</span></a>
+          <a href="/pages/tax-calendar.html" data-menu="tax-calendar"><span>🏛️</span><span>ภาษี</span></a>`;
         document.body.appendChild(bn);
+        this._applyMenuGates(bn);
       }
     }
 
@@ -2203,8 +2261,13 @@ const Layout = {
             <a href="/pages/account-subscription.html" target="_blank" style="color:#0ea5e9;text-decoration:underline">ดูสิทธิ์ของฉัน</a>
           </div>`
         : '';
+      // รอบ 277: คนที่ถูกเชิญเข้าบริษัทอื่น ไม่ต้องสร้างบริษัทเอง — ทางไปต่อคือเปิดลิงก์ในอีเมลคำเชิญ (ล็อกอินอยู่แล้วกดตอบรับได้ทันที)
+      const inviteHint = this._setupForNewCompany ? '' : `<div style="padding:10px 14px;background:#f0fdf4;border-radius:8px;border:1px solid #86efac;margin-bottom:12px;font-size:13px;color:#166534">
+            📩 <strong>ถูกเชิญเข้าบริษัทอื่นอยู่แล้ว?</strong> ไม่ต้องสร้างบริษัท — เปิดลิงก์ "ตอบรับคำเชิญ" ในอีเมลคำเชิญ (ใช้บัญชีนี้ได้เลยถ้าอีเมลตรงกับที่ถูกเชิญ) ·
+            ไม่พบอีเมล ขอให้เจ้าของบริษัทกด "ส่งซ้ำ" ที่หน้าจัดการทีม
+          </div>`;
       formContent = `
-        ${licenseHint}
+        ${licenseHint}${inviteHint}
         <div style="padding:10px 14px;background:#eff6ff;border-radius:8px;border:1px solid #bfdbfe;margin-bottom:16px;font-size:13px;color:#1e40af">
           พิมพ์ชื่อบริษัทเพื่อค้นหาจาก DBD หรือใส่เลขผู้เสียภาษี 13 หลักเพื่อดึงข้อมูลอัตโนมัติ
         </div>

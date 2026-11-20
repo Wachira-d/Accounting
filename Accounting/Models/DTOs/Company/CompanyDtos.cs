@@ -152,9 +152,33 @@ public record TrialSummary(
     int ExtensionsUsed,
     int MaxExtensions);
 
+/// <summary>เชิญสมาชิก (รอบ 277) — <paramref name="Role"/> = null และไม่ผูก <paramref name="CompanyRoleId"/> ⇒ "ยังไม่กำหนดบทบาท":
+/// ผู้ตอบรับเข้าร่วมแบบยังไม่มีสิทธิ์จนกว่าเจ้าของตั้ง (คำตัดสิน 277-4) · ค่าจำกัดเอกสารของรอบ 276 ตั้งได้ตั้งแต่ตอนเชิญ</summary>
 public record AddCompanyUserRequest(
     string Email,
-    UserRole Role);
+    UserRole? Role = null,
+    Guid? CompanyRoleId = null,
+    bool OwnDocumentsOnly = false,
+    bool DraftDocumentsOnly = false);
+
+/// <summary>รอบ 277 — แถว "รอตอบรับ" ในหน้าจัดการทีม (ป้ายบทบาท/สถานะจากเซิร์ฟเวอร์ · หน้าเว็บแสดงอย่างเดียว)</summary>
+public record CompanyInvitationResponse(
+    Guid Id,
+    string Email,
+    UserRole Role,
+    bool RoleChosen,
+    Guid? CompanyRoleId,
+    string? CompanyRoleName,
+    string RoleLabel,
+    bool OwnDocumentsOnly,
+    bool DraftDocumentsOnly,
+    string Status,
+    string StatusLabel,
+    DateTime ExpiresAt,
+    DateTime? LastSentAt,
+    int SendCount,
+    string? InvitedByName,
+    DateTime CreatedAt);
 
 public record UpdateUserRoleRequest(UserRole Role);
 public record UpdateMemberNameRequest(string FullName);
@@ -174,7 +198,9 @@ public record CompanyMemberResponse(
     bool OwnDocumentsOnly = false,
     bool DraftDocumentsOnly = false,
     /// <summary>ป้ายค่าที่มีผล (ผู้ใช้ ∪ บทบาท · <c>DocumentRestrictionPolicy.Notice</c>) · null = ไม่ถูกจำกัด</summary>
-    string? EffectiveDocumentRestrictionNotice = null);
+    string? EffectiveDocumentRestrictionNotice = null,
+    /// <summary>รอบ 277 — ตอบรับคำเชิญแล้วแต่เจ้าของยังไม่ตั้งบทบาท (ยังใช้งานอะไรไม่ได้) · หน้าทีมแสดงป้าย "รอตั้งสิทธิ์"</summary>
+    bool AccessPending = false);
 
 /// <summary>รอบ 276 — เจ้าของตั้ง "เห็นเฉพาะเอกสารที่ตัวเองสร้าง" / "สร้าง/แก้ได้เฉพาะร่าง" ให้สมาชิก</summary>
 public sealed record UpdateDocumentRestrictionRequest(bool OwnDocumentsOnly, bool DraftDocumentsOnly);

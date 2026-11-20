@@ -78,8 +78,10 @@
     </div>
 
     <div class="card" id="addMemberSection" style="display:none">
-      <h3 class="card-title" style="margin-bottom:12px">เพิ่มสมาชิกใหม่</h3>
-      <p style="font-size:13px;color:#64748b;margin-bottom:16px">ผู้ใช้ต้องสมัครสมาชิก Next Acc ก่อน จึงจะเพิ่มเข้าบริษัทได้</p>
+      <h3 class="card-title" style="margin-bottom:12px">เชิญสมาชิก</h3>
+      <!-- รอบ 277: ผู้รับไม่ต้องมีบัญชีก่อน และไม่ต้องสร้างบริษัท — อีเมลมีลิงก์ตอบรับ (มีบัญชีแล้ว = เข้าสู่ระบบแล้วเข้าบริษัททันที · ยังไม่มี = สมัครแล้วผูกเข้าบริษัทนี้) -->
+      <p style="font-size:13px;color:#64748b;margin-bottom:16px">ระบบส่งอีเมลลิงก์ตอบรับ — ผู้รับ<b>ไม่ต้องสร้างบริษัท</b> · มีบัญชีแล้วเข้าสู่ระบบแล้วเข้าบริษัททันที · ยังไม่มีบัญชีสมัครได้จากลิงก์ ·
+        ถ้า<b>ไม่เลือกบทบาท</b> ผู้รับจะเข้ามาแบบ "ยังไม่มีสิทธิ์" (เห็นแค่หน้าต้อนรับ) จนกว่าคุณจะตั้งบทบาทในรายชื่อสมาชิก — ระบบแจ้งคุณเมื่อเขาตอบรับ</p>
       <div class="add-form">
         <div class="form-group" style="flex:2;min-width:200px">
           <label class="form-label">อีเมลผู้ใช้</label>
@@ -88,6 +90,7 @@
         <div class="form-group" style="min-width:160px">
           <label class="form-label">บทบาท</label>
           <select id="addRole" class="form-select" onchange="Page.onRoleChange(this.value)">
+            <option value="" selected>— ยังไม่กำหนด (ตั้งสิทธิ์หลังตอบรับ) —</option>
             <option value="Accountant">นักบัญชี</option>
             <option value="Staff">พนักงาน</option>
             <option value="Auditor">ผู้ตรวจสอบ</option>
@@ -99,8 +102,23 @@
             ⚠️ <strong>สิทธิ์เจ้าของ</strong> เห็นข้อมูลทุกอย่าง รวมเงินเดือน + เอกสารลับ จัดการสมาชิก / ลบบริษัทได้ — ให้เฉพาะคนที่ไว้ใจ
           </div>
         </div>
-        <button class="btn btn-primary" onclick="Page.addMember()" style="height:40px;white-space:nowrap">เพิ่มสมาชิก</button>
+        <div class="form-group" id="addCustomRoleGroup" style="min-width:160px;display:none">
+          <label class="form-label" for="addCustomRole">สิทธิ์เมนู (บทบาทกำหนดเอง)</label>
+          <select id="addCustomRole" class="form-select"><option value="">— ไม่ผูก —</option></select>
+        </div>
+        <button class="btn btn-primary" onclick="Page.addMember()" style="height:40px;white-space:nowrap">ส่งคำเชิญ</button>
       </div>
+      <div style="display:flex;gap:16px;flex-wrap:wrap;font-size:13px;color:#334155;margin-top:8px">
+        <label title="รอบ 276 — เห็นและแก้ได้เฉพาะเอกสารที่ตัวเองสร้าง (บังคับเฉพาะร่างด้วย)"><input type="checkbox" id="addOwnOnly"> เห็นเฉพาะเอกสารที่ตัวเองสร้าง</label>
+        <label title="รอบ 276 — สร้าง/แก้ได้เฉพาะร่าง ต้องส่งขออนุมัติ"><input type="checkbox" id="addDraftOnly"> สร้าง/แก้ได้เฉพาะร่าง (ส่งขออนุมัติ)</label>
+      </div>
+      <div id="inviteLinkBox" style="display:none;margin-top:10px;font-size:12px;background:#f8fafc;border:1px dashed #94a3b8;border-radius:8px;padding:8px 10px;word-break:break-all"></div>
+    </div>
+
+    <!-- รอบ 277: คำเชิญที่รอตอบรับ (แสดงทันทีหลังกดเชิญ · ส่งซ้ำ/ยกเลิกได้) -->
+    <div class="card" id="pendingInvitesSection" style="padding:0;margin-top:16px;display:none">
+      <div style="padding:16px 20px;border-bottom:1px solid #e2e8f0"><h3 class="card-title" style="margin:0">คำเชิญที่รอตอบรับ</h3></div>
+      <div id="pendingInviteList"></div>
     </div>
 
     <!-- Members List -->
@@ -197,6 +215,8 @@
 
           this.renderQuota();
           this.renderMembers();
+          this.renderCustomRoleSelect();
+          if (isOwner) await this.loadInvitations();
         } catch (e) {
           // รอบ 205 ทีม I: บอกสาเหตุจริงจากเซิร์ฟเวอร์ + ปุ่มลองใหม่ (เดิม toast แล้วรายการค้างว่าง — ผู้ใช้ไม่รู้ว่าโหลดไม่สำเร็จ)
           document.getElementById('memberList').innerHTML =
@@ -263,6 +283,7 @@
               `<option value="${cr.id}" ${m.companyRoleId === cr.id ? 'selected' : ''}>${Layout.esc(cr.icon)} ${Layout.esc(cr.name)}</option>`
             ).join('');
             actions = `
+              ${m.accessPending ? `<button class="btn btn-primary" style="padding:4px 10px;font-size:12px" title="ยืนยันบทบาทปัจจุบันแล้วเปิดใช้งาน (หรือเลือกบทบาท/สิทธิ์เมนูอื่นจากรายการ)" onclick="Page.changeRole('${m.userId}','${Layout.jsArg(m.role)}')">✅ เปิดใช้งานเป็น ${Layout.esc(r.label)}</button>` : ''}
               <select class="form-select" style="width:auto;font-size:12px;padding:4px 8px;height:32px" onchange="Page.changeRole('${m.userId}',this.value)">
                 ${editableRoles.map(rv => `<option value="${rv}" ${m.role===rv?'selected':''}>${ROLES[rv].label}</option>`).join('')}
               </select>
@@ -281,6 +302,7 @@
               <div class="member-name">${Layout.esc(m.fullName)}${isMe?' <span style="color:#94a3b8;font-weight:400;font-size:12px">(คุณ)</span>':''}${m.companyRoleName ? ` <span style="font-size:11px;color:#6366f1">· ${Layout.esc(m.companyRoleName)}</span>` : ''}</div>
               <div class="member-email">${Layout.esc(m.email)}${m.phone?' · '+Layout.esc(m.phone):''}</div>
               <div class="member-meta">เข้าร่วม ${joinDate} · เข้าใช้ล่าสุด ${lastLogin}</div>
+              ${m.accessPending ? `<div class="member-meta" style="color:#b45309;font-weight:600">⏳ ตอบรับคำเชิญแล้ว — รอคุณตั้งบทบาท/สิทธิ์ (ยังใช้งานอะไรไม่ได้) · เลือกบทบาทด้านขวาเพื่อเปิดใช้งาน</div>` : ''}
               ${m.effectiveDocumentRestrictionNotice ? `<div class="member-meta" style="color:#b45309">🔒 ${Layout.esc(m.effectiveDocumentRestrictionNotice)}</div>` : ''}
             </div>
             <div class="member-actions">
@@ -294,6 +316,80 @@
 
       filterMembers() { this.renderMembers(); },
 
+      renderCustomRoleSelect() {
+        const sel = document.getElementById('addCustomRole');
+        const grp = document.getElementById('addCustomRoleGroup');
+        if (!sel || !grp) return;
+        grp.style.display = this.customRoles.length ? '' : 'none';
+        const cur = sel.value;
+        sel.innerHTML = '<option value="">— ไม่ผูก —</option>' + this.customRoles.map(cr =>
+          `<option value="${Layout.esc(cr.id)}">${Layout.esc(cr.icon || '')} ${Layout.esc(cr.name)}</option>`).join('');
+        sel.value = cur;
+      },
+
+      /** รอบ 277 — แถว "รอตอบรับ" (ป้ายบทบาท/สถานะจากเซิร์ฟเวอร์) */
+      async loadInvitations() {
+        const box = document.getElementById('pendingInviteList');
+        const sec = document.getElementById('pendingInvitesSection');
+        try {
+          const res = await API.get(`/api/company/${Layout.getCompanyId()}/invitations`);
+          const rows = (res && res.data) || [];
+          sec.style.display = rows.length ? '' : 'none';
+          box.innerHTML = rows.map(r => {
+            const exp = r.expiresAt ? new Date(r.expiresAt).toLocaleDateString('th-TH', { year:'numeric', month:'short', day:'numeric' }) : '-';
+            const sent = r.lastSentAt ? 'ส่งล่าสุด ' + Page.timeAgo(r.lastSentAt) : 'ยังไม่ได้ส่งอีเมล (คัดลอกลิงก์ด้วยปุ่มส่งซ้ำ)';
+            const expired = r.status === 'Expired';
+            const restrict = (r.ownDocumentsOnly ? ' · เห็นเฉพาะเอกสารตัวเอง' : '') + (r.draftDocumentsOnly ? ' · เฉพาะร่าง' : '');
+            return `<div class="member-card">
+              <div class="member-avatar">✉️</div>
+              <div class="member-info">
+                <div class="member-name">${Layout.esc(r.email)}</div>
+                <div class="member-email">บทบาท: ${Layout.esc(r.roleLabel)}${Layout.esc(restrict)}</div>
+                <div class="member-meta" style="${expired ? 'color:#b91c1c' : ''}">${Layout.esc(r.statusLabel)} · หมดอายุ ${exp} · ${Layout.esc(sent)}${r.invitedByName ? ' · เชิญโดย ' + Layout.esc(r.invitedByName) : ''}</div>
+              </div>
+              <div class="member-actions">
+                <span class="role-badge viewer">⏳ ${expired ? 'หมดอายุ' : 'รอตอบรับ'}</span>
+                <button class="btn btn-outline" style="padding:4px 10px;font-size:12px" onclick="Page.resendInvite('${Layout.jsArg(r.id)}')">ส่งซ้ำ</button>
+                <button class="btn btn-outline" style="color:#ef4444;border-color:#ef4444;padding:4px 10px;font-size:12px" onclick="Page.cancelInvite('${Layout.jsArg(r.id)}','${Layout.jsArg(r.email)}')">ยกเลิกคำเชิญ</button>
+              </div>
+            </div>`;
+          }).join('');
+        } catch (e) {
+          sec.style.display = '';
+          box.innerHTML = `<div style="padding:16px;color:#b91c1c">โหลดคำเชิญที่รอตอบรับไม่สำเร็จ: ${Layout.esc(e.message || '')}</div>`;
+        }
+      },
+
+      showInviteLink(data) {
+        const box = document.getElementById('inviteLinkBox');
+        if (!box) return;
+        if (data && data.inviteLink && !data.emailSent) {
+          box.style.display = '';
+          box.innerHTML = `ระบบยังไม่ได้ส่งอีเมล — คัดลอกลิงก์นี้ส่งให้ ${Layout.esc(data.email || '')} เอง (ใช้ได้ครั้งเดียว · 7 วัน):<br><code>${Layout.esc(data.inviteLink)}</code>`;
+        } else { box.style.display = 'none'; box.innerHTML = ''; }
+      },
+
+      async resendInvite(id) {
+        try {
+          const res = await API.post(`/api/company/${Layout.getCompanyId()}/invitations/${id}/resend`, {});
+          Layout.toast(res.message || 'ส่งคำเชิญซ้ำแล้ว', 'success', 5000);
+          this.showInviteLink(res.data);
+          await this.load();
+        } catch (e) {
+          if (window.QuotaUI && QuotaUI.handleFull(e, () => this.load())) return;
+          Layout.toast(e.message, 'error');
+        }
+      },
+
+      async cancelInvite(id, email) {
+        if (!(await Layout.confirmDanger({ title: 'ยกเลิกคำเชิญ', message: `ยกเลิกคำเชิญของ <b>${Layout.esc(email)}</b> — ลิงก์ในอีเมลจะใช้ไม่ได้อีก และคืนที่นั่ง` }))) return;
+        try {
+          const res = await API.del(`/api/company/${Layout.getCompanyId()}/invitations/${id}`);
+          Layout.toast((res && res.message) || 'ยกเลิกคำเชิญแล้ว');
+          await this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
       onRoleChange(role) {
         // Owner is high-privilege — show a warning banner so the action
         // can't be made by accident.
@@ -304,18 +400,21 @@
         const api = Layout.api(); if (!api) return;
         const email = document.getElementById('addEmail').value.trim();
         const role = document.getElementById('addRole').value;
+        const customRoleId = (document.getElementById('addCustomRole') || {}).value || '';
+        const own = !!(document.getElementById('addOwnOnly') || {}).checked;
+        const draft = !!(document.getElementById('addDraftOnly') || {}).checked;
         if (!email) { Layout.toast('กรุณากรอกอีเมล', 'error'); return; }
-        if (role === 'Owner' && !confirm(`เพิ่ม ${email} เป็น "เจ้าของ" ของบริษัทนี้?\n\nคนนี้จะ:\n• เห็นข้อมูลทั้งหมด รวมเงินเดือน + เอกสารลับ\n• จัดการสมาชิกคนอื่นได้\n• ลบ / โอน บริษัทได้\n\nให้เฉพาะคนที่ไว้ใจระดับเดียวกับคุณ`)) return;
+        if (role === 'Owner' && !confirm(`เชิญ ${email} เป็น "เจ้าของ" ของบริษัทนี้?\n\nคนนี้จะ:\n• เห็นข้อมูลทั้งหมด รวมเงินเดือน + เอกสารลับ\n• จัดการสมาชิกคนอื่นได้\n• ลบ / โอน บริษัทได้\n\nให้เฉพาะคนที่ไว้ใจระดับเดียวกับคุณ`)) return;
         try {
-          // Response shape: { success, data: { wasInvited, email, invitationId }, message }
-          const res = await api.addMember(email, role);
-          const wasInvited = res && res.data && res.data.wasInvited;
-          if (wasInvited) {
-            Layout.toast(`📩 ส่งคำเชิญถึง ${email} แล้ว — ผู้รับจะได้รับลิงก์สมัครและเข้าร่วมทีมในอีเมล`, 'success', 5500);
-          } else {
-            Layout.toast(role === 'Owner' ? '⭐ เพิ่มเจ้าของสำเร็จ' : 'เพิ่มสมาชิกสำเร็จ');
-          }
+          // รอบ 277: role ว่าง + ไม่ผูกบทบาทกำหนดเอง = "ยังไม่กำหนดบทบาท" (เซิร์ฟเวอร์ตัดสินผล) · ข้อความผลมาจากเซิร์ฟเวอร์
+          const res = await api.addMember(email, role || null, { companyRoleId: customRoleId || null, ownDocumentsOnly: own, draftDocumentsOnly: draft });
+          Layout.toast((res && res.message) || `ส่งคำเชิญถึง ${email} แล้ว`, 'success', 6000);
+          this.showInviteLink(res && res.data);
           document.getElementById('addEmail').value = '';
+          document.getElementById('addRole').value = '';
+          if (document.getElementById('addCustomRole')) document.getElementById('addCustomRole').value = '';
+          if (document.getElementById('addOwnOnly')) document.getElementById('addOwnOnly').checked = false;
+          if (document.getElementById('addDraftOnly')) document.getElementById('addDraftOnly').checked = false;
           document.getElementById('ownerWarning').style.display = 'none';
           await this.load();
         } catch (e) {

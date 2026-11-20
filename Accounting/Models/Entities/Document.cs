@@ -7,6 +7,11 @@ namespace Accounting.Models.Entities;
 /// </summary>
 public class Document : TenantEntity
 {
+    /// <summary>รอบ 276 (ฝ่ายค้าน LOW-10) — ผู้สร้างเป็น id ผู้ใช้ (ไม่ใช่ข้อความ) · ประทับตอนบันทึกครั้งแรกที่ <c>AccountingDbContext.StampDocumentCreators</c>
+    /// จาก <c>CreatedBy</c> (id/อีเมลสมาชิก) หรือผู้ใช้ของคำขอที่ถูกจำกัด (เอกสารที่ระบบสร้างในคำขอของเขา เช่น OCR) · null = ระบบสร้าง/ไม่รู้ผู้สร้าง ·
+    /// ผู้อ่าน: ตัวกรองแถว "เห็นเฉพาะของตัวเอง" (ตัวหลัก — ข้อความเป็นทางสำรองของแถวเก่า) · Round276Migration เติมแถวเก่าที่จับคู่ได้แน่นอน</summary>
+    public Guid? CreatedByUserId { get; set; }
+
     public string DocumentNumber { get; set; } = null!;    // running number
     public DocumentType DocumentType { get; set; }
     public DocumentStatus Status { get; set; } = DocumentStatus.Draft;

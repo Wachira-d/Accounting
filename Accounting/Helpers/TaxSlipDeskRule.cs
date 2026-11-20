@@ -9,7 +9,7 @@ namespace Accounting.Helpers;
 /// แต่ <b>ภาษี + เงินเพิ่ม + เบี้ยปรับ ต้องเท่ายอดบนสลิปทุกสตางค์</b> (คำตัดสิน 4.3 · ไม่ต้องมีผู้อนุมัติคนที่สอง — เท่ากับทางนำส่งด้วยมือเดิม)</item>
 /// <item><see cref="LinkProblem"/> — ปิดสลิปด้วยรายการนำส่งที่บันทึกไว้แล้ว (บันทึกมือที่หน้านำส่งของลูกค้าก่อน) แทน "ไม่บันทึก" ที่ส่งการ์ดผิดความจริง</item>
 /// </list>
-/// ไม่เรียก AI · ทุกด่านเลขล้วนตรงตัว (F2 ข้อ 3) · ชุดแก้ฝ่ายค้าน: commit c2de48a8 + 80c51ae9
+/// ไม่เรียก AI · ทุกด่านเลขล้วนตรงตัว (F2 ข้อ 3) · ชุดแก้ฝ่ายค้าน: commit c2de48a8 + 80c51ae9 · เลขผู้เสียภาษีเต็ม f32c38ed
 /// </summary>
 public static class TaxSlipDeskRule
 {
@@ -46,12 +46,12 @@ public static class TaxSlipDeskRule
     /// <param name="staffSlipAmount">ยอดบนสลิปที่พนักงานอ่านเอง (ใช้เฉพาะเมื่อระบบอ่านไม่ได้ · audit)</param>
     /// <param name="payDate">วันที่จ่ายที่จะลงบัญชี (ปฏิทินไทย)</param>
     /// <param name="todayThai">วันนี้ตามปฏิทินไทย</param>
-    /// <param name="slipTaxIdOtherCompany">เลขผู้เสียภาษีบนสลิป (แบบปิดบัง) อ่านได้และไม่ตรงบริษัทที่เลือก</param>
+    /// <param name="taxId">ผลเทียบเลขผู้เสียภาษีบนสลิปกับบริษัทที่เลือก (<see cref="TaxIdVerdict"/>) · <paramref name="staffConfirmedTaxId"/> ดู <see cref="TaxIdProblem"/></param>
     public static string? ManualProblem(string type, decimal tax, decimal surcharge, decimal penalty, decimal? slipAmount, decimal? staffSlipAmount,
-        DateTime? payDate, DateTime todayThai, bool slipTaxIdOtherCompany = false, string? slipAgency = null)
+        DateTime? payDate, DateTime todayThai, TaxIdCheck taxId = TaxIdCheck.NoTaxId, string? slipAgency = null, bool staffConfirmedTaxId = false)
     {
         if (!ProviderConsent.TaxTypes.Any(t => t.Type == type)) return "แบบนำส่งนี้ไม่อยู่ในรายการที่โต๊ะสลิปบันทึกได้";
-        if (slipTaxIdOtherCompany) return "เลขผู้เสียภาษีบนสลิปไม่ตรงบริษัทที่เลือก — สลิปนี้อาจเป็นของบริษัทอื่น";
+        if (TaxIdProblem(taxId, staffConfirmedTaxId) is { } tp) return tp;
         if (AgencyTypeProblem(slipAgency, type) is { } ap) return ap + " — ไม่บันทึก";
         if (tax <= 0m) return "ยอดภาษีต้องมากกว่า 0";
         if (surcharge < 0m || penalty < 0m) return "เงินเพิ่ม/เบี้ยปรับติดลบไม่ได้";
@@ -81,22 +81,50 @@ public static class TaxSlipDeskRule
         };
     }
 
-    /// <summary>รอบ 275 แพ็ก D (ฝ่ายค้าน MED-1): เลขผู้เสียภาษีบนสลิป (เก็บแบบปิดบัง) อ่านได้และไม่ตรงบริษัทนี้ — ตัวเดียวของบันทึกเอง/ผูก/ตัวเลือกบนโต๊ะ ·
-    /// สลิปไม่มีเลข/บริษัทไม่มีเลข 13 หลัก ⇒ false (ไม่รู้ ไม่ใช่ขัดกัน)</summary>
-    public static bool SlipTaxIdOther(string? slipTaxIdMasked, string? companyTaxId)
-        => slipTaxIdMasked != null && ThaiTaxId.Normalize(companyTaxId).Length == 13 && TaxSlipReplyCard.MaskTaxId(companyTaxId) != slipTaxIdMasked;
+    /// <summary>ผลเทียบเลขผู้เสียภาษีบนสลิปกับบริษัท</summary>
+    public enum TaxIdCheck
+    {
+        /// <summary>สลิปไม่มีเลขผู้เสียภาษี (เช่น สปส. · OCR อ่านไม่ได้) — ไม่มีอะไรให้ขัด</summary>
+        NoTaxId,
+        Match,
+        Mismatch,
+        /// <summary>แถวเก่าไม่มีค่าเทียบเลขเต็ม และ 7 หลักแรกตรง — ตัดสินไม่ได้ ⇒ พนักงานต้องยืนยันจากรูป (ห้ามปล่อยผ่านเงียบ)</summary>
+        Undecided,
+    }
+
+    /// <summary>รอบ 275 แพ็ก D (ฝ่ายค้าน MED-1 · ผู้ประสานงาน): เทียบเลขผู้เสียภาษีบนสลิปกับบริษัท — ตัวเดียวของบันทึกเอง/ผูก/ตัวเลือกบนโต๊ะ ·
+    /// ใช้ค่าเทียบเลขเต็ม (<paramref name="slipTaxIdHash"/> = <c>TaxSlipRefHash.TaxId</c>) ก่อน · เลขปิดบังเปิดแค่ 7 หลักแรก จึงใช้ได้แค่ "ไม่ตรงแน่นอน" ·
+    /// บริษัทไม่มีเลข 13 หลักแต่สลิปมีเลข ⇒ <see cref="TaxIdCheck.Undecided"/></summary>
+    /// <param name="companyTaxIdHash">ค่าเทียบของเลขบริษัท (ผู้เรียกคำนวณด้วย <c>TaxSlipRefHash.TaxId</c> — helper นี้ pure)</param>
+    public static TaxIdCheck TaxIdVerdict(string? slipTaxIdMasked, string? slipTaxIdHash, string? companyTaxId, string? companyTaxIdHash)
+    {
+        if (slipTaxIdMasked == null && slipTaxIdHash == null) return TaxIdCheck.NoTaxId;
+        if (slipTaxIdHash != null && companyTaxIdHash != null)
+            return string.Equals(slipTaxIdHash, companyTaxIdHash, StringComparison.Ordinal) ? TaxIdCheck.Match : TaxIdCheck.Mismatch;
+        if (slipTaxIdMasked != null && ThaiTaxId.Normalize(companyTaxId).Length == 13 && TaxSlipReplyCard.MaskTaxId(companyTaxId) != slipTaxIdMasked)
+            return TaxIdCheck.Mismatch;
+        return TaxIdCheck.Undecided;
+    }
+
+    /// <summary>เหตุที่ไม่ให้ใช้สลิปกับบริษัทนี้ · null = ใช้ได้ · <paramref name="staffConfirmed"/> = พนักงานติ๊กว่าตรวจเลขบนรูปสลิปแล้ว (ใช้ได้เฉพาะ Undecided · audit)</summary>
+    public static string? TaxIdProblem(TaxIdCheck check, bool staffConfirmed) => check switch
+    {
+        TaxIdCheck.Mismatch => "เลขผู้เสียภาษีบนสลิปไม่ตรงบริษัทนี้ — สลิปนี้อาจเป็นของบริษัทอื่น",
+        TaxIdCheck.Undecided when !staffConfirmed => "ระบบเทียบเลขผู้เสียภาษีบนสลิปกับบริษัทนี้ให้แน่นอนไม่ได้ (สลิปรับก่อนมีค่าเทียบเลขเต็ม) — เปิดรูปสลิปตรวจเลขแล้วติ๊กยืนยัน",
+        _ => null,
+    };
 
     /// <summary>ปิดสลิปด้วยรายการนำส่งที่มีอยู่ได้ไหม · null = ได้</summary>
     /// <param name="remittanceTotal">ภาษี + เงินเพิ่ม + เบี้ยปรับ + ค่าปรับ ของรายการนำส่ง</param>
     /// <param name="linkedSlipId">รายการนำส่งผูกสลิปอื่นอยู่แล้ว</param>
-    /// <param name="slipTaxIdOtherCompany">เลขผู้เสียภาษีบนสลิปไม่ตรงบริษัทของรายการนำส่ง (<see cref="SlipTaxIdOther"/>)</param>
+    /// <param name="taxId">ผลเทียบเลขผู้เสียภาษีบนสลิปกับบริษัทของรายการนำส่ง (<see cref="TaxIdVerdict"/>) · <paramref name="staffConfirmedTaxId"/> ดู <see cref="TaxIdProblem"/></param>
     /// <param name="slipAgency">หน่วยงานบนสลิป · <paramref name="remittanceType"/> แบบของรายการนำส่ง (<see cref="AgencyTypeProblem"/>)</param>
     public static string? LinkProblem(decimal? slipAmount, decimal remittanceTotal, bool remittanceDeleted, Guid? linkedSlipId,
-        bool slipTaxIdOtherCompany = false, string? slipAgency = null, string? remittanceType = null)
+        TaxIdCheck taxId = TaxIdCheck.NoTaxId, string? slipAgency = null, string? remittanceType = null, bool staffConfirmedTaxId = false)
     {
         if (remittanceDeleted) return "รายการนำส่งนี้ถูกยกเลิกแล้ว";
         if (linkedSlipId != null) return "รายการนำส่งนี้ผูกกับสลิปอื่นแล้ว";
-        if (slipTaxIdOtherCompany) return "เลขผู้เสียภาษีบนสลิปไม่ตรงบริษัทของรายการนำส่งนี้";
+        if (TaxIdProblem(taxId, staffConfirmedTaxId) is { } tp) return tp;
         if (remittanceType != null && AgencyTypeProblem(slipAgency, remittanceType) is { } ap) return ap;
         if (slipAmount is not decimal p) return "ระบบอ่านยอดบนสลิปไม่ได้ — ผูกได้เมื่อรู้ยอดบนสลิป (ใช้ “บันทึกเอง” แล้วกรอกยอดที่อ่าน)";
         if (R(p) != R(remittanceTotal)) return $"ยอดบนสลิป {p:N2} ไม่ตรงยอดรายการนำส่ง {remittanceTotal:N2}";

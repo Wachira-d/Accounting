@@ -436,4 +436,42 @@ public class TaxSlipDeskRound275DbTests
         using var c2 = DbTestDatabase.TryCreateContext()!;
         Assert.NotNull((await c2.TaxSlipEvidences.AsNoTracking().SingleAsync(x => x.Id == slip.Id)).FilePurgedAt);
     }
+
+    [Fact]
+    public async Task ผู้ประสานงาน_เลขผู้เสียภาษีขึ้นต้น7หลักเหมือนกัน_ถูกกัน_แถวเก่าต้องยืนยันจากรูป_เลขตรงบันทึกได้()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน — ข้าม"); return; }
+        var root = Root();
+        var storage = Storage(root);
+        var s = await SeedAsync(db);   // ลูกค้า 0009990000018 · สลิปของบริษัทอื่น 0009990000026 (เลขปิดบังเหมือนกัน "0009990XXXXXX")
+        var masked = TaxSlipReplyCard.MaskTaxId(SlipCorpusRound272.ClientTaxId);
+        async Task<TaxSlipEvidence> Slip(string? hash)
+        {
+            var x = await SlipAsync(db, storage, s, root);
+            await db.TaxSlipEvidences.Where(r => r.Id == x.Id).ExecuteUpdateAsync(u => u.SetProperty(r => r.TaxIdMasked, masked).SetProperty(r => r.TaxIdHash, hash));
+            return x;
+        }
+        var other = await Slip(TaxSlipRefHash.TaxId(SlipCorpusRound272.OtherClientTaxId));
+        var legacy = await Slip(null);
+        var mine = await Slip(TaxSlipRefHash.TaxId(SlipCorpusRound272.ClientTaxId));
+        var m = new TaxSlipIntakeService.ManualInput(s.Client, "VatPp36", P1.Year, P1.Month, Vat, 0m, 0m, s.BankAccountId, null, null);
+        using var d1 = DbTestDatabase.TryCreateContext()!;
+        var e1 = await Assert.ThrowsAsync<BusinessRuleException>(() => Intake(d1, storage).StaffManualRemitAsync(s.Provider, s.Owner, other.Id, m with { ConfirmTaxId = true }));
+        Assert.Contains("ไม่ตรง", e1.Message);   // ไม่ตรงแน่นอน — ติ๊กยืนยันก็ไม่ผ่าน
+        using var d2 = DbTestDatabase.TryCreateContext()!;
+        var e2 = await Assert.ThrowsAsync<BusinessRuleException>(() => Intake(d2, storage).StaffManualRemitAsync(s.Provider, s.Owner, legacy.Id, m));
+        Assert.Contains("ยืนยัน", e2.Message);   // แถวเก่า ตัดสินไม่ได้ ⇒ ไม่ปล่อยผ่านเงียบ
+        using var c0 = DbTestDatabase.TryCreateContext()!;
+        Assert.False(await c0.StatutoryRemittances.AnyAsync(r => r.CompanyId == s.Client && !r.IsDeleted));
+        // ทิศตรงข้าม: เลขเต็มตรง ⇒ บันทึกได้ · แถวเก่า + พนักงานยืนยันจากรูป ⇒ บันทึกได้ (audit)
+        using var d3 = DbTestDatabase.TryCreateContext()!;
+        await Intake(d3, storage).StaffManualRemitAsync(s.Provider, s.Owner, mine.Id, m);
+        using var d4 = DbTestDatabase.TryCreateContext()!;
+        await Intake(d4, storage).StaffManualRemitAsync(s.Provider, s.Owner, legacy.Id, m with { PeriodYear = P2.Year, PeriodMonth = P2.Month, ConfirmTaxId = true });
+        using var c = DbTestDatabase.TryCreateContext()!;
+        Assert.Equal(TaxSlipIntakeService.Statuses.Remitted, (await c.TaxSlipEvidences.AsNoTracking().SingleAsync(x => x.Id == legacy.Id)).Status);
+        Assert.True(await c.AuditLogs.AnyAsync(a => a.CompanyId == s.Provider && a.EntityId == legacy.Id.ToString() && a.NewValues!.Contains("TaxSlipTaxIdConfirmedByStaff")));
+        Assert.Equal(TaxSlipIntakeService.Statuses.ToStaff, (await c.TaxSlipEvidences.AsNoTracking().SingleAsync(x => x.Id == other.Id)).Status);
+    }
 }

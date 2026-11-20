@@ -159,6 +159,11 @@ public static class NotificationEvents
     /// <summary>ใบที่ขอไว้ได้รับการอนุมัติ (ออกเลขแล้ว) — ผู้รับระบุตัว = ผู้ขอ · ผู้ส่ง: hook ท้าย <c>ApproveDocumentAsync</c></summary>
     public const string DocumentApprovalGranted   = "document.approval_granted";
 
+    // ===== รอบ 277: ทีม/คำเชิญ =====
+    /// <summary>ผู้ถูกเชิญตอบรับคำเชิญเข้าบริษัทแล้ว — ถึงเจ้าของ (กระดิ่ง + อีเมล · ไม่เข้ากลุ่ม LINE: ข้อความมีอีเมลผู้รับเชิญ) ·
+    /// ผู้เชิญไม่ได้ตั้งบทบาท ⇒ ข้อความบอก "รอคุณตั้งสิทธิ์" + ลิงก์หน้าจัดการทีม · ผู้ส่งเดียว <c>CompanyInvitationService.AcceptAsync</c></summary>
+    public const string TeamInvitationAccepted = "team.invitation_accepted";
+
     // ===== Subscription / billing =====
     public const string SubscriptionTrialStarted    = "subscription.trial_started";
     public const string SubscriptionTrialEnding     = "subscription.trial_ending";
@@ -249,6 +254,7 @@ public static class NotificationEvents
         ("Approval", DocumentApprovalRequested, "พนักงานส่งเอกสารร่างขออนุมัติ (ไม่มีกฎอนุมัติที่ตรง) — ถึงผู้อนุมัติเอกสาร"),
         ("Approval", DocumentApprovalReturned, "เอกสารที่ขออนุมัติถูกตีกลับพร้อมเหตุผล — ถึงผู้ขอ"),
         ("Approval", DocumentApprovalGranted, "เอกสารที่ขออนุมัติได้รับการอนุมัติแล้ว — ถึงผู้ขอ"),
+        ("Approval", TeamInvitationAccepted, "ผู้ถูกเชิญตอบรับคำเชิญเข้าบริษัทแล้ว (ถ้ายังไม่ได้ตั้งบทบาท — รอเจ้าของตั้งสิทธิ์)"),
         ("Lodging",  LodgingPaymentUnconfirmed, "ที่พัก: เงินเข้า/ส่งสลิปแล้วแต่ยืนยันห้องไม่ได้ (ต้องตัดสิน)"),
         ("Lodging",  LodgingBookingCreated, "ที่พัก: มีการจองใหม่จากเว็บ"),
         ("Lodging",  LodgingSlipUploaded, "ที่พัก: แขกส่งสลิปรอตรวจ"),

@@ -49,7 +49,7 @@ public class TaxSlipDeskRound275Tests
         Assert.NotNull(TaxSlipDeskRule.ManualProblem("WhtPnd53", 10_000m, 0m, 0m, 10_000m, null, Today.AddDays(1), Today)); // อนาคต
         Assert.NotNull(TaxSlipDeskRule.ManualProblem("WhtPnd53", 10_000m, -1m, 1m, 10_000m, null, Today, Today));
         Assert.NotNull(TaxSlipDeskRule.ManualProblem("Bogus", 10_000m, 0m, 0m, 10_000m, null, Today, Today));
-        Assert.NotNull(TaxSlipDeskRule.ManualProblem("WhtPnd53", 10_000m, 0m, 0m, 10_000m, null, Today, Today, slipTaxIdOtherCompany: true));
+        Assert.NotNull(TaxSlipDeskRule.ManualProblem("WhtPnd53", 10_000m, 0m, 0m, 10_000m, null, Today, Today, taxId: TaxSlipDeskRule.TaxIdCheck.Mismatch));
     }
 
     [Fact]
@@ -73,13 +73,25 @@ public class TaxSlipDeskRound275Tests
         Assert.Null(TaxSlipDeskRule.AgencyTypeProblem(null, "WhtPnd53"));       // ไม่รู้หน่วยงาน ⇒ ไม่บล็อก
         Assert.NotNull(TaxSlipDeskRule.ManualProblem("WhtPnd53", 8_558m, 0m, 0m, 8_558m, null, Today, Today, slipAgency: sso));
         Assert.Null(TaxSlipDeskRule.ManualProblem("SsoSps110", 8_558m, 0m, 0m, 8_558m, null, Today, Today, slipAgency: sso));
-        Assert.NotNull(TaxSlipDeskRule.LinkProblem(8_558m, 8_558m, false, null, false, sso, "WhtPnd53"));
-        Assert.Null(TaxSlipDeskRule.LinkProblem(8_558m, 8_558m, false, null, false, sso, "SsoSps110"));
-        Assert.NotNull(TaxSlipDeskRule.LinkProblem(8_558m, 8_558m, false, null, slipTaxIdOtherCompany: true));
+        Assert.NotNull(TaxSlipDeskRule.LinkProblem(8_558m, 8_558m, false, null, TaxSlipDeskRule.TaxIdCheck.NoTaxId, sso, "WhtPnd53"));
+        Assert.Null(TaxSlipDeskRule.LinkProblem(8_558m, 8_558m, false, null, TaxSlipDeskRule.TaxIdCheck.NoTaxId, sso, "SsoSps110"));
+        Assert.NotNull(TaxSlipDeskRule.LinkProblem(8_558m, 8_558m, false, null, taxId: TaxSlipDeskRule.TaxIdCheck.Mismatch));
         var masked = TaxSlipReplyCard.MaskTaxId(SlipCorpusRound272.ClientTaxId);
-        Assert.False(TaxSlipDeskRule.SlipTaxIdOther(masked, SlipCorpusRound272.ClientTaxId));
-        Assert.True(TaxSlipDeskRule.SlipTaxIdOther(masked, "0105536000011"));   // 7 หลักแรกต่าง (เลขที่เก็บเปิดแค่ 7 หลักแรก — PiiMask.TaxId)
-        Assert.False(TaxSlipDeskRule.SlipTaxIdOther(null, SlipCorpusRound272.OtherClientTaxId));   // สลิปไม่มีเลข ⇒ ไม่รู้
+        // ผู้ประสานงาน: นิติบุคคลที่ขึ้นต้น 7 หลักเหมือนกัน (0009990…) — เลขปิดบังเหมือนกันทุกตัว ⇒ ต้องเทียบด้วยค่าเทียบเลขเต็ม
+        Assert.Equal(TaxSlipReplyCard.MaskTaxId(SlipCorpusRound272.OtherClientTaxId), masked);
+        var slipHash = TaxSlipRefHash.TaxId(SlipCorpusRound272.ClientTaxId);
+        TaxSlipDeskRule.TaxIdCheck V(string? m, string? h, string co) => TaxSlipDeskRule.TaxIdVerdict(m, h, co, TaxSlipRefHash.TaxId(co));
+        Assert.Equal(TaxSlipDeskRule.TaxIdCheck.Mismatch, V(masked, slipHash, SlipCorpusRound272.OtherClientTaxId));   // ต้องถูกกัน
+        Assert.Equal(TaxSlipDeskRule.TaxIdCheck.Match, V(masked, slipHash, SlipCorpusRound272.ClientTaxId));           // ทิศตรงข้าม
+        Assert.Equal(TaxSlipDeskRule.TaxIdCheck.Mismatch, V(masked, null, "0105536000011"));   // แถวเก่า: 7 หลักแรกต่าง ⇒ ไม่ตรงแน่นอน
+        Assert.Equal(TaxSlipDeskRule.TaxIdCheck.Undecided, V(masked, null, SlipCorpusRound272.OtherClientTaxId));   // แถวเก่า 7 หลักแรกตรง ⇒ ตัดสินไม่ได้
+        Assert.Equal(TaxSlipDeskRule.TaxIdCheck.NoTaxId, V(null, null, SlipCorpusRound272.OtherClientTaxId));
+        Assert.NotNull(TaxSlipDeskRule.TaxIdProblem(TaxSlipDeskRule.TaxIdCheck.Undecided, staffConfirmed: false));    // ห้ามปล่อยผ่านเงียบ
+        Assert.Null(TaxSlipDeskRule.TaxIdProblem(TaxSlipDeskRule.TaxIdCheck.Undecided, staffConfirmed: true));        // ทางไปต่อ: ยืนยันจากรูป (audit)
+        Assert.NotNull(TaxSlipDeskRule.TaxIdProblem(TaxSlipDeskRule.TaxIdCheck.Mismatch, staffConfirmed: true));      // ไม่ตรงแน่นอน ยืนยันก็ไม่ได้
+        Assert.NotNull(TaxSlipDeskRule.ManualProblem("VatPp36", 413.56m, 0m, 0m, 413.56m, null, Today, Today, TaxSlipDeskRule.TaxIdCheck.Undecided));
+        Assert.Null(TaxSlipDeskRule.ManualProblem("VatPp36", 413.56m, 0m, 0m, 413.56m, null, Today, Today, TaxSlipDeskRule.TaxIdCheck.Undecided, staffConfirmedTaxId: true));
+        Assert.Null(TaxSlipRefHash.TaxId("12345"));
         // หน่วยงานจากข้อความ: สลิป สปส. จริง (Biller ID + "สมทบ") ⇒ สปส. · สลิปโอนทั่วไป ⇒ ไม่รู้
         Assert.Equal(GovPaymentSlip.Agency.SocialSecurityOffice, GovPaymentSlip.AgencyHint(OcrSlipText.Parse(C.KbizBillSso.Text, 2026, C.KbizBillSso.Qr)));
         Assert.Null(GovPaymentSlip.AgencyHint(OcrSlipText.Parse(C.KbizTransferMemo.Text, 2026, C.KbizTransferMemo.Qr)));
