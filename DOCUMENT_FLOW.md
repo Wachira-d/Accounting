@@ -9922,4 +9922,4 @@ _Last verified against codebase: 2026-11-20 (รอบ 275 แพ็ก C — §
 วันที่ปฏิทินไทยที่ต้นทางการรับชำระ · ข้อความใบเสร็จผ่าน DocumentLabels · คำตัดสิน 275-C-1…9) — commit 96bb5262_
 
 _Last verified against codebase: 2026-11-20 (รอบ 275 แพ็ก A ผลตรวจฝ่ายค้าน MED-1…4 + LOW — heartbeat/ยืนยันลายนิ้วมือที่ระบุ · ประตูเขียนค่าเข้ารหัส · หมุนรอทุกเครื่อง · เมล็ด HMAC ถาวร ·
-เทสต์ `EncryptionWriteGuardRound275ATests` + Db `KeysSecretsRound275ADbTests` — commit (เติมในคอมมิตตามหลัง))_
+เทสต์ `EncryptionWriteGuardRound275ATests` + Db `KeysSecretsRound275ADbTests` — commit 17305b6a)_

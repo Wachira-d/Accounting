@@ -1,7 +1,7 @@
 namespace Accounting.Helpers;
 
 /// <summary>
-/// รอบ 275 แพ็ก A (คีย์และความลับ · T4 M-4) — ลายนิ้วมือคีย์เข้ารหัสบน <c>SiteSettings</c> · idempotent (<c>ADD COLUMN IF NOT EXISTS</c>) ·
+/// รอบ 275 แพ็ก A (คีย์และความลับ · T4 M-4 · commit 2e7199e0 · ฝ่ายค้าน MED-1/3/4 commit 17305b6a) — ลายนิ้วมือคีย์เข้ารหัสบน <c>SiteSettings</c> · idempotent (<c>ADD COLUMN IF NOT EXISTS</c>) ·
 /// ฐานเทสต์ได้คอลัมน์จากโมเดล (EnsureCreated) · ไม่มี backfill: ค่า null = <see cref="KeyFingerprintVerdict.FirstSeen"/> ⇒ เครื่องแรกที่ตรวจบันทึกคีย์ของตัวเอง
 /// </summary>
 public static class Round275AMigration

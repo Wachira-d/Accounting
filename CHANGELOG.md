@@ -7373,4 +7373,4 @@ LOW ลายเซ็นใส่ DocumentId · `Round275BMigration` เติ�
 _รอบ 275 แพ็ก A ผลตรวจฝ่ายค้าน (2026-11-20 · ไม่พบ HIGH): MED-1 ยืนยัน "ลายนิ้วมือที่ระบุ" จาก heartbeat ต่อเครื่อง (`EncryptionKeyHeartbeats`) · เครื่องที่ตอบใช้คีย์อื่น ⇒ 409 ·
 MED-2 `EncryptionWriteGuard` — เครื่องคีย์ไม่ตรงหยุดเข้ารหัสค่าใหม่ (ความลับ + PII · 503 ข้อความไทย · อ่านไม่กระทบ) · MED-3 `RotationPending` จนทุกเครื่องรายงานคีย์ใหม่/ผู้ดูแลยืนยัน ·
 MED-4 กุญแจ HMAC สลิปภาษี/OTP จากเมล็ดถาวร `SiteSettings.HmacSeedProtected` (`HmacSeedBootstrap`) · LOW ลายนิ้วมือจากกุญแจ PBKDF2 · ยืนยันแบบมีเงื่อนไขค่าเดิม · รอบข้ามสแกนลงชื่อ `…Skipped` ·
-คำตัดสิน 275-A-8…12 · เทสต์ P275A-11…14 · runbook ขั้น 4 — commit (เติมในคอมมิตตามหลัง)_
+คำตัดสิน 275-A-8…12 · เทสต์ P275A-11…14 · runbook ขั้น 4 — commit 17305b6a_
