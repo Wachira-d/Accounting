@@ -211,7 +211,7 @@ public class TaxSlipIntakeService
             Agency = (agency.Row?.Agency ?? GovPaymentSlip.AgencyHint(reading))?.ToString(),   /* ฝ่ายค้าน MED-1: สลิปที่ไม่มีแถวผู้รับชำระ (สปส.) ยังรู้หน่วยงานจากข้อความ */
             BankCode = payerBank, BankTxnHash = txnHash, BankTxnLast4 = TaxSlipRefHash.Last4(bill?.TxnNo),
             ControlCodeHash = TaxSlipRefHash.ControlCode(agency.ControlCode), ControlCodeLast4 = TaxSlipRefHash.Last4(agency.ControlCode),
-            TaxIdMasked = agency.TaxId != null ? TaxSlipReplyCard.MaskTaxId(agency.TaxId) : null,
+            TaxIdMasked = agency.TaxId != null ? TaxSlipReplyCard.MaskTaxId(agency.TaxId) : null, TaxIdHash = TaxSlipRefHash.TaxId(agency.TaxId),
             Amount = reading.Amount, Fee = bill?.Fee, SlipDate = reading.Date, Status = Statuses.Received, ShowAmounts = binding.ShowAmounts,
             ClientCompanyId = binding.ClientCompanyIds.Count == 1 ? binding.ClientCompanyIds[0] : null, CreatedBy = source + "-intake",
             SenderUnverified = senderUnverified,
@@ -756,7 +756,7 @@ public class TaxSlipIntakeService
             row.Status = Statuses.Received; row.RuleCode = null; row.Reason = null; row.UpdatedAt = nowUtc;
             row.Amount = reading.Amount; row.SlipDate = reading.Date; row.Fee = reading.Bill?.Fee; row.Agency = (agency.Row?.Agency ?? GovPaymentSlip.AgencyHint(reading))?.ToString();
             row.ControlCodeHash = TaxSlipRefHash.ControlCode(agency.ControlCode); row.ControlCodeLast4 = TaxSlipRefHash.Last4(agency.ControlCode);
-            row.TaxIdMasked = agency.TaxId != null ? TaxSlipReplyCard.MaskTaxId(agency.TaxId) : null;
+            row.TaxIdMasked = agency.TaxId != null ? TaxSlipReplyCard.MaskTaxId(agency.TaxId) : null; row.TaxIdHash = TaxSlipRefHash.TaxId(agency.TaxId);
             await _db.SaveChangesAsync(ct);
             await ProcessAsync(row, reading, agency, null, null, null, ct);
             n++;
@@ -1009,7 +1009,7 @@ public class TaxSlipIntakeService
     public sealed record PendingView(string Type, string Label, int Year, int Month, decimal Amount, string? Blocked = null);   // Blocked = หน่วยงานบนสลิปไม่ตรงแบบ (ฝ่ายค้าน MED-1 · server ตัดสิน)
     public sealed record RemittanceView(Guid Id, string Label, decimal Total, DateTime PayDate, string? Blocked);
     public sealed record ClientManualView(Guid ClientCompanyId, string Name, IReadOnlyList<PendingView> Pending, IReadOnlyList<RemittanceView> Remittances,
-        IReadOnlyList<AccountView> Accounts, string? TaxIdNote);
+        IReadOnlyList<AccountView> Accounts, string? TaxIdNote, bool TaxIdNeedsConfirm = false);   // TaxIdNeedsConfirm = แถวเก่า ตัดสินเลขไม่ได้ ⇒ ต้องติ๊กยืนยันจากรูป
     /// <param name="NeedsSlipAmount">ระบบอ่านยอดบนสลิปไม่ได้ ⇒ ต้องกรอกยอดที่อ่านเอง</param>
     public sealed record ManualOptions(Guid SlipId, decimal? SlipAmount, DateTime? SlipDate, bool NeedsSlipAmount, bool NeedsPayDate, IReadOnlyList<ClientManualView> Clients);
 
@@ -1025,6 +1025,7 @@ public class TaxSlipIntakeService
         var list = new List<ClientManualView>();
         foreach (var co in cos.OrderBy(c => c.Name))
         {
+            var taxId = TaxSlipDeskRule.TaxIdVerdict(row.TaxIdMasked, row.TaxIdHash, co.TaxId, TaxSlipRefHash.TaxId(co.TaxId));
             var dash = await _remit.GetDashboardAsync(co.Id, 24, includeOldAnnual: true);
             var pending = dash.Pending.Where(p => ProviderConsent.TaxTypes.Any(t => t.Type == p.RemittanceType))
                 .Select(p => new PendingView(p.RemittanceType, FormLabel(p.RemittanceType, p.PeriodYear, p.PeriodMonth), p.PeriodYear, p.PeriodMonth, p.Amount,
@@ -1039,9 +1040,9 @@ public class TaxSlipIntakeService
             list.Add(new ClientManualView(co.Id, co.Name, pending,
                 recs.Select(r => new RemittanceView(r.Id, FormLabel(r.RemittanceType, r.PeriodYear, r.PeriodMonth), r.Total, r.PayDate,
                     TaxSlipDeskRule.LinkProblem(row.Amount, r.Total, false, r.SlipEvidenceId,
-                        TaxSlipDeskRule.SlipTaxIdOther(row.TaxIdMasked, co.TaxId), row.Agency, r.RemittanceType))).ToList(),
+                        taxId == TaxSlipDeskRule.TaxIdCheck.Mismatch ? taxId : TaxSlipDeskRule.TaxIdCheck.NoTaxId, row.Agency, r.RemittanceType))).ToList(),
                 accs.Select(a => new AccountView(a.Id, AccountLabel(a.BankName, a.AccountNumber), false)).ToList(),
-                TaxSlipDeskRule.SlipTaxIdOther(row.TaxIdMasked, co.TaxId) ? "เลขผู้เสียภาษีบนสลิปไม่ตรงบริษัทนี้" : null));
+                TaxSlipDeskRule.TaxIdProblem(taxId, false), taxId == TaxSlipDeskRule.TaxIdCheck.Undecided));
         }
         return new ManualOptions(row.Id, row.Amount, row.SlipDate, row.Amount == null, row.SlipDate == null, list);
     }
@@ -1049,7 +1050,7 @@ public class TaxSlipIntakeService
     /// <param name="SlipAmount">ยอดบนสลิปที่พนักงานอ่านเอง — ใช้เฉพาะเมื่อระบบอ่านไม่ได้</param>
     /// <param name="PayDate">วันที่จ่ายตามสลิป — ใช้เฉพาะเมื่อระบบอ่านวันที่ไม่ได้</param>
     public sealed record ManualInput(Guid ClientCompanyId, string RemittanceType, int PeriodYear, int PeriodMonth, decimal Tax, decimal Surcharge, decimal Penalty,
-        Guid BankAccountId, decimal? SlipAmount, DateTime? PayDate);
+        Guid BankAccountId, decimal? SlipAmount, DateTime? PayDate, bool ConfirmTaxId = false);
 
     /// <summary>
     /// รอบ 275 แพ็ก D (H1 · คำตัดสิน 4.3) — พนักงาน<b>บันทึกนำส่งเอง</b>จากสลิปที่ระบบจับคู่ไม่ได้ (ปกส. · ธนาคารอื่น · จ่ายช้าไม่มีใบขอชำระ · OCR ล่ม):
@@ -1066,9 +1067,17 @@ public class TaxSlipIntakeService
             throw new BusinessRuleException("บริษัทนี้ไม่ได้ผูกกับช่องทางที่ส่งสลิป — บันทึกจากโต๊ะนี้ไม่ได้", TaxSlipMatch.Codes.TaxId, 400);
         var co = await _db.Companies.AsNoTracking().Where(c => c.Id == m.ClientCompanyId).Select(c => new { c.Name, c.TaxId }).FirstAsync(ct);
         var payDate = row.SlipDate ?? m.PayDate?.Date;
+        var taxId = TaxSlipDeskRule.TaxIdVerdict(row.TaxIdMasked, row.TaxIdHash, co.TaxId, TaxSlipRefHash.TaxId(co.TaxId));
         if (TaxSlipDeskRule.ManualProblem(m.RemittanceType, m.Tax, m.Surcharge, m.Penalty, row.Amount, m.SlipAmount, payDate,
-                ThaiDate.CalendarDateUtc(DateTime.UtcNow), TaxSlipDeskRule.SlipTaxIdOther(row.TaxIdMasked, co.TaxId), row.Agency) is { } problem)
+                ThaiDate.CalendarDateUtc(DateTime.UtcNow), taxId, row.Agency, m.ConfirmTaxId) is { } problem)
             throw new BusinessRuleException(problem, TaxSlipDeskRule.ManualRuleCode, 400);
+        if (taxId == TaxSlipDeskRule.TaxIdCheck.Undecided)
+            // พนักงานยืนยันเลขจากรูป (แถวเก่าไม่มีค่าเทียบเลขเต็ม) — เข้า audit chain ในธุรกรรมเดียวกับการบันทึก (ล้ม ⇒ ไม่มีแถวนี้)
+            _db.AddChainedAuditLog(new AuditLog
+            {
+                CompanyId = providerId, UserId = staffUserId, Action = Accounting.Models.Enums.AuditAction.Update, EntityType = nameof(TaxSlipEvidence), EntityId = row.Id.ToString(),
+                NewValues = JsonSerializer.Serialize(new { @event = "TaxSlipTaxIdConfirmedByStaff", clientId = m.ClientCompanyId, path = "manual" }), Timestamp = DateTime.UtcNow,
+            });
         var label = await ClientAccountLabelAsync(m.ClientCompanyId, m.BankAccountId, ct);
         var cand = new TaxSlipMatch.Candidate(m.ClientCompanyId, m.RemittanceType, m.PeriodYear, m.PeriodMonth,
             Math.Round(m.Tax, 2, MidpointRounding.AwayFromZero), Math.Round(m.Surcharge, 2, MidpointRounding.AwayFromZero), Math.Round(m.Penalty, 2, MidpointRounding.AwayFromZero), null);
@@ -1078,7 +1087,8 @@ public class TaxSlipIntakeService
     }
 
     /// <summary>รอบ 275 แพ็ก D (H1): ปิดสลิปด้วยรายการนำส่งที่บันทึกไว้แล้ว (<see cref="TaxSlipRemitService.LinkAsync"/>) — การ์ด "บันทึกการชำระแล้ว" ตามจริง แทน "ไม่ได้บันทึก"</summary>
-    public async Task StaffLinkAsync(Guid providerId, Guid staffUserId, Guid slipId, Guid clientCompanyId, Guid remittanceId, CancellationToken ct = default)
+    public async Task StaffLinkAsync(Guid providerId, Guid staffUserId, Guid slipId, Guid clientCompanyId, Guid remittanceId, CancellationToken ct = default,
+        bool confirmTaxId = false)
     {
         var row = await _db.TaxSlipEvidences.AsNoTracking().FirstOrDefaultAsync(s => s.Id == slipId && s.CompanyId == providerId, ct) ?? throw new KeyNotFoundException("ไม่พบสลิป");
         if (!StaffCanAct(row, DateTime.UtcNow)) throw new BusinessRuleException("สลิปนี้ไม่ได้รอพนักงานตัดสิน (" + StatusLabel(row.Status) + ")", TaxSlipRemitService.ClosedRuleCode, 409);
@@ -1087,7 +1097,7 @@ public class TaxSlipIntakeService
         try
         {
             linked = await _remitter.LinkAsync(new TaxSlipRemitService.LinkRequest(providerId, slipId, clientCompanyId, remittanceId, staffUserId,
-                await StaffIsClientTaxFilerAsync(clientCompanyId, staffUserId, ct), allowed), ct);
+                await StaffIsClientTaxFilerAsync(clientCompanyId, staffUserId, ct), allowed, confirmTaxId), ct);
         }
         catch (TaxSlipRemitService.TaxSlipGateException gx) { throw new BusinessRuleException("ผูกไม่ได้ — " + gx.Message, gx.RuleCode, 409); }
         var fresh = await _db.TaxSlipEvidences.FirstAsync(s => s.Id == slipId && s.CompanyId == providerId, ct);

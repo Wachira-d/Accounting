@@ -192,8 +192,9 @@ public class TaxSlipRemitService
     /// <summary>รอบ 275 แพ็ก D (H1): ปิดสลิปด้วย<b>รายการนำส่งที่บันทึกไว้แล้ว</b> (บันทึกมือที่หน้านำส่งของลูกค้าก่อน) — แนบสลิปเป็นหลักฐานของรายการนั้น ·
     /// ไม่สร้าง JE/รายการนำส่งใหม่ · ด่านเดียวกับการกดบันทึก (ความยินยอม/หนังสือมอบอำนาจ/ผู้ยื่นภาษีของลูกค้า ใต้ล็อก) · ยอดสลิป = ยอดรายการทุกสตางค์ · audit สองบริษัท</summary>
     /// <param name="AllowedClients">บริษัทที่ช่องทางของสลิปผูก (กฎ M — ห้ามผูกกับบริษัทนอกชุด)</param>
+    /// <param name="StaffConfirmedTaxId">พนักงานติ๊กว่าตรวจเลขผู้เสียภาษีบนรูปแล้ว — ใช้ได้เฉพาะแถวเก่าที่ตัดสินไม่ได้ (<c>TaxSlipDeskRule.TaxIdCheck.Undecided</c>) · audit</param>
     public sealed record LinkRequest(Guid ProviderId, Guid SlipId, Guid ClientCompanyId, Guid RemittanceId, Guid StaffUserId, bool StaffIsClientTaxFiler,
-        IReadOnlyCollection<Guid> AllowedClients);
+        IReadOnlyCollection<Guid> AllowedClients, bool StaffConfirmedTaxId = false);
 
     public sealed record Linked(Guid RemittanceId, string RemittanceType, int PeriodYear, int PeriodMonth, decimal Tax, decimal Surcharge, decimal Penalty, DateTime PayDate);
 
@@ -212,9 +213,10 @@ public class TaxSlipRemitService
                 ?? throw new TaxSlipGateException("ไม่พบรายการนำส่งของบริษัทนี้", TaxSlipDeskRule.LinkRuleCode);
             await _db.Entry(rec).ReloadAsync(ct);
             var recTotal = rec.Amount + rec.LateFee + rec.Penalty + rec.OtherFine;
-            if (TaxSlipDeskRule.LinkProblem(slip.Amount, recTotal, rec.IsDeleted, rec.SlipEvidenceId,
-                    TaxSlipDeskRule.SlipTaxIdOther(slip.TaxIdMasked, await _db.Companies.AsNoTracking().Where(co => co.Id == a.ClientCompanyId).Select(co => co.TaxId).FirstOrDefaultAsync(ct)),
-                    slip.Agency, rec.RemittanceType) is { } problem)
+            var coTaxId = await _db.Companies.AsNoTracking().Where(co => co.Id == a.ClientCompanyId).Select(co => co.TaxId).FirstOrDefaultAsync(ct);
+            var taxIdCheck = TaxSlipDeskRule.TaxIdVerdict(slip.TaxIdMasked, slip.TaxIdHash, coTaxId, TaxSlipRefHash.TaxId(coTaxId));
+            if (TaxSlipDeskRule.LinkProblem(slip.Amount, recTotal, rec.IsDeleted, rec.SlipEvidenceId, taxIdCheck,
+                    slip.Agency, rec.RemittanceType, a.StaffConfirmedTaxId) is { } problem)
                 throw new TaxSlipGateException(problem + " — ไม่ผูก", TaxSlipDeskRule.LinkRuleCode);
             var verdict = await _consent.CheckForWriteAsync(a.ClientCompanyId, a.ProviderId, rec.RemittanceType, recTotal, ct);
             if (!verdict.AllowsStaffClick && !a.StaffIsClientTaxFiler)
@@ -234,7 +236,7 @@ public class TaxSlipRemitService
             var payload = JsonSerializer.Serialize(new
             {
                 @event = "TaxSlipLinkedToRemittance", slipId = slip.Id, remittanceId = rec.Id, type = rec.RemittanceType, year = rec.PeriodYear, month = rec.PeriodMonth,
-                total = recTotal, consentId, staff = a.StaffUserId, controlLast4 = slip.ControlCodeLast4, ruleCode = TaxSlipDeskRule.LinkRuleCode,
+                total = recTotal, consentId, staff = a.StaffUserId, taxIdCheck = taxIdCheck.ToString(), staffConfirmedTaxId = taxIdCheck == TaxSlipDeskRule.TaxIdCheck.Undecided, controlLast4 = slip.ControlCodeLast4, ruleCode = TaxSlipDeskRule.LinkRuleCode,
                 legalReference = TaxSlipMatch.LegalReference,
             });
             _db.AddChainedAuditLog(new AuditLog { CompanyId = a.ClientCompanyId, UserId = a.StaffUserId, Action = AuditAction.Update, EntityType = nameof(StatutoryRemittance),

@@ -4594,14 +4594,12 @@ RULES += [
          before=[("ExecuteSqlRawAsync(", "CountAsync(")],
          why="P1-1 ล็อก License ก่อนนับช่อง (สองคำขอแย่งช่องสุดท้ายไม่ผ่านทั้งคู่) แทน Serializable"),
     # ฝ่ายค้านรอบสาม P2-2: รับคำเชิญตรวจบทบาทซ้ำ (คำเชิญเก่าที่ค้าง)
-    dict(file="Controllers/InvitationController.cs", method="Accept",
+    # รอบ 277: ปุ่มรับ (InvitationController.Accept) + เส้นสมัคร/SSO (AuthService.ConsumeInvitationAsync) รวมเป็นตัวตอบรับเดียว
+    # CompanyInvitationService.AcceptAsync (กติกา _R277_ ล็อกว่าทั้งสองทางเรียกตัวนี้) — ด่าน P2-2 ย้ายมาอยู่ที่นี่จุดเดียว
+    dict(file="Services/Implementations/CompanyInvitationService.cs", method="AcceptAsync",
          must=["OwnershipTransferPolicy.InvitationRoleBlock(inv.Role, inviterIsPlatformAdmin)"],
          before=[("OwnershipTransferPolicy.InvitationRoleBlock(", "_db.CompanyUsers.Add(")],
-         why="P2-2 คำเชิญ SystemAdmin/PlatformSupport ที่ค้างก่อนแก้ห้ามรับได้"),
-    dict(file="Services/Implementations/AuthService.cs", method="ConsumeInvitationAsync",
-         must=["OwnershipTransferPolicy.InvitationRoleBlock(inv.Role, inviterIsPlatformAdmin)"],
-         before=[("OwnershipTransferPolicy.InvitationRoleBlock(", "_db.CompanyUsers.Add(")],
-         why="P2-2 เส้นสมัคร/SSO ที่รับคำเชิญเดินด่านเดียวกับปุ่มรับคำเชิญ"),
+         why="P2-2 คำเชิญ SystemAdmin/PlatformSupport ที่ค้างก่อนแก้ห้ามรับได้ — ทุกทางรับ (ปุ่มรับ · สมัครฟอร์ม · SSO)"),
     dict(file="Services/Implementations/PermissionService.cs", method="HasPermissionAsync",
          must=["BuiltInRolePermissions.Grants(userRole, permissionKey)"],
          forbid=["userRole == UserRole.PlatformSupport) return true", "AccountantDefaultKeys"],
@@ -4928,8 +4926,8 @@ RULES += [
     dict(file=ROLE_PERM, method="GetMyPermissionsAsync", must=["PermissionDeniedMenuIdsAsync("],
          why="A-GW10: เมนูรับชำระออนไลน์ซ่อนเมื่อไม่มีสิทธิ์ (เดิมเห็นแล้วกด 403)"),
     dict(file=ROLE_PERM, method="PermissionDeniedMenuIdsAsync",
-         must=["PaymentGatewayPermissionScope.MenuPermissionKeys", "_permissions.HasPermissionAsync("],
-         why="A-GW10: ตารางเมนู→สิทธิ์ตัวเดียว · ตรวจด้วยด่านเดียวกับ endpoint"),
+         must=["MenuPermissionMap.DeniedMenuIdsAsync(", "_permissions.HasPermissionAsync("],
+         why="A-GW10 + รอบ 277 (_R277_): ตารางเมนู→สิทธิ์ตัวเดียว (MenuPermissionMap รวมหน้ารับชำระ) · ตรวจด้วยด่านเดียวกับ endpoint"),
     # ── ฝ่ายค้านรอบ 201 ทีม GW (GWO-1..7) ──
     dict(file=GW_CTL, method="Receive",
          must=["c.LegacyWebhookEligible", "GatewayWebhookRoute.ConfigsToTry(candidates.Select(Facts), token, now)",
@@ -13013,10 +13011,10 @@ RULES += [
          must_re=[r"if\s*\(\s*!\s*siteQuota\.Allowed\s*\)\s*throw\b"],
          before=[("_quotaGate.LockAsync(", "_quotaGate.CheckAsync("), ("_quotaGate.CheckAsync(", "_db.Sites.Add(")],
          why=_R229Q_WHY + "§C จำนวนเว็บต่อบริษัท ตรวจใต้ล็อกก่อน insert (ทางสร้าง Site ทางเดียว — ทางใหม่ต้องผ่านด่านนี้)"),
-    dict(file="Services/Implementations/CompanyService.cs", method="AddUserAsync",
+    # รอบ 277: ด่านที่นั่งย้ายเข้า EnsureSeatAsync ตัวเดียว (เชิญ · ส่งซ้ำ) — AddUserAsync ต้องเรียกก่อนเพิ่มคำเชิญ (กติกา _R277_) · ไม่มีการเพิ่มสมาชิกตรงแล้ว
+    dict(file="Services/Implementations/CompanyService.cs", method="EnsureSeatAsync",
          must=["_quotaGate.LockAsync(", "_quotaGate.CheckAsync(", "QuotaResources.Users"],
          must_re=[r"if\s*\(\s*!\s*seat\.Allowed\s*\)\s*throw\b"],
-         before=[("_quotaGate.CheckAsync(", "_db.CompanyUsers.Add("), ("_quotaGate.CheckAsync(", "_db.CompanyInvitations.Add(")],
          why=_R229Q_WHY + "แพ็ก 5 ที่นั่ง = ด่านตัวเดียว (เพดานเดิม + override + ที่ซื้อ) ใต้ล็อกก่อนเพิ่มสมาชิก/คำเชิญ"),
     dict(file="Services/Background/AddOnMonthlyBillingJob.cs", method="RunOnce",
          must=["GetEffectivePlanAsync(", "BillQuotaAddOnsAsync("],
@@ -21726,6 +21724,10 @@ RULES += [
          why=_R275D_WHY + "M8 ผลไม่พบเงินออกตรวจซ้ำได้ ไม่ประทับถาวร · ผลเดิมไม่กระดิ่งซ้ำ"),
 ]
 RULES += [   # รอบ 275 แพ็ก D ชุดแก้ฝ่ายค้าน (MED-1…3 · LOW-1…4)
+    dict(file=_R275D_INTAKE, method="IntakeAsync", must=["TaxIdHash = TaxSlipRefHash.TaxId(agency.TaxId)"],
+         why=_R275D_WHY + "ผู้ประสานงาน: เก็บค่าเทียบเลขผู้เสียภาษีเต็ม (HMAC) — เลขปิดบังเปิดแค่ 7 หลักแรก"),
+    dict(file="Helpers/TaxSlipDeskRule.cs", method="TaxIdVerdict", must=["slipTaxIdHash != null && companyTaxIdHash != null", "return TaxIdCheck.Undecided;"],
+         why=_R275D_WHY + "ผู้ประสานงาน: เทียบด้วยค่าเทียบเลขเต็มก่อน · แถวเก่าที่ตัดสินไม่ได้ = Undecided (พนักงานยืนยันจากรูป ไม่ปล่อยผ่าน)"),
     dict(file=_R275D_INTAKE, method="MoveToStaffIfOpenAsync", must=["Statuses.Open.Contains(s.Status)", "ExecuteUpdateAsync("],
          why=_R275D_WHY + "ฝ่ายค้าน LOW-4 ทางล้มย้ายเข้าคิวแบบมีเงื่อนไข (ไม่ทับแถวที่บันทึก/ปิดระหว่างนี้)"),
     dict(file=_R275D_INTAKE, method="ProcessAsync", must=["MoveToStaffIfOpenAsync("],
@@ -21743,14 +21745,15 @@ RULES += [   # รอบ 275 แพ็ก D ชุดแก้ฝ่ายค้
          why=_R275D_WHY + "ฝ่ายค้าน MED-2 (คลาสเดียวกัน) ยกเลิกไม่ทับชำระแล้ว"),
     dict(file=_R275D_REMIT, method="ReleaseOnVoidAsync", must=["slip.ReleasedAt = nowUtc", "r.ReopenedAt = nowUtc"],
          why=_R275D_WHY + "ฝ่ายค้าน MED-3/LOW-3 ปล่อยแล้วนับอายุใหม่ · ใบกลับเปิดต้องแจ้งกลุ่ม"),
-    dict(file=_R275D_REMIT, method="LinkAsync", must=["TaxSlipDeskRule.SlipTaxIdOther(", "slip.Agency, rec.RemittanceType"],
+    dict(file=_R275D_REMIT, method="LinkAsync", must=["TaxSlipDeskRule.TaxIdVerdict(slip.TaxIdMasked, slip.TaxIdHash,", "TaxSlipRefHash.TaxId(coTaxId)", "slip.Agency, rec.RemittanceType, a.StaffConfirmedTaxId"],
          why=_R275D_WHY + "ฝ่ายค้าน MED-1 ผูก: เลขผู้เสียภาษี + หน่วยงานกับแบบ"),
-    dict(file=_R275D_INTAKE, method="StaffManualRemitAsync", must=["TaxSlipDeskRule.SlipTaxIdOther(row.TaxIdMasked, co.TaxId), row.Agency"],
+    dict(file=_R275D_INTAKE, method="StaffManualRemitAsync", must=["TaxSlipDeskRule.TaxIdVerdict(row.TaxIdMasked, row.TaxIdHash, co.TaxId, TaxSlipRefHash.TaxId(co.TaxId))", "taxId, row.Agency, m.ConfirmTaxId", "if (taxId == TaxSlipDeskRule.TaxIdCheck.Undecided)"],
          why=_R275D_WHY + "ฝ่ายค้าน MED-1 บันทึกเอง: หน่วยงานบนสลิปกับแบบ (สลิป สปส. ห้ามลงเป็น ภ.ง.ด.)"),
 ]
 REVIEWER_CASES += [
     ("R275D-6", "AgeOpenRowsAsync", "if (done == 0) break;", "", True),
     ("R275D-7", "LinkAsync", "slip.Agency, rec.RemittanceType", "null, null", True),
+    ("R275D-8", "TaxIdVerdict", "return TaxIdCheck.Undecided;", "return TaxIdCheck.NoTaxId;", True),   # แถวเก่าตัดสินไม่ได้ต้องไม่ปล่อยผ่าน
     ("R275D-1", "LockedSlipAsync", "await _db.Entry(slip).ReloadAsync(ct);", "", True),                       # กลับไปเชื่อ tracker (H2)
     ("R275D-2", "ApplyAndReplyAsync", "if (!Statuses.Open.Contains(fresh.Status))", "if (false)", True),         # ทางล้มเขียนทับ Remitted
     ("R275D-3", "StaffRejectAsync", "var n = await _db.TaxSlipEvidences", "await _storage.DeleteAsync(\"x\", ct); var n = await _db.TaxSlipEvidences", True),   # ลบไฟล์ทันที (M4)
@@ -21930,8 +21933,74 @@ RULES += [
          why=_R276_WHY + "บทบาทผู้รับ DocumentApprover ใช้ตัวตัดสินเดียวกับคิว/ปุ่ม"),
 ]
 
-if __name__ == "__main__":
-    sys.exit(main())
+# ── รอบ 277: เมนูตามสิทธิ์ + คำเชิญเข้าบริษัท (ไม่ต้องสร้างบริษัท · ยังไม่มีสิทธิ์จนเจ้าของตั้ง) ──
+_R277_WHY = "รอบ 277 (เมนูตามสิทธิ์/คำเชิญ): "
+_R277_INV = "Services/Implementations/CompanyInvitationService.cs"
+_R277_CO = "Services/Implementations/CompanyService.cs"
+_R277_AUTH = "Services/Implementations/AuthService.cs"
+RULES += [
+    dict(file="Middleware/TenantAccessMiddleware.cs", method="InvokeAsync",
+         must=["cu.AccessPending", "row.AccessPending", "PendingMemberAccess.IsAllowed(context.Request.Method, path)", "PendingMemberAccess.DeniedMessage"],
+         why=_R277_WHY + "สมาชิกที่ตอบรับคำเชิญแบบไม่กำหนดบทบาท = ทุก API ของบริษัท 403 (ผ่านเฉพาะรายการของ PendingMemberAccess)"),
+    dict(file=ROLE_PERM, method="GetMyPermissionsAsync",
+         must=["cu.AccessPending", "AccessPending: true", "PendingMemberAccess.Notice("],
+         before=[("cu.AccessPending", "cu.CompanyRoleId == null")],
+         why=_R277_WHY + "สมาชิกรอสิทธิ์ต้องไม่ได้ \"*\" (เห็นทุกเมนู) — ตรวจก่อนทาง legacy"),
+    dict(file=ROLE_PERM, method="AssignRoleAsync", must=["cu.AccessPending = false", "PendingMemberAccess.GrantAudit("],
+         why=_R277_WHY + "ผูกบทบาทกำหนดเอง = เจ้าของตั้งสิทธิ์แล้ว (ปลดสถานะ + audit)"),
+    dict(file=_R277_CO, method="UpdateUserRoleAsync", must=["cu.AccessPending = false", "PendingMemberAccess.GrantAudit("],
+         why=_R277_WHY + "เปลี่ยนบทบาทมาตรฐาน = เจ้าของตั้งสิทธิ์แล้ว (ปลดสถานะ + audit)"),
+    dict(file=_R277_CO, method="AddUserAsync",
+         must=["EnsureOwnerAccessAsync(", "OwnershipTransferPolicy.MayAssign(", "EnsureSeatAsync(", "CompanyInvitationPolicy.HashToken(rawToken)",
+               "inv.Token = null", "AddChainedAuditLog(", "SendInvitationEmailAsync(", "i.Status == InvitationStatus.Pending"],
+         forbid=["_db.CompanyUsers.Add("],
+         before=[("EnsureSeatAsync(", "_db.CompanyInvitations.Add(inv)")],
+         why=_R277_WHY + "ทุกอีเมลได้คำเชิญ (ห้ามยัดผู้มีบัญชีเข้าบริษัทเอง) · token เก็บเป็น hash · ที่นั่งใต้ล็อกก่อนเขียน · กันเชิญซ้ำ · audit"),
+    dict(file=_R277_CO, method="ResendInvitationAsync",
+         must=["EnsureOwnerAccessAsync(", "CompanyInvitationPolicy.HashToken(rawToken)", "EnsureSeatAsync(", "i.CompanyId == companyId", "AddChainedAuditLog("],
+         why=_R277_WHY + "ส่งซ้ำ = token ใหม่ (ลิงก์เดิมตาย) · คำเชิญหมดอายุต้องมีที่นั่งว่าง · tenant · audit"),
+    dict(file=_R277_CO, method="CancelInvitationAsync",
+         must=["EnsureOwnerAccessAsync(", "i.CompanyId == companyId", "InvitationStatus.Cancelled", "AddChainedAuditLog("],
+         why=_R277_WHY + "ยกเลิกคำเชิญ: เจ้าของ · tenant · audit"),
+    dict(file=_R277_CO, method="ListInvitationsAsync",
+         must=["EnsureOwnerAccessAsync(", "i.CompanyId == companyId", "CompanyInvitationPolicy.DisplayStatus(", "CompanyInvitationPolicy.RoleLabel("],
+         why=_R277_WHY + "แถวรอตอบรับ: เจ้าของ · tenant · ป้ายจากตัวตัดสินเดียว"),
+    dict(file=_R277_INV, method="AcceptAsync",
+         must_lit=["pg_advisory_xact_lock"],
+         must=["AdvisoryLockKey.QuotaCapacity", "CompanyInvitationPolicy.Check(", "user.Email", "OwnershipTransferPolicy.InvitationRoleBlock(",
+               "_quotaGate.CheckAsync(", "CompanyInvitationPolicy.MembershipFor(", "AccessPending = pending", "InvitationStatus.Accepted",
+               "AddChainedAuditLog(", "NotificationEvents.TeamInvitationAccepted"],
+         before=[("AdvisoryLockKey.QuotaCapacity", "CompanyInvitationPolicy.Check("), ("CompanyInvitationPolicy.Check(", "_db.CompanyUsers.Add("),
+                 ("SaveChangesAsync()", "NotificationEvents.TeamInvitationAccepted")],
+         why=_R277_WHY + "ตอบรับ: ใช้ครั้งเดียวใต้ล็อก · อีเมลตรง · บทบาทแพลตฟอร์มถูกปฏิเสธ · ที่นั่งตรวจซ้ำ · ไม่กำหนดบทบาท = ยังไม่มีสิทธิ์ · audit · แจ้งเจ้าของหลังบันทึก"),
+    dict(file=_R277_INV, method="FindAsync", must=["CompanyInvitationPolicy.HashToken(rawToken)", "i.TokenHash == hash"],
+         forbid=["i.Token =="],
+         why=_R277_WHY + "ค้นคำเชิญด้วย hash เท่านั้น (ห้ามเทียบ token ดิบ)"),
+    dict(file=_R277_AUTH, method="ConsumeInvitationAsync", must=["_invitations.TryAcceptOnSignupAsync("],
+         why=_R277_WHY + "สมัครฟอร์ม/SSO ผ่านลิงก์ใช้ตัวตอบรับเดียวกับหน้าคำเชิญ"),
+    dict(file=_R277_AUTH, method="EvaluateRegistrationAsync", must=["_invitations.IsUsableForEmailAsync("], forbid=["i.Token =="],
+         why=_R277_WHY + "ด่านเปิดรับสมัครตรวจคำเชิญด้วยตัวเดียวกัน (hash)"),
+    dict(file=_R277_AUTH, method="RegisterAsync",
+         must=["ConsumeInvitationAsync(user, request.InvitationToken)", "!consumedInvite && registration.MayCreateCompany"],
+         before=[("ConsumeInvitationAsync(user, request.InvitationToken)", "!consumedInvite && registration.MayCreateCompany")],
+         why=_R277_WHY + "สมัครผ่านลิงก์คำเชิญ = เข้าบริษัทที่เชิญ ไม่สร้างบริษัทใหม่ (แม้ส่งชื่อบริษัทมา)"),
+    dict(file="Controllers/InvitationController.cs", method="Accept", must=["_invitations.AcceptAsync("],
+         why=_R277_WHY + "ตอบรับจากหน้าคำเชิญผ่านตัวตัดสินเดียว"),
+    dict(file="Services/Implementations/QuotaGateService.cs", method="UsersUsedAsync", must=["i.ExpiresAt > now", "i.Status == InvitationStatus.Pending"],
+         why=_R277_WHY + "คำเชิญหมดอายุไม่ล็อกที่นั่งถาวร (CompanyInvitationPolicy.HoldsSeat)"),
+    dict(file="Controllers/AdminController.cs", method="ResendInvitation",
+         must=["CompanyInvitationPolicy.HashToken(rawToken)", "AddChainedAuditLog("], forbid=["inv.Token)"],
+         why=_R277_WHY + "แอดมินส่งซ้ำ = token ใหม่ (ฐานไม่มี token ดิบ) · audit"),
+]
+REVIEWER_CASES += [
+    ("R277-1", "InvokeAsync", "if (row.AccessPending && !PendingMemberAccess.IsAllowed(context.Request.Method, path))",
+     "if (row.AccessPending && false)", True),
+    ("R277-2", "AcceptAsync", "var (role, pending) = CompanyInvitationPolicy.MembershipFor(inv.RoleChosen && customRoleOk, inv.Role);",
+     "var (role, pending) = (inv.Role, false);", True),
+    ("R277-3", "FindAsync", "i.TokenHash == hash", "i.Token == rawToken", True),
+    ("R277-4", "AddUserAsync", "await EnsureSeatAsync(companyId, adding);", "_ = adding;", True),
+]
+
 
 
 # ── รอบ 275 แพ็ก C (ใบเสร็จ/ใบกำกับภาษี ณ วันรับเงิน · คำตัดสิน 275-C-1 · erp-review/2026-11-20/dev-275-C.md) ──
@@ -22027,3 +22096,7 @@ REVIEWER_CASES += [
      "$\"รับชำระเงินตามใบแจ้งหนี้เลขที่ {invoice.DocumentNumber}\"", True),
     ("R275C-5", "UndoInstallmentReclassOnPaymentVoidAsync", "DocumentVoidPreconditions.ReceiptHoldsTaxPointFor(", "false && Equals(", True),
 ]
+
+
+if __name__ == "__main__":
+    sys.exit(main())

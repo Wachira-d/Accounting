@@ -19,12 +19,13 @@ public interface ICompanyService
     Task<List<CompanyResponse>> GetUserCompaniesAsync(Guid userId);
     Task<CompanyResponse> UpdateAsync(Guid companyId, Guid userId, UpdateCompanyRequest request);
     Task<List<CompanyMemberResponse>> GetMembersAsync(Guid companyId, Guid userId);
-    /// <summary>Add (or invite) a user to a company by email. When the email
-    /// matches an existing user the link is created directly. When it
-    /// doesn't, a CompanyInvitation row is created and an email goes out
-    /// with a signup-and-accept link. Result.WasInvited distinguishes the
-    /// two outcomes so the controller can surface the right toast.</summary>
+    /// <summary>เชิญผู้ใช้เข้าบริษัทด้วยอีเมล (รอบ 277: ทุกอีเมลได้คำเชิญ + อีเมลลิงก์ตอบรับ — มีบัญชีแล้วก็ต้องตอบรับเอง ·
+    /// แถว "รอตอบรับ" เกิดทันที) · WasInvited = true เสมอ (คงช่องไว้ให้ผู้เรียกเดิม)</summary>
     Task<AddUserResult> AddUserAsync(Guid companyId, Guid ownerId, AddCompanyUserRequest request);
+    /// <summary>รอบ 277 — คำเชิญที่รอตอบรับ/หมดอายุ (เจ้าของ) · ส่งซ้ำ (token ใหม่ + ต่ออายุ) · ยกเลิก</summary>
+    Task<List<CompanyInvitationResponse>> ListInvitationsAsync(Guid companyId, Guid ownerId);
+    Task<AddUserResult> ResendInvitationAsync(Guid companyId, Guid ownerId, Guid invitationId);
+    Task CancelInvitationAsync(Guid companyId, Guid ownerId, Guid invitationId);
     Task RemoveUserAsync(Guid companyId, Guid ownerId, Guid targetUserId);
     Task DeleteCompanyAsync(Guid companyId, Guid requestingUserId, string confirmName);
     Task UpdateUserRoleAsync(Guid companyId, Guid ownerId, Guid targetUserId, UserRole newRole);

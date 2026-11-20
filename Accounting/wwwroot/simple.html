@@ -213,6 +213,8 @@
         // จะเรียก load() ซ้ำให้อีกครั้ง — จึงเรียกซ้ำได้ไม่มีผลข้างเคียง
         if (!Layout.init('dashboard')) return;
         Layout.setTitle('หน้าหลัก');
+        // รอบ 277: หน้าหลักโหมดง่าย = แดชบอร์ด — ไม่มีสิทธิ์ (เซิร์ฟเวอร์ตัดสิน) ⇒ ไปหน้าแรกที่เข้าได้ก่อนโหลดตัวเลข
+        if (Layout.getCompanyId && Layout.getCompanyId() && !(await Layout.ensurePageAccess('dashboard'))) return;
 
         // Greet + load company name
         const co = Layout.currentCompany || JSON.parse(localStorage.getItem('currentCompany') || '{}');

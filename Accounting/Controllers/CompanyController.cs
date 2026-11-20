@@ -87,15 +87,42 @@ public class CompanyController : ControllerBase
         // Honest message per outcome. When email isn't configured we DON'T
         // claim it was sent — we tell the owner to share the link manually
         // (returned in the payload so the UI can show a copy button).
-        string message;
-        if (!result.WasInvited)
-            message = "เพิ่มผู้ใช้สำเร็จ";
-        else if (result.EmailSent)
-            message = $"ส่งคำเชิญไปยัง {result.Email} แล้ว — ผู้รับจะได้รับลิงก์สมัครและเข้าร่วมทีมในอีเมล";
-        else
-            message = $"สร้างคำเชิญสำหรับ {result.Email} แล้ว แต่ระบบยังไม่ได้ตั้งค่าอีเมล — กรุณาคัดลอกลิงก์ด้านล่างส่งให้ผู้รับเอง";
         return StatusCode(201, new ApiResponse<object>(true,
-            new { result.WasInvited, result.Email, result.InvitationId, result.EmailSent, result.InviteLink }, message));
+            new { result.WasInvited, result.Email, result.InvitationId, result.EmailSent, result.InviteLink }, InviteMessage(result)));
+    }
+
+    /// <summary>ข้อความผลการเชิญ/ส่งซ้ำ — บอกตรงตามที่เกิดจริง (ส่งอีเมลแล้ว / ระบบยังไม่ตั้งค่าอีเมล ⇒ คัดลอกลิงก์เอง)</summary>
+    private static string InviteMessage(AddUserResult result) => result.EmailSent
+        ? $"ส่งคำเชิญไปยัง {result.Email} แล้ว — แถว \u201cรอตอบรับ\u201d อยู่ในรายการด้านล่าง · มีบัญชีแล้วเข้าสู่ระบบแล้วเข้าบริษัททันที · ยังไม่มีบัญชีสมัครได้โดยไม่ต้องสร้างบริษัท"
+        : $"สร้างคำเชิญสำหรับ {result.Email} แล้ว (แถว \u201cรอตอบรับ\u201d) แต่ระบบยังไม่ได้ตั้งค่าอีเมล — กรุณาคัดลอกลิงก์ส่งให้ผู้รับเอง";
+
+    /// <summary>รอบ 277 — คำเชิญที่รอตอบรับ/หมดอายุ (เจ้าของ)</summary>
+    [HttpGet("{companyId:guid}/invitations")]
+    public async Task<ActionResult<ApiResponse<List<CompanyInvitationResponse>>>> GetInvitations(Guid companyId)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        return Ok(new ApiResponse<List<CompanyInvitationResponse>>(true, await _companyService.ListInvitationsAsync(companyId, userId)));
+    }
+
+    /// <summary>รอบ 277 — ส่งคำเชิญซ้ำ (ออกลิงก์ใหม่ · ลิงก์เดิมใช้ไม่ได้ · ต่ออายุ 7 วัน)</summary>
+    [HttpPost("{companyId:guid}/invitations/{invitationId:guid}/resend")]
+    [Accounting.Filters.RequireOwner("ส่งคำเชิญซ้ำ")]
+    public async Task<ActionResult<ApiResponse<object>>> ResendInvitation(Guid companyId, Guid invitationId)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        var result = await _companyService.ResendInvitationAsync(companyId, userId, invitationId);
+        return Ok(new ApiResponse<object>(true,
+            new { result.WasInvited, result.Email, result.InvitationId, result.EmailSent, result.InviteLink }, InviteMessage(result)));
+    }
+
+    /// <summary>รอบ 277 — ยกเลิกคำเชิญ (คืนที่นั่ง)</summary>
+    [HttpDelete("{companyId:guid}/invitations/{invitationId:guid}")]
+    [Accounting.Filters.RequireOwner("ยกเลิกคำเชิญ")]
+    public async Task<ActionResult<ApiResponse<bool>>> CancelInvitation(Guid companyId, Guid invitationId)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        await _companyService.CancelInvitationAsync(companyId, userId, invitationId);
+        return Ok(new ApiResponse<bool>(true, true, "ยกเลิกคำเชิญแล้ว — ลิงก์ในอีเมลใช้ไม่ได้อีก"));
     }
 
     /// <summary>รอบ 201 ทีม PL (C-4 · ข้อ 77): โอนความเป็นเจ้าของ (ผู้ดูแลแพลตฟอร์มส่งมอบบริษัทให้ลูกค้า) — ด่านตัวเดียว

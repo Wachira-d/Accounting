@@ -242,18 +242,24 @@ public class EmailService : IEmailService
     {
         var cfg = await ResolveConfigAsync();
         var acceptLink = $"{cfg.BaseUrl}/accept-invitation.html?token={Uri.EscapeDataString(invitationToken)}";
+        // รอบ 277: ชื่อผู้เชิญ/บริษัท/บทบาท มาจากผู้ใช้ ⇒ HtmlEncode ก่อนต่อ HTML (กฎ #4 C) · ข้อความบอกชัดว่า "ไม่ต้องสร้างบริษัท"
+        // (เดิม "ตอบรับคำเชิญและสร้างบัญชีของคุณ" + หน้าทีมบอก "ต้องสมัครก่อน" ⇒ ผู้รับเข้าใจว่าต้องเปิดบริษัทใหม่)
+        string E(string? v) => System.Net.WebUtility.HtmlEncode(v ?? "");
+        var link = E(acceptLink);
         var html = $@"
             <div style='font-family:sans-serif;max-width:600px;margin:0 auto'>
-                <h2 style='color:#4F46E5'>{cfg.FromName} - คำเชิญเข้าร่วมงาน</h2>
-                <p>สวัสดี {inviteeName},</p>
-                <p><strong>{inviterName}</strong> จากบริษัท <strong>{companyName}</strong> ได้เชิญคุณเข้าร่วมเป็น <strong>{role}</strong></p>
-                <p>กดปุ่มด้านล่างเพื่อตอบรับคำเชิญและสร้างบัญชีของคุณ:</p>
+                <h2 style='color:#4F46E5'>{E(cfg.FromName)} - คำเชิญเข้าร่วมทีม</h2>
+                <p>สวัสดี {E(inviteeName)},</p>
+                <p><strong>{E(inviterName)}</strong> เชิญคุณเข้าร่วมบริษัท <strong>{E(companyName)}</strong> · บทบาท: <strong>{E(role)}</strong></p>
+                <p>กดปุ่มด้านล่างเพื่อตอบรับคำเชิญ — <b>ไม่ต้องสร้างบริษัทใหม่</b>:<br/>
+                   • มีบัญชีอยู่แล้ว: เข้าสู่ระบบด้วยอีเมลนี้ แล้วเข้าบริษัทได้ทันที<br/>
+                   • ยังไม่มีบัญชี: สมัครด้วยอีเมลนี้ (ระบบผูกเข้าบริษัทที่เชิญให้อัตโนมัติ)</p>
                 <p style='text-align:center;margin:32px 0'>
-                    <a href='{acceptLink}' style='background:#4F46E5;color:#fff;padding:12px 32px;border-radius:8px;text-decoration:none;font-weight:600'>ตอบรับคำเชิญ</a>
+                    <a href='{link}' style='background:#4F46E5;color:#fff;padding:12px 32px;border-radius:8px;text-decoration:none;font-weight:600'>ตอบรับคำเชิญ</a>
                 </p>
-                <p style='color:#666;font-size:14px'>ลิงก์นี้จะหมดอายุภายใน 7 วัน</p>
+                <p style='color:#666;font-size:14px'>ลิงก์นี้ใช้ได้ครั้งเดียวและจะหมดอายุภายใน 7 วัน · ถ้าผู้เชิญกดส่งซ้ำ ให้ใช้ลิงก์จากอีเมลฉบับล่าสุด</p>
                 <hr style='border:none;border-top:1px solid #eee;margin:24px 0' />
-                <p style='color:#999;font-size:12px'>หากปุ่มไม่ทำงาน คัดลอกลิงก์นี้ไปวางในเบราว์เซอร์: <br/>{acceptLink}</p>
+                <p style='color:#999;font-size:12px'>หากปุ่มไม่ทำงาน คัดลอกลิงก์นี้ไปวางในเบราว์เซอร์: <br/>{link}</p>
             </div>";
         await SendAsync(to, $"คำเชิญเข้าร่วม {companyName} - {cfg.FromName}", html);
     }

@@ -70,48 +70,30 @@
       }
     }
 
-    function roleLabel(r) {
-      // Server sends UserRole as a string when JSON converter is configured;
-      // fall back to a numeric map if it ever switches to integer.
-      const map = { Owner:'เจ้าของ', Accountant:'นักบัญชี', Staff:'พนักงาน',
-        Auditor:'ผู้ตรวจสอบ', Viewer:'ผู้ดู', ExternalAccountant:'นักบัญชีภายนอก' };
-      const numMap = { 1:'เจ้าของ', 2:'นักบัญชี', 3:'พนักงาน', 4:'ผู้ตรวจสอบ', 5:'ผู้ดู', 6:'นักบัญชีภายนอก' };
-      return map[r] || numMap[r] || r;
-    }
-
+    // รอบ 277: ป้ายบทบาท/สถานะ/ข้อความมาจากเซิร์ฟเวอร์ (CompanyInvitationPolicy) — หน้านี้แสดงอย่างเดียว · ไม่มีตารางบทบาทของตัวเอง
     function renderInvitation(d) {
       const expiresAt = d.expiresAt ? new Date(d.expiresAt).toLocaleDateString('th-TH', { day:'numeric', month:'long', year:'numeric' }) : '-';
       metaEl.innerHTML = `
         <div><b>${escapeHtml(d.inviterName)}</b> เชิญคุณเข้าร่วมบริษัท</div>
         <div><b>${escapeHtml(d.companyName)}</b></div>
-        <div>ในตำแหน่ง <b>${escapeHtml(roleLabel(d.role))}</b></div>
+        <div>บทบาท: <b>${escapeHtml(d.roleLabel)}</b></div>
         <div>ส่งถึง: <b>${escapeHtml(d.email)}</b></div>
-        <div style="color:#64748b">หมดอายุ ${expiresAt}</div>`;
+        <div style="color:#64748b">หมดอายุ ${expiresAt} · <b style="color:#059669">ไม่ต้องสร้างบริษัทใหม่</b></div>`;
       metaEl.classList.remove('hidden');
 
-      // The server marks status as Expired in the preview when ExpiresAt < now,
-      // even if the row hasn't been flipped in the DB yet.
-      if (d.status === 'Expired' || d.status === 2) {
-        errEl.textContent = 'คำเชิญหมดอายุแล้ว — โปรดติดต่อผู้เชิญให้ส่งคำเชิญใหม่';
-        errEl.classList.remove('hidden');
-        return;
-      }
-      if (d.status === 'Cancelled' || d.status === 3) {
-        errEl.textContent = 'คำเชิญนี้ถูกยกเลิกแล้ว';
-        errEl.classList.remove('hidden');
-        return;
-      }
-      if (d.status === 'Accepted' || d.status === 1) {
-        okEl.innerHTML = 'คำเชิญนี้ถูกตอบรับไปแล้ว — <a href="/login.html" style="color:#059669;font-weight:600">เข้าสู่ระบบเพื่อใช้งาน →</a>';
-        okEl.classList.remove('hidden');
+      if (d.status !== 'Pending') {
+        if (d.status === 'Accepted') {
+          okEl.innerHTML = 'คำเชิญนี้ถูกตอบรับไปแล้ว — <a href="/login.html" style="color:#059669;font-weight:600">เข้าสู่ระบบเพื่อใช้งาน →</a>';
+          okEl.classList.remove('hidden');
+        } else {
+          errEl.textContent = d.statusMessage || 'คำเชิญนี้ใช้ไม่ได้';
+          errEl.classList.remove('hidden');
+        }
         return;
       }
 
-      // Pending — decide flow based on whether the user is already signed in.
+      // Pending — ล็อกอินอยู่ = ตอบรับได้เลย (เซิร์ฟเวอร์ตรวจอีเมลตรงคำเชิญ) · ยังไม่ล็อกอิน = มีบัญชีแล้ว → เข้าสู่ระบบ / ยังไม่มี → สมัคร (ไม่สร้างบริษัท)
       const hasToken = !!localStorage.getItem('token');
-      // For an already-signed-in user we offer "Accept now". For a new user
-      // we route them through the signup form (with email pre-filled +
-      // invitation token preserved through register → server-side accept).
       const registerHref = `/register.html?invite=${encodeURIComponent(token)}&email=${encodeURIComponent(d.email)}`;
       const loginHref = `/login.html?invite=${encodeURIComponent(token)}`;
       if (hasToken) {
@@ -119,9 +101,13 @@
           <button id="acceptBtn" class="btn btn-primary btn-lg">✓ ตอบรับคำเชิญ</button>
           <a href="${loginHref}" class="btn btn-secondary" style="text-align:center;text-decoration:none">เข้าสู่ระบบในนามอื่น</a>`;
         document.getElementById('acceptBtn').addEventListener('click', acceptNow);
+      } else if (d.accountExists) {
+        actionsEl.innerHTML = `
+          <div class="alert alert-warn" style="margin:0">อีเมลนี้มีบัญชีอยู่แล้ว — เข้าสู่ระบบด้วย <b>${escapeHtml(d.email)}</b> แล้วระบบพากลับมาตอบรับ</div>
+          <a href="${loginHref}" class="btn btn-primary btn-lg" style="text-align:center;text-decoration:none">เข้าสู่ระบบแล้วตอบรับ</a>`;
       } else {
         actionsEl.innerHTML = `
-          <a href="${registerHref}" class="btn btn-primary btn-lg" style="text-align:center;text-decoration:none">สมัครสมาชิกใหม่และตอบรับ</a>
+          <a href="${registerHref}" class="btn btn-primary btn-lg" style="text-align:center;text-decoration:none">สมัครด้วยอีเมลนี้แล้วเข้าร่วมทีม (ไม่ต้องสร้างบริษัท)</a>
           <a href="${loginHref}" class="btn btn-secondary" style="text-align:center;text-decoration:none">เข้าสู่ระบบ (มีบัญชีแล้ว)</a>`;
       }
       actionsEl.classList.remove('hidden');
@@ -142,15 +128,13 @@
         okEl.textContent = (j.message || 'ตอบรับสำเร็จ') + ' — กำลังพาไปยังบริษัท...';
         okEl.classList.remove('hidden');
         if (j.data && j.data.companyId) {
-          localStorage.setItem('currentCompany', JSON.stringify({ id: j.data.companyId }));
+          localStorage.setItem('currentCompany', JSON.stringify({ id: j.data.companyId, name: j.data.companyName }));
+          try { localStorage.removeItem('myPermissions'); } catch (_) { /* ไม่กระทบ */ }
         }
-        // หน้านี้ไม่ได้โหลด layout.js (เป็นหน้าสาธารณะก่อน login เสร็จ) จึง
-        // คำนวณปลายทางเองแบบเดียวกับ Layout.dashboardUrl() — เดิมพาไป
-        // '/pages/dashboard.html' ที่ไม่มีอยู่จริง ⇒ ผู้ถูกเชิญกดรับแล้วจอตาย
-        // ตั้งแต่ก้าวแรกที่เข้าระบบ
+        // หน้านี้ไม่โหลด layout.js — ยังไม่มีสิทธิ์ ⇒ หน้าต้อนรับ · มีบทบาทแล้ว ⇒ หน้าหลัก (หน้าหลักพาต่อไปหน้าแรกที่เข้าได้เองถ้าไม่มีสิทธิ์แดชบอร์ด)
         setTimeout(() => {
-          location.href = (localStorage.getItem('uiMode') || 'simple') === 'advanced'
-            ? '/app.html' : '/simple.html';
+          location.href = (j.data && j.data.accessPending) ? '/pages/no-access.html'
+            : ((localStorage.getItem('uiMode') || 'simple') === 'advanced' ? '/app.html' : '/simple.html');
         }, 1200);
       } catch (e) {
         errEl.textContent = e.message;

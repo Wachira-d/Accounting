@@ -647,6 +647,8 @@
         Layout.setTitle('แดชบอร์ด');
         const api = Layout.api();
         if (!api) return; // company not selected yet — loadCompanies() will call us again
+        // รอบ 277: ไม่มีสิทธิ์ Reports.Dashboard (เซิร์ฟเวอร์ตัดสิน) ⇒ ไปหน้าแรกที่เข้าได้ ก่อนยิง API แดชบอร์ด (เดิมขึ้น "ไม่มีสิทธิ์ ดูแดชบอร์ดภาพรวม")
+        if (!(await Layout.ensurePageAccess('dashboard'))) return;
         this.applyWidgetVisibility();
 
         try {

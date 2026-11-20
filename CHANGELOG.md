@@ -7357,7 +7357,6 @@ DTO พนักงานส่งป้าย ⛔ แทน ciphertext + ฟอ
 คำตัดสิน 275-A-1…7 · pure + Db `KeysSecretsRound275A*` · กติกา `_R275A_` — commit 2e7199e0 + bc9b6d73_
 
 _รอบ 275 แพ็ก D ชุดแก้ฝ่ายค้าน (ไม่พบ HIGH): MED-1 ผูก/บันทึกเองตรวจเลขผู้เสียภาษี + หน่วยงานกับแบบ (`AgencyTypeProblem` · `GovPaymentSlip.AgencyHint`) · MED-2 งานเบื้องหลัง/ยกเลิกใบเขียนแบบมีเงื่อนไขทีละแถว + Db test แข่งเวลา · MED-3 `ReleasedAt` · LOW-1 การ์ดสรุปต่อกลุ่ม + เพดาน 20 · LOW-2 ใบที่มีสลิปเปิดอ้างไม่หมดอายุ · LOW-3 `PaidBy` + การ์ดใบกลับเปิด (`ReopenedAt`/`ReopenNoticeAt`) · LOW-4 `MoveToStaffIfOpenAsync` — คอลัมน์ใหม่ 3 (Round272Migration)_
-คำตัดสิน 275-A-1…7 · pure + Db `KeysSecretsRound275A*` · กติกา `_R275A_` — commit 2e7199e0 + bc9b6d73_
 
 _Last verified against codebase: 2026-11-20 (รอบ 275 แพ็ก C — ใบเสร็จ/ใบกำกับภาษี ณ วันรับเงิน: ตัวตัดสินเดียว `Helpers/SettlementTaxInvoiceRole` ยุบสูตร "งวดเดียว" 4 สำเนา
 (บันทึกรับชำระ · ออกใบย้อนหลัง · ย้ายการรับชำระ · งานหลังรับชำระ — นับค่าธรรมเนียม/บรรทัดปรับ/ภาษีหัก/ใบลดหนี้ตามลำดับเหตุการณ์ผ่านตัวไล่ยอด `SettlementReceiptTotals.Walk` ตัวเดียว) ·
@@ -7374,7 +7373,7 @@ _รอบ 275 แพ็ก A ผลตรวจฝ่ายค้าน (2026-1
 MED-2 `EncryptionWriteGuard` — เครื่องคีย์ไม่ตรงหยุดเข้ารหัสค่าใหม่ (ความลับ + PII · 503 ข้อความไทย · อ่านไม่กระทบ) · MED-3 `RotationPending` จนทุกเครื่องรายงานคีย์ใหม่/ผู้ดูแลยืนยัน ·
 MED-4 กุญแจ HMAC สลิปภาษี/OTP จากเมล็ดถาวร `SiteSettings.HmacSeedProtected` (`HmacSeedBootstrap`) · LOW ลายนิ้วมือจากกุญแจ PBKDF2 · ยืนยันแบบมีเงื่อนไขค่าเดิม · รอบข้ามสแกนลงชื่อ `…Skipped` ·
 คำตัดสิน 275-A-8…12 · เทสต์ P275A-11…14 · runbook ขั้น 4 — commit 17305b6a_
-(ข) สำเนาผู้ถูกหัก ณ วันออก `WithholdingTaxCerts.PayeeSnapshotJson` (`WhtPayeeSnapshot` · ประทับที่ SaveChanges · backfill) — renderer ×2 · หน้าใบ · รายงาน/ไฟล์ — commit 24aad79a_
+
 _รอบ 276 (2026-11-20 · ความต้องการเจ้าของ "เห็นเฉพาะเอกสารที่ตัวเองสร้าง + เฉพาะร่าง + กดแจ้งให้บัญชีอนุมัติ · แจ้ง LINE กลุ่ม/ส่วนตัว/อีเมล/ในระบบ"):
 ค่าตั้งต่อผู้ใช้/บทบาท (`CompanyUser`/`CompanyRole.OwnDocumentsOnly/DraftDocumentsOnly` · Round276Migration) · ตัวตัดสิน `Helpers/DocumentRestrictionPolicy` ·
 ด่าน `Filters/DocumentRestrictionFilter` + ตัวกรองแถว EF ของ Documents · ด่าน Approve/Void ชั้น service (`DocumentRestrictionGuard`) ·
@@ -7387,8 +7386,17 @@ MED-1 รับหลายใบ/ยกเลิกเดินตัวตั�
 MED-4 เส้นหลังยกเลิกทาง e-Tax · MED-5 วันที่ UTC เท่านั้น · LOW รายงานวันที่ข้ามเดือน/ภาษีหักตามสัดส่วนใบ/งวดปิดไม่พิมพ์ "(บางส่วน)" · คำตัดสิน 275-C-3/4/6/7 ปรับ + 275-C-10…13) — commit 0e43cd18_
 MED-4 เส้นหลังยกเลิกทาง e-Tax · MED-5 วันที่ UTC เท่านั้น · LOW รายงานวันที่ข้ามเดือน/ภาษีหักตามสัดส่วนใบ/งวดปิดไม่พิมพ์ "(บางส่วน)" · คำตัดสิน 275-C-3/4/6/7 ปรับ + 275-C-10…13)_
 
+_รอบ 275 แพ็ก D (ผู้ประสานงาน): ค่าเทียบเลขผู้เสียภาษีเต็ม `TaxSlipEvidences.TaxIdHash` (HMAC เมล็ดถาวร) + `TaxSlipDeskRule.TaxIdVerdict` — นิติบุคคลที่ขึ้นต้น 7 หลักเหมือนกันถูกกัน · แถวเก่าตัดสินไม่ได้ ⇒ พนักงานยืนยันจากรูป (audit) · ลบบรรทัดซ้ำที่เกิดจาก resolve conflict — commit f32c38ed_
+
 _รอบ 276 ชุดแก้ฝ่ายค้าน (2026-11-20 · HIGH 2 · MED 4 · LOW 6): ด่านผูกผู้ใช้+บริษัททุกทางเข้า (รวมไม่มี companyId · accountant-workspace ปิด) · LINE ดูยอด/ถาม/อนุมัติตาม policy เว็บ ·
 แจ้งเตือน/รายการแจ้งเตือนกรองผู้ถูกจำกัด · หมายเหตุผู้ขอไม่เข้ากลุ่ม LINE · ทางเขียนยกตัวกรองแถว (ด่านระดับบริษัทเห็นทั้งบริษัท) + บล็อกอนุมัติใบเกินของผู้ถูกจำกัด ·
 id ใน body 404 · แก้ผู้ติดต่อเดิมไม่ได้ · `Document.CreatedByUserId` + migration · OCR ร่างของตัวเอง · `DocumentRestrictionRouteInventoryTests` · คำตัดสิน 276-9…16 — commit 8a2514f3 + 9ca871bb_
+_รอบ 277 (2026-11-20 · `erp-review/2026-11-20/dev-277-menu-invite.md` · คำตัดสิน 277-1…7): (A) เมนูตามสิทธิ์ — ตาราง `Helpers/MenuPermissionMap`
+(แดชบอร์ด = Reports.Dashboard + หน้ารายงานผู้บริหาร/FP&A/บริหารการเงิน/งบรวม/รอบโอน/ที่พัก + หน้ารับชำระรอบ 201) ⇒ `permissionDeniedMenuIds` · `layout.js`
+`landingUrl`/`ensurePageAccess` (ไม่มีสิทธิ์แดชบอร์ด ⇒ หน้าแรกที่เข้าได้ · ไม่มีเลย ⇒ `/pages/no-access.html`) · command palette/แถบล่าง/ลิงก์หน้าหลักกรองตามสิทธิ์ ·
+(B) คำเชิญ — ทุกอีเมลได้คำเชิญ (เดิมผู้มีบัญชีถูกยัดเข้าบริษัท) · แถวรอตอบรับ + ส่งซ้ำ/ยกเลิกในหน้าทีม · token เก็บ SHA-256 (Round277Migration ย้ายค่าดิบ) ·
+ตอบรับตัวเดียว `CompanyInvitationService` (ปุ่ม/ฟอร์ม/SSO) · ไม่สร้างบริษัท · ไม่เลือกบทบาท ⇒ `CompanyUser.AccessPending` (ทุก API 403 ที่ `TenantAccessMiddleware`) จนเจ้าของตั้ง ·
+แจ้ง `team.invitation_accepted` · ที่นั่งไม่นับคำเชิญหมดอายุ · อีเมลคำเชิญ HtmlEncode + บอก "ไม่ต้องสร้างบริษัท" · เทสต์ `MenuInviteRound277Tests` + Db `TeamInvitationDbTests` +
+sim `menu_landing_sim.js` · กติกา `_R277_` — commit a1ae70d2 + d93800f2_
 
 _รอบ 276 ข้อความตอบกลับ (2026-11-20): ตัวช่วยกลาง `Helpers/RestrictedResponseRedactor` ใช้ทุกทางเขียนที่ยกตัวกรองแถว + ใบซ้ำ — เหตุจากด่านข้ามเอกสาร/อ้างเลขของคนอื่น ⇒ "มีเอกสารอื่นในบริษัทที่…" · DTO แทนเลข/ล้าง id ของคนอื่น · คำตัดสิน 276-17 — commit 401add83_

@@ -136,7 +136,7 @@ public class TaxSlipDeskController : ControllerBase
         catch (BusinessRuleException ex) { return Fail(ex); }
     }
 
-    public sealed record LinkInput(Guid ClientCompanyId, Guid RemittanceId);
+    public sealed record LinkInput(Guid ClientCompanyId, Guid RemittanceId, bool ConfirmTaxId = false);
 
     /// <summary>รอบ 275 แพ็ก D (H1): ปิดสลิปด้วยรายการนำส่งที่บันทึกไว้แล้ว — แนบสลิปเป็นหลักฐาน · การ์ด "บันทึกแล้ว" ตามจริง</summary>
     [HttpPost("slips/{slipId:guid}/link")]
@@ -149,7 +149,7 @@ public class TaxSlipDeskController : ControllerBase
         if (userId == Guid.Empty) return Unauthorized();
         try
         {
-            await _intake.StaffLinkAsync(companyId, userId, slipId, req.ClientCompanyId, req.RemittanceId, ct);
+            await _intake.StaffLinkAsync(companyId, userId, slipId, req.ClientCompanyId, req.RemittanceId, ct, req.ConfirmTaxId);
             return Ok(new ApiResponse<object>(true, null, "ผูกสลิปกับรายการนำส่งแล้ว · แจ้งผลในกลุ่ม/อีเมลแล้ว"));
         }
         catch (KeyNotFoundException ex) { return NotFound(new ApiResponse<object>(false, null, ex.Message)); }

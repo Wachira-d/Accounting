@@ -22,16 +22,12 @@ public class RolePermissionService : IRolePermissionService
         _permissions = permissions;
     }
 
-    /// <summary>รอบ 201 ทีม GW (A-GW10): เมนูที่ผู้ใช้ไม่มีสิทธิ์ตามตาราง <see cref="Accounting.Helpers.PaymentGatewayPermissionScope.MenuPermissionKeys"/> —
+    /// <summary>เมนูที่ผู้ใช้ไม่มีสิทธิ์ตามตาราง <see cref="Accounting.Helpers.MenuPermissionMap.Keys"/> (รอบ 277 · เดิมรอบ 201 GW เฉพาะหน้ารับชำระ) —
     /// ด่านเดียวกับ endpoint ของหน้านั้น (<see cref="IPermissionService.HasPermissionAsync"/>) · ไม่มีตัวตรวจสิทธิ์ = ไม่ตัด (ด่านจริงอยู่ที่ API)</summary>
     private async Task<List<string>?> PermissionDeniedMenuIdsAsync(Guid companyId, Guid userId)
     {
         if (_permissions == null) return null;
-        var denied = new List<string>();
-        foreach (var (menuId, key) in Accounting.Helpers.PaymentGatewayPermissionScope.MenuPermissionKeys)
-            if (!await _permissions.HasPermissionAsync(companyId, userId, key))
-                denied.Add(menuId);
-        return denied.Count == 0 ? null : denied;
+        return await Accounting.Helpers.MenuPermissionMap.DeniedMenuIdsAsync(key => _permissions.HasPermissionAsync(companyId, userId, key));
     }
 
     public async Task<List<CompanyRoleResponse>> GetRolesAsync(Guid companyId, Guid userId)
@@ -242,6 +238,12 @@ public class RolePermissionService : IRolePermissionService
                 .FirstOrDefaultAsync(r => r.Id == request.RoleId && r.CompanyId == companyId)
                 ?? throw new KeyNotFoundException("ไม่พบ Role");
             cu.CompanyRoleId = role.Id;
+            // รอบ 277 — ผูกบทบาทกำหนดเองให้สมาชิกที่ "ยังไม่มีสิทธิ์" = เจ้าของตั้งสิทธิ์แล้ว (ปลดสถานะ) · ถอดบทบาท (RoleId ว่าง) ไม่ปลด
+            if (cu.AccessPending)
+            {
+                cu.AccessPending = false;
+                _db.AddChainedAuditLog(Accounting.Helpers.PendingMemberAccess.GrantAudit(companyId, actingUserId, targetUserId, role.Name));
+            }
         }
 
         await _db.SaveChangesAsync();
@@ -282,6 +284,15 @@ public class RolePermissionService : IRolePermissionService
                 new List<string>(),
                 ownerHiddenMenuIds,
                 isPlatformAdmin);
+        }
+
+        // รอบ 277 (งาน B · คำตัดสิน 277-4): ตอบรับคำเชิญที่ผู้เชิญไม่ได้เลือกบทบาท ⇒ ยังไม่มีสิทธิ์ใด ๆ จนกว่าเจ้าของตั้งบทบาท ·
+        // ด่านจริงอยู่ที่ TenantAccessMiddleware (ทุก API ของบริษัท) — ตรงนี้บอกหน้าเว็บให้แสดงหน้าต้อนรับแทนเมนู
+        if (cu.AccessPending)
+        {
+            var companyName = await _db.Companies.AsNoTracking().Where(c => c.Id == companyId).Select(c => c.Name).FirstOrDefaultAsync();
+            return new MyPermissionsResponse(cu.Role.ToString(), false, new List<string>(), ownerHiddenMenuIds, isPlatformAdmin,
+                AccessPending: true, AccessPendingNotice: Accounting.Helpers.PendingMemberAccess.Notice(companyName));
         }
 
         if (cu.CompanyRoleId == null)

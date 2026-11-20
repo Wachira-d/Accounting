@@ -145,4 +145,7 @@ public class TaxSlipEvidence : TenantEntity
     public DateTime? StaffRemindedAt { get; set; }
     /// <summary>รอบ 275 แพ็ก D (ฝ่ายค้าน MED-3): เวลาที่แถวถูกปล่อยกลับเข้าคิวเพราะรายการนำส่งถูกยกเลิก — อายุคิวนับจากเวลานี้ (ไม่ใช่วันรับสลิป)</summary>
     public DateTime? ReleasedAt { get; set; }
+    /// <summary>รอบ 275 แพ็ก D: ค่าเทียบ (HMAC · <c>TaxSlipRefHash.TaxId</c>) ของเลขผู้เสียภาษีเต็มบนสลิป — <see cref="TaxIdMasked"/> เปิดแค่ 7 หลักแรกจึงแยกบริษัทที่ขึ้นต้นเหมือนกันไม่ได้ ·
+    /// null = แถวก่อนรอบนี้/สลิปไม่มีเลข (ตัดสินไม่ได้ ⇒ พนักงานต้องยืนยันจากรูป)</summary>
+    public string? TaxIdHash { get; set; }
 }
