@@ -21370,7 +21370,7 @@ REVIEWER_CASES += [
 
 
 # ═══ รอบ 275 แพ็ก B (erp-review/2026-11-20/audit-T2-wht-pnd-vat.md · H1 H2 M1–M5 L1 L2 L4 · คำตัดสิน 275-B-1…4) ═══
-_R275B_WHY = "รอบ 275 แพ็ก B (T2 · commit 33b2c7de): "
+_R275B_WHY = "รอบ 275 แพ็ก B (T2 · commit 33b2c7de · ชุดแก้ฝ่ายค้าน 24aad79a): "
 _R275B_TAX = "Services/Implementations/TaxService.cs"
 _R275B_GATE = "Services/Implementations/TaxService.FilingGate.cs"
 RULES += [
@@ -21724,6 +21724,10 @@ RULES += [
          why=_R275D_WHY + "M8 ผลไม่พบเงินออกตรวจซ้ำได้ ไม่ประทับถาวร · ผลเดิมไม่กระดิ่งซ้ำ"),
 ]
 RULES += [   # รอบ 275 แพ็ก D ชุดแก้ฝ่ายค้าน (MED-1…3 · LOW-1…4)
+    dict(file=_R275D_INTAKE, method="IntakeAsync", must=["TaxIdHash = TaxSlipRefHash.TaxId(agency.TaxId)"],
+         why=_R275D_WHY + "ผู้ประสานงาน: เก็บค่าเทียบเลขผู้เสียภาษีเต็ม (HMAC) — เลขปิดบังเปิดแค่ 7 หลักแรก"),
+    dict(file="Helpers/TaxSlipDeskRule.cs", method="TaxIdVerdict", must=["slipTaxIdHash != null && companyTaxIdHash != null", "return TaxIdCheck.Undecided;"],
+         why=_R275D_WHY + "ผู้ประสานงาน: เทียบด้วยค่าเทียบเลขเต็มก่อน · แถวเก่าที่ตัดสินไม่ได้ = Undecided (พนักงานยืนยันจากรูป ไม่ปล่อยผ่าน)"),
     dict(file=_R275D_INTAKE, method="MoveToStaffIfOpenAsync", must=["Statuses.Open.Contains(s.Status)", "ExecuteUpdateAsync("],
          why=_R275D_WHY + "ฝ่ายค้าน LOW-4 ทางล้มย้ายเข้าคิวแบบมีเงื่อนไข (ไม่ทับแถวที่บันทึก/ปิดระหว่างนี้)"),
     dict(file=_R275D_INTAKE, method="ProcessAsync", must=["MoveToStaffIfOpenAsync("],
@@ -21741,14 +21745,15 @@ RULES += [   # รอบ 275 แพ็ก D ชุดแก้ฝ่ายค้
          why=_R275D_WHY + "ฝ่ายค้าน MED-2 (คลาสเดียวกัน) ยกเลิกไม่ทับชำระแล้ว"),
     dict(file=_R275D_REMIT, method="ReleaseOnVoidAsync", must=["slip.ReleasedAt = nowUtc", "r.ReopenedAt = nowUtc"],
          why=_R275D_WHY + "ฝ่ายค้าน MED-3/LOW-3 ปล่อยแล้วนับอายุใหม่ · ใบกลับเปิดต้องแจ้งกลุ่ม"),
-    dict(file=_R275D_REMIT, method="LinkAsync", must=["TaxSlipDeskRule.SlipTaxIdOther(", "slip.Agency, rec.RemittanceType"],
+    dict(file=_R275D_REMIT, method="LinkAsync", must=["TaxSlipDeskRule.TaxIdVerdict(slip.TaxIdMasked, slip.TaxIdHash,", "TaxSlipRefHash.TaxId(coTaxId)", "slip.Agency, rec.RemittanceType, a.StaffConfirmedTaxId"],
          why=_R275D_WHY + "ฝ่ายค้าน MED-1 ผูก: เลขผู้เสียภาษี + หน่วยงานกับแบบ"),
-    dict(file=_R275D_INTAKE, method="StaffManualRemitAsync", must=["TaxSlipDeskRule.SlipTaxIdOther(row.TaxIdMasked, co.TaxId), row.Agency"],
+    dict(file=_R275D_INTAKE, method="StaffManualRemitAsync", must=["TaxSlipDeskRule.TaxIdVerdict(row.TaxIdMasked, row.TaxIdHash, co.TaxId, TaxSlipRefHash.TaxId(co.TaxId))", "taxId, row.Agency, m.ConfirmTaxId", "if (taxId == TaxSlipDeskRule.TaxIdCheck.Undecided)"],
          why=_R275D_WHY + "ฝ่ายค้าน MED-1 บันทึกเอง: หน่วยงานบนสลิปกับแบบ (สลิป สปส. ห้ามลงเป็น ภ.ง.ด.)"),
 ]
 REVIEWER_CASES += [
     ("R275D-6", "AgeOpenRowsAsync", "if (done == 0) break;", "", True),
     ("R275D-7", "LinkAsync", "slip.Agency, rec.RemittanceType", "null, null", True),
+    ("R275D-8", "TaxIdVerdict", "return TaxIdCheck.Undecided;", "return TaxIdCheck.NoTaxId;", True),   # แถวเก่าตัดสินไม่ได้ต้องไม่ปล่อยผ่าน
     ("R275D-1", "LockedSlipAsync", "await _db.Entry(slip).ReloadAsync(ct);", "", True),                       # กลับไปเชื่อ tracker (H2)
     ("R275D-2", "ApplyAndReplyAsync", "if (!Statuses.Open.Contains(fresh.Status))", "if (false)", True),         # ทางล้มเขียนทับ Remitted
     ("R275D-3", "StaffRejectAsync", "var n = await _db.TaxSlipEvidences", "await _storage.DeleteAsync(\"x\", ct); var n = await _db.TaxSlipEvidences", True),   # ลบไฟล์ทันที (M4)
@@ -21858,11 +21863,40 @@ RULES += [
          before=[("DocumentRestrictionGuard.ApplyScope(", "DocumentRestrictionPolicy.Decide("), ("DocumentRestrictionPolicy.Decide(", "Deny(404")],
          forbid=["DocumentOwnerScopeUserId ="],
          why=_R276_WHY + "ด่านทุกคำขอ: ตั้งขอบเขตตัวกรองแถวก่อน แล้วรายการอนุญาต · id ของคนอื่น = 404 · เขียนได้เฉพาะใบ Draft/Rejected (ตั้งขอบเขตผ่าน ApplyScope ตัวเดียว)"),
+    dict(file=_R276_FILTER, method="OnActionExecutionAsync",
+         must=["DocumentRestrictionGuard.StrictestAsync(", "TenantCompanyId.FromHttp(", "BodyReferences(", "OwnScanAsync(",
+               "DocumentRestrictionGuard.LiftRowFilterForWrite(", "IAllowAnonymous"],
+         before=[("BodyReferences(", "DocumentRestrictionGuard.LiftRowFilterForWrite("), ("DocumentRestrictionPolicy.Decide(", "DocumentRestrictionGuard.LiftRowFilterForWrite(")],
+         why=_R276_WHY + "ฝ่ายค้าน: ผูกผู้ใช้+บริษัท (ทางเข้าไม่มี companyId ใช้ค่าเข้มสุด) · id ใน body (MED-5) · สแกนของตัวเอง (LOW-12) · ยกตัวกรองแถวในทางเขียนหลังตรวจ id ครบ (MED-4)"),
+    dict(file="Services/Implementations/LineBotService.cs", method="HandleMessageAsync",
+         must=["DocumentRestrictionGuard.ApplyScope(", "LineCommand.CompanySummary", "LineCommand.AskAssistant", "DocumentApproverDirectory.MayApproveAsync("],
+         before=[("LineCommand.CompanySummary", "ReportableJournal.WherePeriodActivity("), ("LineCommand.AskAssistant", "_chat.AskTenantAsync(")],
+         forbid=["DocumentPermissionHelper.CanApproveAsync("],
+         why=_R276_WHY + "ฝ่ายค้าน HIGH-1: คำสั่ง LINE เดิน policy เดียวกับเว็บ — ดูยอด/ถาม ปิดพร้อมเหตุ · บันทึกได้ร่าง"),
+    dict(file="Services/Implementations/LineBotService.cs", method="HandleImageAsync",
+         must=["DocumentRestrictionGuard.ApplyScope("], before=[("DocumentRestrictionGuard.ApplyScope(", "_ocr.ScanAsync(")],
+         why=_R276_WHY + "ฝ่ายค้าน HIGH-1/LOW-12: OCR ทาง LINE = ร่างของผู้ส่ง (ผู้สร้าง + ห้ามอนุมัติอัตโนมัติ)"),
+    dict(file="Services/Implementations/LineBotService.cs", method="HandlePostbackAsync",
+         must=["LineCommand.Approve"], before=[("LineCommand.Approve", "_docService.ApproveDocumentAsync(")],
+         why=_R276_WHY + "ฝ่ายค้าน HIGH-1: ปุ่มอนุมัติในแชตของผู้ถูกจำกัด ⇒ ตอบเหตุ"),
+    dict(file="Services/Implementations/NotificationEngine.cs", method="DispatchWithOutcomeAsync",
+         must=["DocumentRestrictionGuard.MayReceiveAsync("],
+         why=_R276_WHY + "ฝ่ายค้าน MED-3: ผู้เห็นเฉพาะของตัวเองไม่ได้แจ้งเตือนเรื่องของใบคนอื่น (เส้นบทบาท)"),
+    dict(file="Services/Implementations/NotificationEngine.cs", method="DispatchDirectAsync",
+         must=["DocumentRestrictionGuard.MayReceiveAsync("],
+         why=_R276_WHY + "ฝ่ายค้าน MED-3: เส้นผู้รับระบุตัวใช้ตัวตัดสินเดียวกัน"),
+    dict(file="Services/Implementations/NotificationService.cs", method="GetUserNotificationsAsync", must=["VisibleAsync("],
+         why=_R276_WHY + "ฝ่ายค้าน MED-3: รายการแจ้งเตือนเก่ากรองตามค่าจำกัด"),
+    dict(file="Services/Implementations/NotificationService.cs", method="GetCountAsync", must=["VisibleAsync("],
+         why=_R276_WHY + "ฝ่ายค้าน MED-3: ตัวนับเท่ารายการ"),
+    dict(file=DOC, method="CheckDuplicateAsync", must=["IgnoreQueryFilters()", "DocumentRestrictionPolicy.RedactDuplicate("],
+         why=_R276_WHY + "ฝ่ายค้าน MED-4: ตรวจใบซ้ำทั้งบริษัท คืนแค่ผลตัดสินของใบที่มองไม่เห็น"),
     dict(file="Helpers/DocumentRestrictionGuard.cs", method="EnsureMayFinalizeAsync",
          must=["db.DocumentDraftOnlyRequest", "ForActorAsync(", "DocumentRestrictionPolicy.DraftOnlyRuleCode"],
          why=_R276_WHY + "ด่านชั้น service: ธงของคำขอ (อนุมัติอัตโนมัติที่ประทับป้ายระบบ) หรือผู้กระทำ (id/อีเมล — LINE) ที่ถูกจำกัด ⇒ 403"),
     dict(file=DOC, method="ApproveDocumentAsync#2",
          must=["DocumentRestrictionGuard.EnsureMayFinalizeAsync(_db, companyId, approvedBy,", "DocumentApprovalRequestService.EnsureNotSelfApprovalAsync(",
+               "RestrictedCreatorOverConvertAsync(",
                "DocumentApprovalRequestService.OnDocumentApprovedAsync("],
          before=[("DocumentRestrictionGuard.EnsureMayFinalizeAsync(", "doc.Status != DocumentStatus.Draft"),
                  ("AllocateCreditHoldsAfterApproveAsync(", "DocumentApprovalRequestService.OnDocumentApprovedAsync(")],

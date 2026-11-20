@@ -150,7 +150,10 @@
         const pend = c.pending.map((p, i) => `<option value="${i}" ${p.blocked ? 'disabled' : ''}>${e(p.label)} · ค้าง ${e(Layout.money(p.amount))}${p.blocked ? ' — ' + e(p.blocked) : ''}</option>`).join('');
         const accs = c.accounts.map(a => `<option value="${e(a.id)}">${e(a.label)}</option>`).join('');
         const recs = c.remittances.map(r => `<option value="${e(r.id)}" ${r.blocked ? 'disabled' : ''}>${e(r.label)} · ${e(Layout.money(r.total))} · จ่าย ${e(Layout.date(r.payDate))}${r.blocked ? ' — ' + e(r.blocked) : ''}</option>`).join('');
-        box.innerHTML = `<div style="margin-top:6px"><b>บันทึกเอง</b> <span class="ts-muted">(ภาษี + เงินเพิ่ม + เบี้ยปรับ ต้องเท่ายอดบนสลิป${o.slipAmount != null ? ' ' + e(Layout.money(o.slipAmount)) : ''} ทุกสตางค์)</span></div>`
+        // ผู้ประสานงาน 275-D: แถวเก่าที่ระบบเทียบเลขผู้เสียภาษีเต็มไม่ได้ ⇒ ต้องติ๊กยืนยันจากรูป (server ตัดสินว่าต้องติ๊กไหม)
+        const confirmBox = c.taxIdNeedsConfirm ? `<div style="margin-top:6px"><label for="mt_${e(id)}"><input type="checkbox" id="mt_${e(id)}"> ตรวจเลขผู้เสียภาษีบนรูปสลิปแล้ว ตรงกับ ${e(c.name)}</label></div>` : '';
+        box.innerHTML = (c.taxIdNote ? `<div class="ts-muted" style="color:#b45309">${e(c.taxIdNote)}</div>` : '') + confirmBox
+          + `<div style="margin-top:6px"><b>บันทึกเอง</b> <span class="ts-muted">(ภาษี + เงินเพิ่ม + เบี้ยปรับ ต้องเท่ายอดบนสลิป${o.slipAmount != null ? ' ' + e(Layout.money(o.slipAmount)) : ''} ทุกสตางค์)</span></div>`
           + (pend ? `<label for="mp_${e(id)}" class="ts-muted">งวดค้าง</label> <select id="mp_${e(id)}" class="form-select" style="max-width:280px">${pend}</select>` : '<div class="ts-muted">ไม่มีงวดค้างในสมุดของบริษัทนี้ — ลงรายการของงวดที่หน้าบริษัทลูกค้าก่อน</div>')
           + ` <label for="ms_${e(id)}" class="ts-muted">เงินเพิ่ม</label> <input id="ms_${e(id)}" class="form-input" style="max-width:110px" inputmode="decimal" value="0">`
           + ` <label for="mx_${e(id)}" class="ts-muted">เบี้ยปรับ</label> <input id="mx_${e(id)}" class="form-input" style="max-width:110px" inputmode="decimal" value="0">`
@@ -175,6 +178,7 @@
             surcharge: num(document.getElementById('ms_' + id)), penalty: num(document.getElementById('mx_' + id)), bankAccountId: acc,
             slipAmount: o.needsSlipAmount ? num(document.getElementById('ma_' + id)) : null,
             payDate: o.needsPayDate ? (document.getElementById('md_' + id).value || null) : null,
+            confirmTaxId: !!(document.getElementById('mt_' + id) || {}).checked,
           });
           Layout.toast(r?.message || 'บันทึกแล้ว', 'success'); await this.load();
         } catch (e) { Layout.toast(e.message || 'บันทึกไม่สำเร็จ', 'error'); btn.disabled = false; }
@@ -183,7 +187,7 @@
         const o = this.manual[id], c = o.clients[Number(document.getElementById('mc_' + id).value)], rid = document.getElementById('mr_' + id).value;
         if (!c || !rid) { Layout.toast('เลือกรายการนำส่ง', 'error'); return; }
         btn.disabled = true;
-        try { const r = await API.post(`${this.base()}/slips/${id}/link`, { clientCompanyId: c.clientCompanyId, remittanceId: rid }); Layout.toast(r?.message || 'ผูกแล้ว', 'success'); await this.load(); }
+        try { const r = await API.post(`${this.base()}/slips/${id}/link`, { clientCompanyId: c.clientCompanyId, remittanceId: rid, confirmTaxId: !!(document.getElementById('mt_' + id) || {}).checked }); Layout.toast(r?.message || 'ผูกแล้ว', 'success'); await this.load(); }
         catch (e) { Layout.toast(e.message || 'ผูกไม่สำเร็จ', 'error'); btn.disabled = false; }
       },
       async toggle(on) {

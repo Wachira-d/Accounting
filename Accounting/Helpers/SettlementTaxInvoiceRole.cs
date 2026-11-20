@@ -23,7 +23,7 @@ namespace Accounting.Helpers;
 /// งวดที่ปิดยอดถือ VAT ที่เหลือทั้งหมด (ผลรวมทุกงวด = VAT ของใบแจ้งหนี้ทุกสตางค์) (<see cref="Mode.Installment"/>)</item>
 /// <item>ขายสินค้า (ภาษีขายไม่ได้พัก — จุดความรับผิด ม.78 เกิดตอนส่งมอบ) รับเป็นงวด ⇒ คงเดิม (ใบรับเปล่า) · ไม่รู้ว่าพักหรือไม่ (ผังไม่มี 21913) ⇒ คิวให้คนตัดสิน</item>
 /// </list>
-/// <para>คอมมิตหลัก 96bb5262 (DOCUMENT_FLOW §3.4b-275) · G6: pure · ผู้เรียก (ล็อกใน <c>tools/required_call_site_check.py</c> กติกา <c>_R275C_</c>): <c>CreatePaymentAsync</c> · <c>IssueReceiptForPaymentAsync</c> ·
+/// <para>คอมมิตหลัก 96bb5262 · ชุดแก้ฝ่ายค้าน 0e43cd18 (DOCUMENT_FLOW §3.4b-275) · G6: pure · ผู้เรียก (ล็อกใน <c>tools/required_call_site_check.py</c> กติกา <c>_R275C_</c>): <c>CreatePaymentAsync</c> · <c>IssueReceiptForPaymentAsync</c> ·
 /// ย้ายการรับชำระ (<c>DocumentService.ReceiptLink</c>) · คิว/ปุ่มออกใบกำกับเพิ่ม (<c>DocumentService.SettlementTaxInvoice</c>) · ตัวประมาณ <see cref="MayCarryVat"/> ของงานหลังรับชำระ</para>
 /// </summary>
 public static class SettlementTaxInvoiceRole
