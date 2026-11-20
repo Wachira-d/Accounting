@@ -20,7 +20,7 @@
 | ข้อ | สถานะ |
 | --- | --- |
 | 1. หาโค้ด + ยืนยันสาเหตุ | ✅ ตามตารางบน |
-| 2. `#HeyNextAcc` ในกลุ่มที่ผูกแล้ว ⇒ การ์ดสถานะ (ผูกกับใคร ทุกราย · topics · ความยินยอม 272 · ลิงก์ยืนยันบนเว็บ · เมนูส่งคำขอของพนักงาน) · `#HeyNextAcc เพิ่ม` ⇒ รหัส · ไม่มีเลขภาษี/ยอดเงิน | ✅ แก้แล้ว (sha ในคอมมิตตามหลัง) · `LineGroupBindRule.ShouldIssueCode` · `Replies.Status` · `ProviderConsent.Classify` |
+| 2. `#HeyNextAcc` ในกลุ่มที่ผูกแล้ว ⇒ การ์ดสถานะ (ผูกกับใคร ทุกราย · topics · ความยินยอม 272 · ลิงก์ยืนยันบนเว็บ · เมนูส่งคำขอของพนักงาน) · `#HeyNextAcc เพิ่ม` ⇒ รหัส · ไม่มีเลขภาษี/ยอดเงิน | ✅ แก้แล้ว aed2ad1f · `LineGroupBindRule.ShouldIssueCode` · `Replies.Status` · `ProviderConsent.Classify` |
 | 3. หน้าผู้ติดต่อ › ช่องทางแจ้งเตือน: กลุ่มที่ผูก + topics (มีอยู่แล้ว) + สถานะความยินยอม + ปุ่มส่งคำขอ · การ์ดชี้เมนูจริง | ✅ กล่อง `providerConsent` + ปุ่ม (endpoint เดิม · ไม่มีสิทธิ์ยื่นภาษี ⇒ ล็อก + เหตุ) · เมนูผิด 3 จุด ⇒ `ProviderConsent.ClientMenuPath` (เหลือ 0 · เทสต์สแกน) · ขั้นตอนผูกกลุ่มบอกคำสั่งเพิ่ม |
 | 4. เทสต์ | ✅ pure `LineGroupStatusRound279Tests` (20) · Db `LineGroupStatusRound279DbTests` (3) · กลายพันธุ์ `if (true \|\| ShouldIssueCode…)` ⇒ Db 3/3 แดง |
 | 5. เอกสาร | ✅ DOCUMENT_FLOW §2.12h + Last verified · TEST_PLAN T279-01…07 + §0 · CHANGELOG · DECISIONS 279-1…3 |

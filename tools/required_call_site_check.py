@@ -22299,7 +22299,7 @@ REVIEWER_CASES += [
 ]
 
 # ═══ รอบ 279 (สถานะกลุ่ม LINE — คำตัดสิน 279-1…279-3) ═══
-_R279_WHY = "รอบ 279 (กลุ่มผูกแล้วพิมพ์ #HeyNextAcc ได้รหัสใหม่ — คำตัดสิน 279-1…279-3): "
+_R279_WHY = "รอบ 279 (กลุ่มผูกแล้วพิมพ์ #HeyNextAcc ได้รหัสใหม่ — คำตัดสิน 279-1…279-3 · commit aed2ad1f): "
 _R279_GROUPS = "Services/Implementations/ContactLineGroupService.cs"
 RULES += [
     dict(file=_R279_GROUPS, method="HandleCompanyGroupEventAsync", must=["await HeyAsync(companyId, NotifyEndpointKind.ScopeCompany,"],
