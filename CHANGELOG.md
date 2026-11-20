@@ -7471,4 +7471,4 @@ _รอบ 275 แพ็ก E ชุดแก้ฝ่ายค้าน (2026-1
 
 **แก้:** ตัวตัดสิน `Helpers/PartnerLinkRequestChannels` + บริการ `PartnerLinkRequestNotifier` (ตัวหาผู้รับ/ผู้ส่ง LINE/ผู้ส่งอีเมลเดิม) · เรื่องใหม่ `NotifyTopic.PartnerLink` (ปลายทางเดิมไม่ถูกเปิดให้เอง) ·
 หน้า partners: เลือกผู้ติดต่อ + ช่อง (ช่องปิดพร้อมเหตุ + ลิงก์) · คอลัมน์ "แจ้งทาง" + "ส่งแจ้งอีกครั้ง" · คู่ค้าสมัครทีหลังเห็นคำขอ (`MaterializeIncomingLinkRequestsAsync`) ·
-`Round280Migration` · เทสต์ `PartnerLinkChannelsRound280Tests` · Db `PartnerLinkNotifyRound280DbTests` · กติกา `_R280_` ×8 · คำตัดสิน 280-1…280-9 — commit (เติมในคอมมิตตามหลัง)
+`Round280Migration` · เทสต์ `PartnerLinkChannelsRound280Tests` · Db `PartnerLinkNotifyRound280DbTests` · กติกา `_R280_` ×8 · คำตัดสิน 280-1…280-9 — commit 4274be39

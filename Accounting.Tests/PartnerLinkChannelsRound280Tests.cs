@@ -94,7 +94,7 @@ public class PartnerLinkChannelsRound280Tests
         Assert.Contains("https://app.nextacc.test" + PartnerLinkRequestChannels.RegisterPath, m.Text);
         Assert.DoesNotContain("0203562005871", m.Text);
         Assert.DoesNotContain("0203562005871", m.Html);
-        Assert.Contains(PartnerLinkRequestChannels.PartnerTaxMasked("0203562005871"), m.Text);
+        Assert.Contains(PiiMask.CitizenId("0203562005871")!, m.Text);
         Assert.Contains("สำนักงานใหญ่", m.Text);
         Assert.DoesNotContain("<b>ร้าน</b>", m.Html);                 // XSS: ชื่อบริษัทผู้ส่งถูก encode
         Assert.Contains("&lt;b&gt;", m.Html);

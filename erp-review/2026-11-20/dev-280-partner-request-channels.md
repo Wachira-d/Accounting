@@ -53,4 +53,4 @@
 ## 7. หลักฐาน
 - เทสต์ pure `PartnerLinkChannelsRound280Tests` (9) · Db `PartnerLinkNotifyRound280DbTests` (7) ผ่าน · ชุดเดิมที่เกี่ยว (PartnerLinkRequestRound264 · PartnerConsentRound264 · PartnerExchangeRound257 · ContactRecipientRule · ContactNotifyEndpointRound245 · LineQueueRound254 · LineCentralGroupRound256 · LineRound259 · ProviderCentralOa) ผ่าน
 - กติกา `_R280_` (+8 · เคสฝ่ายค้าน R280-1…2)
-- commit: (เติมในคอมมิตตามหลัง)
+- commit: 4274be39 (งาน) + คอมมิตเติม sha (helper ที่ไม่มีผู้เรียกนอกไฟล์ทำเป็น private ตาม dead_helper_check)

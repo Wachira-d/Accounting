@@ -183,7 +183,7 @@ public static class PartnerLinkRequestChannels
     public const string NoBaseUrlReason = "ยังไม่ได้ตั้ง URL ของระบบ (แอดมิน → ตั้งค่าระบบ / App:BaseUrl) — ข้อความต้องมีลิงก์ให้คู่ค้ากด จึงยังไม่ส่ง";
 
     /// <summary>เลขภาษีของคู่ค้าแบบปิดบัง (ข้อความในกลุ่ม — สมาชิกกลุ่มหลายคน) · ไม่ใช่ 13 หลัก ⇒ "-"</summary>
-    public static string PartnerTaxMasked(string? taxId)
+    private static string PartnerTaxMasked(string? taxId)
     {
         var d = ThaiTaxId.Normalize(taxId);
         return d.Length == 13 ? PiiMask.CitizenId(d)! : "-";

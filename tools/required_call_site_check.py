@@ -22335,7 +22335,7 @@ REVIEWER_CASES += [
 
 # ── รอบ 280: ช่องทางแจ้งคำขอเชื่อมคู่ค้า (กลุ่ม LINE/อีเมลของผู้ติดต่อ · คำตัดสิน 280-1…280-9) ──
 # ตัวตัดสินเดียว Helpers/PartnerLinkRequestChannels · ส่งผ่านตัวหาผู้รับ/ผู้ส่งเดิมเท่านั้น · ช่องในระบบไม่มีผลที่บอกสมาชิกภาพ
-_R280_WHY = "รอบ 280 (ช่องทางแจ้งคำขอเชื่อมคู่ค้า): "
+_R280_WHY = "รอบ 280 (ช่องทางแจ้งคำขอเชื่อมคู่ค้า — commit 4274be39): "
 _R280_SVC = "Services/Implementations/PartnerLinkRequestNotifier.cs"
 _R280_CTL = "Controllers/CrossTenantWorkflowController.cs"
 RULES += [
