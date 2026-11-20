@@ -572,6 +572,7 @@ builder.Services.AddHostedService<Accounting.Services.Background.AutopilotJob>()
 builder.Services.AddScoped<IFixedAssetService, FixedAssetService>();
 builder.Services.AddScoped<IFinancialManagementService, FinancialManagementService>();
 builder.Services.AddScoped<IApprovalService, ApprovalService>();
+builder.Services.AddScoped<IDocumentApprovalRequestService, DocumentApprovalRequestService>();   // รอบ 276 — ส่งขออนุมัติ/ถอน/ตีกลับ/คิว
 builder.Services.AddScoped<IFileAttachmentService, FileAttachmentService>();
 // ที่เก็บไฟล์กลาง (Local | S3-compatible) + ด่าน fail-fast ใน production — ทีม FS 2026-11-02 · erp-review/2026-11-02/FILE_STORAGE_AUDIT.md
 Accounting.Services.Storage.FileStorageRegistration.AddFileStorage(builder.Services, builder.Configuration, builder.Environment);
@@ -964,6 +965,9 @@ builder.Services.AddControllers(options =>
         // F1 — Cross-cutting tenant guard: ทุก route ที่มี {companyId}
         // ต้องผ่าน membership check ก่อนเข้า action.
         options.Filters.Add<Accounting.Middleware.TenantGuardFilter>();
+        // รอบ 276 — ผู้ใช้ "เห็นเฉพาะเอกสารที่ตัวเองสร้าง" / "เฉพาะร่าง": รายการทางเข้าที่อนุญาต + ตัวกรองแถว Documents + id ⇒ 404
+        // (ต้องอยู่หลัง TenantGuard — ตรวจสมาชิกก่อน แล้วค่อยตัดขอบเขต)
+        options.Filters.Add<Accounting.Filters.DocumentRestrictionFilter>();
         // F-05 — บังคับ CanRead/CanWrite/CanDelete ของ API key. ค่าเหล่านี้ถูก
         // เขียนลง HttpContext.Items โดย ApiKeyMiddleware มาตลอดแต่ไม่มีใครอ่าน
         // ⇒ คีย์ "อ่านอย่างเดียว" เขียน/ลบได้เต็ม. ต้องเป็น global filter เพราะ

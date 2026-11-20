@@ -8,6 +8,16 @@ public class AccountingDbContext : DbContext
 {
     public AccountingDbContext(DbContextOptions<AccountingDbContext> options) : base(options) { }
 
+    /// <summary>รอบ 276 — ขอบเขต "เห็นเฉพาะเอกสารที่ตัวเองสร้าง" ของ<b>คำขอนี้</b> (DbContext เป็น scoped ต่อคำขอ) · ผู้ตั้งเดียว
+    /// <c>Filters/DocumentRestrictionFilter</c> (หรือ <c>Helpers/DocumentRestrictionScope.Apply</c>) · null = ไม่จำกัด (ผู้ใช้ทั่วไป · งานเบื้องหลัง) ·
+    /// ผู้อ่าน: ตัวกรองแถวของ <see cref="Document"/> ด้านล่าง (ทุก query ผ่าน <c>_db.Documents</c> รวม Include/FromSql ที่ compose)</summary>
+    public string? DocumentOwnerScopeUserId { get; set; }
+    /// <summary>อีเมลของผู้ใช้คนเดียวกัน — บางทางเข้า (LINE) ประทับ <c>CreatedBy</c> เป็นอีเมล (คำตัดสิน 276-3)</summary>
+    public string? DocumentOwnerScopeEmail { get; set; }
+    /// <summary>รอบ 276 — คำขอนี้มาจากผู้ใช้ "เฉพาะร่าง" (ตั้งโดย <c>DocumentRestrictionFilter</c>) · ผู้อ่าน: <c>Helpers/DocumentRestrictionGuard</c>
+    /// (กันอนุมัติอัตโนมัติที่ประทับผู้กระทำเป็นป้ายระบบระหว่างคำขอของผู้ถูกจำกัด)</summary>
+    public bool DocumentDraftOnlyRequest { get; set; }
+
     // Core
     public DbSet<User> Users => Set<User>();
     public DbSet<LineBindCode> LineBindCodes => Set<LineBindCode>();
@@ -212,6 +222,7 @@ public class AccountingDbContext : DbContext
     public DbSet<ApprovalRule> ApprovalRules => Set<ApprovalRule>();
     public DbSet<ApprovalStep> ApprovalSteps => Set<ApprovalStep>();
     public DbSet<ApprovalRequest> ApprovalRequests => Set<ApprovalRequest>();
+    public DbSet<DocumentApprovalRequest> DocumentApprovalRequests => Set<DocumentApprovalRequest>();   // รอบ 276 — คำขออนุมัติพื้นฐาน (Helpers/Round276Migration)
     public DbSet<ApprovalAction> ApprovalActions => Set<ApprovalAction>();
 
     // File Attachments
@@ -967,6 +978,10 @@ public class AccountingDbContext : DbContext
         // ===== Document =====
         modelBuilder.Entity<Document>(e =>
         {
+            // รอบ 276: ตัวกรองแถว "เห็นเฉพาะเอกสารที่ตัวเองสร้าง" — มีผลเฉพาะคำขอที่ DocumentRestrictionFilter ตั้งขอบเขต (ค่าอื่น null ⇒ ไม่กรอง)
+            e.HasQueryFilter(d => DocumentOwnerScopeUserId == null
+                || d.CreatedBy == DocumentOwnerScopeUserId
+                || (DocumentOwnerScopeEmail != null && d.CreatedBy == DocumentOwnerScopeEmail));
             e.HasIndex(d => new { d.CompanyId, d.DocumentNumber }).IsUnique();
             e.Property(d => d.DocumentNumber).HasMaxLength(50);
             e.Property(d => d.SubTotal).HasPrecision(18, 2);
@@ -1483,6 +1498,15 @@ public class AccountingDbContext : DbContext
         });
 
         // ===== ApprovalRequest =====
+        modelBuilder.Entity<DocumentApprovalRequest>(e =>
+        {
+            e.HasIndex(r => new { r.CompanyId, r.DocumentId, r.Status }).HasDatabaseName("IX_DocumentApprovalRequests_Company_Doc_Status");
+            e.Property(r => r.Note).HasMaxLength(500);
+            e.Property(r => r.DecisionReason).HasMaxLength(500);
+            e.Property(r => r.Status).HasConversion<int>();
+            e.HasQueryFilter(r => !r.IsDeleted);
+        });
+
         modelBuilder.Entity<ApprovalRequest>(e =>
         {
             e.HasIndex(r => new { r.EntityType, r.EntityId });

@@ -309,6 +309,7 @@ public static class DatabaseMigrationHelper
         list.AddRange(Accounting.Helpers.Round271Migration.Statements());   // รอบ 271 — ผูกใบสำคัญจ่ายกับ 50 ทวิ ที่ออกไว้แล้ว (SupersededByCertId ฯลฯ)
         list.AddRange(Accounting.Helpers.Round272Migration.Statements());   // รอบ 272 — สลิปชำระภาษีจากกลุ่ม LINE/อีเมล: ความยินยอมผู้ให้บริการ (append-only) · ใบขอชำระ · แถวสลิป · ที่มาของการนำส่ง
         list.AddRange(Accounting.Helpers.Round275AMigration.Statements());   // รอบ 275 แพ็ก A — ลายนิ้วมือคีย์เข้ารหัสบน SiteSettings (กันหลายเครื่องคนละคีย์ · T4 M-4)
+        list.AddRange(Accounting.Helpers.Round276Migration.Statements());   // รอบ 276 — ผู้ใช้เห็นเฉพาะเอกสารของตัวเอง/เฉพาะร่าง + คำขออนุมัติพื้นฐาน
         return list;
     }
 

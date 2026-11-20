@@ -11054,6 +11054,17 @@
           // ERP upgrade banners — surface RD compliance + aging + VAT defer at top
           // แผงสถานะคำขออนุมัติ (เติมทีหลังแบบ async — ไม่หน่วงการเปิด modal)
           let banners = '<div id="approvalStatusBox" style="display:none"></div>';
+          // รอบ 276: สถานะ "ส่งขออนุมัติ" + ปุ่มที่ผู้ใช้คนนี้กดได้ — เซิร์ฟเวอร์ตัดสิน (canApprove/canReturn/canWithdraw/mayFinalize) · ล้ม = ไม่แสดงอะไรเพิ่ม (ปุ่มเดิม)
+          let apr = null;
+          try { apr = (await API.get(`/api/companies/${Layout.getCompanyId()}/document/${id}/approval-request`))?.data || null; } catch { apr = null; }
+          if (apr && apr.statusLabel) {
+            const ret = apr.requestStatus === 'Returned';
+            banners += `<div style="background:${ret ? '#fef2f2' : '#eff6ff'};border:1px solid ${ret ? '#fca5a5' : '#bfdbfe'};color:${ret ? '#991b1b' : '#1e40af'};padding:9px 14px;border-radius:8px;margin-bottom:8px;font-size:12.5px">
+              🧾 <b>คำขออนุมัติ</b> — ${Layout.esc(apr.statusLabel)}${apr.note && !ret ? `<div style="margin-top:3px;color:#475569">หมายเหตุผู้ขอ: ${Layout.esc(apr.note)}</div>` : ''}</div>`;
+          }
+          if (apr && apr.restrictionNotice) {
+            banners += `<div style="background:#fffbeb;border:1px solid #fcd34d;color:#92400e;padding:8px 14px;border-radius:8px;margin-bottom:8px;font-size:12.5px">🔒 ${Layout.esc(apr.restrictionNotice)}</div>`;
+          }
           if (d.ocrTenantMismatchFlag) {
             banners += `<div style="background:#fee2e2;border:1px solid #fca5a5;color:#991b1b;padding:10px 14px;border-radius:8px;margin-bottom:8px;font-size:13px">
               ⚠️ <strong>เลขผู้ซื้อในเอกสารไม่ตรงกับบริษัทนี้</strong>
@@ -11869,7 +11880,26 @@
           actions += ` <button data-g="more" class="btn btn-secondary"
             onclick="window.location.href='/pages/assistant.html?documentId=${d.id}&docNo=${encodeURIComponent(d.documentNumber || '')}'"
             title="ถามผู้ช่วย AI เรื่องการลงบัญชี/ภาษีของเอกสารใบนี้ — ผู้ช่วยเห็นรายละเอียดใบนี้ประกอบการตอบ">💬 ถามผู้ช่วย</button>`;
+          if (apr && apr.canApprove && d.status === 'WaitingApproval') {
+            actions += ` <button data-g="primary" class="btn btn-success" onclick="Page.approve('${d.id}')" title="อนุมัติใบที่พนักงานส่งขออนุมัติ — ระบบออกเลขเอกสารตอนนี้">✅ อนุมัติ</button>`;
+          }
+          if (apr && apr.canReturn) {
+            actions += ` <button data-g="primary" class="btn btn-warning" onclick="Page.returnApproval('${d.id}')" title="ส่งกลับให้ผู้ขอแก้ — ต้องระบุเหตุผล (ผู้ขอได้รับแจ้ง)">↩️ ตีกลับ</button>`;
+          }
+          if (apr && apr.canWithdraw) {
+            actions += ` <button data-g="primary" class="btn btn-secondary" onclick="Page.withdrawApproval('${d.id}')" title="ดึงคำขอกลับเป็นร่างเพื่อแก้ไข (ระหว่างรออนุมัติแก้ใบไม่ได้)">⏪ ถอนคำขอ</button>`;
+          }
           document.getElementById('detailActions').innerHTML = actions;
+          // รอบ 276: ผู้ใช้ "เฉพาะร่าง" — ซ่อนปุ่มที่เซิร์ฟเวอร์จะปฏิเสธ (อนุมัติ · ยกเลิก · รับชำระ · ลงบัญชี ฯลฯ) เหลือเฉพาะชุดที่ทำได้ + บอกเหตุ
+          if (apr && apr.mayFinalize === false) {
+            const keep = /Layout\.closeModal|Page\.showPdf|showEntityTimeline|Page\.openEdit|Page\.deleteDoc|Page\.submitApproval|Page\.withdrawApproval|Page\.openConvert|Page\.cloneDoc|assistant\.html/;
+            const host = document.getElementById('detailActions');
+            let hidden = 0;
+            Array.from(host.querySelectorAll('button')).forEach(b => {
+              if (!keep.test(b.getAttribute('onclick') || '')) { b.remove(); hidden++; }
+            });
+            if (hidden) host.insertAdjacentHTML('beforeend', `<span class="text-xs" style="color:#92400e;align-self:center" title="${Layout.esc(apr.restrictionNotice || '')}">🔒 ซ่อน ${hidden} คำสั่งที่บัญชีของคุณทำไม่ได้</span>`);
+          }
           this._layoutDetailActions();
           Layout.openModal('detailModal');
 
@@ -15048,8 +15078,47 @@
        *  ผู้อนุมัติมาจาก "กฎอนุมัติตามวงเงิน (Workflow)" — จับคู่ด้วย ยอดเงิน +
        *  ชนิดเอกสาร + โครงการ ตามกฎที่ตั้งไว้ที่เมนู กฎอนุมัติตามวงเงิน
        *  ถ้ายังไม่ตั้งกฎ = ไม่มีใครต้องอนุมัติ (อนุมัติเองได้เลย) */
+      /** รอบ 276 — ตีกลับใบที่ขออนุมัติ (เหตุผลบังคับ · ผู้ขอได้รับแจ้ง) */
+      async returnApproval(id) {
+        const reason = await Layout.promptText({ title: '↩️ ตีกลับเอกสาร', message: 'ผู้ขอจะเห็นเหตุผลนี้ และแก้ใบแล้วส่งขออนุมัติใหม่ได้',
+          label: 'เหตุผลที่ตีกลับ', required: true, multiline: true, okText: 'ตีกลับ' });
+        if (reason == null) return;
+        try {
+          const r = await API.post(`/api/companies/${Layout.getCompanyId()}/document/${id}/approval-request/return`, { reason });
+          Layout.toast(r.message || 'ตีกลับแล้ว', 'success');
+          Layout.closeModal('detailModal');
+          await this.load();
+        } catch (e) { Layout.toast(e.message, 'error', 8000); }
+      },
+
+      /** รอบ 276 — ผู้ขอถอนคำขอ (ใบกลับเป็นร่าง แก้ได้) */
+      async withdrawApproval(id) {
+        if (!(await Layout.confirm('ถอนคำขออนุมัติ? ใบจะกลับเป็นร่าง แก้ไขแล้วส่งขออนุมัติใหม่ได้'))) return;
+        try {
+          const r = await API.post(`/api/companies/${Layout.getCompanyId()}/document/${id}/approval-request/withdraw`, {});
+          Layout.toast(r.message || 'ถอนคำขอแล้ว', 'success');
+          Layout.closeModal('detailModal');
+          await this.load();
+        } catch (e) { Layout.toast(e.message, 'error', 8000); }
+      },
+
       async submitApproval(id) {
         const api = Layout.api(); if (!api) return;
+        // รอบ 276: ปุ่มเดียว — เซิร์ฟเวอร์เลือกเส้น (กฎอนุมัติที่ตรง ⇒ workflow เดิม · ไม่มีกฎ + ผู้ขออนุมัติเองไม่ได้ ⇒ แจ้งผู้อนุมัติเอกสาร)
+        // และประกอบข้อความที่บอกว่าไปถึงใคร/ช่องทางไหน · ใบที่รออนุมัติอยู่แล้ว (ส่งซ้ำเพื่อเตือน) ยังเดินเส้นเดิมด้านล่าง
+        const cur = this._currentDoc && this._currentDoc.id === id ? this._currentDoc : null;
+        if (!cur || cur.status !== 'WaitingApproval') {
+          const note = await Layout.promptText({ title: '📤 ส่งขออนุมัติ', message: 'ผู้อนุมัติจะได้รับแจ้ง (กระดิ่งในระบบ + LINE/อีเมล/กลุ่ม LINE ตามที่บริษัทตั้ง)',
+            label: 'หมายเหตุถึงผู้อนุมัติ (ไม่บังคับ)', required: false, multiline: true, okText: 'ส่งขออนุมัติ' });
+          if (note == null) return;
+          try {
+            const r = await API.post(`/api/companies/${Layout.getCompanyId()}/document/${id}/approval-request`, { note: note || null });
+            Layout.toast(r.message || 'ส่งขออนุมัติแล้ว', 'success', 9000);
+            Layout.closeModal('detailModal');
+            await this.load();
+          } catch (e) { Layout.toast(e.message, 'error', 9000); }
+          return;
+        }
         try {
           const res = await api.submitForApproval('Document', id);
           const r = res.data || {};

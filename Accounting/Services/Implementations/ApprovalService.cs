@@ -179,8 +179,12 @@ public class ApprovalService : IApprovalService
 
     // ==================== Requests ====================
 
-    public async Task<ApprovalRequestResponse> SubmitForApprovalAsync(
-        Guid companyId, string entityType, Guid entityId, Guid requestedByUserId)
+    /// <summary>รอบ 276: มีกฎอนุมัติที่ตรงกับรายการนี้ไหม (ตัวเลือกกฎตัวเดียวกับ <see cref="SubmitForApprovalAsync"/>) — ผู้เรียก:
+    /// <c>DocumentApprovalRequestService</c> (กฎที่ตรง ⇒ workflow เดิม · ไม่มี ⇒ เส้นพื้นฐาน)</summary>
+    public async Task<bool> HasMatchingRuleAsync(Guid companyId, string entityType, Guid entityId)
+        => await MatchRuleAsync(companyId, entityType, entityId) != null;
+
+    private async Task<ApprovalRule?> MatchRuleAsync(Guid companyId, string entityType, Guid entityId)
     {
         // Pull the entity's amount + projectId + (for Documents) DocumentType
         // so rule selection can factor in all three filters. Other entity
@@ -249,13 +253,19 @@ public class ApprovalService : IApprovalService
         // project + docType + amount range beat catch-all rules.
         // Highest score wins; ties broken by MinAmount (most specific
         // tier first).
-        var rule = rules
+        return rules
             .Select(r => new { Rule = r, Score = ScoreRule(r, entityDocType, entityAmount, entityProjectId) })
             .Where(x => x.Score >= 0)
             .OrderByDescending(x => x.Score)
             .ThenByDescending(x => x.Rule.MinAmount ?? 0)
             .Select(x => x.Rule)
-            .FirstOrDefault()
+            .FirstOrDefault();
+    }
+
+    public async Task<ApprovalRequestResponse> SubmitForApprovalAsync(
+        Guid companyId, string entityType, Guid entityId, Guid requestedByUserId)
+    {
+        var rule = await MatchRuleAsync(companyId, entityType, entityId)
             ?? throw new InvalidOperationException("ไม่พบกฎการอนุมัติที่เหมาะสม");
 
         // รอบ 2026-10-14 ทีม F4 (ID#11): ผู้อนุมัติของกฎต้องยังเป็นสมาชิกบริษัท — เดิมส่งคำขอไปหาคนที่ออกแล้ว ⇒ ไม่มีใครกดได้

@@ -270,6 +270,7 @@
                 <option value="">-- สิทธิ์เมนู --</option>
                 ${customRoleOpts}
               </select>` : ''}
+              ${m.role !== 'Owner' ? `<button class="btn btn-outline" style="padding:4px 10px;font-size:12px" title="จำกัดให้เห็นเฉพาะเอกสารที่ตัวเองสร้าง / สร้าง-แก้ได้เฉพาะร่าง (ต้องส่งขออนุมัติ)" onclick="Page.editDocRestriction('${m.userId}','${Layout.jsArg(m.fullName||'')}',${m.ownDocumentsOnly ? 'true' : 'false'},${m.draftDocumentsOnly ? 'true' : 'false'})">🔒 จำกัดเอกสาร</button>` : ''}
               <button class="btn btn-outline" style="color:#ef4444;border-color:#ef4444;padding:4px 12px;font-size:12px" onclick="Page.removeMember('${m.userId}','${Layout.jsArg(m.fullName)}',${m.role==='Owner'?'true':'false'})" data-i18n="common.delete">ลบ</button>
             `;
           }
@@ -280,6 +281,7 @@
               <div class="member-name">${Layout.esc(m.fullName)}${isMe?' <span style="color:#94a3b8;font-weight:400;font-size:12px">(คุณ)</span>':''}${m.companyRoleName ? ` <span style="font-size:11px;color:#6366f1">· ${Layout.esc(m.companyRoleName)}</span>` : ''}</div>
               <div class="member-email">${Layout.esc(m.email)}${m.phone?' · '+Layout.esc(m.phone):''}</div>
               <div class="member-meta">เข้าร่วม ${joinDate} · เข้าใช้ล่าสุด ${lastLogin}</div>
+              ${m.effectiveDocumentRestrictionNotice ? `<div class="member-meta" style="color:#b45309">🔒 ${Layout.esc(m.effectiveDocumentRestrictionNotice)}</div>` : ''}
             </div>
             <div class="member-actions">
               <span class="role-badge ${r.cls}">${r.icon} ${r.label}</span>
@@ -337,6 +339,30 @@
           await this.load();
         } catch (e) { Layout.toast(e.message, 'error'); }
         finally { btn.disabled = false; }
+      },
+
+      /** รอบ 276 — ตั้ง "เห็นเฉพาะเอกสารที่ตัวเองสร้าง" / "สร้าง-แก้ได้เฉพาะร่าง" (ด่าน/กติกา/ข้อความอยู่ที่เซิร์ฟเวอร์) ·
+       *  ตัวเลือกสามระดับ — "เห็นเฉพาะของตัวเอง" รวม "เฉพาะร่าง" เสมอ (คำตัดสิน 276-2: การอนุมัติต้องเห็นทั้งบริษัท) */
+      async editDocRestriction(userId, name, own, draft) {
+        const level = own ? 'own' : draft ? 'draft' : 'none';
+        const v = await Layout.formDialog({
+          title: '🔒 จำกัดเอกสาร — ' + (name || ''),
+          message: 'เลือกระดับ · ผู้ใช้ที่ถูกจำกัดกด "ส่งขออนุมัติ" บนใบร่าง แล้วผู้อนุมัติเอกสาร (เจ้าของ/บัญชี) ได้รับแจ้งทางกระดิ่งในระบบ '
+            + 'และ LINE ส่วนตัว/อีเมล/กลุ่ม LINE ตามที่ตั้งในหน้า "การแจ้งเตือน" · มีผลกับคำขอถัดไปของผู้ใช้',
+          okText: 'บันทึก',
+          fields: [{ key: 'level', label: 'ระดับการจำกัด', type: 'select', value: level, options: [
+            { value: 'none', label: 'ไม่จำกัด (เหมือนเดิม)' },
+            { value: 'draft', label: 'สร้าง/แก้ได้เฉพาะร่าง — อนุมัติ/ออกเลข/ยกเลิก/ลงบัญชี/รับ-จ่ายชำระไม่ได้' },
+            { value: 'own', label: 'เห็นเฉพาะเอกสารที่ตัวเองสร้าง + เฉพาะร่าง — รายงาน/แดชบอร์ด/สมุดบัญชีของบริษัทเปิดไม่ได้' },
+          ] }],
+        });
+        if (!v) return;
+        try {
+          const r = await API.put(`/api/company/${Layout.getCompanyId()}/users/${userId}/document-restriction`,
+            { ownDocumentsOnly: v.level === 'own', draftDocumentsOnly: v.level !== 'none' });
+          Layout.toast(r.message || 'บันทึกแล้ว', 'success', 6000);
+          await this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
       },
 
       async changeRole(userId, newRole) {

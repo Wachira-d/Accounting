@@ -268,6 +268,18 @@ public class NotificationEngine : INotificationEngine
                         .ToList();
                 }
 
+                case NotificationRecipientRoles.DocumentApprover:   // รอบ 276: ผู้อนุมัติเอกสารได้ (ตัวตัดสินเดียว DocumentApproverDirectory · ไม่รวมผู้ "เฉพาะร่าง")
+                {
+                    DocumentType? docType = null;
+                    if (ctx.EntityType == "Document" && ctx.EntityId is Guid docId)
+                        docType = await _db.Documents.AsNoTracking().IgnoreQueryFilters()
+                            .Where(d => d.Id == docId && d.CompanyId == companyId)
+                            .Select(d => (DocumentType?)d.DocumentType).FirstOrDefaultAsync();
+                    return (await DocumentApproverDirectory.ResolveAsync(_db, new PermissionService(_db), companyId, docType))
+                        .Select(uid => new Recipient(uid, null, null, null))
+                        .ToList();
+                }
+
                 case NotificationRecipientRoles.HrAdmin:
                     return (await ResolveByPermissionOrRoleAsync(companyId, PermissionKeys.HrAdmin, UserRole.SystemAdmin))
                         .Select(uid => new Recipient(uid, null, null, null))

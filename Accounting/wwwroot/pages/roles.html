@@ -101,6 +101,15 @@
             <label class="form-label">สี</label>
             <input type="color" class="form-control" id="roleColor" value="#6B7280" style="height:38px;padding:4px">
           </div>
+          <!-- รอบ 276: จำกัดเอกสารของผู้ถือบทบาทนี้ (รวมกับค่าต่อผู้ใช้ที่หน้าทีม · เห็นเฉพาะของตัวเอง ⇒ เฉพาะร่าง — กติกาอยู่ที่เซิร์ฟเวอร์) -->
+          <div class="form-group" style="grid-column:1 / -1">
+            <label class="form-label">จำกัดเอกสาร</label>
+            <select class="form-select" id="roleDocRestriction">
+              <option value="none">ไม่จำกัด (เหมือนเดิม)</option>
+              <option value="draft">สร้าง/แก้ได้เฉพาะร่าง — ต้องกด "ส่งขออนุมัติ" (อนุมัติ/ออกเลข/ยกเลิก/ลงบัญชีไม่ได้)</option>
+              <option value="own">เห็นเฉพาะเอกสารที่ตัวเองสร้าง + เฉพาะร่าง (รายงาน/แดชบอร์ดของบริษัทเปิดไม่ได้)</option>
+            </select>
+          </div>
           <div class="form-group">
             <label class="form-label">ไอคอน</label>
             <select class="form-select" id="roleIcon">
@@ -281,7 +290,7 @@
           <div class="role-desc">${Layout.esc(r.description || '-')}</div>
           <div class="role-meta">
             <span>👥 ${r.memberCount} สมาชิก</span>
-            <span>📋 ${r.allowedMenuIds?.length || 0} เมนู</span>
+            <span>📋 ${r.allowedMenuIds?.length || 0} เมนู</span>${r.ownDocumentsOnly ? '<span title="เห็นเฉพาะเอกสารที่ตัวเองสร้าง + เฉพาะร่าง">🔒 เอกสารของตัวเอง</span>' : r.draftDocumentsOnly ? '<span title="สร้าง/แก้ได้เฉพาะร่าง">🔒 เฉพาะร่าง</span>' : ''}
           </div>`;
         grid.appendChild(card);
       });
@@ -436,6 +445,7 @@
       document.getElementById('roleColor').value = '#6B7280';
       document.getElementById('roleIcon').value = '👤';
       document.getElementById('roleName').disabled = false;
+      document.getElementById('roleDocRestriction').value = 'none';
       this.renderPermEditor([]);
       document.getElementById('roleModal').classList.add('active');
     },
@@ -450,6 +460,7 @@
       document.getElementById('roleColor').value = role.color;
       document.getElementById('roleIcon').value = role.icon;
       document.getElementById('roleName').disabled = role.isSystemRole;
+      document.getElementById('roleDocRestriction').value = role.ownDocumentsOnly ? 'own' : role.draftDocumentsOnly ? 'draft' : 'none';
       this.renderPermEditor(role.allowedMenuIds || []);
       document.getElementById('roleModal').classList.add('active');
     },
@@ -467,7 +478,9 @@
         description: document.getElementById('roleDesc').value.trim() || null,
         color: document.getElementById('roleColor').value,
         icon: document.getElementById('roleIcon').value,
-        allowedMenuIds: this.getSelectedMenuIds()
+        allowedMenuIds: this.getSelectedMenuIds(),
+        ownDocumentsOnly: document.getElementById('roleDocRestriction').value === 'own',
+        draftDocumentsOnly: document.getElementById('roleDocRestriction').value !== 'none'
       };
 
       const btn = document.getElementById('btnSave');
