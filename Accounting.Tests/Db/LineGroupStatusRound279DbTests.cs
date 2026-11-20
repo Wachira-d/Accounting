@@ -231,6 +231,35 @@ public class LineGroupStatusRound279DbTests
         });
     }
 
+    /// <summary>รอบ 280 (ฝ่ายค้าน LOW-2 ของการ์ด 279): กลุ่มเดียวผูกผู้ติดต่อหลายราย ⇒ การ์ดไม่แสดงชื่อ/ความยินยอมรายผู้ติดต่อ (ลูกค้ารายหนึ่งไม่เห็นของอีกราย) ·
+    /// ลิงก์ในกลุ่มไม่มี id บริษัทลูกค้า · ผูกรายเดียว ⇒ แสดงสถานะตามเดิม (ทิศตรงข้าม)</summary>
+    [Fact]
+    public async Task R280_LOW2_กลุ่มผูกหลายผู้ติดต่อ_การ์ดไม่เปิดเผยความยินยอมรายผู้ติดต่อ_ลิงก์ไม่มีGUID()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var s = await SeedAsync(db);
+        var group = "C280m" + Guid.NewGuid().ToString("N")[..27];
+        await BindDirectAsync(db, s.Provider, s.TenantContact, CentralBot, group, NotifyEndpointKind.ScopeNextAcc, NotifyTopic.Document, NotifyTopic.Wht);
+        var log = new List<string>();
+        await WithPlatformAsync(db, s.Provider, async () =>
+        {
+            // ผูกรายเดียว ⇒ สถานะความยินยอมตามเดิม · ลิงก์/ทางยืนยันไม่มี GUID ของบริษัทลูกค้า
+            var single = (await Groups(db, log).HandleCentralGroupEventAsync(CentralBot, Ev(group, "#HeyNextAcc"))).Reply!;
+            Assert.Contains("บันทึกการชำระภาษีจากสลิป", single);
+            Assert.DoesNotContain(s.Client.ToString("D"), single);
+
+            await BindDirectAsync(db, s.Provider, s.PlainContact, CentralBot, group, NotifyEndpointKind.ScopeNextAcc, NotifyTopic.Dunning);
+            var multi = (await Groups(db, log).HandleCentralGroupEventAsync(CentralBot, Ev(group, "#HeyNextAcc"))).Reply!;
+            Assert.Contains("ผู้ติดต่อ 2 ราย", multi);
+            Assert.Contains(LineGroupBindRule.Replies.MultiContactWebHint, multi);
+            Assert.DoesNotContain("บันทึกการชำระภาษีจากสลิป", multi);
+            Assert.DoesNotContain("ห้างหุ้นส่วนจำกัด แอม แฮปปี้เนส", multi);          // ไม่มีชื่อลูกค้ารายผู้ติดต่อ
+            Assert.DoesNotContain(s.Client.ToString("D"), multi);
+            Assert.Contains("เอกสาร", multi);
+        });
+    }
+
     [Fact]
     public async Task tenant_isolation_การผูกของบริษัทอื่นไม่นับ_ไม่แสดง_และ_OA_บริษัทได้การ์ดสถานะของตัวเอง()
     {

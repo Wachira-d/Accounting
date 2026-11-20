@@ -53,8 +53,6 @@ public class CrossTenantWorkflowController : ControllerBase
     [HttpGet("trading-partners")]
     public async Task<ActionResult<ApiResponse<object>>> List(Guid companyId)
     {
-        // รอบ 280 (คำตัดสิน 280-5): คำขอที่ส่งถึงเลขภาษีของเรา<b>ก่อน</b>เราใช้ NextAcc/ตั้งเลขนี้ ⇒ เปิดแถว "รอเรายอมรับ" ให้ตอนเปิดหน้า (ลิงก์ในข้อความ LINE/อีเมลพามาที่นี่)
-        await _service.MaterializeIncomingLinkRequestsAsync(companyId, DateTime.UtcNow);
         var raw = await _db.TradingPartnerships.AsNoTracking()
             .Include(p => p.CompanyA)
             .Include(p => p.CompanyB)
@@ -152,6 +150,17 @@ public class CrossTenantWorkflowController : ControllerBase
     {
         if (_notifier == null) return StatusCode(503, new ApiResponse<object>(false, null, "ช่องทางแจ้งยังไม่พร้อม"));
         return Ok(new ApiResponse<object>(true, await _notifier.ChannelOptionsAsync(companyId, taxId, contactId)));
+    }
+
+    /// <summary>รอบ 280 (ฝ่ายค้าน MED-1 ก · 280-10) — เปิดคำขอที่ส่งถึงเลขภาษีของเราหลังตั้งเลขนี้ (<c>TaxIdSetAt</c>) ให้เป็นแถว "รอเรายอมรับ" ·
+    /// เป็นการกระทำที่ต้องมีสิทธิ์ตั้งค่าบริษัท (เดิมทำใน GET รายการคู่ค้าที่ไม่ตรวจสิทธิ์) · หน้าคู่ค้าเรียกตอนโหลด · คำตอบไม่มีจำนวน (ไม่บอกอะไรเพิ่ม — แถวขึ้นในตาราง)</summary>
+    [HttpPost("trading-partners/requests/incoming/refresh")]
+    [Accounting.Filters.RequirePermission(PermissionKeys.CompanySettingsEdit)]
+    [Accounting.Filters.RejectApiKey("รับคำขอเชื่อมคู่ค้า")]
+    public async Task<ActionResult<ApiResponse<object>>> RefreshIncomingRequests(Guid companyId)
+    {
+        await _service.MaterializeIncomingLinkRequestsAsync(companyId, DateTime.UtcNow);
+        return Ok(new ApiResponse<object>(true, null));
     }
 
     /// <summary>รอบ 280 — ส่งแจ้งคำขอที่รออีกครั้ง (ช่องในระบบ + ช่องที่เลือก) · ผลต่อช่องตามจริง (ช่องในระบบ = "เข้าคิว" เสมอ) · กันถี่ต่อคำขอต่อช่อง + ต่อบริษัทต่อวัน</summary>

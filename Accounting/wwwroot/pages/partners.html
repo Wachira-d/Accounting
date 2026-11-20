@@ -129,6 +129,8 @@ const Page = {
 
   async load() {
     const api = Layout.api(); if (!api) return;
+    // รอบ 280 (ฝ่ายค้าน MED-1): เปิดคำขอที่ส่งถึงเลขของเราหลังตั้งเลขนี้ — ต้องมีสิทธิ์ตั้งค่าบริษัท · ไม่มีสิทธิ์/ล้ม ⇒ ตารางแสดงตามที่มี (ไม่บล็อกหน้า)
+    try { await api.refreshIncomingPartnerRequests(); } catch { /* ไม่มีสิทธิ์ตั้งค่าบริษัท — รายการคู่ค้ายังโหลดได้ */ }
     try {
       const [p, d, c, n, o] = await Promise.all([
         api.getTradingPartners(),
@@ -424,7 +426,7 @@ const Page = {
 
   noticeCells(list) {
     if (!list || !list.length) return '<span class="pt-muted">-</span>';
-    return list.map(n => `<div style="margin-bottom:4px"><span class="pt-badge ${n.status === 'Sent' ? 'pt-ok' : n.status === 'Failed' ? 'pt-bad' : n.status === 'Refused' ? 'pt-warn' : ''}"
+    return list.map(n => `<div style="margin-bottom:4px"><span class="pt-badge ${n.status === 'Sent' ? 'pt-ok' : n.status === 'Failed' ? 'pt-bad' : (n.status === 'Refused' || n.status === 'Partial') ? 'pt-warn' : ''}"
       title="${Layout.esc(n.statusLabel || '')}">${Layout.esc(n.channelLabel)}: ${Layout.esc(n.status === 'Queued' ? 'เข้าคิวแล้ว' : n.statusLabel)}</span>
       <div class="pt-muted">${Layout.esc(new Date(n.at).toLocaleString('th-TH'))}${n.recipient ? ' · ' + Layout.esc(n.recipient) : ''}${n.reason ? ' · ' + Layout.esc(n.reason) : ''}</div></div>`).join('');
   },

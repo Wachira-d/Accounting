@@ -1,15 +1,18 @@
 namespace Accounting.Helpers;
 
 /// <summary>
-/// รอบ 280 — ช่องทางแจ้งคำขอเชื่อมคู่ค้า (<see cref="PartnerLinkRequestChannels"/>) · idempotent (<c>IF NOT EXISTS</c> ทุกบรรทัด · ไม่มี UPDATE) ·
+/// รอบ 280 — ช่องทางแจ้งคำขอเชื่อมคู่ค้า (<see cref="PartnerLinkRequestChannels"/>) · idempotent (<c>IF NOT EXISTS</c> · UPDATE เฉพาะแถวที่ยัง NULL) ·
 /// ชื่อ index ตรง <c>AccountingDbContext</c> · คำขอเดิม: <c>ContactId</c> = NULL (เลือกผู้ติดต่อตอนกด "ส่งแจ้งอีกครั้ง") ·
-/// ปลายทางของผู้ติดต่อเดิม<b>ไม่</b>ถูกเพิ่มเรื่อง <c>PartnerLink</c> (คำตัดสิน 280-2 — ค่าที่เก็บของผู้รับไม่ถูกแก้เงียบ ๆ)
+/// <c>Companies.TaxIdSetAt</c> (ฝ่ายค้าน MED-1) ประทับเวลาที่ deploy ให้บริษัทเดิม · ปลายทางของผู้ติดต่อเดิม<b>ไม่</b>ถูกเพิ่มเรื่อง <c>PartnerLink</c> (คำตัดสิน 280-2 — ค่าที่เก็บของผู้รับไม่ถูกแก้เงียบ ๆ)
 /// </summary>
 public static class Round280Migration
 {
     public static IReadOnlyList<string> Statements() => new List<string>
     {
         """ALTER TABLE "PartnerLinkRequests" ADD COLUMN IF NOT EXISTS "ContactId" uuid NULL;""",
+        // ฝ่ายค้าน MED-1: เวลาที่ตั้งเลขภาษี — บริษัทเดิมประทับ = เวลาที่ deploy (ไม่รู้ประวัติ ⇒ คำขอเก่าไม่ถูกเปิดย้อนหลัง · ทำซ้ำได้: เฉพาะแถวที่ยัง NULL)
+        """ALTER TABLE "Companies" ADD COLUMN IF NOT EXISTS "TaxIdSetAt" timestamp without time zone NULL;""",
+        """UPDATE "Companies" SET "TaxIdSetAt" = (now() at time zone 'utc') WHERE "TaxIdSetAt" IS NULL;""",
         // ผู้ขอที่ยังไม่ใช้ NextAcc สมัครทีหลัง ⇒ ค้นคำขอที่ค้างด้วยเลขภาษี (MaterializeIncomingLinkRequestsAsync)
         """CREATE INDEX IF NOT EXISTS "IX_PartnerLinkRequests_PartnerTax_Open" ON "PartnerLinkRequests" ("PartnerTaxId") WHERE "AcceptedAt" IS NULL;""",
         """

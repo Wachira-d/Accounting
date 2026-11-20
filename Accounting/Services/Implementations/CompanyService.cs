@@ -390,6 +390,9 @@ public class CompanyService : ICompanyService
                 }),
                 Timestamp = DateTime.UtcNow,
             });
+        // รอบ 280 (ฝ่ายค้าน MED-1 ค · คำตัดสิน 280-10): เปลี่ยนเลขภาษี (audit อยู่ในแถว identity ข้างบน) ⇒ ยกเลิกคำขอเชื่อมคู่ค้าที่รอเรายอมรับซึ่งส่งถึงเลขเดิม
+        // (TaxIdSetAt ประทับใหม่โดย AccountingDbContext ⇒ คำขอเก่าของเลขใหม่ไม่ถูกเปิดย้อนหลัง)
+        await CrossTenantWorkflowService.VoidIncomingRequestsForOldTaxIdAsync(_db, companyId, identityBefore.TaxId, company.TaxId, userId, DateTime.UtcNow);
 
         await _db.SaveChangesAsync();
 

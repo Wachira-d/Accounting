@@ -49,6 +49,13 @@ public static class ProviderConsent
     public static string GrantLinkOrMenu(string? baseUrl, Guid clientCompanyId)
         => string.IsNullOrWhiteSpace(baseUrl) ? "อนุญาตได้ที่เมนู " + ClientMenuPath : baseUrl.TrimEnd('/') + PageUrl(clientCompanyId);
 
+    /// <summary>รอบ 280 (ฝ่ายค้าน LOW-2 ของการ์ด 279): ลิงก์ที่<b>โพสต์เข้ากลุ่ม LINE</b> ห้ามมี id บริษัทลูกค้า (GUID ภายในของผู้เช่า — สมาชิกกลุ่มทุกคนเห็น) ⇒
+    /// หน้าเดียวกันแบบไม่มีพารามิเตอร์ (หน้าเลือกบริษัทของผู้ใช้เองหลังเข้าสู่ระบบ) · ไม่ตั้ง URL ของระบบ ⇒ ทางในเมนู · ลิงก์ที่มี id ใช้ได้เฉพาะหน้าพนักงาน/การแจ้งส่วนตัว</summary>
+    public const string GroupPagePath = "/pages/billing.html" + PageAnchor;
+
+    public static string GroupGrantLinkOrMenu(string? baseUrl)
+        => string.IsNullOrWhiteSpace(baseUrl) ? "อนุญาตได้ที่เมนู " + ClientMenuPath : baseUrl.TrimEnd('/') + GroupPagePath;
+
     /// <summary>สถานะความยินยอมของบริษัทลูกค้าหนึ่งราย (มุมกลุ่ม LINE/หน้าผู้ติดต่อ)</summary>
     public enum GroupConsentState { Granted, PowerOfAttorney, Pending, NotRequested }
 

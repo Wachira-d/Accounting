@@ -4851,6 +4851,7 @@ public class AccountingDbContext : DbContext
 
     public override int SaveChanges()
     {
+        StampTaxIdSetAt();
         ClearTaxIdWaiversWhenIdValid();
         GuardPayrollJunkPayees();
         StampDocumentCreators();
@@ -4928,6 +4929,22 @@ public class AccountingDbContext : DbContext
     /// <summary>รอบ 278 (ฝ่ายค้าน HIGH-3): แช่แข็งผู้ลงนามตอนเอกสาร<b>เข้าสถานะออกแล้วครั้งแรก</b> — ทุกทางเข้าที่บันทึกผ่าน SaveChanges (อนุมัติบนเว็บ ·
     /// API · integration ที่สร้างเป็น Approved · POS · นำเข้า · ออกอัตโนมัติ) · ผลใน <see cref="Document.SignerSnapshotJson"/> (กุญแจ + ชื่อ/ตำแหน่งตาม
     /// โปรไฟล์วันนั้น + RuleCode) เข้า audit ของเอกสารอัตโนมัติ · ตัวตัดสินผู้สมัคร <c>SignatureSlotIdentity.BuildSnapshot</c> ตัวเดียว</summary>
+    /// <summary>รอบ 280 (ฝ่ายค้าน MED-1): ประทับ <c>Company.TaxIdSetAt</c> เมื่อสร้างบริษัทหรือเลขภาษีเปลี่ยน (เทียบเลขที่ normalize แล้ว) — ทุกทางเข้า SaveChanges</summary>
+    private void StampTaxIdSetAt()
+    {
+        foreach (var entry in ChangeTracker.Entries<Company>())
+        {
+            if (entry.State == EntityState.Added)
+            {
+                entry.Entity.TaxIdSetAt ??= DateTime.UtcNow;
+                continue;
+            }
+            if (entry.State != EntityState.Modified) continue;
+            var before = Accounting.Helpers.ThaiTaxId.Normalize(entry.Property(nameof(Company.TaxId)).OriginalValue as string);
+            if (before != Accounting.Helpers.ThaiTaxId.Normalize(entry.Entity.TaxId)) entry.Entity.TaxIdSetAt = DateTime.UtcNow;
+        }
+    }
+
     private void StampSignerFreeze()
     {
         foreach (var entry in ChangeTracker.Entries<Document>())
@@ -4971,6 +4988,7 @@ public class AccountingDbContext : DbContext
 
     public override async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
     {
+        StampTaxIdSetAt();
         ClearTaxIdWaiversWhenIdValid();
         GuardPayrollJunkPayees();
         StampDocumentCreators();
