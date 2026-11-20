@@ -4880,6 +4880,23 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
     e-Tax by Email ตอนอนุมัติ = ตั้ง "ตารางส่งอีเมล" ทริกเกอร์อนุมัติ (คิวเดินทาง e-Tax ให้เอง — §3.3a) · ค่าตั้ง `EtaxByEmailAutoSendOnApprove`/`EtaxByEmailEmbedXml`
     ถูกลบในรอบ 244 (คำตัดสิน 244-4 · คอลัมน์ในฐานคงอยู่ ไม่มีผู้อ่าน)
 
+### 3.2-276 ผู้ใช้ "เห็นเฉพาะเอกสารที่ตัวเองสร้าง" / "สร้าง-แก้ได้เฉพาะร่าง" + ส่งขออนุมัติพื้นฐาน (รอบ 276 · คำตัดสิน 276-1…8 · `erp-review/2026-11-20/dev-276-own-docs-approval.md`)
+- **ค่าตั้ง** `CompanyUser.OwnDocumentsOnly/DraftDocumentsOnly` (หน้า "ทีม" · เจ้าของตั้ง · ตั้งบนเจ้าของ/ตัวเองไม่ได้ · audit) + `CompanyRole.*` ชื่อเดียวกัน (หน้า "บทบาท") ·
+  ค่าที่มีผล = ผู้ใช้ ∪ บทบาท (`Helpers/DocumentRestrictionPolicy.Effective`) · เจ้าของ/SystemAdmin ไม่ถูกจำกัด · **เห็นเฉพาะของตัวเอง ⇒ เฉพาะร่างเสมอ** (276-2) · ค่าตั้งต้น false = พฤติกรรมเดิม
+- **ด่านทุกคำขอ** `Filters/DocumentRestrictionFilter` (global หลัง TenantGuard): ตั้งขอบเขตบน DbContext ⇒ ตัวกรองแถว EF ของ `Documents`
+  (`CreatedBy` = id ผู้ใช้ หรืออีเมลผู้ใช้) · เห็นเฉพาะของตัวเอง = เรียกได้เฉพาะรายการ `DocumentRestrictionPolicy.Routes` (list/get/export/PDF/แปลง/คัดลอก/ไฟล์แนบของเอกสาร/
+  ข้อมูลหลักของฟอร์ม) — อื่น ๆ (รายงาน · แดชบอร์ด · GL · ธนาคาร · ค้นหาทั่วระบบ · แชต AI · มือถือ · OCR) 403 · id เอกสารของคนอื่นใน route/entity/ไฟล์แนบ = **404** ·
+  เฉพาะร่าง = ทางเขียนต้องอยู่ในรายการเขียน · แก้/ลบ/แนบไฟล์ได้เฉพาะใบ Draft/Rejected
+- **ด่านชั้น service** `DocumentRestrictionGuard.EnsureMayFinalizeAsync` ใน `ApproveDocumentAsync` (ทุกทางอนุมัติ — ผู้กระทำ id/อีเมล หรือคำขอนี้ถูกจำกัด) + `VoidDocumentAsync` ⇒ 403 `R276-DRAFT-ONLY`
+- **ส่งขออนุมัติ** `POST document/{id}/approval-request` (ใบ Draft/Rejected · สิทธิ์สร้างชนิดนั้น): กฎอนุมัติที่ตรง ⇒ `ApprovalService.SubmitForApprovalAsync` (เส้นเดิม) ·
+  ไม่มีกฎ + ผู้ขออนุมัติเองได้ ⇒ 409 "กดอนุมัติได้เลย" (พฤติกรรมเดิม) · ไม่มีกฎ + อนุมัติเองไม่ได้ ⇒ **เส้นพื้นฐาน**: ใบ → `WaitingApproval` · แถว `DocumentApprovalRequests` (Pending) ·
+  แจ้ง `document.approval_requested` ถึงบทบาท `DocumentApprover` (`Helpers/DocumentApproverDirectory` = ด่านเดียวกับปุ่มอนุมัติ ไม่รวมผู้เฉพาะร่าง) ผ่าน `NotificationEngine`
+  (กระดิ่ง + อีเมล + LINE ส่วนตัว + กลุ่ม LINE ของบริษัทเมื่อผูก — ค่าตั้งต้น `NotificationAudiencePolicy.DefaultMatrix` · บริษัทปรับที่หน้าแจ้งเตือน) · ข้อความไม่มีชื่อลูกค้า/เลขภาษี
+- ผู้อนุมัติ: ปุ่ม "อนุมัติ" (endpoint เดิม — เลขออกตอนนี้) / "ตีกลับ" `…/approval-request/return` (เหตุผลบังคับ ⇒ ใบ `Rejected` + แจ้งผู้ขอ `document.approval_returned`) ·
+  ผู้ขอห้ามอนุมัติ/ตีกลับใบที่ตัวเองขอ (`EnsureNotSelfApprovalAsync`) · อนุมัติแล้ว ⇒ `OnDocumentApprovedAsync` ปิดคำขอ + แจ้งผู้ขอ `document.approval_granted` ·
+  ผู้ขอ**แก้ระหว่างรอไม่ได้** (กติกาเดิม) — `…/withdraw` ⇒ Draft (276-5) · คิว `GET document-approval-queue` (หน้า approval) · สถานะ/ปุ่มบนใบ `GET document/{id}/approval-request`
+- เลื่อน: OCR · POST ความเห็น · แชต AI/ค้นหาทั่วระบบ สำหรับผู้เห็นเฉพาะของตัวเอง (dev-276 §5)
+
 ### 3.3 Send (Approved → Sent)
 - **Endpoint**: `POST /documents/{id}/send-email`
 - **Controller**: `DocumentController.cs:43` → `IDocumentEmailService`
@@ -6025,6 +6042,8 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
   **DTO พนักงาน** ไม่ส่ง ciphertext: ป้าย `⛔ ถอดรหัสไม่ได้` + `IdentityProblem`/`BankAccountProblem`/`PiiProblemText` · ฟอร์มส่งป้ายกลับ = คงค่าเดิม · ฟอร์มแสดงกล่องเหตุ + ขอบแดงที่ช่อง ·
   **หน้า "สุขภาพข้อมูลเข้ารหัส"** `/pages/encryption-health.html` (ความลับ `GET encryption-health/secrets` · สิทธิ์ตั้งค่าบริษัท + PII `GET payroll/tax-identity-health` เดิม) · มุมผู้ดูแลใน admin › งานเบื้องหลัง (`GET api/admin/encryption-health`) ·
   ข้อความถึงผู้ใช้บริษัทไม่ชี้ URL ดิบ/ชื่อ env (`EncryptionHealthText`)
+  **ฝ่ายค้านแพ็ก A:** heartbeat ลายนิ้วมือต่อเครื่องทุก 5 นาที (`EncryptionKeyHeartbeats`) · หมุนคีย์ = `RotationPending` (ไม่ย้าย) จนทุกเครื่องใน 15 นาทีล่าสุดรายงานคีย์ใหม่หรือผู้ดูแลยืนยันลายนิ้วมือที่ระบุ ·
+  เครื่องคีย์ไม่ตรงหยุดเข้ารหัสค่าใหม่ (`EncryptionWriteGuard` · 503) · กุญแจ HMAC สลิปภาษี/OTP จากเมล็ดถาวร (`HmacSeedBootstrap` · สลิปเดิมหลังหมุนยังถูกกันซ้ำ) · คำตัดสิน 275-A-8…12
 - **รอบ 200 ทีม R (กวาดค้างรอบ 189)**: ฐานภาษีสะสม (YTD) ของงวดก่อน = `PayrollIncomeBase.PriorTaxBase(TaxableGross, GrossIncome)` (D-09 — เดิม gross
   รวมสวัสดิการยกเว้น ⇒ หักเกินงวดหลัง · แถวเก่าที่ TaxableGross = 0 ใช้ gross เหมือนเดิม) · PVD = `PayrollIncomeBase.PvdContribution(proratedBaseSalary, %)`
   (D-10 — เดิมเต็มเดือน + ไม่ปัด) · เพดานสมทบปัด AwayFromZero (D-08) · กำหนดนำส่ง สปส. + เงินเพิ่ม §49 = `Helpers/SsoLateFee` ตัวเดียว
@@ -6476,7 +6495,7 @@ _Last verified against codebase: 2026-11-13 · commit 76130af2 (รอบแร�
 **ตัวตนผู้ถูกหัก ณ วันออก** (`Helpers/WhtPayeeSnapshot` · ประทับที่ `AccountingDbContext.SaveChanges` เมื่อเข้าสถานะออกแล้ว/เปลี่ยนผู้ถูกหัก) — HTML + QuestPDF · หน้าใบ (`MapToResponse`) · รายงาน/ไฟล์ ภ.ง.ด. จากทะเบียน ใช้สำเนา · ใบร่างใช้ผู้ติดต่อสด ·
 แก้ผู้ติดต่อหลังออกใบ ⇒ ใบที่ออกแล้วไม่เปลี่ยน (ทางแก้ = ยกเลิกแล้วออกใหม่) · ยังเลื่อน: ฉบับยื่นเพิ่มเติมของงวดเดิม (§4 ข้อ 1) · 50 ทวิ เงินเดือนรายปี (ไม่บันทึก) ใช้ข้อมูลพนักงานตามเดิม
 ล็อกจุดเรียก: `tools/required_call_site_check.py` `_R275B_*` (12) + ฝ่ายค้าน R275B-1…6 · เทสต์ TEST_PLAN §รอบ 275 แพ็ก B
-_Last verified against codebase: 2026-11-20 · รอบ 275 แพ็ก B · commit 33b2c7de_
+_Last verified against codebase: 2026-11-20 · รอบ 275 แพ็ก B · commit 33b2c7de · ชุดแก้ฝ่ายค้าน 24aad79a_
 
 #### 5.3a-1 ฐานยอด ภ.ง.ด.3/53/54 ของหน้า "นำส่งภาษี" + ปฏิทิน (แก้ 2026-09-16)
 
@@ -9927,3 +9946,10 @@ _Last verified against codebase: 2026-11-20 (รอบ 275 แพ็ก A — �
 _Last verified against codebase: 2026-11-20 (รอบ 275 แพ็ก C — §3.4b-275: ใบเสร็จ = ใบกำกับภาษี ณ วันรับเงินจากตัวตัดสินเดียว `SettlementTaxInvoiceRole`
 (ยุบสูตรงวดเดียว 4 สำเนา · ค่าธรรมเนียม/บรรทัดปรับ/ภาษีหัก/ใบลดหนี้) · งานบริการรับเป็นงวด = ใบกำกับรายงวด VAT ตามส่วน + ย้าย 21913 ตามส่วนผูกการรับ · คิว "รับเงินแล้วยังไม่มีใบกำกับ" ·
 วันที่ปฏิทินไทยที่ต้นทางการรับชำระ · ข้อความใบเสร็จผ่าน DocumentLabels · คำตัดสิน 275-C-1…9) — commit 96bb5262_
+
+_Last verified against codebase: 2026-11-20 (รอบ 275 แพ็ก A ผลตรวจฝ่ายค้าน MED-1…4 + LOW — heartbeat/ยืนยันลายนิ้วมือที่ระบุ · ประตูเขียนค่าเข้ารหัส · หมุนรอทุกเครื่อง · เมล็ด HMAC ถาวร ·
+เทสต์ `EncryptionWriteGuardRound275ATests` + Db `KeysSecretsRound275ADbTests` — commit 17305b6a)_
+`SecretUse` ด่านเดียวของผู้อ่านความลับ · DTO พนักงานไม่ส่ง ciphertext · หน้า "สุขภาพข้อมูลเข้ารหัส" · เทสต์ `KeysSecretsRound275ATests` + Db `KeysSecretsRound275ADbTests` · กติกา `_R275A_` — commit (เติมในคอมมิตตามหลัง))_
+_Last verified against codebase: 2026-11-20 (รอบ 276 — ผู้ใช้เห็นเฉพาะเอกสารที่ตัวเองสร้าง/สร้าง-แก้ได้เฉพาะร่าง: ตัวกรองแถว EF ของ Documents ·
+`DocumentRestrictionFilter` รายการอนุญาต + 404 · ด่าน Approve/Void ชั้น service · ส่งขออนุมัติพื้นฐาน/ถอน/ตีกลับ + แจ้งผ่านเครื่องแจ้งเตือนกลาง ·
+คำตัดสิน 276-1…8 — commit 69740aef + 4456de7a)_

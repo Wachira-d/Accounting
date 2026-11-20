@@ -398,7 +398,7 @@ public class CompanyService : ICompanyService
             await _db.SaveChangesAsync();
         }
 
-        return await _db.CompanyUsers
+        var members = await _db.CompanyUsers
             .Where(cu => cu.CompanyId == companyId)
             .Include(cu => cu.User)
             .Include(cu => cu.CompanyRole)
@@ -413,8 +413,48 @@ public class CompanyService : ICompanyService
                 cu.CompanyRoleId != null ? cu.CompanyRole!.Name : null,
                 cu.JoinedAt,
                 cu.User.LastLoginAt,
-                cu.User.Status))
+                cu.User.Status,
+                cu.OwnDocumentsOnly,
+                cu.DraftDocumentsOnly,
+                null))
             .ToListAsync();
+        // ค่าที่มีผล (ผู้ใช้ ∪ บทบาท) — ตัวตัดสินเดียว DocumentRestrictionPolicy (หน้าเว็บแสดงป้ายอย่างเดียว)
+        var roleIds = members.Where(m => m.CompanyRoleId != null).Select(m => m.CompanyRoleId!.Value).Distinct().ToList();
+        var roleFlags = await _db.CompanyRoles.AsNoTracking().Where(r => r.CompanyId == companyId && roleIds.Contains(r.Id))
+            .ToDictionaryAsync(r => r.Id, r => (Own: r.OwnDocumentsOnly, Draft: r.DraftDocumentsOnly));
+        return members.Select(m =>
+        {
+            var rf = m.CompanyRoleId is Guid rid && roleFlags.TryGetValue(rid, out var f) ? f : (Own: false, Draft: false);
+            return m with
+            {
+                EffectiveDocumentRestrictionNotice = Accounting.Helpers.DocumentRestrictionPolicy.Notice(
+                    Accounting.Helpers.DocumentRestrictionPolicy.Effective(m.Role, m.OwnDocumentsOnly, m.DraftDocumentsOnly, rf.Own, rf.Draft)),
+            };
+        }).ToList();
+    }
+
+    /// <summary>รอบ 276 — เจ้าของตั้งค่าจำกัดเอกสารของสมาชิก (ด่านเดียวกับเปลี่ยนบทบาท <see cref="EnsureOwnerAccessAsync"/>) ·
+    /// ตั้งบนเจ้าของ/ตัวเองไม่ได้ (<c>DocumentRestrictionPolicy.SetProblem</c>) · เห็นเฉพาะของตัวเอง ⇒ เฉพาะร่างด้วย · audit</summary>
+    public async Task UpdateDocumentRestrictionAsync(Guid companyId, Guid ownerId, Guid targetUserId, bool ownDocumentsOnly, bool draftDocumentsOnly)
+    {
+        await EnsureOwnerAccessAsync(companyId, ownerId);
+        var cu = await _db.CompanyUsers.FirstOrDefaultAsync(x => x.CompanyId == companyId && x.UserId == targetUserId)
+            ?? throw new KeyNotFoundException("ไม่พบผู้ใช้ในบริษัท");
+        if ((ownDocumentsOnly || draftDocumentsOnly)
+            && Accounting.Helpers.DocumentRestrictionPolicy.SetProblem(cu.Role, ownerId == targetUserId) is string problem)
+            throw new Accounting.Helpers.BusinessRuleException(problem, Accounting.Helpers.DocumentRestrictionPolicy.DraftOnlyRuleCode, 409);
+        var before = new { cu.OwnDocumentsOnly, cu.DraftDocumentsOnly };
+        cu.OwnDocumentsOnly = ownDocumentsOnly;
+        cu.DraftDocumentsOnly = draftDocumentsOnly || ownDocumentsOnly;   // คำตัดสิน 276-2
+        _db.AddChainedAuditLog(new AuditLog
+        {
+            CompanyId = companyId, UserId = ownerId, Action = AuditAction.Update,
+            EntityType = nameof(CompanyUser), EntityId = targetUserId.ToString(),
+            OldValues = System.Text.Json.JsonSerializer.Serialize(before),
+            NewValues = System.Text.Json.JsonSerializer.Serialize(new { action = "document-restriction", cu.OwnDocumentsOnly, cu.DraftDocumentsOnly }),
+            Timestamp = DateTime.UtcNow,
+        });
+        await _db.SaveChangesAsync();
     }
 
     public async Task<AddUserResult> AddUserAsync(Guid companyId, Guid ownerId, AddCompanyUserRequest request)

@@ -7354,7 +7354,7 @@ _รอบ 275 แพ็ก A (2026-11-20 · คีย์และความ�
 `SecretReprotectJob` เป็นระยะ + ล้ม = JobRunLog + watermark · ลายนิ้วมือคีย์ใน `SiteSettings` (งานย้ายคีย์ทั้งสองหยุดเมื่อไม่ตรง · ยืนยันคีย์โดยผู้ดูแล + audit) ·
 `Helpers/SecretUse` ที่ webhook ขาออก/CMS ขาเข้า/e-Tax/อีเมล/login ภายนอก/Omise/ธนาคาร/LINE OA/ลงนาม callback (ห้ามใช้ค่าว่างเงียบ · ห้ามส่งไม่เซ็น · ห้ามตรวจด้วยกุญแจว่าง) ·
 DTO พนักงานส่งป้าย ⛔ แทน ciphertext + ฟอร์มบอกชัด (ฝ่ายค้าน 274-10 MED-2) · หน้า `/pages/encryption-health.html` + มุมผู้ดูแล · runbook `docs/runbooks/encryption-key-rotation.md` ·
-คำตัดสิน 275-A-1…7 · pure + Db `KeysSecretsRound275A*` · กติกา `_R275A_` — commit (เติมในคอมมิตตามหลัง)_
+คำตัดสิน 275-A-1…7 · pure + Db `KeysSecretsRound275A*` · กติกา `_R275A_` — commit 2e7199e0 + bc9b6d73_
 
 _รอบ 275 แพ็ก D ชุดแก้ฝ่ายค้าน (ไม่พบ HIGH): MED-1 ผูก/บันทึกเองตรวจเลขผู้เสียภาษี + หน่วยงานกับแบบ (`AgencyTypeProblem` · `GovPaymentSlip.AgencyHint`) · MED-2 งานเบื้องหลัง/ยกเลิกใบเขียนแบบมีเงื่อนไขทีละแถว + Db test แข่งเวลา · MED-3 `ReleasedAt` · LOW-1 การ์ดสรุปต่อกลุ่ม + เพดาน 20 · LOW-2 ใบที่มีสลิปเปิดอ้างไม่หมดอายุ · LOW-3 `PaidBy` + การ์ดใบกลับเปิด (`ReopenedAt`/`ReopenNoticeAt`) · LOW-4 `MoveToStaffIfOpenAsync` — คอลัมน์ใหม่ 3 (Round272Migration)_
 คำตัดสิน 275-A-1…7 · pure + Db `KeysSecretsRound275A*` · กติกา `_R275A_` — commit 2e7199e0 + bc9b6d73_
@@ -7368,7 +7368,19 @@ LOW-1 การ์ด LINE "ยอดรับชำระ" · LOW-3 · ตั�
 _รอบ 275 แพ็ก B ชุดแก้ฝ่ายค้าน + คำตัดสินแทนเจ้าของ 275-B-6…10 (2026-11-20): HIGH-1 ด่านทะเบียนเฉพาะร่าง (รายงานที่ยื่นแล้วสร้างไฟล์ได้ + คำเตือนยื่นเพิ่มเติม) ·
 MED-1/2 ยอดของบรรทัดในลายเซ็นล็อก (แก้ที่ต้นทาง) · MED-3 ด่านเซิร์ฟเวอร์บล็อกเฉพาะ `ServerBlockingCodes` · MED-4 สร้างใหม่คืนการติ๊กออก (`RegenerateUntick`) ·
 LOW ลายเซ็นใส่ DocumentId · `Round275BMigration` เติม WhtCertId ย้อนหลังที่จับคู่ได้แน่นอน · แถบ ≤ 6 เดือน · 275-B-6 (ก) ยกเลิก PV ⇒ ใบผูกด้วยมือหลุดการผูก (`WhtCertVoidCascade`) ·
+(ข) สำเนาผู้ถูกหัก ณ วันออก `WithholdingTaxCerts.PayeeSnapshotJson` (`WhtPayeeSnapshot` · ประทับที่ SaveChanges · backfill) — renderer ×2 · หน้าใบ · รายงาน/ไฟล์ — commit 24aad79a_
+
+_รอบ 275 แพ็ก A ผลตรวจฝ่ายค้าน (2026-11-20 · ไม่พบ HIGH): MED-1 ยืนยัน "ลายนิ้วมือที่ระบุ" จาก heartbeat ต่อเครื่อง (`EncryptionKeyHeartbeats`) · เครื่องที่ตอบใช้คีย์อื่น ⇒ 409 ·
+MED-2 `EncryptionWriteGuard` — เครื่องคีย์ไม่ตรงหยุดเข้ารหัสค่าใหม่ (ความลับ + PII · 503 ข้อความไทย · อ่านไม่กระทบ) · MED-3 `RotationPending` จนทุกเครื่องรายงานคีย์ใหม่/ผู้ดูแลยืนยัน ·
+MED-4 กุญแจ HMAC สลิปภาษี/OTP จากเมล็ดถาวร `SiteSettings.HmacSeedProtected` (`HmacSeedBootstrap`) · LOW ลายนิ้วมือจากกุญแจ PBKDF2 · ยืนยันแบบมีเงื่อนไขค่าเดิม · รอบข้ามสแกนลงชื่อ `…Skipped` ·
+คำตัดสิน 275-A-8…12 · เทสต์ P275A-11…14 · runbook ขั้น 4 — commit 17305b6a_
 (ข) สำเนาผู้ถูกหัก ณ วันออก `WithholdingTaxCerts.PayeeSnapshotJson` (`WhtPayeeSnapshot` · ประทับที่ SaveChanges · backfill) — renderer ×2 · หน้าใบ · รายงาน/ไฟล์ — commit (เติมในคอมมิตตามหลัง)_
+_รอบ 276 (2026-11-20 · ความต้องการเจ้าของ "เห็นเฉพาะเอกสารที่ตัวเองสร้าง + เฉพาะร่าง + กดแจ้งให้บัญชีอนุมัติ · แจ้ง LINE กลุ่ม/ส่วนตัว/อีเมล/ในระบบ"):
+ค่าตั้งต่อผู้ใช้/บทบาท (`CompanyUser`/`CompanyRole.OwnDocumentsOnly/DraftDocumentsOnly` · Round276Migration) · ตัวตัดสิน `Helpers/DocumentRestrictionPolicy` ·
+ด่าน `Filters/DocumentRestrictionFilter` + ตัวกรองแถว EF ของ Documents · ด่าน Approve/Void ชั้น service (`DocumentRestrictionGuard`) ·
+ส่งขออนุมัติพื้นฐาน `DocumentApprovalRequests` + `DocumentApprovalRequestService` (กฎที่ตรง ⇒ workflow เดิม) · คีย์แจ้งเตือน `document.approval_requested/returned/granted` +
+บทบาทผู้รับ `DocumentApprover` · UI ทีม/บทบาท/เอกสาร/คิวอนุมัติ/เมนู · คำตัดสิน 276-1…8 · เทสต์ `DocumentRestrictionPolicyTests` + Db `DocumentRestrictionDbTests` ·
+กติกา `_R276_` — commit 69740aef + 4456de7a_
 
 _Last verified against codebase: 2026-11-20 (รอบ 275 แพ็ก C ชุดแก้ฝ่ายค้าน — HIGH-1 invariant ปิดยอดแล้ว 21913 = 0 ทุกเส้น (งวดปิดถือภาษีที่ยังพัก · ใบลดหนี้ที่แตะภาษีพักไม่นับซ้ำใน ภ.พ.30) ·
 MED-1 รับหลายใบ/ยกเลิกเดินตัวตัดสินเดียว · MED-2 ใบกำกับรายงวดแยกบรรทัดตามอัตรา · MED-3 ใบเก่าที่ภาษีรายงานแล้ว = ใบกำกับหลักฐานกระดาษ `VatReportedOnSource` (แทนการออกทุกงวดพร้อมกัน) ·

@@ -4466,9 +4466,9 @@ public partial class TaxService : ITaxService
         // ฝ่ายค้าน MED-4: การติ๊ก "ออก" ของผู้ใช้ต้องคืนด้วย — ใบที่ตั้งใจตัดออกห้ามกลับเข้ายอด/ไฟล์ยื่นเงียบ ๆ (คีย์ เอกสาร+ใบ+ประเภทเงินได้+คำอธิบาย ·
         // บรรทัดรุ่นก่อนรอบ 275 ที่ไม่มีตัวอ้างใบ ⇒ จับคู่โดยไม่ดูใบ) · แถวที่ระบบตัดออกเองจับคู่กับฉบับใหม่ที่ติ๊กออกอยู่แล้ว = ไม่มีผล
         var untickSnapshot = existing.TaxType is TaxType.CorporateIncomeTax or TaxType.PersonalIncomeTax91
-            ? new List<Accounting.Helpers.RegenerateUntick.Key>()
+            ? new List<Accounting.Helpers.RegenerateUntick.UntickKey>()
             : existing.Lines.Where(l => l.IsExcluded && !Accounting.Helpers.WhtReportTotals.IsSummary(l))
-                .Select(l => new Accounting.Helpers.RegenerateUntick.Key(l.DocumentId, l.WhtCertId, l.IncomeTypeCode, l.Description)).ToList();
+                .Select(l => new Accounting.Helpers.RegenerateUntick.UntickKey(l.DocumentId, l.WhtCertId, l.IncomeTypeCode, l.Description)).ToList();
         // ฟิลด์ audit/สถานะการยื่นที่ "ไม่ใช่ผลของการคำนวณ" — สร้างรายงานใหม่
         // ต้องไม่ลบร่องรอยการยื่น/ถูกปฏิเสธ/RD ack (เส้น ปลดล็อก → แก้ →
         // สร้างใหม่ เคยล้างทิ้งหมดรวมทั้งตัวชี้ JE กลับรายการ)
@@ -4568,7 +4568,7 @@ public partial class TaxService : ITaxService
                 {
                     if (line.IsExcluded || Accounting.Helpers.WhtReportTotals.IsSummary(line)) continue;
                     if (!Accounting.Helpers.RegenerateUntick.Matches(untickSnapshot,
-                            new Accounting.Helpers.RegenerateUntick.Key(line.DocumentId, line.WhtCertId, line.IncomeTypeCode, line.Description))) continue;
+                            new Accounting.Helpers.RegenerateUntick.UntickKey(line.DocumentId, line.WhtCertId, line.IncomeTypeCode, line.Description))) continue;
                     line.IsExcluded = true;
                     changed = true;
                 }

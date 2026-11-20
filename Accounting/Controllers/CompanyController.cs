@@ -122,6 +122,20 @@ public class CompanyController : ControllerBase
         return Ok(new ApiResponse<string>(true, null, "เปลี่ยน Role สำเร็จ"));
     }
 
+    /// <summary>รอบ 276 — เจ้าของตั้ง "เห็นเฉพาะเอกสารที่ตัวเองสร้าง" / "สร้าง/แก้ได้เฉพาะร่าง" ให้สมาชิก (ด่าน/กติกาอยู่ที่ service)</summary>
+    [HttpPut("{companyId:guid}/users/{targetUserId:guid}/document-restriction")]
+    [Accounting.Filters.RequireOwner("ตั้งค่าจำกัดเอกสารของสมาชิก")]
+    public async Task<ActionResult<ApiResponse<string>>> UpdateDocumentRestriction(Guid companyId, Guid targetUserId,
+        [FromBody] UpdateDocumentRestrictionRequest request)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        await _companyService.UpdateDocumentRestrictionAsync(companyId, userId, targetUserId, request.OwnDocumentsOnly, request.DraftDocumentsOnly);
+        return Ok(new ApiResponse<string>(true, null,
+            request.OwnDocumentsOnly ? "ตั้งแล้ว — ผู้ใช้นี้เห็นเฉพาะเอกสารที่ตัวเองสร้าง และสร้าง/แก้ได้เฉพาะร่าง (มีผลคำขอถัดไป)"
+            : request.DraftDocumentsOnly ? "ตั้งแล้ว — ผู้ใช้นี้สร้าง/แก้ได้เฉพาะเอกสารร่าง (มีผลคำขอถัดไป)"
+            : "ยกเลิกการจำกัดเอกสารของผู้ใช้นี้แล้ว"));
+    }
+
     /// <summary>เจ้าของแก้ชื่อ-นามสกุลของสมาชิก (แก้ชื่อที่พิมพ์ผิดบนลายเซ็น/เอกสาร).</summary>
     [HttpPut("{companyId:guid}/users/{targetUserId:guid}/name")]
     public async Task<ActionResult<ApiResponse<string>>> UpdateMemberName(Guid companyId, Guid targetUserId, [FromBody] UpdateMemberNameRequest request)

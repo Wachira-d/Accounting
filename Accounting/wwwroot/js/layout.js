@@ -800,6 +800,21 @@ const Layout = {
     document.body.insertBefore(banner, document.body.firstChild);
   },
 
+  /** รอบ 276 — แถบบอกผู้ใช้ที่ถูกจำกัดเอกสารว่าทำไมเห็น/ทำได้เท่านี้ (ข้อความจากเซิร์ฟเวอร์ · แสดงอย่างเดียว) */
+  _renderDocRestrictionBanner() {
+    const dr = this.myPermissions && this.myPermissions.documentRestriction;
+    const old = document.getElementById('docRestrictionBanner');
+    if (!dr || !dr.notice) { if (old) old.remove(); return; }
+    if (old) { old.textContent = '🔒 ' + dr.notice; return; }
+    const host = document.querySelector('.main-content') || document.body;
+    const el = document.createElement('div');
+    el.id = 'docRestrictionBanner';
+    el.setAttribute('role', 'status');
+    el.style.cssText = 'background:#fffbeb;border-bottom:1px solid #fcd34d;color:#92400e;padding:8px 16px;font-size:13px';
+    el.textContent = '🔒 ' + dr.notice;
+    host.insertBefore(el, host.firstChild);
+  },
+
   async loadMyPermissions() {
     if (!this.currentCompany?.id) return;
     this.loadVatRegistration();
@@ -810,6 +825,7 @@ const Layout = {
         try { localStorage.setItem('myPermissions', JSON.stringify(res.data)); } catch {}
         this._refreshNavMenu();
         this._enforceRoleAccess();
+        this._renderDocRestrictionBanner();
         // ฝ่ายค้านรอบ 215 S4: หน้าที่วาดก่อนสิทธิ์มาถึง (hasMenuAccess = true ตอนยังไม่รู้) ต้องวาดใหม่ — เช่นแท็บหัวพื้นที่ทำงานเว็บ
         try { document.dispatchEvent(new CustomEvent('layout:permissions')); } catch (_) { /* เบราว์เซอร์เก่า */ }
       }
@@ -863,6 +879,10 @@ const Layout = {
   hasMenuAccess(menuId) {
     // Permissions not loaded yet → don't flicker-hide; allow then re-render.
     if (!this.myPermissions) return true;
+    // รอบ 276: ผู้ใช้ "เห็นเฉพาะเอกสารที่ตัวเองสร้าง" — เห็นเฉพาะเมนูที่เซิร์ฟเวอร์ส่งมา (DocumentRestrictionPolicy.OwnScopeMenuIds) ·
+    // หน้าอื่นแสดงข้อมูลรวมของบริษัท — API ปฏิเสธอยู่แล้ว ตรงนี้กันเมนูโผล่แล้วกดได้ 403
+    const dr = this.myPermissions.documentRestriction;
+    if (dr && Array.isArray(dr.allowedMenuIds)) return dr.allowedMenuIds.includes(menuId);
     if (this.myPermissions.isOwnerOrAdmin) return true;
     // หน้า "ส่วนตัว" ของผู้ใช้เอง (ลายเซ็น/โปรไฟล์) เข้าได้ทุกคนเสมอ — ไม่ผูก
     // สิทธิ์เมนูบริษัท. พนักงานที่มีสิทธิ์อนุมัติแต่ไม่มีสิทธิ์เข้า "ตั้งค่าบริษัท"
@@ -906,6 +926,13 @@ const Layout = {
         && this.myPermissions.isSystemAdmin !== true) {
       this.toast('หน้านี้สำหรับผู้ดูแลระบบเท่านั้น', 'error');
       setTimeout(() => { window.location.href = this.dashboardUrl(); }, 1200);
+      return;
+    }
+    // รอบ 276: ผู้ใช้ "เห็นเฉพาะเอกสารที่ตัวเองสร้าง" เปิดได้เฉพาะหน้าในรายการ (แดชบอร์ด/รายงานแสดงข้อมูลรวมของบริษัท) ⇒ พาไปหน้าเอกสาร
+    const dr = this.myPermissions.documentRestriction;
+    if (dr && Array.isArray(dr.allowedMenuIds) && this.currentPage && !dr.allowedMenuIds.includes(this.currentPage)) {
+      this.toast(dr.notice || 'บัญชีของคุณเห็นเฉพาะเอกสารที่ตัวเองสร้าง — กำลังพาไปหน้าเอกสาร', 'warning', 6000);
+      setTimeout(() => { window.location.href = '/pages/documents.html'; }, 1500);
       return;
     }
     if (this.myPermissions.isOwnerOrAdmin) return;

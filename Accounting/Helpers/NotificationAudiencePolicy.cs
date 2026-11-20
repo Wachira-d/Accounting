@@ -197,6 +197,14 @@ public static class NotificationAudiencePolicy
                 new NotificationDefaultRow("Owner", EnableSystem: true, EnableEmail: true, EnableLine: true, EnableLineGroup: false),
                 new NotificationDefaultRow("CompanyAdmin", EnableSystem: true, EnableEmail: true, EnableLine: true, EnableLineGroup: false),
             };
+        // รอบ 276 (คำตัดสิน 276-6): พนักงานขออนุมัติเอกสาร — ต้องถึงผู้อนุมัติทุกช่องที่เขามี (กระดิ่ง · อีเมล · LINE ส่วนตัวที่ผูกแล้ว) + กลุ่ม LINE ของบริษัท
+        // เมื่อผูกไว้ (ข้อความไม่มีชื่อลูกค้า/เลขภาษี) · บริษัทตั้งแถวของคีย์เองแล้ว ⇒ ตามที่ตั้ง (ปิดได้ทุกช่อง)
+        if (eventKey == Accounting.Models.Constants.NotificationEvents.DocumentApprovalRequested)
+            return new[]
+            {
+                new NotificationDefaultRow(Accounting.Models.Constants.NotificationRecipientRoles.DocumentApprover,
+                    EnableSystem: true, EnableEmail: true, EnableLine: true, EnableLineGroup: companyLineGroupConfigured),
+            };
         if (BellOnlyKeys.Contains(eventKey))
             return new[] { new NotificationDefaultRow("Owner", EnableSystem: true, EnableEmail: false, EnableLine: false, EnableLineGroup: false) };
         if (EmailDefaultKeys.Contains(eventKey))

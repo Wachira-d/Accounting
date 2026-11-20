@@ -201,7 +201,7 @@ public class WhtReportRound275Tests
     {
         var doc = Guid.NewGuid();
         var cert = Guid.NewGuid();
-        var excluded = new[] { new RegenerateUntick.Key(doc, cert, "40(8)", "WT-1 — ค่าบริการ"), new RegenerateUntick.Key(null, null, "40(8)", "JV-9") };
+        var excluded = new[] { new RegenerateUntick.UntickKey(doc, cert, "40(8)", "WT-1 — ค่าบริการ"), new RegenerateUntick.UntickKey(null, null, "40(8)", "JV-9") };
         Assert.True(RegenerateUntick.Matches(excluded, new(doc, cert, "40(8)", "WT-1 — ค่าบริการ")));
         Assert.True(RegenerateUntick.Matches(excluded, new(null, null, "40(8)", "JV-9")));
         // ทิศตรงข้าม: ใบอื่น · ประเภทอื่น · คำอธิบายอื่น (ร่าง → ออกแล้ว) ⇒ ไม่ติ๊กออกตาม
@@ -209,7 +209,7 @@ public class WhtReportRound275Tests
         Assert.False(RegenerateUntick.Matches(excluded, new(doc, cert, "40(2)", "WT-1 — ค่าบริการ")));
         Assert.False(RegenerateUntick.Matches(excluded, new(doc, cert, "40(8)", "WT-2 — ค่าบริการ")));
         // บรรทัดเดิมไม่มีตัวอ้างใบ (ก่อนรอบ 275) ⇒ จับคู่โดยไม่ดูใบ
-        var legacy = new[] { new RegenerateUntick.Key(doc, null, "40(8)", "WT-1 — ค่าบริการ") };
+        var legacy = new[] { new RegenerateUntick.UntickKey(doc, null, "40(8)", "WT-1 — ค่าบริการ") };
         Assert.True(RegenerateUntick.Matches(legacy, new(doc, cert, "40(8)", "WT-1 — ค่าบริการ")));
     }
 

@@ -169,4 +169,12 @@ public record CompanyMemberResponse(
     string? CompanyRoleName,
     DateTime JoinedAt,
     DateTime? LastLoginAt,
-    UserStatus Status);
+    UserStatus Status,
+    /// <summary>รอบ 276 — ค่าที่เจ้าของตั้งให้ผู้ใช้คนนี้ (เก็บแล้วต้อง echo) · ค่าที่มีผลรวมบทบาทอยู่ที่ <see cref="EffectiveDocumentRestrictionNotice"/></summary>
+    bool OwnDocumentsOnly = false,
+    bool DraftDocumentsOnly = false,
+    /// <summary>ป้ายค่าที่มีผล (ผู้ใช้ ∪ บทบาท · <c>DocumentRestrictionPolicy.Notice</c>) · null = ไม่ถูกจำกัด</summary>
+    string? EffectiveDocumentRestrictionNotice = null);
+
+/// <summary>รอบ 276 — เจ้าของตั้ง "เห็นเฉพาะเอกสารที่ตัวเองสร้าง" / "สร้าง/แก้ได้เฉพาะร่าง" ให้สมาชิก</summary>
+public sealed record UpdateDocumentRestrictionRequest(bool OwnDocumentsOnly, bool DraftDocumentsOnly);

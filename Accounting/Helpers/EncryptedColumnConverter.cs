@@ -202,6 +202,7 @@ public class EncryptedColumnConverter : ValueConverter<string?, string?>
     {
         if (string.IsNullOrEmpty(value)) return value;
         if (IsUnreadable(value) && PassThrough.ContainsKey(Fingerprint(value))) return value;   // ค่าเดิมที่อ่านมาแล้วถอดไม่ออก — คงไว้
+        EncryptionWriteGuard.ThrowIfBlocked("ข้อมูลส่วนบุคคล");   // รอบ 275 แพ็ก A (MED-2): คีย์ของเครื่องนี้ไม่ตรงกับที่ระบบใช้ ⇒ ไม่เข้ารหัสค่าใหม่ (อ่านไม่กระทบ)
         // รอบ 274-10: ciphertext ที่ผู้ใช้/ทางเข้าส่งมาเป็นค่า (ด่านข้อความไทยอยู่ที่ EmployeeRecordEdit.CipherInputProblem) — ห่อพร้อมเครื่องหมาย
         // ⇒ ฝั่งอ่านไม่แกะ (Unwrap) · ไม่มีเครื่องหมาย = แถวซ้อนรุ่นเก่าที่แกะได้
         // ฝ่ายค้าน 274-10 LOW-1: ค่าที่ขึ้นต้นด้วยเครื่องหมายเองก็ห่อเพิ่ม ⇒ ฝั่งอ่านตัดเครื่องหมายหนึ่งชั้นได้ค่าที่ส่งมาตรงตัวเสมอ (ไม่ตัดคำนำหน้าเงียบ ๆ)

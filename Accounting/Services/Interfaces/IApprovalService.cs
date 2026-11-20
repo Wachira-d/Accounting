@@ -12,6 +12,8 @@ public interface IApprovalService
 
     // Requests
     Task<ApprovalRequestResponse> SubmitForApprovalAsync(Guid companyId, string entityType, Guid entityId, Guid requestedByUserId);
+    /// <summary>รอบ 276: มีกฎอนุมัติที่ตรงไหม (ตัวเลือกกฎตัวเดียวกับ SubmitForApprovalAsync)</summary>
+    Task<bool> HasMatchingRuleAsync(Guid companyId, string entityType, Guid entityId);
     Task<ApprovalRequestResponse> GetApprovalRequestAsync(Guid companyId, Guid requestId);
 
     /// <summary>คำขออนุมัติล่าสุดของเอกสาร/รายการนั้น (null = ยังไม่เคยส่ง) —

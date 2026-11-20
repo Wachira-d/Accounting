@@ -8,6 +8,16 @@ public class AccountingDbContext : DbContext
 {
     public AccountingDbContext(DbContextOptions<AccountingDbContext> options) : base(options) { }
 
+    /// <summary>รอบ 276 — ขอบเขต "เห็นเฉพาะเอกสารที่ตัวเองสร้าง" ของ<b>คำขอนี้</b> (DbContext เป็น scoped ต่อคำขอ) · ผู้ตั้งเดียว
+    /// <c>Filters/DocumentRestrictionFilter</c> (หรือ <c>Helpers/DocumentRestrictionScope.Apply</c>) · null = ไม่จำกัด (ผู้ใช้ทั่วไป · งานเบื้องหลัง) ·
+    /// ผู้อ่าน: ตัวกรองแถวของ <see cref="Document"/> ด้านล่าง (ทุก query ผ่าน <c>_db.Documents</c> รวม Include/FromSql ที่ compose)</summary>
+    public string? DocumentOwnerScopeUserId { get; set; }
+    /// <summary>อีเมลของผู้ใช้คนเดียวกัน — บางทางเข้า (LINE) ประทับ <c>CreatedBy</c> เป็นอีเมล (คำตัดสิน 276-3)</summary>
+    public string? DocumentOwnerScopeEmail { get; set; }
+    /// <summary>รอบ 276 — คำขอนี้มาจากผู้ใช้ "เฉพาะร่าง" (ตั้งโดย <c>DocumentRestrictionFilter</c>) · ผู้อ่าน: <c>Helpers/DocumentRestrictionGuard</c>
+    /// (กันอนุมัติอัตโนมัติที่ประทับผู้กระทำเป็นป้ายระบบระหว่างคำขอของผู้ถูกจำกัด)</summary>
+    public bool DocumentDraftOnlyRequest { get; set; }
+
     // Core
     public DbSet<User> Users => Set<User>();
     public DbSet<LineBindCode> LineBindCodes => Set<LineBindCode>();
@@ -102,6 +112,8 @@ public class AccountingDbContext : DbContext
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
     /// <summary>watermark งานตรวจ audit chain ต่อบริษัท (รอบ 201 ทีม PL · A-PL3)</summary>
     public DbSet<AuditChainCheckpoint> AuditChainCheckpoints => Set<AuditChainCheckpoint>();
+    /// <summary>รอบ 275 แพ็ก A (ฝ่ายค้าน MED-1/MED-3): ลายนิ้วมือคีย์ต่อเครื่อง</summary>
+    public DbSet<EncryptionKeyHeartbeat> EncryptionKeyHeartbeats => Set<EncryptionKeyHeartbeat>();
     /// <summary>วันหยุดราชการระดับแพลตฟอร์ม (รอบ 201 ทีม PL · B-9) — เลื่อนกำหนดยื่น/นับวันทำการ · ว่าง = เสาร์/อาทิตย์อย่างเดียว</summary>
     public DbSet<PlatformHoliday> PlatformHolidays => Set<PlatformHoliday>();
     public DbSet<LegalDocumentVersion> LegalDocumentVersions => Set<LegalDocumentVersion>();   // รอบ 214 — นโยบาย/ข้อกำหนดของแพลตฟอร์มที่แอดมินแก้ได้
@@ -212,6 +224,7 @@ public class AccountingDbContext : DbContext
     public DbSet<ApprovalRule> ApprovalRules => Set<ApprovalRule>();
     public DbSet<ApprovalStep> ApprovalSteps => Set<ApprovalStep>();
     public DbSet<ApprovalRequest> ApprovalRequests => Set<ApprovalRequest>();
+    public DbSet<DocumentApprovalRequest> DocumentApprovalRequests => Set<DocumentApprovalRequest>();   // รอบ 276 — คำขออนุมัติพื้นฐาน (Helpers/Round276Migration)
     public DbSet<ApprovalAction> ApprovalActions => Set<ApprovalAction>();
 
     // File Attachments
@@ -994,7 +1007,12 @@ public class AccountingDbContext : DbContext
             // (รหัสที่พิมพ์จริงถูก snapshot ไว้ใน IssuerBranchCode แล้ว ใบเก่ายังพิมพ์ถูก)
             e.HasOne(d => d.Branch).WithMany().HasForeignKey(d => d.BranchId).OnDelete(DeleteBehavior.SetNull);
             e.Property(d => d.IssuerBranchCode).HasMaxLength(5);
-            e.HasQueryFilter(d => !d.IsDeleted);
+            // EF มีตัวกรองได้ตัวเดียวต่อ entity (ตัวหลังทับตัวก่อน) ⇒ รวมไว้ที่นี่ที่เดียว:
+            // ใบที่ลบแล้ว + รอบ 276 "เห็นเฉพาะเอกสารที่ตัวเองสร้าง" (มีผลเฉพาะคำขอที่ DocumentRestrictionFilter ตั้งขอบเขต · ค่าอื่น null ⇒ ไม่กรอง)
+            e.HasQueryFilter(d => !d.IsDeleted
+                && (DocumentOwnerScopeUserId == null
+                    || d.CreatedBy == DocumentOwnerScopeUserId
+                    || (DocumentOwnerScopeEmail != null && d.CreatedBy == DocumentOwnerScopeEmail)));
         });
 
         // ===== DocumentLine =====
@@ -1246,6 +1264,13 @@ public class AccountingDbContext : DbContext
             e.HasQueryFilter(h => !h.IsDeleted);
         });
 
+        // ===== EncryptionKeyHeartbeat (รอบ 275 แพ็ก A) — แถวเดียวต่อ process =====
+        modelBuilder.Entity<EncryptionKeyHeartbeat>(e =>
+        {
+            e.HasKey(h => h.InstanceId);
+            e.Property(h => h.InstanceId).HasMaxLength(200);
+        });
+
         // ===== AuditChainCheckpoint (รอบ 201 ทีม PL · A-PL3) — แถวเดียวต่อบริษัท =====
         modelBuilder.Entity<AuditChainCheckpoint>(e =>
         {
@@ -1483,6 +1508,15 @@ public class AccountingDbContext : DbContext
         });
 
         // ===== ApprovalRequest =====
+        modelBuilder.Entity<DocumentApprovalRequest>(e =>
+        {
+            e.HasIndex(r => new { r.CompanyId, r.DocumentId, r.Status }).HasDatabaseName("IX_DocumentApprovalRequests_Company_Doc_Status");
+            e.Property(r => r.Note).HasMaxLength(500);
+            e.Property(r => r.DecisionReason).HasMaxLength(500);
+            e.Property(r => r.Status).HasConversion<int>();
+            e.HasQueryFilter(r => !r.IsDeleted);
+        });
+
         modelBuilder.Entity<ApprovalRequest>(e =>
         {
             e.HasIndex(r => new { r.EntityType, r.EntityId });

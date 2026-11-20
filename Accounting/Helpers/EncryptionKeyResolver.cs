@@ -93,11 +93,12 @@ public static class EncryptionKeyResolver
         return PreviousKeysFrom(currentKey, inputs, env("ENCRYPTION_KEY"), configKey);
     }
 
-    /// <summary>รอบ 275 แพ็ก A (T4 M-4): "ลายนิ้วมือ" ของคีย์ — HMAC-SHA256 ของค่าคงที่ด้วยคีย์ (ตัด 16 ตัวอักษรฐานสิบหก) · ย้อนหาคีย์ไม่ได้ ·
+    /// <summary>รอบ 275 แพ็ก A (T4 M-4): "ลายนิ้วมือ" ของคีย์ — HMAC-SHA256 ของค่าคงที่ด้วย<b>กุญแจที่ derive แล้ว</b> (PBKDF2 100,000 รอบ ตัวเดียวกับที่เข้ารหัสจริง ·
+    /// ฝ่ายค้าน LOW: เดิมใช้คีย์ดิบ ⇒ เดาคีย์สั้นจากลายนิ้วมือได้เร็ว) · ตัด 16 ตัวอักษรฐานสิบหก · ย้อนหาคีย์ไม่ได้ ·
     /// ใช้ตรวจว่าทุกเครื่องใช้คีย์เดียวกัน (<c>EncryptionKeyFingerprintRule</c>) · ห้ามคำนวณที่อื่น (ฝั่งเขียน = ฝั่งตรวจ)</summary>
     public static string Fingerprint(string key)
     {
-        using var h = new System.Security.Cryptography.HMACSHA256(System.Text.Encoding.UTF8.GetBytes(key));
+        using var h = new System.Security.Cryptography.HMACSHA256(EncryptionHelper.DerivedKeyFor(key));
         return Convert.ToHexString(h.ComputeHash(System.Text.Encoding.UTF8.GetBytes("nextacc/encryption-key-fingerprint/v1")))[..16].ToLowerInvariant();
     }
 

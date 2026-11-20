@@ -6928,6 +6928,11 @@ public partial class DocumentService : IDocumentService
             ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
         await _db.HydrateContactAsync(companyId, doc);  // กัน INNER JOIN ตัดใบที่ contact ถูกลบ
 
+        // รอบ 276: ผู้ใช้ "เฉพาะร่าง" (ผู้กระทำ หรือคำขอนี้) อนุมัติ/ออกเลขไม่ได้ — ทุกทางเข้า (เว็บ · มือถือ · LINE · workflow · อนุมัติอัตโนมัติตอนสร้าง) ·
+        // ผู้ส่งขออนุมัติห้ามอนุมัติใบที่ตัวเองขอ (SoD ของเส้นพื้นฐาน)
+        await DocumentRestrictionGuard.EnsureMayFinalizeAsync(_db, companyId, approvedBy, "อนุมัติ/ออกเลขเอกสาร");
+        await DocumentApprovalRequestService.EnsureNotSelfApprovalAsync(_db, companyId, documentId, approvedBy);
+
         if (doc.Status != DocumentStatus.Draft && doc.Status != DocumentStatus.WaitingApproval)
             throw new InvalidOperationException("อนุมัติได้เฉพาะเอกสาร Draft หรือ WaitingApproval เท่านั้น");
 
@@ -8105,6 +8110,8 @@ public partial class DocumentService : IDocumentService
 
         // รอบ 259 ฝ่ายค้าน M4: ใบที่ออกจากเงินรอจัดสรร (จองไว้) ⇒ จัดสรรเองหลังอนุมัติ — จุดเดียวของทุกทางอนุมัติ (เว็บ · หลายใบ · workflow · ลายเซ็น · LINE)
         approved = await AllocateCreditHoldsAfterApproveAsync(companyId, documentId, approvedBy, approved);
+        // รอบ 276: คำขออนุมัติพื้นฐานที่ค้างของใบนี้ ⇒ ปิด (Approved) + แจ้งผู้ขอ — จุดเดียวของทุกทางอนุมัติ
+        await DocumentApprovalRequestService.OnDocumentApprovedAsync(_db, _notify, companyId, documentId, approvedBy, approved.DocumentNumber, doc.DocumentType);
         return approved;
     }
 
@@ -10167,6 +10174,9 @@ public partial class DocumentService : IDocumentService
             .Include(d => d.Lines)
             .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
+
+        // รอบ 276: คำขอของผู้ใช้ "เฉพาะร่าง" ยกเลิกเอกสารไม่ได้ (ทุกทางเข้าที่มาในคำขอของเขา)
+        await DocumentRestrictionGuard.EnsureMayFinalizeAsync(_db, companyId, null, "ยกเลิกเอกสาร");
 
         if (doc.Status == DocumentStatus.Voided)
             throw new InvalidOperationException("เอกสารนี้ถูกยกเลิกแล้ว");

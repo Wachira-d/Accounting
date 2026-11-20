@@ -62,6 +62,9 @@ ENTITIES = {
     # ศูนย์ตั้งค่าเว็บ (js/cms-mto-settings-admin.js) — หน้าแก้คือไฟล์นั้น · cms-orders ไม่ใช่หน้าแก้แล้ว (อ่านเพื่อแบนเนอร์ = ผู้อ่านจริง)
     'SiteCommerceConfig': ('Accounting/Models/Entities/CmsSite.cs', None,
                            ['Accounting/wwwroot/pages/cms-store-settings.html', 'Accounting/wwwroot/js/cms-mto-settings-admin.js']),
+    # รอบ 276: ค่าจำกัดเอกสารต่อผู้ใช้/บทบาท — ผู้อ่านเชิงธุรกิจ = Helpers/DocumentRestrictionGuard.ForUserAsync (ด่านทุกคำขอ + ชั้น service)
+    'CompanyUser': ('Accounting/Models/Entities/User.cs', {'OwnDocumentsOnly', 'DraftDocumentsOnly'}, ['Accounting/wwwroot/pages/team.html']),
+    'CompanyRole': ('Accounting/Models/Entities/CompanyRole.cs', {'OwnDocumentsOnly', 'DraftDocumentsOnly'}, ['Accounting/wwwroot/pages/roles.html']),
     'DocumentTemplate': ('Accounting/Models/Entities/DocumentTemplate.cs', None,
                          ['Accounting/wwwroot/pages/document-templates.html']),
     'TrialConfig': ('Accounting/Models/Entities/Subscription.cs', None, ['Accounting/wwwroot/admin/plans.html']),

@@ -134,6 +134,7 @@ public class SecretProtector : ISecretProtector
     {
         if (string.IsNullOrEmpty(plaintext)) return plaintext;
         SecretInputRule.Check(plaintext);
+        EncryptionWriteGuard.ThrowIfBlocked("ความลับ");   // รอบ 275 แพ็ก A (MED-2): คีย์ของเครื่องนี้ไม่ตรงกับที่ระบบใช้ ⇒ ไม่เขียน (อ่านไม่กระทบ)
         return EncryptionHelper.Encrypt(plaintext, _key);
     }
 

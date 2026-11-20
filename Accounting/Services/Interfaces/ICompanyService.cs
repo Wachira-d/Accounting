@@ -28,6 +28,8 @@ public interface ICompanyService
     Task RemoveUserAsync(Guid companyId, Guid ownerId, Guid targetUserId);
     Task DeleteCompanyAsync(Guid companyId, Guid requestingUserId, string confirmName);
     Task UpdateUserRoleAsync(Guid companyId, Guid ownerId, Guid targetUserId, UserRole newRole);
+    /// <summary>รอบ 276 — ค่าจำกัดเอกสารของสมาชิก (เจ้าของเท่านั้น)</summary>
+    Task UpdateDocumentRestrictionAsync(Guid companyId, Guid ownerId, Guid targetUserId, bool ownDocumentsOnly, bool draftDocumentsOnly);
     /// <summary>รอบ 201 ทีม PL (C-4): ตรวจว่าโอนความเป็นเจ้าของได้ไหม (ตัวตัดสิน Helpers/OwnershipTransferPolicy) — ไม่เขียนอะไร</summary>
     Task<Accounting.Helpers.OwnershipTransferPolicy.Outcome> CheckOwnershipTransferAsync(Guid companyId, Guid actorUserId, string? targetEmail);
     /// <summary>รอบ 201 ทีม PL (C-4): โอนความเป็นเจ้าของให้ผู้ใช้ที่มีบัญชีแล้ว + audit (hash chain)</summary>

@@ -88,7 +88,10 @@ public class RolePermissionService : IRolePermissionService
             Icon = request.Icon ?? "👤",
             IsSystemRole = false,
             SortOrder = maxSort + 1,
-            CreatedBy = userId.ToString()
+            CreatedBy = userId.ToString(),
+            // รอบ 276 — เห็นเฉพาะของตัวเอง ⇒ เฉพาะร่างด้วย (คำตัดสิน 276-2)
+            OwnDocumentsOnly = request.OwnDocumentsOnly,
+            DraftDocumentsOnly = request.DraftDocumentsOnly || request.OwnDocumentsOnly,
         };
 
         if (request.AllowedMenuIds?.Count > 0)
@@ -135,6 +138,23 @@ public class RolePermissionService : IRolePermissionService
         if (request.Color != null) role.Color = request.Color;
         if (request.Icon != null) role.Icon = request.Icon;
         if (request.SortOrder.HasValue) role.SortOrder = request.SortOrder.Value;
+        // รอบ 276 — ค่าจำกัดเอกสารของบทบาท (null = ไม่เปลี่ยน · เห็นเฉพาะของตัวเอง ⇒ เฉพาะร่างด้วย) + audit
+        if (request.OwnDocumentsOnly.HasValue || request.DraftDocumentsOnly.HasValue)
+        {
+            var before = new { role.OwnDocumentsOnly, role.DraftDocumentsOnly };
+            if (request.OwnDocumentsOnly is bool own) role.OwnDocumentsOnly = own;
+            if (request.DraftDocumentsOnly is bool draft) role.DraftDocumentsOnly = draft;
+            if (role.OwnDocumentsOnly) role.DraftDocumentsOnly = true;
+            if (before.OwnDocumentsOnly != role.OwnDocumentsOnly || before.DraftDocumentsOnly != role.DraftDocumentsOnly)
+                _db.AddChainedAuditLog(new AuditLog
+                {
+                    CompanyId = companyId, UserId = userId, Action = AuditAction.Update,
+                    EntityType = nameof(CompanyRole), EntityId = role.Id.ToString(),
+                    OldValues = System.Text.Json.JsonSerializer.Serialize(before),
+                    NewValues = System.Text.Json.JsonSerializer.Serialize(new { action = "document-restriction", role.OwnDocumentsOnly, role.DraftDocumentsOnly }),
+                    Timestamp = DateTime.UtcNow,
+                });
+        }
         role.UpdatedBy = userId.ToString();
 
         if (request.AllowedMenuIds != null)
@@ -276,7 +296,8 @@ public class RolePermissionService : IRolePermissionService
                 new List<string> { "*" },
                 ownerHiddenMenuIds,
                 isPlatformAdmin,
-                await PermissionDeniedMenuIdsAsync(companyId, userId));
+                await PermissionDeniedMenuIdsAsync(companyId, userId),
+                await MyDocumentRestrictionAsync(companyId, userId));
         }
 
         // CompanyRole assigned → STRICT mode. An empty granted list now
@@ -294,7 +315,16 @@ public class RolePermissionService : IRolePermissionService
             .FirstOrDefaultAsync() ?? cu.Role.ToString();
 
         return new MyPermissionsResponse(roleName, false, perms, ownerHiddenMenuIds, isPlatformAdmin,
-            await PermissionDeniedMenuIdsAsync(companyId, userId));
+            await PermissionDeniedMenuIdsAsync(companyId, userId), await MyDocumentRestrictionAsync(companyId, userId));
+    }
+
+    /// <summary>รอบ 276 — ค่าจำกัดเอกสารที่มีผลของผู้ใช้ที่ล็อกอิน (ตัวอ่านเดียวกับด่าน <c>DocumentRestrictionFilter</c>) · null = ไม่ถูกจำกัด</summary>
+    private async Task<MyDocumentRestriction?> MyDocumentRestrictionAsync(Guid companyId, Guid userId)
+    {
+        var r = (await Accounting.Helpers.DocumentRestrictionGuard.ForUserAsync(_db, companyId, userId)).Restriction;
+        if (!r.IsRestricted) return null;
+        return new MyDocumentRestriction(r.OwnDocumentsOnly, r.DraftOnly, Accounting.Helpers.DocumentRestrictionPolicy.Notice(r)!,
+            r.OwnDocumentsOnly ? Accounting.Helpers.DocumentRestrictionPolicy.OwnScopeMenuIds.ToList() : null);
     }
 
     /// <summary>รอบ 200 ทีม R (G2-08): ต้องเป็นเจ้าของ (ด่านเดียวกับสร้าง/แก้ Role อื่น) + idempotent — เดิมสมาชิกคนไหนก็กดได้
@@ -402,7 +432,9 @@ public class RolePermissionService : IRolePermissionService
             r.IsSystemRole,
             r.SortOrder,
             memberCount,
-            r.Permissions.Where(p => p.CanAccess).Select(p => p.MenuItemId).ToList());
+            r.Permissions.Where(p => p.CanAccess).Select(p => p.MenuItemId).ToList(),
+            r.OwnDocumentsOnly,
+            r.DraftDocumentsOnly);
     }
 
     private static List<string> GetAllMenuItemIds()

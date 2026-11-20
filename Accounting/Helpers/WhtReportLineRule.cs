@@ -110,11 +110,11 @@ public static class WhtReportLineRule
 /// <summary>รอบ 275 แพ็ก B (ฝ่ายค้าน MED-4): "สร้างใหม่" คืนการติ๊ก<b>ออก</b>ของผู้ใช้ — ตัวจับคู่ตัวเดียว (pure)</summary>
 public static class RegenerateUntick
 {
-    public readonly record struct Key(Guid? DocumentId, Guid? WhtCertId, string? IncomeTypeCode, string? Description);
+    public readonly record struct UntickKey(Guid? DocumentId, Guid? WhtCertId, string? IncomeTypeCode, string? Description);
 
     /// <summary>บรรทัดของฉบับใหม่ตรงกับบรรทัดที่ติ๊กออกในฉบับเดิมไหม — ตรงทั้ง เอกสาร · ใบ · ประเภทเงินได้ · คำอธิบาย ·
     /// บรรทัดเดิมที่ไม่มีตัวอ้างใบ (ก่อนรอบ 275) เทียบโดยไม่ดูใบ</summary>
-    public static bool Matches(IReadOnlyCollection<Key> excluded, Key fresh)
+    public static bool Matches(IReadOnlyCollection<UntickKey> excluded, UntickKey fresh)
     {
         foreach (var e in excluded)
         {

@@ -9,8 +9,11 @@ public enum KeyFingerprintVerdict
     FirstSeen,
     /// <summary>ตรงกัน — สภาพปกติ</summary>
     Match,
-    /// <summary>ฐานบันทึกคีย์ที่อยู่ในรายการคีย์เดิมของเครื่องนี้ ⇒ หมุนคีย์ตามขั้นตอน (บันทึกคีย์ใหม่ + audit)</summary>
+    /// <summary>ฐานบันทึกคีย์ที่อยู่ในรายการคีย์เดิมของเครื่องนี้ ⇒ หมุนคีย์ตามขั้นตอน — <b>มีผล</b> (บันทึกคีย์ใหม่ + audit + ย้ายแถว) เฉพาะเมื่อทุกเครื่องที่ยังส่ง heartbeat
+    /// รายงานคีย์ใหม่แล้ว หรือผู้ดูแลยืนยัน (ฝ่ายค้าน MED-3) · ยังไม่ครบ ⇒ <see cref="RotationPending"/></summary>
     Rotated,
+    /// <summary>รอบ 275 ฝ่ายค้าน MED-3: หมุนคีย์แล้วแต่ยังมีเครื่องที่ส่ง heartbeat ด้วยคีย์อื่น ⇒ <b>ยังไม่ย้ายแถว</b> (รอทุกเครื่อง/ผู้ดูแลยืนยัน) · เขียนค่าใหม่ได้ตามปกติ</summary>
+    RotationPending,
     /// <summary>คีย์ของเครื่องนี้คือคีย์ที่ฐาน<b>เพิ่งหมุนออกไป</b> ⇒ น่าจะมีเครื่องที่ยังใช้คีย์เก่า (ห้ามย้ายแถวกลับ — กันชักเย่อ)</summary>
     RotatedBack,
     /// <summary>ฐานบันทึกคีย์ที่เครื่องนี้ไม่รู้จัก ⇒ อีกเครื่องใช้คีย์อื่น / restore ฐานจากที่อื่น / ตั้งคีย์ผิด</summary>
@@ -51,12 +54,22 @@ public static class EncryptionKeyFingerprintRule
     /// <summary>ปัญหาที่ต้องให้คนตัดสิน</summary>
     public static bool IsProblem(KeyFingerprintVerdict v) => v is KeyFingerprintVerdict.Mismatch or KeyFingerprintVerdict.RotatedBack;
 
+    /// <summary>ผู้ดูแลยืนยันลายนิ้วมือได้ (ปัญหาคีย์ หรือรอยืนยันการหมุน)</summary>
+    public static bool NeedsAdmin(KeyFingerprintVerdict v) => IsProblem(v) || v == KeyFingerprintVerdict.RotationPending;
+
+    /// <summary>ฝ่ายค้าน MED-3: การหมุนมีผลได้ไหม — ทุกเครื่องที่ส่ง heartbeat ภายในช่วงล่าสุดรายงานลายนิ้วมือ <paramref name="current"/> แล้ว (ไม่มีเครื่องเลย = ไม่ได้)</summary>
+    public static bool AllInstancesOn(string current, IReadOnlyCollection<string> recentFingerprints)
+        => recentFingerprints.Count > 0 && recentFingerprints.All(f => f == current);
+
     /// <summary>ข้อความถึงผู้ดูแลแพลตฟอร์ม (ชื่อ env ได้) · null = ไม่มีอะไรต้องทำ</summary>
     public static string? AdminMessage(KeyFingerprintVerdict v) => v switch
     {
         KeyFingerprintVerdict.Mismatch =>
             "⛔ คีย์เข้ารหัสของเครื่องนี้ไม่ตรงกับคีย์ที่ระบบบันทึกไว้ และไม่อยู่ในรายการคีย์เดิม — อาจมีหลายเครื่องใช้ ENCRYPTION_KEY ต่างกัน หรือ restore ฐานจากที่อื่น · "
             + "งานย้ายคีย์หยุดไว้ (กันย้ายข้อมูลไปคีย์ที่เครื่องอื่นอ่านไม่ได้) · ตรวจ ENCRYPTION_KEY ทุกเครื่องให้ตรงกัน แล้วกด \"ยืนยันคีย์ปัจจุบัน\" เมื่อแน่ใจ",
+        KeyFingerprintVerdict.RotationPending =>
+            "⏳ เครื่องนี้ใช้คีย์ใหม่ (หมุนคีย์ตามขั้นตอน) แต่ยังมีเครื่องที่รายงานคีย์อื่นภายใน 15 นาทีล่าสุด — ยังไม่ย้ายข้อมูลไปคีย์ใหม่ · "
+            + "ตั้ง ENCRYPTION_KEY ใหม่ให้ครบทุกเครื่อง (ระบบย้ายเองเมื่อทุกเครื่องรายงานคีย์ใหม่) หรือกด \"ยืนยันลายนิ้วมือ\" ของคีย์ใหม่",
         KeyFingerprintVerdict.RotatedBack =>
             "⛔ เครื่องนี้ใช้คีย์ที่ระบบเพิ่งหมุนออกไป — น่าจะมีเครื่องที่ยังไม่ได้ตั้ง ENCRYPTION_KEY ใหม่ · งานย้ายคีย์หยุดไว้ (กันย้ายข้อมูลกลับไปคีย์เก่า) · "
             + "ตั้งคีย์ใหม่ให้ทุกเครื่อง หรือกด \"ยืนยันคีย์ปัจจุบัน\" ถ้าตั้งใจย้อนกลับ",
