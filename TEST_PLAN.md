@@ -1505,7 +1505,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **972 ไฟล์ · 10,575 `[Fact]` + 1,437 `[Theory]` (6,829 `InlineData`)** ณ 2026-11-20 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`) | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)**, **ReceiptFormRule (รูปแบบกระดาษหลักฐานรับเงิน · รอบ 203)** |
+| เทสต์ที่มี | **972 ไฟล์ · 10,581 `[Fact]` + 1,437 `[Theory]` (6,829 `InlineData`)** ณ 2026-11-20 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`) | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)**, **ReceiptFormRule (รูปแบบกระดาษหลักฐานรับเงิน · รอบ 203)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
 | CI | ✅ `.github/workflows/ci.yml` — static check → restore → build → test; รันบน PR/push เข้า main/master + `workflow_dispatch` (branch `claude/**` ปิดไว้ กัน mail spam ระหว่างพัฒนา) |
@@ -9259,3 +9259,8 @@ H2 (OCR ไม่พร้อม ⇒ แถวเข้าคิว) ล็อ�
 | T281-05 | pure `PartnerJourney` 8 เคส (ครบเส้น · ผู้ขายไม่เห็นเลขผู้ซื้อ · ไม่แต่งสถานะ · ใบกำกับหาย · ไม่มีภาษีหัก · ท่อหยุด · 50 ทวิ ไม่เปิด/ล้ม/รอยืนยัน · ผู้ขายยกเลิก) | สถานะจากหลักฐานเท่านั้น |
 | T281-06 | pure `คีย์ต่อขั้น_…` · `คัดลอกค่าตั้ง_…` | คีย์อยู่ในแค็ตตาล็อก + ค่าตั้งต้นเท่าคีย์เดิม · SQL คัดลอกเฉพาะบริษัท/ผู้ใช้ที่ยังไม่มีแถว |
 | T281-07 | กติกา `_R281_*` (+11 · เคสฝ่ายค้าน R281-1 ถอดยอดก่อนหัก · R281-2 คีย์ยืม) · fixture P3/P4 (`PartnerPayableRound264DbTests` · `PartnerOutboundRound264P4DbTests`) ใช้ยอดค้างหลังหักแบบใบจริง | ถอดด่าน ⇒ checker ฟ้อง |
+| T281-08 | ฝ่ายค้าน MED-1: pure `ฝ่ายค้านMED1_ผู้ขายรับเต็ม10700ไม่หัก_…` · Db `ฝ่ายค้านMED1_ผู้ซื้อโอนเต็ม10700ไม่หัก_…` | ลบ: ไม่จ่ายเกิน ไม่โยน · ทิศตรงข้าม 10,400 ยังจ่าย+หัก · ใบไม่มีภาษีหักจ่ายเต็มเท่าเดิม |
+| T281-09 | ฝ่ายค้าน MED-2/LOW-1: Db `ฝ่ายค้านMED2_LOW1_…` | มีแถวผูกแล้ว ⇒ ไม่ผูกซ้ำ · ผู้ติดต่อจากเงินเดือน ⇒ ไม่ผูก · (ทิศตรงข้ามแถวปกติผูก = T281-01) |
+| T281-10 | ฝ่ายค้าน LOW-5: Db `ฝ่ายค้านLOW5_…` | ในธุรกรรม ⇒ ไม่แจ้งก่อน commit · commit+flush ⇒ แจ้ง · ย้อน ⇒ ไม่แจ้ง |
+| T281-11 | ฝ่ายค้าน LOW-6: Db `ฝ่ายค้านLOW6_…` · pure `คัดลอกค่าตั้ง_…` (ธง) | คัดลอกค่าตั้งเดิมตามมา · ลบแล้วบูตซ้ำไม่คัดลอกกลับ |
+| T281-12 | ฝ่ายค้าน LOW-3: pure `ฝ่ายค้านLOW3_…` · กติกา `_R281_*` เพิ่ม 5 (+ R281-3/4) | อีกฝั่งไม่เห็นยอด · ถอดด่าน ⇒ checker ฟ้อง |

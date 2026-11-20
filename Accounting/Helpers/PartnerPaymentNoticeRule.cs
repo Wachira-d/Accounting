@@ -156,10 +156,15 @@ public static class PartnerPaymentNoticeRule
         => $"จ่ายเต็มยอดผ่านลิงก์ของผู้ขาย — ระบบจะบันทึกภาษีหัก ณ ที่จ่าย 0 บาท แต่ตามกติกาของเรา {purchaseNumber} ต้องหัก {wht:N2} บาท · "
            + "หน้าที่หักและนำส่งยังอยู่ (ม.50 · ผู้จ่ายรับผิดร่วมตาม ม.54) — หลังบันทึกจ่าย เปิดใบซื้อเพื่อบันทึกภาษีหัก/ออก 50 ทวิ แบบภาษีออกแทน หรือเรียกเงินส่วนนั้นคืนจากผู้ขาย";
 
+    /// <summary>ฝ่ายค้าน 281 MED-1: ผู้ขายรับเต็มยอดก่อนหักแต่ใบซื้อของเรามีภาษีหักค้าง (ตัวเดียว — เทสต์อ้างได้)</summary>
+    private static string FullPaidOverNetProblem(decimal cash, decimal wht, decimal netDue, string purchaseNumber)
+        => $"ผู้ขายรับ {cash:N2} บาท (เต็มยอดโดยไม่หักภาษี ณ ที่จ่าย) แต่ {purchaseNumber} ของเราหัก {wht:N2} บาท ยอดค้างจริง {netDue:N2} บาท — ยอดไม่ตรง ระบบไม่บันทึกเอง · "
+           + "บันทึกเองที่หน้าใบซื้อ: ขอคืนส่วนเกินจากผู้ขาย หรือแก้ภาษีหัก ณ ที่จ่ายของใบ (หน้าที่หัก/นำส่งยังอยู่ ม.50 · ม.54)";
+
     /// <param name="sellerRecordedWht">รอบ 264 P3 (264-3-5 · D2): ภาษีหักที่ผู้ขายบันทึกในการรับชำระนี้ — ใช้<b>ยืนยันไขว้</b>เท่านั้น (ไม่คัดลอกเป็นคำตอบ) · null = ไม่ใช้กติกาจ่ายบางส่วนที่มีภาษีหัก</param>
     /// <param name="singleWhtRatePercent">อัตราหักของใบซื้อเมื่อทั้งใบมีอัตราเดียว (เช่น 3) · null = หลายอัตรา/ไม่มี ⇒ ไม่เดาสัดส่วน</param>
     public static Plan For(DocumentStatus purchaseStatus, decimal balanceDue, decimal whtRemaining, decimal cashReceivedBySeller, string? purchaseNumber,
-        decimal? sellerRecordedWht = null, decimal? singleWhtRatePercent = null, bool purchaseHasVat = false)
+        decimal? sellerRecordedWht = null, decimal? singleWhtRatePercent = null, bool purchaseHasVat = false, decimal? netDue = null)
     {
         var no = string.IsNullOrWhiteSpace(purchaseNumber) ? "ใบซื้อ" : purchaseNumber!.Trim();
         if (purchaseStatus is DocumentStatus.Draft or DocumentStatus.WaitingApproval)
@@ -173,6 +178,11 @@ public static class PartnerPaymentNoticeRule
         var wht = Math.Max(0m, Math.Round(whtRemaining, 2, MidpointRounding.AwayFromZero));
         if (wht > 0m && Math.Abs(cashReceivedBySeller + wht - balanceDue) <= Tolerance)
             return new(cashReceivedBySeller, wht, null);
+        // ฝ่ายค้าน 281 MED-1 (คำตัดสิน 281-6): ผู้ขายรับเต็มยอดก่อนหัก (ผู้ซื้อไม่ได้หัก) แต่ใบซื้อของเรามีภาษีหักค้าง ⇒ เงินเกินยอดค้างจริง (หลังหัก)
+        // ⇒ บันทึก "จ่ายเต็ม หัก 0" ไม่ได้ (ตัวบันทึกจ่ายปฏิเสธจ่ายเกินยอดค้าง) · ไม่เดาว่าเป็นเงินเกิน/ภาษีออกแทน/ลูกหนี้ ⇒ หยุด + ทางไปต่อ ·
+        // ผู้เรียกที่รู้ยอดค้างหลังหัก (PlanForAsync) ส่ง netDue · ผู้เรียกเดิมที่ไม่ส่ง = พฤติกรรมเดิม
+        if (wht > 0m && netDue is decimal nd && Math.Abs(cashReceivedBySeller - balanceDue) <= Tolerance && cashReceivedBySeller > nd + Tolerance)
+            return new(null, null, FullPaidOverNetProblem(cashReceivedBySeller, wht, nd, no));
         if (Math.Abs(cashReceivedBySeller - balanceDue) <= Tolerance)
             // ฝ่ายค้าน M3: ใบซื้อมีภาษีหักค้างตามกติกาของเรา แต่จ่ายเต็มผ่านลิงก์ ⇒ บันทึกจ่ายตามเงินจริง (หัก 0) แต่ต้องเตือน: หน้าที่หัก/นำส่งยังอยู่ (ม.50 · ม.54 ผู้จ่ายรับผิดร่วม)
             return new(cashReceivedBySeller, 0m, null, wht > 0m ? FullPaidWhtWarning(wht, no) : null);

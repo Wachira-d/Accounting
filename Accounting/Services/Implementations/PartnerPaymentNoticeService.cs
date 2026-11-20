@@ -463,7 +463,7 @@ public class PartnerPaymentNoticeService
         // ยอดก่อนหัก = ยอดค้าง + ภาษีหักที่เหลือ ผ่านตัวตั้งเดียว DocumentPayLinkPolicy.AmountsFor (ยอดค้าง 0 ⇒ 0 — "ชำระครบแล้ว" เหมือนเดิม)
         var grossDue = DocumentPayLinkPolicy.AmountsFor(doc.BalanceDue, wht.NetCap, 0m).Gross;
         return (PartnerPaymentNoticeRule.For(doc.Status, grossDue, wht.NetCap, n.CashAmount, doc.DocumentNumber,
-            sellerRecordedWht: n.SellerRecordedWht, singleWhtRatePercent: singleRate, purchaseHasVat: doc.VatAmount > 0m), doc);
+            sellerRecordedWht: n.SellerRecordedWht, singleWhtRatePercent: singleRate, purchaseHasVat: doc.VatAmount > 0m, netDue: doc.BalanceDue), doc);
     }
 
     /// <summary>ใบซื้อปลายทางของการแจ้ง (ผูกบริษัทผู้เรียก) — ให้ controller ตรวจสิทธิ์ตามชนิดจริง + ความลับ · null = ไม่พบ</summary>

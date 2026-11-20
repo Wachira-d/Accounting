@@ -36,6 +36,7 @@ public static class PartnerFlowNotificationSplit
          WHERE s."EventKey" = '{FromKey}'
            AND s."IsDeleted" = false
            AND NOT EXISTS (SELECT 1 FROM "NotificationSettings" x WHERE x."CompanyId" = s."CompanyId" AND x."EventKey" = '{toKey}')
+           AND NOT EXISTS (SELECT 1 FROM "{MarkTable}" m WHERE m."CompanyId" = s."CompanyId" AND m."Marker" = '{Marker}')
         ON CONFLICT DO NOTHING
         """;
 
@@ -47,9 +48,32 @@ public static class PartnerFlowNotificationSplit
          WHERE p."EventKey" = '{FromKey}'
            AND p."IsDeleted" = false
            AND NOT EXISTS (SELECT 1 FROM "NotificationPreferences" x WHERE x."CompanyId" = p."CompanyId" AND x."UserId" = p."UserId" AND x."EventKey" = '{toKey}')
+           AND NOT EXISTS (SELECT 1 FROM "{MarkTable}" m WHERE m."CompanyId" = p."CompanyId" AND m."Marker" = '{Marker}')
         ON CONFLICT DO NOTHING
         """;
 
-    /// <summary>ก้อนเดียวที่ <c>DatabaseMigrationHelper</c> รัน (ทุกคีย์ · idempotent)</summary>
-    public static string MigrationSql => string.Join("\n", Keys.Select(k => SettingsCopySql(k) + ";\n" + PreferencesCopySql(k) + ";"));
+    /// <summary>ฝ่ายค้าน 281 LOW-6: ธง "คัดลอกแล้ว" ต่อบริษัท — บริษัทที่ผ่านการคัดลอกแล้วไม่ถูกคัดลอกซ้ำแม้ต่อมาจะตั้งค่าคีย์เดิมใหม่
+    /// หรือลบแถวคีย์ใหม่ทิ้ง (เดิมกันซ้ำด้วย "ยังไม่มีแถวคีย์ใหม่" อย่างเดียว ⇒ บูตถัดไปอาจคัดลอกซ้ำ) · บริษัทที่สมัครหลังจากนี้ได้คัดลอกครั้งแรกของตัวเองครั้งเดียว</summary>
+    public const string MarkTable = "NotificationKeySplitMarks";
+    public const string Marker = "281-partner-flow";
+
+    public const string MarkTableSql = $"""
+        CREATE TABLE IF NOT EXISTS "{MarkTable}" (
+            "CompanyId" uuid NOT NULL,
+            "Marker" varchar(64) NOT NULL,
+            "DoneAt" timestamptz NOT NULL DEFAULT now(),
+            CONSTRAINT "PK_{MarkTable}" PRIMARY KEY ("CompanyId", "Marker")
+        )
+        """;
+
+    /// <summary>ประทับธงให้ทุกบริษัทที่มีอยู่ ณ ตอนนี้ (หลังคัดลอกในก้อนเดียวกัน)</summary>
+    public const string MarkSql = $"""
+        INSERT INTO "{MarkTable}" ("CompanyId", "Marker", "DoneAt")
+        SELECT c."Id", '{Marker}', now() FROM "Companies" c
+        ON CONFLICT DO NOTHING
+        """;
+
+    /// <summary>ก้อนเดียวที่ <c>DatabaseMigrationHelper</c> รัน: ตารางธง → คัดลอก (ทุกคีย์ · เฉพาะบริษัทที่ยังไม่มีธง) → ประทับธง · idempotent</summary>
+    public static string MigrationSql => MarkTableSql + ";\n"
+        + string.Join("\n", Keys.Select(k => SettingsCopySql(k) + ";\n" + PreferencesCopySql(k) + ";")) + "\n" + MarkSql + ";";
 }

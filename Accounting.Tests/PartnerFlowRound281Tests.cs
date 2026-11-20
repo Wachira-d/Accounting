@@ -134,6 +134,39 @@ public class PartnerFlowRound281Tests
         Assert.Equal(1_070m, DocumentPayLinkPolicy.AmountsFor(1_070m, 0m, 0m).Gross);
     }
 
+    [Fact]
+    public void ฝ่ายค้านMED1_ผู้ขายรับเต็ม10700ไม่หัก_ใบซื้อหัก300ยอดค้าง10400_ไม่เสนอจ่ายเกิน_หยุดพร้อมเหตุ_ทิศตรงข้ามรับ10400ยังจ่ายพร้อมหัก()
+    {
+        var gross = DocumentPayLinkPolicy.AmountsFor(10_400m, 300m, 0m).Gross;
+        var over = PartnerPaymentNoticeRule.For(Accounting.Models.Enums.DocumentStatus.Approved, gross, 300m, 10_700m, "PI-281",
+            sellerRecordedWht: 0m, singleWhtRatePercent: 3m, purchaseHasVat: true, netDue: 10_400m);
+        Assert.Null(over.Amount);
+        Assert.Null(over.Wht);
+        Assert.Contains("10,700.00", over.Problem);
+        Assert.Contains("300.00", over.Problem);
+        Assert.Contains("10,400.00", over.Problem);
+        Assert.Contains("ยอดไม่ตรง", over.Problem);
+        var ok = PartnerPaymentNoticeRule.For(Accounting.Models.Enums.DocumentStatus.Approved, gross, 300m, 10_400m, "PI-281",
+            sellerRecordedWht: 300m, singleWhtRatePercent: 3m, purchaseHasVat: true, netDue: 10_400m);
+        Assert.Equal((10_400m, 300m), (ok.Amount!.Value, ok.Wht!.Value));
+        // ใบไม่มีภาษีหัก: จ่ายเต็มตามเดิม (netDue = ยอดค้าง)
+        var noWht = PartnerPaymentNoticeRule.For(Accounting.Models.Enums.DocumentStatus.Approved, 10_700m, 0m, 10_700m, "PI-281", netDue: 10_700m);
+        Assert.Equal(10_700m, noWht.Amount);
+        Assert.Null(noWht.Problem);
+    }
+
+    [Fact]
+    public void ฝ่ายค้านLOW3_ผู้ซื้อไม่เห็นยอดที่ผู้ขายรับ_ผู้ขายไม่เห็นยอดภาษีหักบน50ทวิของผู้ซื้อ()
+    {
+        var buyer = PartnerJourney.Build(Full(seller: false));
+        Assert.DoesNotContain("10,700", buyer.Single(r => r.Step == nameof(PartnerJourney.Step.Payment)).Detail);
+        var partial = PartnerJourney.Build(Full(false) with { SellerSettled = false, SellerReceived = 5_000m });
+        Assert.DoesNotContain("5,000", partial.Single(r => r.Step == nameof(PartnerJourney.Step.Payment)).Detail);
+        var seller = PartnerJourney.Build(Full(seller: true));
+        Assert.DoesNotContain("300", seller.Single(r => r.Step == nameof(PartnerJourney.Step.WhtCertIssued)).Detail);
+        Assert.Contains("10,700", seller.Single(r => r.Step == nameof(PartnerJourney.Step.Payment)).Detail);   // ของตัวเองเห็นได้
+    }
+
     // ───────── คีย์แจ้งเตือนต่อขั้น (281-2) ─────────
 
     [Fact]
@@ -163,5 +196,10 @@ public class PartnerFlowRound281Tests
         Assert.Contains("x.\"CompanyId\" = s.\"CompanyId\"", PartnerFlowNotificationSplit.SettingsCopySql(NotificationEvents.PartnerSellerPaid));
         Assert.Contains("x.\"UserId\" = p.\"UserId\"", PartnerFlowNotificationSplit.PreferencesCopySql(NotificationEvents.PartnerSellerPaid));
         Assert.Contains("ON CONFLICT DO NOTHING", sql);
+        // ฝ่ายค้าน LOW-6: ธงต่อบริษัท — คัดลอกเฉพาะบริษัทที่ยังไม่มีธง แล้วประทับธงในก้อนเดียวกัน (ตาราง → คัดลอก → ธง)
+        Assert.Contains($"m.\"Marker\" = '{PartnerFlowNotificationSplit.Marker}'", PartnerFlowNotificationSplit.SettingsCopySql(NotificationEvents.PartnerSellerPaid));
+        Assert.Contains($"m.\"Marker\" = '{PartnerFlowNotificationSplit.Marker}'", PartnerFlowNotificationSplit.PreferencesCopySql(NotificationEvents.PartnerSellerPaid));
+        Assert.True(sql.IndexOf("CREATE TABLE IF NOT EXISTS", StringComparison.Ordinal) < sql.IndexOf("INSERT INTO \"NotificationSettings\"", StringComparison.Ordinal));
+        Assert.EndsWith(PartnerFlowNotificationSplit.MarkSql + ";", sql);
     }
 }

@@ -397,4 +397,143 @@ public class PartnerFlowRound281DbTests
         using var c2 = DbTestDatabase.TryCreateContext()!;
         Assert.Empty(await new PartnerJourneyService(c2).ListAsync(s.Buyer.Id, seeSale: true, seePurchase: false));
     }
+
+    // ═════════ ฝ่ายค้านรอบ 281 ═════════
+
+    /// <summary>การรับชำระของผู้ขายเขียนตรง (แถวจริงในบริษัทผู้ขาย) แล้วขั้นหลัง commit แจ้งผู้ซื้อ — ทางเดียวกับ NotifyPartnerOfSellerPaymentAsync
+    /// (ใช้เมื่อเส้นรับชำระจริงของผู้ขายไม่รับยอดนั้น เช่น เงินเกินยอดค้างของผู้ขาย)</summary>
+    private static async Task<Guid> SellerRowPaysAsync(Seed s, Document inv, decimal cash, decimal wht)
+    {
+        using var c = DbTestDatabase.TryCreateContext()!;
+        var pay = new Payment
+        {
+            CompanyId = s.Seller.Id, PaymentNumber = "RC281-" + Random.Shared.Next(100000, 999999), DocumentId = inv.Id, PaymentDate = Today,
+            Amount = cash, WithholdingTaxAmount = wht, PaymentMethod = PaymentMethod.BankTransfer, Reference = "MAN-" + Guid.NewGuid().ToString("N")[..6],
+        };
+        c.Payments.Add(pay);
+        await c.SaveChangesAsync();
+        using var c2 = DbTestDatabase.TryCreateContext()!;
+        Assert.Equal(1, await PartnerPaymentNoticeService.NotifyForSellerPaymentAsync(c2, null, NullLogger.Instance, s.Seller.Id, pay.Id, PaymentEntrySource.Manual));
+        return pay.Id;
+    }
+
+    [Fact]
+    public async Task ฝ่ายค้านMED1_ผู้ซื้อโอนเต็ม10700ไม่หัก_ใบซื้อหัก300_ไม่จ่ายเกินยอดค้าง_ไม่โยน_ค้างพร้อมเหตุยอดไม่ตรง()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var spy = new Spy();
+        var s = await SeedAsync(db);
+        var inv = await InvoiceAsync(db, s);
+        var purchaseId = await RouteAndApproveAsync(s, inv, spy);
+        var sellerPay = await SellerRowPaysAsync(s, inv, 10_700m, 0m);
+        Assert.Equal(0, await BuyerPipelineAsync(s, spy));   // เดิม: แผน "จ่าย 10,700 หัก 0" ⇒ เส้นจ่ายโยน "มากกว่ายอดค้างชำระ"
+        using var c = DbTestDatabase.TryCreateContext()!;
+        Assert.False(await c.Payments.AnyAsync(p => p.CompanyId == s.Buyer.Id && p.DocumentId == purchaseId));
+        var n = await c.PartnerPaymentNotices.AsNoTracking().IgnoreQueryFilters().SingleAsync(x => x.CompanyId == s.Buyer.Id && x.SellerPaymentId == sellerPay);
+        Assert.Equal(PartnerPaymentNoticeRule.StatusOpen, n.Status);
+        var (plan, _) = await PartnerPaymentNoticeService.PlanForAsync(c, s.Buyer.Id, n);
+        Assert.Null(plan.Amount);
+        Assert.Contains("ยอดไม่ตรง", plan.Problem);   // ปุ่มเดียวแสดงเหตุนี้แทนการเสนอจ่ายเกิน
+    }
+
+    [Fact]
+    public async Task ฝ่ายค้านMED2_LOW1_มีแถวผูกคู่ค้านี้อยู่แล้ว_ไม่ผูกซ้ำ_ผู้ติดต่อจากเงินเดือน_ไม่ผูก_ทิศตรงข้ามแถวปกติผูก()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var spy = new Spy();
+        var s = await SeedAsync(db, consent: false);
+        // แถวที่สองของผู้ซื้อรายเดิม (เลขเดียวกัน) ผูกคู่ค้านี้ไว้แล้ว ⇒ ส่งใบถึงแถวแรก (ยังไม่ผูก) ต้องไม่ได้แถวผูกที่สอง
+        var linked = new Contact { CompanyId = s.Seller.Id, Name = s.Buyer.Name + " (สาขาบัญชี)", TaxId = s.Buyer.TaxId, BranchCode = "00000", IsCustomer = true,
+            ExternalSystem = PartnerWhtCertExchangeService.ExternalSystem, ExternalId = s.Buyer.Id.ToString() };
+        db.Contacts.Add(linked);
+        await db.SaveChangesAsync();
+        var inv = await InvoiceAsync(db, s);
+        await RouteAndApproveAsync(s, inv, spy);
+        using (var c = DbTestDatabase.TryCreateContext()!)
+        {
+            var first = await c.Contacts.AsNoTracking().SingleAsync(x => x.Id == s.BuyerAtSeller.Id && x.CompanyId == s.Seller.Id);
+            Assert.Null(first.ExternalSystem);
+            Assert.Equal(1, await c.Contacts.CountAsync(x => x.CompanyId == s.Seller.Id && x.ExternalSystem == PartnerWhtCertExchangeService.ExternalSystem
+                && x.ExternalId == s.Buyer.Id.ToString()));
+        }
+
+        // LOW-1: ผู้ติดต่อที่เส้นเงินเดือนสร้าง (กุญแจ PayrollJunkPayee) ⇒ ไม่ผูก แม้เลขตรงคู่ค้า
+        var spy2 = new Spy();
+        var s2 = await SeedAsync(db, consent: false);
+        await db.Contacts.Where(x => x.Id == s2.BuyerAtSeller.Id).ExecuteUpdateAsync(x => x.SetProperty(c => c.CreatedBy, PayrollJunkPayee.CreatedByPayrollPnd1));
+        var inv2 = await InvoiceAsync(db, s2);
+        using (var c = DbTestDatabase.TryCreateContext()!)
+            Assert.True((await Xt(c, spy2).RouteSentDocumentAsync(inv2)).Routed);
+        using (var c = DbTestDatabase.TryCreateContext()!)
+            Assert.Null((await c.Contacts.AsNoTracking().SingleAsync(x => x.Id == s2.BuyerAtSeller.Id)).ExternalSystem);
+    }
+
+    [Fact]
+    public async Task ฝ่ายค้านLOW5_ผู้เรียกถือธุรกรรม_ไม่แจ้งก่อนcommit_flushหลังcommitแจ้ง_ธุรกรรมย้อน_ไม่แจ้ง()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var s = await SeedAsync(db, consent: false);
+        // commit
+        var spy = new Spy();
+        var inv = await InvoiceAsync(db, s);
+        using (var c = DbTestDatabase.TryCreateContext()!)
+        {
+            var xt = Xt(c, spy);
+            await using (var tx = await c.Database.BeginTransactionAsync())
+            {
+                Assert.NotNull(await xt.OnDocumentSentAsync(inv));
+                Assert.False(spy.Has(s.Buyer.Id, NotificationEvents.PartnerPurchaseDraftReceived));   // ยังไม่ commit ⇒ ยังไม่แจ้ง
+                await tx.CommitAsync();
+            }
+            await xt.FlushPendingNoticesAsync();
+        }
+        Assert.True(spy.Has(s.Buyer.Id, NotificationEvents.PartnerPurchaseDraftReceived));
+        // rollback ⇒ ใบซื้อร่างไม่อยู่ ⇒ flush ไม่แจ้ง
+        var spy2 = new Spy();
+        var inv2 = await InvoiceAsync(db, s);
+        using (var c = DbTestDatabase.TryCreateContext()!)
+        {
+            var xt = Xt(c, spy2);
+            await using (var tx = await c.Database.BeginTransactionAsync())
+            {
+                await xt.OnDocumentSentAsync(inv2);
+                await tx.RollbackAsync();
+            }
+            c.ChangeTracker.Clear();
+            await xt.FlushPendingNoticesAsync();
+        }
+        Assert.Empty(spy2.Sent);
+    }
+
+    [Fact]
+    public async Task ฝ่ายค้านLOW6_คัดลอกค่าตั้งแจ้งเตือนครั้งเดียวต่อบริษัท_ลบแถวคีย์ใหม่แล้วบูตซ้ำ_ไม่คัดลอกซ้ำ()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var co = new Company { Name = "แจ้งเตือน 281 " + Guid.NewGuid().ToString("N")[..6], TaxId = ValidTax(), BranchCode = "00000" };
+        db.Companies.Add(co);
+        await db.SaveChangesAsync();
+        db.NotificationSettings.Add(new NotificationSetting { CompanyId = co.Id, EventKey = NotificationEvents.AutopilotPartnerExchange, RecipientRole = "Owner",
+            EnableSystem = true, EnableEmail = false, EnableLine = true, EnableLineGroup = false });
+        await db.SaveChangesAsync();
+        // ธงของบริษัทอื่นในฐานร่วมอาจมีจากเทสต์ก่อน — ล้างเฉพาะบริษัทนี้ไม่จำเป็น (บริษัทใหม่ยังไม่มีธง)
+        await DbTestDatabase.ApplyDdlAsync(db, new[] { PartnerFlowNotificationSplit.MigrationSql });
+        using (var c = DbTestDatabase.TryCreateContext()!)
+        {
+            var copied = await c.NotificationSettings.AsNoTracking().Where(x => x.CompanyId == co.Id && x.EventKey == NotificationEvents.PartnerSellerPaid).ToListAsync();
+            var row = Assert.Single(copied);
+            Assert.True(row.EnableLine);       // ค่าตั้งเดิมตามมา
+            Assert.False(row.EnableEmail);
+            Assert.Equal(PartnerFlowNotificationSplit.Keys.Count,
+                await c.NotificationSettings.CountAsync(x => x.CompanyId == co.Id && PartnerFlowNotificationSplit.Keys.Contains(x.EventKey)));
+            // ผู้ใช้ลบแถวคีย์ใหม่ทิ้ง (เช่น ล้างค่าตั้ง) ⇒ บูตถัดไปต้องไม่คัดลอกกลับมา
+            await c.NotificationSettings.Where(x => x.CompanyId == co.Id && x.EventKey == NotificationEvents.PartnerSellerPaid).ExecuteDeleteAsync();
+        }
+        await DbTestDatabase.ApplyDdlAsync(db, new[] { PartnerFlowNotificationSplit.MigrationSql });
+        using var chk = DbTestDatabase.TryCreateContext()!;
+        Assert.False(await chk.NotificationSettings.AnyAsync(x => x.CompanyId == co.Id && x.EventKey == NotificationEvents.PartnerSellerPaid));
+    }
 }

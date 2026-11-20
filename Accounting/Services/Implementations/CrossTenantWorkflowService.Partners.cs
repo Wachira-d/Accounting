@@ -294,9 +294,7 @@ public partial class CrossTenantWorkflowService
                     Accounting.Models.Constants.NotificationEvents.PartnerTaxInvoiceReceived);
                 await NotifyReceiverAsync(link.SourceCompanyId, src.Id,
                     $"ใบ {src.DocumentNumber} เข้าระบบผู้ซื้อคู่ค้าแล้ว",
-                    vatMatches
-                        ? "แนบเข้าใบซื้อของผู้ซื้อแล้ว — ผู้ซื้อใช้เป็นหลักฐานภาษีซื้อเมื่อยืนยันต้นฉบับ"
-                        : "แนบเข้าใบซื้อของผู้ซื้อแล้ว แต่ VAT ไม่ตรงกับใบซื้อของผู้ซื้อ — ผู้ซื้ออาจติดต่อมาเพื่อตรวจ",
+                    "ระบบของผู้ซื้อรับใบนี้แล้ว",   // ฝ่ายค้าน 281 LOW-3: ผลตรวจในสมุดผู้ซื้อ (VAT ตรง/ไม่ตรง · หลักฐานภาษีซื้อ) ไม่ส่งออกนอกบริษัทผู้ซื้อ
                     Accounting.Models.Constants.NotificationEvents.PartnerReceiptDelivered, "/pages/documents.html?id=" + src.Id);
                 return;
             }
@@ -555,6 +553,35 @@ public partial class CrossTenantWorkflowService
     /// <summary>แจ้งบริษัทหนึ่งในเส้นคู่ค้า — คีย์ตั้งต้น autopilot.partner_exchange (เรื่องยกเลิก/ข้อยกเว้น) · รอบ 281: ขั้นปกติส่งคีย์ต่อขั้น (<c>PartnerFlowNotificationSplit.Keys</c>) ·
     /// ไม่มีเครื่องแจ้งเตือน (สร้างนอก DI) = ข้าม · แจ้งล้ม = LogError (งานที่ commit แล้วไม่ย้อน)</summary>
     private async Task NotifyReceiverAsync(Guid companyId, Guid documentId, string title, string message, string? eventKey = null, string? actionUrl = null)
+    {
+        if (_notify == null) return;
+        // ฝ่ายค้าน 281 LOW-5: ยิงหลัง commit เสมอ — ผู้เรียกถือธุรกรรมอยู่ ⇒ เข้าคิวในหน่วยความจำ แล้ว FlushPendingNoticesAsync หลัง commit
+        // (RouteSentDocumentAsync เรียกให้เองเมื่อไม่มีธุรกรรมค้าง · ธุรกรรมถูกย้อน ⇒ ตอน flush ไม่พบเอกสาร = ไม่แจ้ง)
+        if (_db.Database.CurrentTransaction != null)
+        {
+            _pendingNotices.Add((companyId, documentId, title, message, eventKey, actionUrl));
+            return;
+        }
+        await DispatchNoticeAsync(companyId, documentId, title, message, eventKey, actionUrl);
+    }
+
+    private readonly List<(Guid CompanyId, Guid DocumentId, string Title, string Message, string? EventKey, string? ActionUrl)> _pendingNotices = new();
+
+    /// <summary>ฝ่ายค้าน 281 LOW-5: ส่งการแจ้งที่ค้างเพราะผู้เรียกถือธุรกรรม — เรียกหลัง commit · เอกสารไม่อยู่แล้ว (ธุรกรรมถูกย้อน) ⇒ ทิ้ง · ยังอยู่ในธุรกรรม ⇒ ไม่ทำอะไร</summary>
+    public async Task FlushPendingNoticesAsync()
+    {
+        if (_db.Database.CurrentTransaction != null || _pendingNotices.Count == 0) return;
+        var batch = _pendingNotices.ToList();
+        _pendingNotices.Clear();
+        foreach (var n in batch)
+        {
+            var exists = await _db.Documents.AsNoTracking().IgnoreQueryFilters()
+                .AnyAsync(d => d.Id == n.DocumentId && d.CompanyId == n.CompanyId && !d.IsDeleted);
+            if (exists) await DispatchNoticeAsync(n.CompanyId, n.DocumentId, n.Title, n.Message, n.EventKey, n.ActionUrl);
+        }
+    }
+
+    private async Task DispatchNoticeAsync(Guid companyId, Guid documentId, string title, string message, string? eventKey, string? actionUrl)
     {
         if (_notify == null) return;
         try

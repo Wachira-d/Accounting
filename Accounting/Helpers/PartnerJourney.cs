@@ -85,10 +85,11 @@ public static class PartnerJourney
             Add(Step.PurchaseDraft, State.Waiting, null, seller ? "รอระบบผู้ซื้อ" : "เปิด \"สร้างใบซื้อร่างจากใบแจ้งหนี้/ใบกำกับที่คู่ค้าส่งมา\" ที่หน้าคู่ค้า");
 
         // 3. ชำระ
+        // ฝ่ายค้าน 281 LOW-3: ยอดที่ผู้ขายบันทึกรับเป็นข้อมูลในสมุดผู้ขาย ⇒ ผู้ซื้อเห็นแค่สถานะ + วันที่
         if (f.SellerSettled)
-            Add(Step.Payment, State.Done, f.LastReceivedAt, $"ผู้ขายรับครบ {f.SellerReceived:N2} บาท (รวมภาษีหัก ณ ที่จ่าย)");
+            Add(Step.Payment, State.Done, f.LastReceivedAt, seller ? $"รับครบ {f.SellerReceived:N2} บาท (รวมภาษีหัก ณ ที่จ่าย)" : "ผู้ขายบันทึกรับครบแล้ว");
         else if (f.SellerReceived > 0.005m)
-            Add(Step.Payment, State.Waiting, f.LastReceivedAt, $"รับแล้ว {f.SellerReceived:N2} จาก {f.Total:N2} บาท");
+            Add(Step.Payment, State.Waiting, f.LastReceivedAt, seller ? $"รับแล้ว {f.SellerReceived:N2} จาก {f.Total:N2} บาท" : "ผู้ขายบันทึกรับบางส่วนแล้ว");
         else
             Add(Step.Payment, State.Waiting, null, "ยังไม่ชำระ");
 
@@ -130,7 +131,7 @@ public static class PartnerJourney
             return rows;
         }
         if (f.WhtCertIssuedAt is DateTime wi)
-            Add(Step.WhtCertIssued, State.Done, wi, (seller ? "50 ทวิ" : $"50 ทวิ {f.WhtCertNumber}") + $" ภาษีหัก {f.WhtCertAmount:N2} บาท");
+            Add(Step.WhtCertIssued, State.Done, wi, seller ? "ผู้ซื้อออก 50 ทวิ แล้ว" : $"50 ทวิ {f.WhtCertNumber} ภาษีหัก {f.WhtCertAmount:N2} บาท");   // LOW-3
         else
             Add(Step.WhtCertIssued, State.Waiting, null, f.BuyerRecordedAt != null
                 ? (seller ? "รอผู้ซื้อออก 50 ทวิ" : "บันทึกจ่ายแล้วแต่ยังไม่มี 50 ทวิ — ออกที่ใบซื้อ (หรือตรวจค่าตั้งออก 50 ทวิ อัตโนมัติ)")
