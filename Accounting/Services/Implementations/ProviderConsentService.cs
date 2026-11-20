@@ -280,8 +280,9 @@ public class ProviderConsentService
         await _db.ProviderConsentRequests.Where(r => r.CompanyId == clientId && r.ProviderCompanyId == pid && r.Status == "Open")
             .ExecuteUpdateAsync(s => s.SetProperty(r => r.Status, "Granted").SetProperty(r => r.ResolvedAt, (DateTime?)now).SetProperty(r => r.ConsentId, (Guid?)row.Id), ct);
         // สลิปที่พักไว้ + ผู้ให้ไม่ติ๊ก "รวมสลิปที่รออยู่" ⇒ คิวพนักงาน (ไม่ลบเงียบ · ดีไซน์ §5.7)
+        var movedHeld = 0;
         if (!req.IncludeHeld)
-            await _db.TaxSlipEvidences.Where(s => s.CompanyId == pid && s.ClientCompanyId == clientId && s.Status == TaxSlipIntakeService.Statuses.AwaitingConsent)
+            movedHeld = await _db.TaxSlipEvidences.Where(s => s.CompanyId == pid && s.ClientCompanyId == clientId && s.Status == TaxSlipIntakeService.Statuses.AwaitingConsent)
                 .ExecuteUpdateAsync(s => s.SetProperty(x => x.Status, TaxSlipIntakeService.Statuses.ToStaff)
                     .SetProperty(x => x.Reason, "ผู้อนุญาตไม่รวมสลิปที่ส่งก่อนวันอนุญาต — ให้พนักงานตรวจ").SetProperty(x => x.UpdatedAt, (DateTime?)now), ct);
         foreach (var cid in new[] { clientId, pid })
@@ -300,6 +301,20 @@ public class ProviderConsentService
         catch (DbUpdateException ex) when (ex.InnerException is Npgsql.PostgresException { SqlState: "23505" or Round272Migration.TriggerSqlState })
         {
             throw new BusinessRuleException("ความยินยอมถูกเปลี่ยนระหว่างนี้ — โหลดหน้าใหม่แล้วลองอีกครั้ง", ProviderConsent.RuleCode, 409);
+        }
+        // รอบ 275 แพ็ก D (L6): สลิปที่พักไว้ย้ายเข้าคิวพนักงาน ⇒ กระดิ่งผู้ให้บริการ (เดิมย้ายเงียบ — พนักงานไม่รู้ว่ามีงานรอ)
+        if (movedHeld > 0 && _notify != null)
+        {
+            try
+            {
+                await _notify.DispatchAsync(pid, NotificationEvents.TaxSlipNeedsStaff, new NotificationContext
+                {
+                    Title = "🧾 สลิปภาษีที่พักไว้ " + movedHeld + " ใบเข้าคิวพนักงาน",
+                    Message = "ลูกค้าอนุญาตแล้วแต่ไม่รวมสลิปที่ส่งก่อนวันอนุญาต — ตรวจและบันทึกเองที่โต๊ะสลิป",
+                    ActionUrl = "/pages/tax-slip-desk.html",
+                });
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException) { _logger.LogError(ex, "แจ้งพนักงานเรื่องสลิปที่พักไว้เข้าคิวไม่สำเร็จ"); }
         }
         return row;
     }

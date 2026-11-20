@@ -27,17 +27,24 @@ public class TaxSlipReviewService
     { _db = db; _logger = logger; _notify = notify; }
 
     /// <summary>ผลตรวจ (pure) — <paramref name="sameAccount"/>/<paramref name="otherAccount"/> = มีเงินออกยอดตรงในช่วงวัน · <paramref name="linked"/> = ผูก JE แล้ว</summary>
-    public static string? Verdict(bool linked, bool sameAccount, bool otherAccount, DateTime payDate, DateTime nowUtc)
+    /// <summary>รอบ 275 แพ็ก D (M8): ผล "ไม่พบเงินออก" ตรวจซ้ำได้ภายในกี่วันหลังวันจ่าย (รายการเดินบัญชีที่นำเข้ารายเดือนมาถึงทีหลัง)</summary>
+    public const int RecheckNotFoundDays = 60;
+
+    /// <param name="statementCovered">รอบ 275 แพ็ก D (M8): มีรายการเดินบัญชีของบริษัท<b>หลัง</b>ช่วงตรวจแล้ว (นำเข้าถึงช่วงนั้นแล้ว) — ยังไม่มี ⇒ "ยังไม่ได้ตรวจ" ไม่ใช่ "ไม่พบ"</param>
+    public static string? Verdict(bool linked, bool sameAccount, bool otherAccount, DateTime payDate, DateTime nowUtc, bool statementCovered = true)
     {
         if (linked || sameAccount) return TaxSlipRemitView.Review.StatementFound;
         if (otherAccount) return TaxSlipRemitView.Review.OtherAccount;
+        if (!statementCovered) return null;
         return nowUtc.Date > payDate.Date.AddDays(NotFoundAfterDays) ? TaxSlipRemitView.Review.NotFound : null;
     }
 
     public async Task<int> ReviewAsync(DateTime nowUtc, CancellationToken ct = default)
     {
-        var rows = await _db.StatutoryRemittances.Where(r => r.Source == TaxSlipRemitView.SourceSlip && r.ReviewStatus == null && !r.IsDeleted && r.PayDate < nowUtc)
-            .OrderBy(r => r.PayDate).Take(200).ToListAsync(ct);
+        var recheckFrom = nowUtc.AddDays(-RecheckNotFoundDays);
+        var rows = await _db.StatutoryRemittances.Where(r => r.Source == TaxSlipRemitView.SourceSlip && !r.IsDeleted && r.PayDate < nowUtc
+                && (r.ReviewStatus == null || (r.ReviewStatus == TaxSlipRemitView.Review.NotFound && r.PayDate >= recheckFrom)))
+            .OrderBy(r => r.ReviewStatus != null).ThenBy(r => r.PayDate).Take(200).ToListAsync(ct);   // แถวที่ยังไม่เคยตรวจก่อน (ตรวจซ้ำไม่บังแถวใหม่)
         var n = 0;
         foreach (var r in rows)
         {
@@ -51,8 +58,10 @@ public class TaxSlipReviewService
                 .Where(t => t.CompanyId == r.CompanyId && t.TransactionDate >= from && t.TransactionDate < to
                     && (t.TransactionType == BankTransactionType.Withdrawal || t.Amount < 0) && (t.Amount == total || t.Amount == -total))
                 .Select(t => t.BankAccountId).ToListAsync(ct);
-            var verdict = Verdict(linked, bank != null && hits.Contains(bank.Value), hits.Any(h => h != bank), r.PayDate, nowUtc);
-            if (verdict == null) continue;
+            var covered = await _db.BankTransactions.AsNoTracking().AnyAsync(t => t.CompanyId == r.CompanyId && t.TransactionDate >= to, ct);
+            var verdict = Verdict(linked, bank != null && hits.Contains(bank.Value), hits.Any(h => h != bank), r.PayDate, nowUtc, covered);
+            // ตรวจซ้ำแล้วผลเดิม ⇒ ไม่ประทับซ้ำ/ไม่กระดิ่งซ้ำ
+            if (verdict == null || verdict == r.ReviewStatus) continue;
             r.ReviewStatus = verdict;
             r.ReviewedAt = nowUtc;
             r.ReviewNote = verdict switch

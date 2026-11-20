@@ -204,7 +204,7 @@ public sealed class LineChatSlipService : ILineChatSlipService
                     : LineChatSlipRule.Replies.Choose(reading.Amount, showAmounts, decision.Matches.Count), ChoiceItems(key, companyId, sourceKey, row.Id, decision, showAmounts)) };
             }
             await ToStaffAsync(row, decision.Reason, null, isNew: true, ct);
-            return One(LineChatSlipRule.Replies.StaffWillCheck);
+            return One(decision.Reason == LineChatSlipRule.Reasons.GovernmentSlip ? LineChatSlipRule.Replies.GovernmentSlip : LineChatSlipRule.Replies.StaffWillCheck);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

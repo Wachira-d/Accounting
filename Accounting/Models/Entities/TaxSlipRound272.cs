@@ -138,4 +138,6 @@ public class TaxSlipEvidence : TenantEntity
     public bool SenderUnverified { get; set; }
     /// <summary>ฝ่ายค้าน 272 M6: ลบไฟล์สลิปเมื่อพ้นระยะเก็บแล้ว (ไฟล์ของแถวที่บันทึกแล้วย้ายเป็นหลักฐานของลูกค้า · แถวที่ยังไม่ตัดสินไม่ถูกลบ)</summary>
     public DateTime? FilePurgedAt { get; set; }
+    /// <summary>รอบ 275 แพ็ก D (M4): กระดิ่งเตือนพนักงานครั้งล่าสุดของแถวที่รอตัดสินนาน (<c>Helpers/TaxSlipOpenAge</c>) · null = ยังไม่เคยเตือนซ้ำ</summary>
+    public DateTime? StaffRemindedAt { get; set; }
 }
