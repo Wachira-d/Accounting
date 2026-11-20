@@ -153,6 +153,10 @@ public record CreateDocumentRequest(
     // เหมือน integration PV/invoice. null = fallback CreatedBy user เหมือนเดิม.
     string? PreparerName = null,
     string? PreparerSignatureBase64 = null,
+    // รอบ 278: ผูกผู้จัดทำกับผู้ใช้ในระบบด้วยกุญแจ (Id หรืออีเมลของสมาชิกบริษัท — ตรวจตอนรับ ไม่พบ = 400) ⇒ ช่องผู้จัดทำกับช่องผู้มีอำนาจลงนาม
+    // ที่เป็นผู้ใช้คนเดียวกันใช้ลายเซ็น/ชื่อร่วมกัน (Helpers/SignatureSlotIdentity) · ส่งทั้งคู่ต้องเป็นคนเดียวกัน · null = ไม่ผูก
+    Guid? PreparerUserId = null,
+    string? PreparerEmail = null,
     // รอบ 193 (เจ้าของข้อ 1/4): ยอดชำระจริงที่ต่างจากยอดเอกสาร (ใบกำกับ 536 · จ่าย 438) — null = จ่ายเต็มตามยอด
     // ใบสำคัญจ่าย: ส่วนต่างต้องอธิบายด้วย adjusting lines (Helpers/PaymentSettlementAdjustment) ก่อนอนุมัติ
     decimal? ActualPaidAmount = null,
@@ -366,6 +370,9 @@ public record UpdateDocumentRequest(
     // CreatedBy; ช่อง "ผู้มีอำนาจลงนาม" (slot 1 = กรรมการ) คงเดิม. null = ไม่แตะ.
     string? PreparerName = null,
     string? PreparerSignatureBase64 = null,
+    // รอบ 278: ผูกผู้จัดทำกับผู้ใช้ (ดู CreateDocumentRequest) · null ทั้งคู่ = ไม่แตะ · Guid.Empty หรือ "" = ปลดการผูก
+    Guid? PreparerUserId = null,
+    string? PreparerEmail = null,
     // ===== Quotation revision =====
     // แก้ใบเสนอราคาที่ "ลูกค้ากดยอมรับออนไลน์แล้ว" = ข้อเสนอเปลี่ยน การยอมรับ
     // เดิมใช้ไม่ได้ — ต้องส่ง true ยืนยันว่ารับทราบ (หลักฐานการยอมรับเดิมถูก
@@ -938,6 +945,11 @@ public record DocumentResponse(
     /// <summary>ชื่อผู้จัดทำเอกสาร + ลายเซ็น (พิมพ์ลงกระดาษ)</summary>
     string? PreparerName = null,
     string? PreparerSignatureBase64 = null,
+    /// <summary>รอบ 278: ผู้ใช้ที่ผูกเป็นผู้จัดทำ (กุญแจของ SignatureSlotIdentity) — echo กลับให้ผู้เรียก API เห็นว่าผูกแล้ว</summary>
+    Guid? PreparerUserId = null,
+    /// <summary>รอบ 278: เหตุที่ปุ่ม "ปรับผู้ลงนามตามข้อมูลปัจจุบัน" ใช้ไม่ได้กับใบนี้ (null = ใช้ได้ · สิทธิ์เจ้าของ/ลายเซ็นลูกค้าในขั้นอนุมัติตรวจที่ endpoint) —
+    /// เซิร์ฟเวอร์ตัดสิน หน้าเว็บแสดงอย่างเดียว</summary>
+    string? SignerRefreshBlockedReason = null,
     /// <summary>เลขที่ใบมัดจำที่นำมาหัก + ธง "ให้ JE เดินตามการหักมัดจำ"</summary>
     string? DepositAppliedRef = null,
     bool DepositAppliedDrivesJournal = false,
@@ -1931,6 +1943,12 @@ public record PaymentWhtSuggestionResponse(
 /// (ไม่ได้สร้างใหม่) — ข้อความที่โชว์ต้องต่างกัน ไม่งั้นผู้ใช้นึกว่าออกใบซ้ำ ·
 /// <paramref name="IsDraft"/> = ผู้กดไม่มีสิทธิ์อนุมัติใบเสร็จ ใบจึงเป็นร่าง
 /// (เลขจริงออกตอนผู้มีสิทธิ์อนุมัติ — gap-free §86/4)</para></summary>
+/// <summary>รอบ 275 แพ็ก C — แถวคิว "รับเงินแล้วยังไม่มีใบกำกับภาษี" (server computes · หน้าแสดงอย่างเดียว) · <c>Mode</c>/<c>Reason</c> = ชื่อ enum ของ
+/// <c>SettlementTaxInvoiceRole</c> · <c>CanIssue</c> = ปุ่มออกใบกำกับใช้ได้ · <c>HumanReason</c> = เหตุที่ระบบไม่ออกเอง (ผู้ทำบัญชีตัดสิน)</summary>
+public record ReceivedWithoutTaxInvoiceRow(Guid DocumentId, string DocumentNumber, string? ContactName, Guid PaymentId, string PaymentNumber,
+    DateTime PaymentDate, decimal SettledAmount, Guid? PlainReceiptId, string? PlainReceiptNumber, string Mode, string Reason,
+    decimal? VatAmount, string? HumanReason, bool CanIssue);
+
 public record IssuedReceiptResult(
     Guid ReceiptId,
     string ReceiptNumber,

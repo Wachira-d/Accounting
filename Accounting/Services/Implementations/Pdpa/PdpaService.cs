@@ -665,6 +665,8 @@ public partial class PdpaService : IPdpaService
         u.SignatureImageBase64 = null;
         u.SignatureName = null;
         u.SignatureTitle = null;
+        // รอบ 278: ชื่อเล่นสำหรับช่องลายเซ็น (ทุกบริษัท) = ข้อมูลส่วนบุคคล ⇒ ลบ (audit ใต้ขอบเขตลบตามคำขอ ไม่เก็บค่าเดิม)
+        _db.SignerAliases.RemoveRange(await _db.SignerAliases.IgnoreQueryFilters().Where(a => a.UserId == u.Id).ToListAsync(ct));
         var reqs = await _db.PlatformErasureRequests.IgnoreQueryFilters().Where(r => r.UserId == u.Id).ToListAsync(ct);
         foreach (var r in reqs)
         {

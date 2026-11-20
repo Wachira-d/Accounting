@@ -248,10 +248,14 @@ public class CompanyService : ICompanyService
         // can never break the company-list endpoint.
         var companyUsers = await _db.CompanyUsers
             .Where(cu => cu.UserId == userId)
-            .Select(cu => new { cu.CompanyId, cu.Role })
+            .Select(cu => new { cu.CompanyId, cu.Role, cu.AccessPending })
             .ToListAsync();
+        // รอบ 277 (ฝ่ายค้าน HIGH-2): บริษัทที่ผู้ใช้ยังรอสิทธิ์ — คืนแค่ id/ชื่อ (เลือกบริษัทแล้วเห็นหน้าต้อนรับ) ไม่ส่งเลขภาษี/ที่อยู่/แพ็กเกจ ·
+        // ตัวกรองสมาชิกที่ใช้งานได้ตัวเดียว CompanyMembership.Active ตัดแถวรอสิทธิ์ออกจากชุดข้อมูลเต็ม
+        var pendingIds = companyUsers.Where(cu => cu.AccessPending).Select(cu => cu.CompanyId).ToHashSet();
+        var activeIds = (await Accounting.Helpers.CompanyMembership.ActiveOf(_db, userId).Select(cu => cu.CompanyId).ToListAsync()).ToHashSet();
 
-        var companyIds = companyUsers.Select(cu => cu.CompanyId).ToList();
+        var companyIds = companyUsers.Select(cu => cu.CompanyId).Where(activeIds.Contains).ToList();
         var roleMap = companyUsers.ToDictionary(cu => cu.CompanyId, cu => cu.Role.ToString());
 
         var companies = await _db.Companies
@@ -264,11 +268,22 @@ public class CompanyService : ICompanyService
             .ToListAsync();
         var planNames = await LoadPlanNamesAsync();
 
-        return companies.Select(c => {
+        var result = companies.Select(c => {
             var resp = MapToResponse(c, planNames);
             roleMap.TryGetValue(c.Id, out var role);
             return resp with { MyRole = role };
         }).ToList();
+        if (pendingIds.Count > 0)
+        {
+            var pendingNames = await _db.Companies.AsNoTracking().Where(c => pendingIds.Contains(c.Id))
+                .Select(c => new { c.Id, c.Name }).ToListAsync();
+            result.AddRange(pendingNames.Select(c => MapToResponse(new Company { Id = c.Id, Name = c.Name, TaxId = "" }) with
+            {
+                MyRole = roleMap.GetValueOrDefault(c.Id),
+                AccessPending = true,
+            }));
+        }
+        return result;
     }
 
     public async Task<CompanyResponse> UpdateAsync(Guid companyId, Guid userId, UpdateCompanyRequest request)
@@ -398,7 +413,7 @@ public class CompanyService : ICompanyService
             await _db.SaveChangesAsync();
         }
 
-        return await _db.CompanyUsers
+        var members = await _db.CompanyUsers
             .Where(cu => cu.CompanyId == companyId)
             .Include(cu => cu.User)
             .Include(cu => cu.CompanyRole)
@@ -413,173 +428,291 @@ public class CompanyService : ICompanyService
                 cu.CompanyRoleId != null ? cu.CompanyRole!.Name : null,
                 cu.JoinedAt,
                 cu.User.LastLoginAt,
-                cu.User.Status))
+                cu.User.Status,
+                cu.OwnDocumentsOnly,
+                cu.DraftDocumentsOnly,
+                null,
+                cu.AccessPending))
             .ToListAsync();
+        // ค่าที่มีผล (ผู้ใช้ ∪ บทบาท) — ตัวตัดสินเดียว DocumentRestrictionPolicy (หน้าเว็บแสดงป้ายอย่างเดียว)
+        var roleIds = members.Where(m => m.CompanyRoleId != null).Select(m => m.CompanyRoleId!.Value).Distinct().ToList();
+        var roleFlags = await _db.CompanyRoles.AsNoTracking().Where(r => r.CompanyId == companyId && roleIds.Contains(r.Id))
+            .ToDictionaryAsync(r => r.Id, r => (Own: r.OwnDocumentsOnly, Draft: r.DraftDocumentsOnly));
+        return members.Select(m =>
+        {
+            var rf = m.CompanyRoleId is Guid rid && roleFlags.TryGetValue(rid, out var f) ? f : (Own: false, Draft: false);
+            return m with
+            {
+                EffectiveDocumentRestrictionNotice = Accounting.Helpers.DocumentRestrictionPolicy.Notice(
+                    Accounting.Helpers.DocumentRestrictionPolicy.Effective(m.Role, m.OwnDocumentsOnly, m.DraftDocumentsOnly, rf.Own, rf.Draft)),
+            };
+        }).ToList();
     }
 
+    /// <summary>รอบ 276 — เจ้าของตั้งค่าจำกัดเอกสารของสมาชิก (ด่านเดียวกับเปลี่ยนบทบาท <see cref="EnsureOwnerAccessAsync"/>) ·
+    /// ตั้งบนเจ้าของ/ตัวเองไม่ได้ (<c>DocumentRestrictionPolicy.SetProblem</c>) · เห็นเฉพาะของตัวเอง ⇒ เฉพาะร่างด้วย · audit</summary>
+    public async Task UpdateDocumentRestrictionAsync(Guid companyId, Guid ownerId, Guid targetUserId, bool ownDocumentsOnly, bool draftDocumentsOnly)
+    {
+        await EnsureOwnerAccessAsync(companyId, ownerId);
+        var cu = await _db.CompanyUsers.FirstOrDefaultAsync(x => x.CompanyId == companyId && x.UserId == targetUserId)
+            ?? throw new KeyNotFoundException("ไม่พบผู้ใช้ในบริษัท");
+        if ((ownDocumentsOnly || draftDocumentsOnly)
+            && Accounting.Helpers.DocumentRestrictionPolicy.SetProblem(cu.Role, ownerId == targetUserId) is string problem)
+            throw new Accounting.Helpers.BusinessRuleException(problem, Accounting.Helpers.DocumentRestrictionPolicy.DraftOnlyRuleCode, 409);
+        var before = new { cu.OwnDocumentsOnly, cu.DraftDocumentsOnly };
+        cu.OwnDocumentsOnly = ownDocumentsOnly;
+        cu.DraftDocumentsOnly = draftDocumentsOnly || ownDocumentsOnly;   // คำตัดสิน 276-2
+        _db.AddChainedAuditLog(new AuditLog
+        {
+            CompanyId = companyId, UserId = ownerId, Action = AuditAction.Update,
+            EntityType = nameof(CompanyUser), EntityId = targetUserId.ToString(),
+            OldValues = System.Text.Json.JsonSerializer.Serialize(before),
+            NewValues = System.Text.Json.JsonSerializer.Serialize(new { action = "document-restriction", cu.OwnDocumentsOnly, cu.DraftDocumentsOnly }),
+            Timestamp = DateTime.UtcNow,
+        });
+        await _db.SaveChangesAsync();
+    }
+
+    /// <summary>รอบ 277 (งาน B · คำตัดสิน 277-2/277-3): เชิญสมาชิก — <b>ทุกอีเมล</b>ได้คำเชิญ (มีบัญชีแล้วหรือยังไม่มี) แล้วต้องกดตอบรับจากลิงก์ในอีเมล ·
+    /// เดิมผู้มีบัญชีถูกยัดเข้าบริษัททันทีโดยไม่ได้ตอบรับ และคำเชิญค้างไม่มีที่แสดง · แถว "รอตอบรับ" เกิดทันที (หน้าจัดการทีม <see cref="ListInvitationsAsync"/>) ·
+    /// เชิญซ้ำอีเมลเดิม = ใช้แถวเดิม (ออก token ใหม่ · ต่ออายุ · บทบาทล่าสุด) ไม่ซ้อนแถว · ที่นั่งตรวจใต้ล็อกเดียวกับการเขียน · audit</summary>
     public async Task<AddUserResult> AddUserAsync(Guid companyId, Guid ownerId, AddCompanyUserRequest request)
     {
         await EnsureOwnerAccessAsync(companyId, ownerId);
+        var roleChosen = request.Role != null || request.CompanyRoleId != null;
+        var role = request.Role ?? UserRole.Staff;
         // รอบ 201 ทีม PL (C-4 · ข้อ 107): บทบาทระดับแพลตฟอร์ม (support · SystemAdmin) เชิญ/เพิ่มผ่านหน้าทีมไม่ได้ (SystemAdmin เฉพาะแอดมินแพลตฟอร์ม)
-        if (!Accounting.Helpers.OwnershipTransferPolicy.MayAssign(request.Role, await IsPlatformAdminAsync(ownerId)))
-            throw new Accounting.Helpers.BusinessRuleException(Accounting.Helpers.OwnershipTransferPolicy.AssignDeniedMessage(request.Role),
+        if (roleChosen && !Accounting.Helpers.OwnershipTransferPolicy.MayAssign(role, await IsPlatformAdminAsync(ownerId)))
+            throw new Accounting.Helpers.BusinessRuleException(Accounting.Helpers.OwnershipTransferPolicy.AssignDeniedMessage(role),
                 Accounting.Helpers.OwnershipTransferPolicy.RuleCode, 403);
 
         var email = NormalizeEmail(request.Email);
-        if (string.IsNullOrEmpty(email))
-            throw new InvalidOperationException("กรุณาระบุอีเมล");
+        if (string.IsNullOrEmpty(email) || !email.Contains('@'))
+            throw new Accounting.Helpers.BusinessRuleException("กรุณาระบุอีเมลของผู้ที่จะเชิญ", Accounting.Helpers.CompanyInvitationPolicy.RuleCode);
+        if (request.CompanyRoleId is Guid crid
+            && !await _db.CompanyRoles.AnyAsync(r => r.Id == crid && r.CompanyId == companyId))
+            throw new Accounting.Helpers.BusinessRuleException("ไม่พบบทบาทที่เลือกในบริษัทนี้", Accounting.Helpers.CompanyInvitationPolicy.RuleCode, 404);
+        // รอบ 276 — ค่าจำกัดเอกสารตั้งบนเจ้าของไม่ได้ · เห็นเฉพาะของตัวเอง ⇒ เฉพาะร่างด้วย (คำตัดสิน 276-2)
+        var own = request.OwnDocumentsOnly;
+        var draft = request.DraftDocumentsOnly || own;
+        if ((own || draft) && roleChosen && role == UserRole.Owner)
+            throw new Accounting.Helpers.BusinessRuleException("ตั้งค่าจำกัดเอกสารให้ผู้ที่เชิญเป็นเจ้าของไม่ได้ — เจ้าของเห็นและทำได้ทุกอย่าง",
+                Accounting.Helpers.CompanyInvitationPolicy.RuleCode);
 
-        // รอบ 229 (QUOTA_ADDON แพ็ก 5 · คำตัดสินข้อ 229-1/229-2): ด่านที่นั่งตัวเดียว IQuotaGate — เพดานเดิม (License ชนะ/แพ็กเกจบริษัท) + override แอดมิน
-        // + ที่นั่งที่ซื้อเพิ่ม · นับ + เพิ่มแถว ใต้ล็อกธุรกรรมเดียวกัน (สองคำเชิญพร้อมกันผ่านได้แค่หนึ่ง) · เต็ม = บล็อกการเพิ่มเท่านั้น (ผู้ใช้เดิมล็อกอินได้ตามปกติ)
-        await using var seatTx = _quotaGate != null && _db.Database.CurrentTransaction == null
-            ? await _db.Database.BeginTransactionAsync() : null;
+        if (await _db.CompanyUsers.AnyAsync(cu => cu.CompanyId == companyId && cu.User.Email.ToLower() == email))
+            throw new Accounting.Helpers.BusinessRuleException("ผู้ใช้อีเมลนี้เป็นสมาชิกของบริษัทอยู่แล้ว — เปลี่ยนบทบาทได้ที่รายชื่อสมาชิก",
+                Accounting.Helpers.CompanyInvitationPolicy.RuleCode, 409);
+
+        var now = DateTime.UtcNow;
+        var rawToken = Accounting.Helpers.CompanyInvitationPolicy.NewToken();
+        CompanyInvitation inv;
+        // รอบ 229 (QUOTA_ADDON แพ็ก 5 · คำตัดสินข้อ 229-1/229-2): ด่านที่นั่งตัวเดียว IQuotaGate — นับ + เพิ่มแถว ใต้ล็อกธุรกรรมเดียวกัน
+        await using (var seatTx = _db.Database.CurrentTransaction == null ? await _db.Database.BeginTransactionAsync() : null)
+        {
+            // De-dupe: คำเชิญค้างของ (บริษัท, อีเมล) ใช้แถวเดิม — ไม่ซ้อนแถว (กันเชิญซ้ำ)
+            var existing = await _db.CompanyInvitations.FirstOrDefaultAsync(i =>
+                i.CompanyId == companyId && i.Email == email && i.Status == InvitationStatus.Pending && !i.IsDeleted);
+            var adding = existing != null && Accounting.Helpers.CompanyInvitationPolicy.HoldsSeat(existing.Status, existing.ExpiresAt, now) ? 0 : 1;
+            await EnsureSeatAsync(companyId, adding);
+
+            inv = existing ?? new CompanyInvitation
+            {
+                CompanyId = companyId,
+                Email = email,
+                InvitedByUserId = ownerId,
+                CreatedBy = ownerId.ToString(),
+            };
+            object? before = existing == null ? null : new { role = existing.Role.ToString(), existing.RoleChosen, existing.CompanyRoleId, existing.ExpiresAt };
+            inv.Role = Accounting.Helpers.CompanyInvitationPolicy.MembershipFor(roleChosen, role).Role;
+            inv.RoleChosen = roleChosen;
+            inv.CompanyRoleId = request.CompanyRoleId;
+            inv.OwnDocumentsOnly = own;
+            inv.DraftDocumentsOnly = draft;
+            inv.InvitedByUserId = ownerId;
+            inv.TokenHash = Accounting.Helpers.CompanyInvitationPolicy.HashToken(rawToken);
+            inv.Token = null;
+            inv.Status = InvitationStatus.Pending;
+            inv.ExpiresAt = now.Add(Accounting.Helpers.CompanyInvitationPolicy.Lifetime);
+            inv.UpdatedAt = now;
+            inv.UpdatedBy = ownerId.ToString();
+            if (existing == null) _db.CompanyInvitations.Add(inv);
+            await _db.SaveChangesAsync();
+            _db.AddChainedAuditLog(InvitationAudit(companyId, ownerId, existing == null ? AuditAction.Create : AuditAction.Update, inv,
+                before, new { action = existing == null ? "invite" : "re-invite", email, role = inv.Role.ToString(), roleChosen, inv.CompanyRoleId, own, draft, inv.ExpiresAt }));
+            await _db.SaveChangesAsync();
+            if (seatTx != null) await seatTx.CommitAsync();
+        }
+
+        var (emailSent, link) = await SendInvitationEmailAsync(inv, rawToken, ownerId);
+        return new AddUserResult(WasInvited: true, Email: email, InvitationId: inv.Id, EmailSent: emailSent, InviteLink: link);
+    }
+
+    /// <summary>ด่านที่นั่ง (สมาชิก + คำเชิญค้างที่ยังไม่หมดอายุ) — ต้องอยู่ในธุรกรรม · <paramref name="adding"/> = 0 เมื่อคำเชิญเดิมยังถือที่นั่งอยู่</summary>
+    private async Task EnsureSeatAsync(Guid companyId, int adding)
+    {
         if (_quotaGate != null)
         {
             await _quotaGate.LockAsync(companyId, Accounting.Models.Constants.QuotaResources.Users);
-            var seat = await _quotaGate.CheckAsync(companyId, Accounting.Models.Constants.QuotaResources.Users, 1);
+            var seat = await _quotaGate.CheckAsync(companyId, Accounting.Models.Constants.QuotaResources.Users, adding);
             if (!seat.Allowed)
                 throw new Accounting.Helpers.BusinessRuleException(seat.BlockReason!, seat.RuleCode, 409);
+            return;
         }
-
-        // Hard limit: check effective MaxUsers — License's MaxUsersPerCompany
-        // wins when the company is attached, otherwise per-company sub.MaxUsers.
-        var sub = _quotaGate != null ? null : await _db.Subscriptions.FirstOrDefaultAsync(s => s.CompanyId == companyId && !s.IsDeleted);
-        if (sub != null)
+        // ไม่มีด่านโควตา (เทสต์/โครงเก่า): เพดานจากแพ็กเกจบริษัท/License — สูตรนับเดียวกับ QuotaGateService (คำเชิญหมดอายุไม่ถือที่นั่ง)
+        var sub = await _db.Subscriptions.FirstOrDefaultAsync(s => s.CompanyId == companyId && !s.IsDeleted);
+        if (sub == null || adding == 0) return;
+        int maxUsers = sub.MaxUsers;
+        if (sub.AccountSubscriptionId.HasValue)
         {
-            int maxUsers = sub.MaxUsers;
-            if (sub.AccountSubscriptionId.HasValue)
-            {
-                var acct = await _db.AccountSubscriptions.AsNoTracking()
-                    .FirstOrDefaultAsync(a => a.Id == sub.AccountSubscriptionId.Value && !a.IsDeleted);
-                if (acct != null) maxUsers = acct.MaxUsersPerCompany;
-            }
-            // Pending invitations count towards the quota too — once accepted
-            // they become CompanyUsers, so a tenant can't sneak past the cap
-            // by spamming invites.
-            var currentCount = await _db.CompanyUsers.CountAsync(cu => cu.CompanyId == companyId);
-            var pendingInvites = await _db.CompanyInvitations.CountAsync(i =>
-                i.CompanyId == companyId && i.Status == InvitationStatus.Pending && !i.IsDeleted);
-            if (currentCount + pendingInvites >= maxUsers)
-                throw new InvalidOperationException(
-                    $"จำนวนผู้ใช้เต็มแล้ว ({currentCount}/{maxUsers}, มีคำเชิญรออยู่ {pendingInvites}) กรุณาอัปเกรดแพ็กเกจ");
+            var acct = await _db.AccountSubscriptions.AsNoTracking()
+                .FirstOrDefaultAsync(a => a.Id == sub.AccountSubscriptionId.Value && !a.IsDeleted);
+            if (acct != null) maxUsers = acct.MaxUsersPerCompany;
         }
-
-        // Case-insensitive user lookup. EF Core translates ToLower() to LOWER()
-        // on the server — works without an index but indexed lookups on a
-        // computed-column would be faster at scale. (Out of scope here.)
-        var targetUser = await _db.Users.FirstOrDefaultAsync(u => u.Email.ToLower() == email);
-
-        if (targetUser != null)
-        {
-            if (await _db.CompanyUsers.AnyAsync(cu => cu.CompanyId == companyId && cu.UserId == targetUser.Id))
-                throw new InvalidOperationException("ผู้ใช้นี้เป็นสมาชิกอยู่แล้ว");
-            _db.CompanyUsers.Add(new CompanyUser
-            {
-                UserId = targetUser.Id,
-                CompanyId = companyId,
-                Role = request.Role
-            });
-            await _db.SaveChangesAsync();
-            if (seatTx != null) await seatTx.CommitAsync();
-            // Existing platform user added directly — no email needed (they
-            // already have an account + will see the company on next login).
-            return new AddUserResult(WasInvited: false, Email: email, InvitationId: null, EmailSent: false);
-        }
-
-        // Invitee isn't a member of the platform yet — create an invitation
-        // record + email a signup link. Owner doesn't have to wait for the
-        // invitee to sign up first.
-        // De-dupe: if a pending invitation already exists for this (company,
-        // email), reuse it (refresh expiry + re-send email) instead of
-        // creating a parallel row.
-        var existing = await _db.CompanyInvitations.FirstOrDefaultAsync(i =>
-            i.CompanyId == companyId && i.Email == email
-            && i.Status == InvitationStatus.Pending && !i.IsDeleted);
-
-        var inv = existing ?? new CompanyInvitation
-        {
-            CompanyId = companyId,
-            Email = email,
-            Role = request.Role,
-            InvitedByUserId = ownerId,
-            Token = GenerateInviteToken(),
-            CreatedBy = ownerId.ToString(),
-        };
-        inv.Role = request.Role;       // refresh role on re-invite
-        inv.Status = InvitationStatus.Pending;
-        inv.ExpiresAt = DateTime.UtcNow.AddDays(7);
-        inv.UpdatedAt = DateTime.UtcNow;
-        inv.UpdatedBy = ownerId.ToString();
-        if (existing == null) _db.CompanyInvitations.Add(inv);
-        await _db.SaveChangesAsync();
-        if (seatTx != null) await seatTx.CommitAsync();
-
-        // Build the shareable accept-invite link up front so we can always
-        // return it (the owner can copy/paste it even when email isn't set up).
-        var baseUrl = (_config?["App:BaseUrl"] ?? "").TrimEnd('/');
-        var inviteLink = $"{baseUrl}/accept-invitation.html?token={inv.Token}";
-
-        // Email is best-effort. Distinguish THREE outcomes so the owner always
-        // knows the real state instead of falsely believing a mail went out:
-        //   • email configured + sent OK   → EmailSent = true
-        //   • email NOT configured         → EmailSent = false + return link
-        //     (was the silent-fail bug: SendAsync returned without sending and
-        //      the owner was told nothing)
-        //   • email configured but send threw → surface the SMTP error
-        var emailSent = false;
-        if (_emailService != null)
-        {
-            var configured = await _emailService.IsSystemEmailConfiguredAsync();
-            if (configured)
-            {
-                try
-                {
-                    var company = await _db.Companies.AsNoTracking().FirstOrDefaultAsync(c => c.Id == companyId);
-                    var inviter = await _db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == ownerId);
-                    await _emailService.SendInvitationAsync(
-                        to: email,
-                        inviteeName: email.Split('@')[0],
-                        inviterName: inviter?.FullName ?? "Owner",
-                        companyName: company?.Name ?? "บริษัท",
-                        invitationToken: inv.Token,
-                        role: RoleLabel(request.Role));
-                    emailSent = true;
-                }
-                catch (Exception ex)
-                {
-                    _logger?.LogWarning(ex, "Invitation email send failed for {Email}", email);
-                    throw new InvalidOperationException(
-                        "สร้างคำเชิญแล้วแต่ส่งอีเมลไม่สำเร็จ — โปรดตรวจการตั้งค่า SMTP แล้วลองส่งซ้ำ " +
-                        $"หรือคัดลอกลิงก์นี้ส่งให้ผู้รับเอง: {inviteLink}");
-                }
-            }
-            else
-            {
-                // No system SMTP — don't pretend we emailed. Return the link so
-                // the owner can share it manually.
-                _logger?.LogInformation(
-                    "Invitation created for {Email} but system email is not configured — returning manual link", email);
-            }
-        }
-        return new AddUserResult(WasInvited: true, Email: email, InvitationId: inv.Id,
-            EmailSent: emailSent, InviteLink: inviteLink);
+        var now = DateTime.UtcNow;
+        var currentCount = await _db.CompanyUsers.CountAsync(cu => cu.CompanyId == companyId);
+        var pendingInvites = await _db.CompanyInvitations.CountAsync(i =>
+            i.CompanyId == companyId && i.Status == InvitationStatus.Pending && i.ExpiresAt > now && !i.IsDeleted);
+        if (currentCount + pendingInvites + adding > maxUsers)
+            throw new Accounting.Helpers.BusinessRuleException(
+                $"จำนวนผู้ใช้เต็มแล้ว ({currentCount}/{maxUsers}, มีคำเชิญรออยู่ {pendingInvites}) — ยกเลิกคำเชิญที่ค้าง/นำผู้ใช้ออก หรืออัปเกรดแพ็กเกจ",
+                "QUOTA-FULL:users", 409);
     }
 
-    private static string GenerateInviteToken()
-        => Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(48))
-            .Replace('+', '-').Replace('/', '_').TrimEnd('=');
-
-    private static string RoleLabel(UserRole r) => r switch
+    private static AuditLog InvitationAudit(Guid companyId, Guid actorId, AuditAction action, CompanyInvitation inv, object? before, object after) => new()
     {
-        UserRole.Owner => "เจ้าของ",
-        UserRole.Accountant => "นักบัญชี",
-        UserRole.Staff => "พนักงาน",
-        UserRole.Auditor => "ผู้ตรวจสอบ",
-        UserRole.Viewer => "ผู้ดู",
-        UserRole.ExternalAccountant => "นักบัญชีภายนอก",
-        UserRole.PlatformSupport => "ผู้ดูแลแพลตฟอร์ม (support)",
-        _ => r.ToString(),
+        CompanyId = companyId,
+        UserId = actorId,
+        Action = action,
+        EntityType = "CompanyInvitation",
+        EntityId = inv.Id.ToString(),
+        OldValues = before == null ? null : System.Text.Json.JsonSerializer.Serialize(before),
+        NewValues = System.Text.Json.JsonSerializer.Serialize(after),
+        Timestamp = DateTime.UtcNow,
     };
+
+    /// <summary>ส่งอีเมลคำเชิญ (ผู้ส่ง/เทมเพลตเดิม <see cref="IEmailService.SendInvitationAsync"/>) — คืน (ส่งจริงไหม, ลิงก์ให้คัดลอก) ·
+    /// ระบบยังไม่ตั้งค่าอีเมล = ไม่ส่ง (บอกตรง ๆ + ลิงก์) · ตั้งแล้วแต่ส่งล้ม = แจ้งผู้เชิญ (คำเชิญยังอยู่ · ส่งซ้ำได้) · ประทับเวลาส่ง</summary>
+    private async Task<(bool Sent, string Link)> SendInvitationEmailAsync(CompanyInvitation inv, string rawToken, Guid actorId)
+    {
+        var baseUrl = (_config?["App:BaseUrl"] ?? "").TrimEnd('/');
+        var inviteLink = $"{baseUrl}/accept-invitation.html?token={Uri.EscapeDataString(rawToken)}";
+        var emailSent = false;
+        if (_emailService != null && await _emailService.IsSystemEmailConfiguredAsync())
+        {
+            var company = await _db.Companies.AsNoTracking().FirstOrDefaultAsync(c => c.Id == inv.CompanyId);
+            var inviter = await _db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == actorId);
+            var customRole = inv.CompanyRoleId is Guid crid
+                ? await _db.CompanyRoles.AsNoTracking().Where(r => r.Id == crid).Select(r => r.Name).FirstOrDefaultAsync() : null;
+            try
+            {
+                await _emailService.SendInvitationAsync(
+                    to: inv.Email,
+                    inviteeName: inv.Email.Split('@')[0],
+                    inviterName: inviter?.FullName ?? "เจ้าของบริษัท",
+                    companyName: company?.Name ?? "บริษัท",
+                    invitationToken: rawToken,
+                    role: Accounting.Helpers.CompanyInvitationPolicy.RoleLabel(inv.RoleChosen, inv.Role, customRole));
+                emailSent = true;
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogWarning(ex, "Invitation email send failed for invitation {InvitationId}", inv.Id);
+                inv.LastSentAt = null;
+                throw new Accounting.Helpers.BusinessRuleException(
+                    "สร้างคำเชิญแล้ว (แสดงในรายการ “รอตอบรับ”) แต่ส่งอีเมลไม่สำเร็จ — โปรดตรวจการตั้งค่าอีเมลแล้วกด “ส่งซ้ำ” " +
+                    $"หรือคัดลอกลิงก์นี้ส่งให้ผู้รับเอง: {inviteLink}", Accounting.Helpers.CompanyInvitationPolicy.RuleCode, 502);
+            }
+        }
+        else
+        {
+            _logger?.LogInformation("Invitation {InvitationId} created but system email is not configured — returning manual link", inv.Id);
+        }
+        if (emailSent)
+        {
+            inv.LastSentAt = DateTime.UtcNow;
+            inv.SendCount += 1;
+            await _db.SaveChangesAsync();
+        }
+        return (emailSent, inviteLink);
+    }
+
+    /// <summary>รอบ 277 — คำเชิญที่ยังไม่ปิด (รอตอบรับ + หมดอายุที่ยังไม่ถูกยกเลิก) ของบริษัท · เจ้าของเท่านั้น · ป้ายบทบาท/สถานะจากเซิร์ฟเวอร์</summary>
+    public async Task<List<CompanyInvitationResponse>> ListInvitationsAsync(Guid companyId, Guid ownerId)
+    {
+        await EnsureOwnerAccessAsync(companyId, ownerId);
+        var now = DateTime.UtcNow;
+        var rows = await _db.CompanyInvitations.AsNoTracking()
+            .Where(i => i.CompanyId == companyId && !i.IsDeleted && i.Status == InvitationStatus.Pending)
+            .OrderByDescending(i => i.UpdatedAt ?? i.CreatedAt)
+            .Select(i => new
+            {
+                i.Id, i.Email, i.Role, i.RoleChosen, i.CompanyRoleId, i.OwnDocumentsOnly, i.DraftDocumentsOnly,
+                i.Status, i.ExpiresAt, i.LastSentAt, i.SendCount, i.CreatedAt,
+                InviterName = i.InvitedBy.FullName,
+            })
+            .ToListAsync();
+        var roleIds = rows.Where(r => r.CompanyRoleId != null).Select(r => r.CompanyRoleId!.Value).Distinct().ToList();
+        var roleNames = await _db.CompanyRoles.AsNoTracking().Where(r => r.CompanyId == companyId && roleIds.Contains(r.Id))
+            .ToDictionaryAsync(r => r.Id, r => r.Name);
+        return rows.Select(r =>
+        {
+            var st = Accounting.Helpers.CompanyInvitationPolicy.DisplayStatus(r.Status, r.ExpiresAt, now);
+            var crName = r.CompanyRoleId is Guid g && roleNames.TryGetValue(g, out var n) ? n : null;
+            return new CompanyInvitationResponse(r.Id, r.Email, r.Role, r.RoleChosen, r.CompanyRoleId, crName,
+                Accounting.Helpers.CompanyInvitationPolicy.RoleLabel(r.RoleChosen, r.Role, crName),
+                r.OwnDocumentsOnly, r.DraftDocumentsOnly, st.ToString(),
+                st == InvitationStatus.Expired ? "หมดอายุ — กด “ส่งซ้ำ” เพื่อต่ออายุ" : "รอตอบรับ",
+                r.ExpiresAt, r.LastSentAt, r.SendCount, r.InviterName, r.CreatedAt);
+        }).ToList();
+    }
+
+    /// <summary>รอบ 277 — ส่งคำเชิญซ้ำ: ออก token ใหม่ (เก็บแต่ hash ⇒ ลิงก์เดิมใช้ไม่ได้) + ต่ออายุ 7 วัน · คำเชิญที่หมดอายุไปแล้วต้องมีที่นั่งว่างอีกครั้ง</summary>
+    public async Task<AddUserResult> ResendInvitationAsync(Guid companyId, Guid ownerId, Guid invitationId)
+    {
+        await EnsureOwnerAccessAsync(companyId, ownerId);
+        var now = DateTime.UtcNow;
+        var rawToken = Accounting.Helpers.CompanyInvitationPolicy.NewToken();
+        CompanyInvitation inv;
+        await using (var tx = _db.Database.CurrentTransaction == null ? await _db.Database.BeginTransactionAsync() : null)
+        {
+            inv = await _db.CompanyInvitations.FirstOrDefaultAsync(i => i.Id == invitationId && i.CompanyId == companyId && !i.IsDeleted)
+                ?? throw new Accounting.Helpers.BusinessRuleException("ไม่พบคำเชิญ", Accounting.Helpers.CompanyInvitationPolicy.RuleCode, 404);
+            if (inv.Status != InvitationStatus.Pending)
+                throw new Accounting.Helpers.BusinessRuleException(
+                    $"คำเชิญนี้ปิดแล้ว ({(inv.Status == InvitationStatus.Accepted ? "ตอบรับแล้ว" : "ยกเลิกแล้ว")}) — เชิญใหม่ได้จากช่องเชิญสมาชิก",
+                    Accounting.Helpers.CompanyInvitationPolicy.RuleCode, 409);
+            await EnsureSeatAsync(companyId, Accounting.Helpers.CompanyInvitationPolicy.HoldsSeat(inv.Status, inv.ExpiresAt, now) ? 0 : 1);
+            var before = new { inv.ExpiresAt, inv.SendCount };
+            inv.TokenHash = Accounting.Helpers.CompanyInvitationPolicy.HashToken(rawToken);
+            inv.Token = null;
+            inv.ExpiresAt = now.Add(Accounting.Helpers.CompanyInvitationPolicy.Lifetime);
+            inv.UpdatedAt = now;
+            inv.UpdatedBy = ownerId.ToString();
+            _db.AddChainedAuditLog(InvitationAudit(companyId, ownerId, AuditAction.Update, inv, before, new { action = "resend", inv.ExpiresAt }));
+            await _db.SaveChangesAsync();
+            if (tx != null) await tx.CommitAsync();
+        }
+        var (sent, link) = await SendInvitationEmailAsync(inv, rawToken, ownerId);
+        return new AddUserResult(true, inv.Email, inv.Id, sent, link);
+    }
+
+    /// <summary>รอบ 277 — ยกเลิกคำเชิญ (คืนที่นั่ง · ลิงก์ใช้ไม่ได้ทันที) · audit</summary>
+    public async Task CancelInvitationAsync(Guid companyId, Guid ownerId, Guid invitationId)
+    {
+        await EnsureOwnerAccessAsync(companyId, ownerId);
+        var inv = await _db.CompanyInvitations.FirstOrDefaultAsync(i => i.Id == invitationId && i.CompanyId == companyId && !i.IsDeleted)
+            ?? throw new Accounting.Helpers.BusinessRuleException("ไม่พบคำเชิญ", Accounting.Helpers.CompanyInvitationPolicy.RuleCode, 404);
+        if (inv.Status != InvitationStatus.Pending)
+            throw new Accounting.Helpers.BusinessRuleException("คำเชิญนี้ปิดไปแล้ว (ตอบรับ/ยกเลิก) — รีเฟรชหน้า", Accounting.Helpers.CompanyInvitationPolicy.RuleCode, 409);
+        var now = DateTime.UtcNow;
+        inv.Status = InvitationStatus.Cancelled;
+        inv.CancelledAt = now;
+        inv.CancelledByUserId = ownerId;
+        inv.UpdatedAt = now;
+        inv.UpdatedBy = ownerId.ToString();
+        _db.AddChainedAuditLog(InvitationAudit(companyId, ownerId, AuditAction.Delete, inv, new { status = "Pending" }, new { action = "cancel", status = "Cancelled" }));
+        await _db.SaveChangesAsync();
+    }
 
     /// <summary>ลบบริษัท (soft-delete — Owner เท่านั้น + พิมพ์ชื่อบริษัทยืนยัน).
     /// ข้อมูลบัญชี "ไม่ถูกลบจริง" (พ.ร.บ.การบัญชี ม.14 เก็บ 5 ปี) — บริษัทหายจาก
@@ -648,7 +781,12 @@ public class CompanyService : ICompanyService
         if (demoteBlock != null)
             throw new Accounting.Helpers.BusinessRuleException(demoteBlock, Accounting.Helpers.LastOwnerGuard.RuleCode);
 
+        var wasPending = cu.AccessPending;
         cu.Role = newRole;
+        // รอบ 277 — เจ้าของตั้งบทบาทให้สมาชิกที่ตอบรับคำเชิญแบบ "ยังไม่มีสิทธิ์" = ปลดสถานะ (เริ่มใช้งานได้ตามบทบาทนี้)
+        cu.AccessPending = false;
+        if (wasPending)
+            _db.AddChainedAuditLog(Accounting.Helpers.PendingMemberAccess.GrantAudit(companyId, ownerId, targetUserId, newRole.ToString()));
         await _db.SaveChangesAsync();
     }
 

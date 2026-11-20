@@ -15,6 +15,8 @@ public static class TaxSlipReplyCard
         Remitted = 1, NeedsChoice, NeedsAccount, NoMatch, TaxIdMismatch, AmountMismatch, Duplicate, UnknownAgency, NotATaxSlip, AwaitingConsent,
         AwaitingConsentMore, Failed, ToStaff, NoTenant, IntakeOff, ConsentGranted, ConsentWithdrawn, ConsentExpired, BoundAskConsent, PaymentRequest,
         StaffRemitted, StaffRejected, ChoiceAccepted, FailedResend,
+        // รอบ 275 แพ็ก D
+        StaffLinked, OpenExpired, PaymentRequestCancelled, PaymentRequestExpired, TransferNotTax, PaymentRequestReopened,
     }
 
     /// <param name="CompanyName">ชื่อบริษัทลูกค้า (ถูกปิดบางในข้อความ)</param>
@@ -133,6 +135,31 @@ public static class TaxSlipReplyCard
                     + " · จ่ายแล้วส่งสลิปกลับในกลุ่มนี้" + link;
             case Kind.StaffRejected:
                 return "พนักงาน NextAcc ตรวจสลิปแล้ว — ไม่ได้บันทึก" + why;
+            // รอบ 275 แพ็ก D (H1): พนักงานผูกสลิปกับรายการนำส่งที่บันทึกไว้ก่อนแล้ว — การชำระบันทึกแล้วจริง (ไม่ใช่ "ไม่ได้บันทึก")
+            case Kind.StaffLinked:
+                return "✅ บันทึกการชำระแล้ว — " + form + " ของ " + co + (f.PayDate is DateTime lp ? " · เมื่อ " + ThaiDay(lp) : "") + Cc(f)
+                    + " · พนักงาน NextAcc แนบสลิปนี้เป็นหลักฐานของรายการนำส่งที่บันทึกไว้แล้ว · ไม่ต้องส่งสลิปซ้ำ";
+            // รอบ 275 แพ็ก D (M4): แถวรอตรวจพ้นกำหนด — บอกตามจริงว่ายังไม่ได้บันทึก
+            case Kind.OpenExpired:
+                // ฝ่ายค้าน LOW-1: หลายใบในกลุ่มเดียวต่อรอบ ⇒ การ์ดสรุปใบเดียว
+                if (f.HeldCount > 1)
+                    return "สลิป " + f.HeldCount.ToString(Inv) + " ใบ" + (f.RecordedAt is DateTime oes ? " ที่ส่งตั้งแต่ " + ThaiDay(oes) : "")
+                        + " ยังไม่ได้บันทึก และพ้นระยะรอตรวจแล้ว — ระบบปิดรายการเหล่านี้ · ถ้ายังต้องบันทึก กรุณาส่งสลิปอีกครั้งหรือแจ้งพนักงาน NextAcc";
+                return "สลิป" + Cc(f) + (f.RecordedAt is DateTime oe ? " ที่ส่งเมื่อ " + ThaiDay(oe) : "") + " ยังไม่ได้บันทึก และพ้นระยะรอตรวจแล้ว — ระบบปิดรายการนี้"
+                    + " · ถ้ายังต้องบันทึก กรุณาส่งสลิปอีกครั้งหรือแจ้งพนักงาน NextAcc";
+            // รอบ 275 แพ็ก D (M7): ใบแจ้งชำระที่ส่งไปแล้วถูกยกเลิก/หมดอายุ — อย่าจ่ายตาม Control Code นี้
+            case Kind.PaymentRequestCancelled:
+                return "ยกเลิกใบแจ้งชำระ " + form + " ของ " + co + Cc(f) + " แล้ว — กรุณาอย่าชำระตามใบนี้ · พนักงาน NextAcc จะส่งใบใหม่ให้ถ้ายังต้องชำระ";
+            case Kind.PaymentRequestExpired:
+                return "ใบแจ้งชำระ" + (f.HeldCount > 1 ? " " + f.HeldCount.ToString(Inv) + " ใบ" : "") + " " + form + " ของ " + co + Cc(f)
+                    + " หมดอายุแล้ว — ชำระตาม Control Code นี้ไม่ได้ · ติดต่อพนักงาน NextAcc เพื่อขอใบใหม่ (ถ้าชำระไปแล้ว ส่งสลิปในกลุ่มนี้)";
+            // ฝ่ายค้าน LOW-3: รายการนำส่งที่บันทึกตามใบนี้ถูกยกเลิกในบัญชี ⇒ ใบกลับเป็นรอชำระ — บอกตามจริง ไม่สั่งให้จ่ายซ้ำ
+            case Kind.PaymentRequestReopened:
+                return "บันทึกการชำระ " + form + " ของ " + co + Cc(f) + " ถูกยกเลิกในบัญชีของบริษัท — ใบแจ้งชำระกลับเป็นรอชำระ"
+                    + " · ถ้าชำระแล้ว ไม่ต้องจ่ายซ้ำ พนักงาน NextAcc จะตรวจและแจ้งผลในกลุ่มนี้";
+            // รอบ 275 แพ็ก D (M5): สลิปโอนเงินทั่วไปในกลุ่มของ OA กลาง — ไม่ใช่งานของเส้นภาษี แต่อาจเป็นค่าบริการ ⇒ บอกทางไปต่อ (พนักงานได้กระดิ่งแล้ว)
+            case Kind.TransferNotTax:
+                return "รูปนี้เป็นสลิปโอนเงินทั่วไป ไม่ใช่สลิปชำระภาษี/ประกันสังคม — ระบบภาษีไม่ได้บันทึก · ถ้าเป็นการชำระค่าบริการ NextAcc พนักงานได้รับแจ้งแล้วและจะตรวจรายการเงินเข้าให้";
         }
         return "ได้รับสลิปแล้ว — พนักงาน NextAcc จะตรวจและแจ้งผล";
     }

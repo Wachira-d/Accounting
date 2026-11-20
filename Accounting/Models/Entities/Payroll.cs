@@ -74,6 +74,14 @@ public class Employee : TenantEntity
 
     // Tax
     public string? TaxId { get; set; }
+    /// <summary>รอบ 275 แพ็ก E (T4 H-3 · คำตัดสิน 4.2): ผู้ทำบัญชี "รับทราบรายคน" ว่าพนักงานคนนี้ไม่มีเลขประจำตัว 13 หลัก (เช่น ต่างชาติที่ยังไม่ได้เลขจากกรมสรรพากร) ·
+    /// มีผลเฉพาะเมื่อ<b>ไม่มีเลขเลย</b> (เลข checksum ผิด/ถอดรหัสไม่ได้ ไม่ได้รับสิทธิ์นี้) — ตัวตัดสินเดียว <c>Helpers/EmployeeTaxIdentity.ForFiling</c> ·
+    /// null = ยังไม่รับทราบ (50 ทวิ ไม่ออก · นำส่ง ภ.ง.ด.1 ถูกบล็อกเหมือนเดิม) · เขียนผ่าน <c>PayrollService.SetTaxIdWaiverAsync</c> เท่านั้น (audit)</summary>
+    public DateTime? TaxIdWaiverAcknowledgedAt { get; set; }
+    /// <summary>ผู้กดรับทราบ (UserId)</summary>
+    public Guid? TaxIdWaiverAcknowledgedBy { get; set; }
+    /// <summary>เหตุที่ไม่มีเลข 13 หลัก (บังคับกรอกตอนรับทราบ)</summary>
+    public string? TaxIdWaiverReason { get; set; }
     public int TaxAllowances { get; set; } = 0;          // จำนวนค่าลดหย่อน (legacy — count of 30K dependants)
 
     // ── ค่าลดหย่อนภาษีตามมาตรา 47/47ทวิ (ละเอียดขึ้น) ──

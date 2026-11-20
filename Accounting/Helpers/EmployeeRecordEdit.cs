@@ -27,6 +27,47 @@ public static class EmployeeRecordEdit
         internal static FieldEdit Reject(string error) => new(false, null, error);
     }
 
+    /// <summary>รอบ 274-10 — <b>ด่านเดียวของทุกทางเข้าที่เขียนคอลัมน์ PII ของพนักงาน</b> (แก้ไข · สร้าง · HRIS sync · นำเข้าไฟล์):
+    /// ค่าที่เป็น ciphertext (<c>enc1:…</c> หรือรูปรุ่นก่อนไม่มีคำนำหน้า) ไม่ใช่ข้อมูล — ห้ามเก็บเป็นค่า (เดิมถูกเข้ารหัสซ้ำ = เข้ารหัสซ้อน ·
+    /// ที่มา: ช่วงถอดคีย์เดิมไม่ได้ API คืน ciphertext ดิบ แล้วไฟล์ส่งออก/ฟอร์มถูกส่งกลับเข้ามา) · คืนข้อความไทย หรือ null เมื่อผ่าน</summary>
+    public static string? CipherInputProblem(string? value, string fieldLabel)
+    {
+        var t = value?.Trim();
+        if (string.IsNullOrEmpty(t)) return null;
+        if (SecretInputRule.CipherPrefixProblem(t, fieldLabel) is string p) return p;
+        // ฝ่ายค้าน 274-10 LOW-1: เครื่องหมายภายในของ converter (อักขระควบคุม) ไม่ใช่ข้อมูล
+        if (EncryptedColumnConverter.HasInternalMarker(t))
+            return $"{fieldLabel}: ค่านี้มีอักขระควบคุมภายในของระบบ ไม่ใช่ค่าจริง — กรอกค่าจริง";
+        return EncryptedColumnConverter.IsUnreadable(t)
+            ? $"{fieldLabel}: ค่านี้เป็นข้อความที่ระบบเข้ารหัสไว้ (ciphertext) ไม่ใช่ค่าจริง — กรอกค่าจริง"
+            : null;
+    }
+
+    /// <summary>รอบ 274-10: ฟอร์มส่ง ciphertext ที่<b>เก็บอยู่ในแถวนี้เองและถอดไม่ได้</b>กลับมาเป๊ะ (ผู้ใช้เปิดฟอร์มแล้วกดบันทึกโดยไม่แตะช่องนี้) ⇒ "ไม่ได้แก้" = คงค่าเดิม
+    /// (เดิม: ปฏิเสธทั้งคำขอ ⇒ แก้ช่องอื่นของพนักงานคนนั้นไม่ได้เลย · หรือถูกเข้ารหัสซ้ำ) · ค่านั้นยังขึ้นในรายงาน <c>tax-identity-health</c> และป้าย ⛔ ของไฟล์ยื่น (ไม่เงียบ)</summary>
+    public static bool IsEchoOfStoredUnreadable(string? incoming, string? current)
+    {
+        if (incoming == null || !EncryptedColumnConverter.IsUnreadable(current)) return false;
+        return string.Equals(incoming.Trim(), current!.Trim(), StringComparison.Ordinal)
+               // รอบ 275 แพ็ก A (T4 M-2): DTO ส่งป้ายแทน ciphertext ⇒ ฟอร์มส่งป้ายกลับมา = ไม่ได้แก้ (ค่าเดิมคงไว้ให้งานย้ายคีย์กู้ได้เมื่อตั้งคีย์เดิม)
+               || string.Equals(incoming.Trim(), EncryptedColumnConverter.UnreadableExportText, StringComparison.Ordinal);
+    }
+
+    /// <summary>รอบ 275 แพ็ก A (T4 M-2): ค่าช่อง PII ของพนักงานที่ส่งขึ้นจอ — ถอดไม่ได้ ⇒ ป้าย <see cref="EncryptedColumnConverter.UnreadableExportText"/>
+    /// (ทุกสิทธิ์ · ไม่เผย ciphertext และไม่ปลอมเป็นเลขปิดบัง) · ผู้มี <c>Pii.View</c> ⇒ ค่าจริง · อื่น ๆ ⇒ ตัวปิดบังของช่องนั้น</summary>
+    public static string? ForEmployeeDto(string? stored, bool includePii, Func<string?, string?> mask)
+        => EncryptedColumnConverter.IsUnreadable(stored) ? EncryptedColumnConverter.UnreadableExportText
+            : includePii ? stored : mask(stored);
+
+    /// <summary>รอบ 275 แพ็ก A (T4 M-2): ข้อความป้ายของแถว/ฟอร์มพนักงาน (null = ไม่มีปัญหา) — "ยังไม่ได้กรอก" ไม่ถือเป็นปัญหาบนจอทะเบียน (ฟอร์มเว้นว่างได้)</summary>
+    public static string? PiiProblemText(EmployeeTaxIdentity.Result identity, bool bankUnreadable)
+    {
+        var parts = new List<string>();
+        if (identity.Problem is TaxIdProblem.Undecryptable or TaxIdProblem.Invalid && identity.Reason is string r) parts.Add(r);
+        if (bankUnreadable) parts.Add("เลขบัญชีธนาคารถอดรหัสไม่ได้ — กรอกเลขบัญชีใหม่ หรือแจ้งผู้ดูแลระบบ");
+        return parts.Count == 0 ? null : "⛔ " + string.Join(" · ", parts);
+    }
+
     /// <summary>ค่าที่ฟอร์มส่งกลับมา = ค่าปิดบังของของเดิมเป๊ะ ⇒ ผู้ใช้ไม่ได้แก้ช่องนี้</summary>
     public static bool IsMaskedEcho(string? incoming, string? maskedCurrent)
         => incoming != null && maskedCurrent != null
@@ -45,12 +86,15 @@ public static class EmployeeRecordEdit
             return string.IsNullOrWhiteSpace(current) ? FieldEdit.Keep : FieldEdit.Set(null);
         if (!string.IsNullOrWhiteSpace(current) && IsMaskedEcho(t, PiiMask.CitizenId(current)))
             return FieldEdit.Keep;
+        // รอบ 274-10: ciphertext ของแถวนี้เองที่ส่งกลับมาเป๊ะ = ไม่ได้แก้ · ciphertext อื่น = ปฏิเสธ — ตรวจ<b>ก่อน</b>ด่าน X
+        // (base64 มักมีตัว X ⇒ เดิมได้ข้อความ "เลขที่ถูกปิดบัง" ซึ่งไม่ใช่สาเหตุจริง — F2 ข้อ 7)
+        if (IsEchoOfStoredUnreadable(t, current)) return FieldEdit.Keep;
+        // ฝ่ายค้านรอบ 231 S2: คอลัมน์นี้เข้ารหัสผ่าน EncryptedColumnConverter — ciphertext ห้ามเข้า (ปิด oracle · กันเข้ารหัสซ้อน)
+        if (CipherInputProblem(t, fieldLabel) is string cipherProblem)
+            return FieldEdit.Reject(cipherProblem);
         if (t.IndexOf('X') >= 0 || t.IndexOf('x') >= 0)
             return FieldEdit.Reject($"{fieldLabel}: ค่านี้เป็นเลขที่ถูกปิดบัง (PDPA) — "
                 + "พิมพ์เลขจริง 13 หลัก หรือคงค่าเดิมไว้โดยไม่แก้ช่องนี้");
-        // ฝ่ายค้านรอบ 231 S2: คอลัมน์นี้เข้ารหัสผ่าน EncryptedColumnConverter — ค่าที่ขึ้นต้น enc1: ห้ามเข้า (ปิด oracle)
-        if (SecretInputRule.CipherPrefixProblem(t, fieldLabel) is string cipherProblem)
-            return FieldEdit.Reject(cipherProblem);
         // เลขเดิม (แค่ต่างขีด/ช่องว่าง) = ไม่ได้แก้ — ตรวจ**ก่อน** checksum: เลขเก่าที่เข้าระบบ
         // ก่อนมีด่าน checksum (สมัยตรวจแค่ regex 13 หลัก · HRIS sync · นำเข้า CSV) ต้องไม่ทำให้
         // HR แก้ช่องอื่นของพนักงานคนนั้นไม่ได้เลย (เข้มขึ้นต้องมีทางไปต่อ — F2 ข้อ 8)
@@ -116,6 +160,8 @@ public static class EmployeeRecordEdit
             return string.IsNullOrWhiteSpace(current) ? FieldEdit.Keep : FieldEdit.Set(null);
         if (!string.IsNullOrWhiteSpace(current) && IsMaskedEcho(t, PiiMask.CitizenId(current)))
             return FieldEdit.Keep;
+        if (IsEchoOfStoredUnreadable(t, current)) return FieldEdit.Keep;   // รอบ 274-10 (แบบ ThaiIdNumber)
+        if (CipherInputProblem(t, "เลขประกันสังคม") is string cipherProblem) return FieldEdit.Reject(cipherProblem);
         if (t.IndexOf('X') >= 0 || t.IndexOf('x') >= 0)
             return FieldEdit.Reject("เลขประกันสังคม: ค่านี้เป็นเลขที่ถูกปิดบัง (PDPA) — พิมพ์เลขจริง 13 หลัก หรือคงค่าเดิมไว้โดยไม่แก้ช่องนี้");
         var stripped = t.Replace("-", "").Replace(" ", "");
@@ -129,6 +175,14 @@ public static class EmployeeRecordEdit
                 + "เว้นว่างถ้าใช้เลขบัตรประชาชนเป็นเลขผู้ประกันตน");
         return FieldEdit.Set(stripped);
     }
+
+    public const string SyncOk = "สำเร็จ";
+    public const string SyncWarn = "เตือน";
+    public const string SyncSkipped = "มีรายการที่ข้าม";
+
+    /// <summary>ฝ่ายค้าน 274-10 LOW-4: สถานะงาน HRIS sync — ข้ามแถว ⇒ "มีรายการที่ข้าม" · สร้างแล้วแต่ไม่เก็บบางช่อง ⇒ "เตือน" (ห้ามตอบ "สำเร็จ" เงียบ ๆ) · อื่น ๆ "สำเร็จ"</summary>
+    public static string SyncStatus(int skipped, int warnings)
+        => skipped > 0 ? SyncSkipped : warnings > 0 ? SyncWarn : SyncOk;
 
     /// <summary>วันเริ่มงานที่รับได้ — ไม่เกิน 1 ปีข้างหน้า (กติกาเดียวของทั้งสร้างและแก้ไข)</summary>
     public static string? StartDateError(DateTime startDate, DateTime utcNow)

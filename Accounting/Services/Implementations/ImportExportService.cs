@@ -1776,6 +1776,11 @@ public class ImportExportService : IImportExportService
         // รอบ 205 ทีม B: เลขบัตรประชาชนเก็บเป็นตัวเลขล้วน (ขีด/ช่องว่างจากไฟล์ตัดออก) — checksum ไม่ผ่าน = คำเตือนที่ศูนย์นำเข้า
         // (EmployeesImportTarget · ไม่บล็อก — บัตรต่างด้าว/เลขชั่วคราวมีจริง · คำตัดสินข้อ 150)
         var citizenRaw = Val(row, "CitizenId");
+        // รอบ 274-10: ไฟล์ที่ส่งออกไว้ช่วงถอดรหัสไม่ได้มี ciphertext ดิบ — ห้ามเก็บเป็นค่า (เลขบัตร: ตัดตัวเลขจาก base64 · เลขบัญชี: เข้ารหัสซ้อน) ⇒ แถวนี้ล้มพร้อมเหตุ
+        if (Accounting.Helpers.EmployeeRecordEdit.CipherInputProblem(citizenRaw, "เลขบัตรประชาชน (CitizenId)") is string citizenCipher)
+            throw new BusinessRuleException(citizenCipher);
+        if (Accounting.Helpers.EmployeeRecordEdit.CipherInputProblem(row.GetValueOrDefault("BankAccountNumber"), "เลขบัญชีธนาคาร (BankAccountNumber)") is string bankCipher)
+            throw new BusinessRuleException(bankCipher);
         var citizenDigits = citizenRaw == null ? null : Accounting.Helpers.ThaiTaxId.Normalize(citizenRaw);
 
         var employee = new Employee

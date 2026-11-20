@@ -67,11 +67,11 @@ public static class Pnd1FilingData
 
     /// <summary>ข้อความปฏิเสธ: รายชื่อ (เลขปิดบัง) + เหตุ/ทางไปต่อรายแถว + ยอดภาษีที่ขาด — ตัวเดียวของทุกทาง (ดาวน์โหลด · แนบอัตโนมัติ · ภ.ง.ด.1ก)</summary>
     public static string BlockedMessage(string formName, string periodText, IReadOnlyList<BlockedRow> blocked)
-        => $"{formName} {periodText}: ไม่ออกไฟล์ยื่น — เลขประจำตัวของผู้มีเงินได้ {blocked.Count} รายใช้ไม่ได้ "
+        => $"{formName} {periodText}: ไม่ออกไฟล์ยื่น — เลขประจำตัวของผู้มีเงินได้ {blocked.Count} รายใช้ไม่ได้หรือยังไม่มี "
             + $"(ภาษีรวม {blocked.Sum(b => b.TaxAmount):N2} บาท จะขาดจากแบบถ้าออกไฟล์ตอนนี้):\n"
             + string.Join("\n", blocked.Select(b => $"• {b.SourceRef}{(string.IsNullOrWhiteSpace(b.Name) ? "" : " " + b.Name)} "
                 + $"[{b.MaskedTaxId ?? "-"}]: {b.Reason}"))
-            + "\nแก้ทุกแถวแล้วดาวน์โหลดใหม่ (ดูรายการทั้งหมด: GET payroll/tax-identity-health)";
+            + "\nแก้ทุกแถวแล้วดาวน์โหลดใหม่ (ดูรายการทั้งหมดที่ " + EncryptionHealthText.PageName + ")";   // รอบ 275 แพ็ก A (M-1): ชี้หน้าจอ ไม่ใช่ URL ดิบ
 
     /// <summary>รอบ 274: แถวที่ถูกกันออกจากไฟล์ — <paramref name="SourceRef"/> = รหัสพนักงาน/เลขที่ใบ · <paramref name="MaskedTaxId"/> ปิดบังเสมอ ·
     /// <paramref name="Reason"/> = เหตุ + ทางไปต่อ (<see cref="EmployeeTaxIdentity.Result.Reason"/>)</summary>
@@ -198,11 +198,20 @@ public static class Pnd1FilingData
         // รอบ 274: เลขประจำตัวถอดรหัสไม่ได้/ผิดรูป/checksum ไม่ผ่าน ⇒ กันแถวออกจากไฟล์พร้อมเหตุ (เดิมเขียนตัวเลขที่ตัดจาก ciphertext ลงช่อง 5)
         var blocked = new List<BlockedRow>();
         bool Blocks(EmployeeTaxIdentity.Result id) => id.Problem is TaxIdProblem.Undecryptable or TaxIdProblem.Invalid;
+        // รอบ 275 แพ็ก E (T4 H-3 · คำตัดสิน 4.2): ตัวตัดสินเดียวกับ 50 ทวิ (EmployeeTaxIdentity.ForFiling) — ไม่มีเลข + มีภาษีหัก + ยังไม่รับทราบ ⇒ กันแถว
+        // (เดิมไฟล์เติม 0 แต่ 50 ทวิ ไม่ออก ⇒ ไฟล์กับด่านนำส่งขัดกัน) · รับทราบแล้ว ⇒ เติม 0 ตามสเปก + Notes ℹ️ · ภาษี 0 ไม่ต้องรับทราบ (ไม่มี 50 ทวิ ให้ออก)
+        var waivedRefs = new HashSet<string>(StringComparer.Ordinal);
         bool BlockEmployee(Employee e, decimal tax)
         {
-            var id = EmployeeTaxIdentity.Inspect(e.TaxId, e.CitizenId);
-            if (!Blocks(id)) return false;
-            blocked.Add(new BlockedRow(e.EmployeeCode, $"{e.FirstNameTh} {e.LastNameTh}".Trim(), id.Masked, id.Problem, id.Reason!, tax));
+            var f = EmployeeTaxIdentity.ForFiling(e);
+            var blocks = f.Kind == EmployeeTaxIdentity.FilingKind.Unusable
+                || (f.Kind == EmployeeTaxIdentity.FilingKind.NeedsAcknowledgement && tax > 0);
+            if (!blocks)
+            {
+                if (f.Kind == EmployeeTaxIdentity.FilingKind.WaivedNoId) waivedRefs.Add(e.EmployeeCode);
+                return false;
+            }
+            blocked.Add(new BlockedRow(e.EmployeeCode, $"{e.FirstNameTh} {e.LastNameTh}".Trim(), f.Inspected.Masked, f.Inspected.Problem, f.Reason!, tax));
             return true;
         }
         if (!annual)
@@ -240,13 +249,17 @@ public static class Pnd1FilingData
             .OrderBy(c => c.CertificateNumber, StringComparer.Ordinal))
         {
             var contact = c.PayeeContact;
-            var payeeId = EmployeeTaxIdentity.InspectValue(contact?.TaxId);
-            if (Blocks(payeeId))
+            // รอบ 275 แพ็ก E ฝ่ายค้าน MED-2: ตัวตัดสินเดียวกับแถวเงินเดือน/รายงานสุขภาพ (EmployeeTaxIdentity.ForFiling) — ไม่มีทางลัดผ่านประเทศของผู้ติดต่อ ·
+            // ไม่มีเลข + มีภาษี ⇒ ต้องรับทราบรายคน (ผู้ติดต่อ) · เลขต่างประเทศในช่องเลข = เลขไทยที่ผิด ⇒ กัน (ล้างช่องแล้วรับทราบ หรือกรอกเลขที่กรมออกให้)
+            var payeeF = EmployeeTaxIdentity.ForFiling(contact?.TaxId, null, contact?.TaxIdWaiverAcknowledgedAt);
+            if (payeeF.Kind == EmployeeTaxIdentity.FilingKind.Unusable
+                || (payeeF.Kind == EmployeeTaxIdentity.FilingKind.NeedsAcknowledgement && c.TotalTaxAmount > 0))
             {
-                blocked.Add(new BlockedRow(c.CertificateNumber, contact?.Name, payeeId.Masked, payeeId.Problem, payeeId.Reason!, c.TotalTaxAmount));
+                blocked.Add(new BlockedRow(c.CertificateNumber, contact?.Name, payeeF.Inspected.Masked, payeeF.Inspected.Problem, payeeF.Reason!, c.TotalTaxAmount));
                 continue;
             }
-            var tid = payeeId.Value ?? "";
+            if (payeeF.Kind == EmployeeTaxIdentity.FilingKind.WaivedNoId) waivedRefs.Add(c.CertificateNumber);
+            var tid = payeeF.Value ?? "";
 
             var cond = WhtGrossUp.FilingCondition(c.CertificateType);
             // รอบ 2026-10-16 (สเปก WHTSVS): นิติบุคคล = ชื่อเต็มในช่องชื่อ · นามสกุล/คำนำหน้าว่าง (ไม่ผ่า "บริษัท ก จำกัด" เป็นชื่อ/สกุล) ·
@@ -312,14 +325,22 @@ public static class Pnd1FilingData
                 + string.Join(", ", unknown.Select(u => u.CertNo).Distinct().Take(3))
                 + (unknown.Select(u => u.CertNo).Distinct().Count() > 3 ? ", …" : "")
                 + " · แก้ประเภทเงินได้ในหนังสือรับรอง (หรือย้ายไปแบบ ภ.ง.ด.3) แล้วสร้างไฟล์ใหม่");
-        var noTaxId = rows.Count(r => ThaiTaxId.Normalize(r.PayeeTaxId).Length == 0);
+        bool IsWaivedRow(Pnd1FileFormat.Row r) => r.SourceRef != null
+            && waivedRefs.Any(n => string.Equals(r.SourceRef, n, StringComparison.Ordinal) || r.SourceRef.Split(' ').Contains(n));
+        var waivedRows = rows.Count(r => ThaiTaxId.Normalize(r.PayeeTaxId).Length == 0 && IsWaivedRow(r));
+        var noTaxId = rows.Count(r => ThaiTaxId.Normalize(r.PayeeTaxId).Length == 0 && !IsWaivedRow(r));
+        // ฝ่ายค้าน MED-2: ยังไม่ได้ยืนยันกับสเปก RD ว่าช่อง 5 รับเลข 0 ได้ (หรือต้องใช้เลขผู้เสียภาษีที่กรมออกให้คนต่างชาติ) — คำถามถึงเจ้าของ/นักบัญชี (DECISIONS 275-E-7)
+        if (waivedRows > 0)
+            notes.Add($"⚠️ {waivedRows} รายการเป็นผู้ไม่มีเลขประจำตัว 13 หลักที่ผู้ทำบัญชีรับทราบแล้ว — ไฟล์ลงเลข 0 13 หลักในช่องที่ 5 "
+                + "**ยังไม่ได้ยืนยันกับสเปกกรมสรรพากรว่ารับเลข 0 ได้** (อาจต้องใช้เลขประจำตัวผู้เสียภาษีที่กรมออกให้ผู้มีเงินได้ต่างชาติ) — ตรวจกับนักบัญชีก่อนยื่น · "
+                + "ได้เลขแล้วให้กรอกที่ทะเบียนพนักงาน/ผู้ติดต่อ (การรับทราบถูกล้างเอง)");
         if (noTaxId > 0)
             notes.Add($"⚠️ {noTaxId} รายการไม่มีเลขประจำตัวผู้เสียภาษี (ไฟล์ลงเลข 0 13 หลักตามสเปกช่องที่ 5 — สรรพากรจะไม่รับเป็นเลขของผู้มีเงินได้) — "
                 + "กรอกเลขบัตรประชาชนที่ทะเบียนพนักงาน/ผู้ติดต่อ แล้วสร้างไฟล์ใหม่");
         // รอบ 274: แถวที่ถูกกัน (เลขถอดรหัสไม่ได้/ไม่ถูกต้อง) — ล้มดังทีละแถว (รหัส/เลขที่ใบ + เลขปิดบัง + เหตุ) · ไม่อยู่ในไฟล์และไม่อยู่ในยอดรวมของไฟล์
         if (blocked.Count > 0)
         {
-            notes.Add($"⛔ {blocked.Count} รายการไม่ได้ลงไฟล์ (ภาษี {blocked.Sum(b => b.TaxAmount):N2} บาท) เพราะ{EmployeeTaxIdentity.InvalidText}/ถอดรหัสไม่ได้ — "
+            notes.Add($"⛔ {blocked.Count} รายการไม่ได้ลงไฟล์ (ภาษี {blocked.Sum(b => b.TaxAmount):N2} บาท) เพราะ{EmployeeTaxIdentity.InvalidText}/ถอดรหัสไม่ได้/ยังไม่มีเลขและยังไม่รับทราบ — "
                 + "ระบบไม่เขียนเลขที่ผิดลงแบบ · แก้แล้วสร้างไฟล์ใหม่ก่อนยื่น:");
             foreach (var b in blocked.Take(20))
                 notes.Add($"   • {b.SourceRef} {b.Name} — {b.Reason}");

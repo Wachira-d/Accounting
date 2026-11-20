@@ -86,6 +86,9 @@ public class TaxPaymentRequest : TenantEntity
     public string Status { get; set; } = "Open";
     public Guid? StatutoryRemittanceId { get; set; }
     public Guid? TaxSlipEvidenceId { get; set; }
+    /// <summary>รอบ 275 แพ็ก D (ฝ่ายค้าน LOW-3): รายการนำส่งที่ปิดใบนี้ถูกยกเลิก ⇒ ใบกลับเปิด · <see cref="ReopenNoticeAt"/> = แจ้งกลุ่มแล้ว (งานเบื้องหลังส่ง · null = ยังไม่แจ้ง)</summary>
+    public DateTime? ReopenedAt { get; set; }
+    public DateTime? ReopenNoticeAt { get; set; }
 }
 
 /// <summary>
@@ -138,4 +141,11 @@ public class TaxSlipEvidence : TenantEntity
     public bool SenderUnverified { get; set; }
     /// <summary>ฝ่ายค้าน 272 M6: ลบไฟล์สลิปเมื่อพ้นระยะเก็บแล้ว (ไฟล์ของแถวที่บันทึกแล้วย้ายเป็นหลักฐานของลูกค้า · แถวที่ยังไม่ตัดสินไม่ถูกลบ)</summary>
     public DateTime? FilePurgedAt { get; set; }
+    /// <summary>รอบ 275 แพ็ก D (M4): กระดิ่งเตือนพนักงานครั้งล่าสุดของแถวที่รอตัดสินนาน (<c>Helpers/TaxSlipOpenAge</c>) · null = ยังไม่เคยเตือนซ้ำ</summary>
+    public DateTime? StaffRemindedAt { get; set; }
+    /// <summary>รอบ 275 แพ็ก D (ฝ่ายค้าน MED-3): เวลาที่แถวถูกปล่อยกลับเข้าคิวเพราะรายการนำส่งถูกยกเลิก — อายุคิวนับจากเวลานี้ (ไม่ใช่วันรับสลิป)</summary>
+    public DateTime? ReleasedAt { get; set; }
+    /// <summary>รอบ 275 แพ็ก D: ค่าเทียบ (HMAC · <c>TaxSlipRefHash.TaxId</c>) ของเลขผู้เสียภาษีเต็มบนสลิป — <see cref="TaxIdMasked"/> เปิดแค่ 7 หลักแรกจึงแยกบริษัทที่ขึ้นต้นเหมือนกันไม่ได้ ·
+    /// null = แถวก่อนรอบนี้/สลิปไม่มีเลข (ตัดสินไม่ได้ ⇒ พนักงานต้องยืนยันจากรูป)</summary>
+    public string? TaxIdHash { get; set; }
 }

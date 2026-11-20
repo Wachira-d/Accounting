@@ -73,7 +73,7 @@ BillingAccount  ─ ใครจ่าย (สัญญา, บิล, โคว
 | `Subscription` (ต่อบริษัท) | `Models/Entities/Subscription.cs` | ชนะ AccountSubscription เมื่อบริษัทมีของตัวเอง (resolution order §6.3) |
 | `ConsolidationGroup/Member` | `DimensionalAccounting.cs:122` | งบรวม + %ถือหุ้น — **เรื่องการเงิน แยกจาก billing เด็ดขาด** |
 | `ExternalIntegration` + `ApiKeyMiddleware` | `Models/Entities/`, `Middleware/` | ต้นแบบของ ApiClient (TakeTime ใช้อยู่) · ✅ **รอบ 193 (คำตัดสิน #37)**: สิทธิ์แยก `CanRead/CanWrite/CanDelete` + `IsLegacyKey`/`LegacyDeprecatesAt` · ออก/แก้/ลบคีย์ + ผูกผู้ใช้เฉพาะ Owner — §3.1c |
-| `CompanyUser` | `Models/Entities/User.cs:75` | สิทธิ์ราย user รายบริษัท |
+| `CompanyUser` | `Models/Entities/User.cs:75` | สิทธิ์ราย user รายบริษัท · รอบ 276: `OwnDocumentsOnly`/`DraftDocumentsOnly` (เจ้าของตั้งที่หน้าทีม · บทบาทกำหนดเองมีชุดเดียวกัน · ตัวตัดสิน `Helpers/DocumentRestrictionPolicy` · DOCUMENT_FLOW §3.2-276) |
 | **`BillingAccount`** | `Models/Entities/BillingAccount.cs` | ✅ องค์กรผู้จ่ายเงิน — Name/TaxId/BillingMode/PaymentModel/CreditBalance/PostpaidCreditLimit/GracePeriodDays/IsSandbox/Status |
 | **`BillingAccountAdmin`** | `Models/Entities/BillingAccount.cs` | ✅ M:N account↔user + `IsPrimary`; unique ต่อ (account,user) |
 | **`Company.BillingAccountId`** | `Models/Entities/Company.cs` | ✅ nullable FK (`ON DELETE SET NULL` — ลบกลุ่มแล้วบริษัทต้องไม่หาย) |
@@ -177,10 +177,18 @@ subscription เดิมโดยสิ้นเชิง — โควตา�
 เพดานวันขยาย trial ที่ server `Helpers/TrialExtensionPolicy.ResolveDays` (ขอเกิน `TrialConfig.ExtensionDays` = ปฏิเสธพร้อมบอกเพดาน ไม่ตัดเงียบ · แอดมินแพลตฟอร์ม
 กำหนดเองได้ด้วย `allowCustomDays: true`)
 
-**ปิดรับสมัคร (`SiteSettings.RegistrationEnabled`) กันที่ server** (S-08 · `Helpers/RegistrationPolicy`): `IsOpen` (ไม่มีแถว = เปิด) · `IsInvitationUsable`
+**ปิดรับสมัคร (`SiteSettings.RegistrationEnabled`) กันที่ server** (S-08 · `Helpers/RegistrationPolicy`): `IsOpen` (ไม่มีแถว = เปิด) · คำเชิญใช้ได้ = `CompanyInvitationPolicy.Check` (รอบ 277 · เดิม `IsInvitationUsable` ลบแล้ว)
 (predicate เดียวกับ `AuthService.ConsumeInvitationAsync`) · `EvaluateNewAccount` (ปิด + มีคำเชิญของอีเมลนี้ = สมัครได้แต่ `MayCreateCompany=false`) ·
 `EvaluateNewCompany` (แอดมินแพลตฟอร์มยังเปิดบริษัทให้ลูกค้าได้) · ทางเข้า: `AuthService.RegisterAsync` · SSO บัญชีใหม่ (ตรวจก่อนพาไปหน้าสมัคร) ·
 `CompanyService.CreateAsync` (ผู้ใช้เดิมเปิดบริษัทเพิ่มไม่ได้เมื่อปิด) · `register.html` ไม่ซ่อนฟอร์มเมื่อมี `?invite=`
+
+**ทีม/คำเชิญ (รอบ 277 · คำตัดสิน 277-2…7)**: ที่นั่ง (`QuotaResources.Users`) = สมาชิก + คำเชิญ Pending ที่**ยังไม่หมดอายุ** (`CompanyInvitationPolicy.HoldsSeat` ·
+`QuotaGateService.UsersUsedAsync` · เดิมคำเชิญหมดอายุล็อกที่นั่งถาวร) · เชิญ/ส่งซ้ำตรวจใต้ล็อกเดียว (`CompanyService.EnsureSeatAsync`) · ตอบรับตรวจซ้ำ (`adding 0`)
+⇒ ลดแพ็กเกจหลังเชิญ = ตอบรับไม่ได้พร้อมเหตุ · ผู้ใช้หลายบริษัทสลับได้ตามเดิม (`CompanyUser` ต่อบริษัท) · สมาชิกที่ตอบรับโดยไม่กำหนดบทบาท (`AccessPending`) นับที่นั่งแล้ว
+แต่ใช้งานอะไรไม่ได้จนเจ้าของตั้งบทบาท · ไม่มีการคิดเงินต่อที่นั่งเพิ่มในรอบนี้ (ราคาที่นั่งเสริมเดิม §6.1b-Q) — commit a1ae70d2 + d93800f2
+
+**สมาชิก ↔ ช่องลายเซ็น (รอบ 278 · คำตัดสิน 278-5/278-6)**: `CompanyUser.AllowExternalPreparerBinding` (ผู้ใช้เปิดเอง — ให้ API key ของคนอื่นระบุตนเป็นผู้จัดทำ) ·
+ตาราง `SignerAliases` ชื่อเล่นต่อบริษัท (ยื่นโดยสมาชิก → เจ้าของอนุมัติ · ยกเลิก = `RevokedAt`) · ดู DOCUMENT_FLOW §2.8a
 
 **ภาษีรายงานข้ามบริษัท (B-03/B-04)**: `ITaxComplianceChecker.CheckAsync(companyId, taxReportId)` ค้นผ่าน `Helpers/TaxReportTenantScope.ById` (ไม่พบ = 404) ·
 `TaxController` endpoint เขียน 12 จุด ⇒ `Tax.File` (+ `Tax.Export` สำหรับ e-filing · `Tax.File` **และ** `Journal.Manage` สำหรับ unlock-filing/reject-reverse)
@@ -1537,3 +1545,4 @@ _Last verified against codebase: 2026-11-11 (รอบ 258 — ผัง 21630 "
 _Last verified against codebase: 2026-11-11 (รอบ 258 ฝ่ายค้าน — `Payment.UnappliedNeedsReview` (รายการเงินส่วนเกินก่อนรอบ 258 ต้องยืนยัน/ปิดก่อนนับเป็นเงินรอจัดสรร) · `Document.CreditCoverNoticeAt` (แจ้งทีมครั้งเดียวเมื่อใบถูกระงับทวง) · ผังไม่เปลี่ยน) · commit 78e3f30c_
 _Last verified against codebase: 2026-11-11 (รอบ 259 แพ็ก A — ตาราง `PaymentCreditMovements` (ขาออกของเงินรอจัดสรร) · `CompanySettings.CustomerCreditWriteOffCap` (เพดานตัดเศษ ตั้งต้น 1.00) · ผังไม่เพิ่ม (ใช้ 21630 · 54960 เดิม)) · commit 5a3b7fa1_
 _Last verified against codebase: 2026-11-12 (รอบ 262 — §6.2c: ใบ/ทวง/ใบเสร็จค่าบริการทาง LINE ของผู้ติดต่อผู้เช่าผ่าน OA กลาง (บริษัทผู้ให้บริการเท่านั้น) · `ContactLineInvites.OaScope` · ศูนย์บิลผูก LINE — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 81af94ae)_
+_Last verified against codebase: 2026-11-20 (รอบ 278 — `CompanyUser.AllowExternalPreparerBinding` + ตาราง `SignerAliases` ต่อบริษัท (เจ้าของอนุมัติ) — commit b8960a48)_

@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 namespace Accounting.Helpers;
@@ -15,10 +16,24 @@ namespace Accounting.Helpers;
 /// คะตอน startup). ถ้าไม่ configure → fallback dev key + log warning.</summary>
 public class EncryptedColumnConverter : ValueConverter<string?, string?>
 {
-    public EncryptedColumnConverter() : base(
-        v => EncryptOnSave(v),
-        v => DecryptOnRead(v))
-    { }
+    /// <summary>ค่าตั้งต้น = <see cref="PiiValueKind.NoUnwrap"/> (ฝ่ายค้าน 274-10 MED-1: แกะชั้นซ้อนเฉพาะคอลัมน์ที่เปิดไว้ชัดใน allow-list)</summary>
+    public EncryptedColumnConverter() : this(PiiValueKind.NoUnwrap) { }
+
+    /// <summary>รอบ 274-10: <paramref name="kind"/> = ชนิดค่าของคอลัมน์ — ใช้ตัดสินว่า "ค่าที่แกะจากชั้นซ้อนได้" ใช้ได้ไหม
+    /// (<see cref="PiiValueKind.ThaiTaxId"/> ต้องเป็นเลข 13 หลักที่ผ่าน mod-11 · อื่น ๆ ต้องไม่ใช่ ciphertext อีก)</summary>
+    public EncryptedColumnConverter(PiiValueKind kind) : base(v => EncryptOnSave(v), ReadExpression(kind))
+    { Kind = kind; }
+
+    /// <summary>ชนิดค่าของคอลัมน์นี้ — งานย้ายคีย์/รายงานแถวเสียอ่านจาก converter ของโมเดล (ไม่มีรายชื่อคอลัมน์สำเนาที่สอง)</summary>
+    public PiiValueKind Kind { get; }
+
+    private static Expression<Func<string?, string?>> ReadExpression(PiiValueKind kind)
+        => kind switch
+        {
+            PiiValueKind.ThaiTaxId => v => DecryptOnRead(v, PiiValueKind.ThaiTaxId),
+            PiiValueKind.Text => v => DecryptOnRead(v, PiiValueKind.Text),
+            _ => v => DecryptOnRead(v, PiiValueKind.NoUnwrap),
+        };
 
     private static string _key = "default-dev-key-change-in-production";
     private static bool _configured;
@@ -47,30 +62,96 @@ public class EncryptedColumnConverter : ValueConverter<string?, string?>
 
     /// <summary>ผลตรวจค่าหนึ่งค่าในคอลัมน์ PII · <see cref="Plain"/> = ค่าที่ใช้ได้ (Plaintext/Current/Previous) หรือค่าดิบ (Undecryptable) ·
     /// <see cref="KeyIndex"/> = ลำดับคีย์เดิมที่ถอดได้ (เฉพาะ <see cref="PiiCipherState.Previous"/>)</summary>
-    public readonly record struct Inspection(PiiCipherState State, string? Plain, int KeyIndex = -1);
+    /// <para>รอบ 274-10: <see cref="NestedLayers"/> = จำนวนชั้นซ้อนที่แกะออก (สถานะ <see cref="PiiCipherState.Nested"/>) ·
+    /// <see cref="NestedUnresolved"/> = ถอดชั้นนอกได้แต่ข้างในยังเป็น ciphertext ที่ใช้ไม่ได้ (ถอดไม่ออก/เกินความลึก/ผิดรูป/ผู้ใช้ส่ง ciphertext มาเอง) —
+    /// <see cref="Plain"/> เป็น ciphertext ชั้นใน (ผู้อ่านปลายทางเห็น <see cref="IsUnreadable"/> = true ⇒ ไม่ตัดตัวเลข)</para></summary>
+    public readonly record struct Inspection(PiiCipherState State, string? Plain, int KeyIndex = -1, int NestedLayers = 0, bool NestedUnresolved = false);
+
+    /// <summary>รอบ 274-10: ความลึกสูงสุดของชั้นซ้อนที่แกะ (กันวนไม่จบ/ค่าที่ถูกห่อซ้ำโดยตั้งใจ)</summary>
+    public const int MaxNestedDepth = 3;
+
+    /// <summary>รอบ 274-10: เครื่องหมายใน plaintext ของ "ciphertext ที่ผู้ใช้ส่งมาเป็นค่า" ที่ <see cref="EncryptOnSave"/> ห่อตั้งแต่รอบนี้ —
+    /// ฝั่งอ่านคืน ciphertext นั้นตามเดิม <b>ไม่แกะ</b> (ปิด oracle รอบ 231 S2 ต่อไป) · แถวซ้อนที่ไม่มีเครื่องหมาย = ของเก่าจากช่วงรอบ 231–274 ⇒ แกะได้</summary>
+    internal const string UserCipherMarker = "\u0001pii-user-cipher:";
 
     /// <summary><b>ตัวตัดสินเดียว</b>ของ "ค่านี้ในคอลัมน์ PII ถอดด้วยคีย์ไหน" — pure (คีย์ส่งเข้ามา) ⇒ ฝั่งอ่านของ EF (<see cref="DecryptOnRead"/>) ·
     /// งานย้ายคีย์ · รายงานแถวเสีย และเทสต์เรียกตัวเดียวกัน · ลำดับ: คีย์ปัจจุบันก่อน แล้วคีย์เดิมตามลำดับ</summary>
-    public static Inspection Inspect(string? stored, string currentKey, IReadOnlyList<string> previousKeys)
+    public static Inspection Inspect(string? stored, string currentKey, IReadOnlyList<string> previousKeys, PiiValueKind kind = PiiValueKind.NoUnwrap)
     {
         if (string.IsNullOrEmpty(stored)) return new(PiiCipherState.Empty, stored);
-        var prefixed = EncryptionHelper.IsEncrypted(stored);
-        if (!prefixed && !EncryptionHelper.LooksLikeLegacyCiphertext(stored)) return new(PiiCipherState.Plaintext, stored);
-        if (TryDecrypt(stored, currentKey, out var p)) return new(PiiCipherState.Current, p);
-        for (var i = 0; i < previousKeys.Count; i++)
-            if (TryDecrypt(stored, previousKeys[i], out p)) return new(PiiCipherState.Previous, p, i);
-        // รอบ 274 (ฝ่ายค้าน MED-1): ไม่มีคำนำหน้าแต่รูปเป็น ciphertext รุ่นก่อน (base64 ≥ 40 ตัว ≥ nonce+tag) และถอดไม่ออกทุกคีย์ = <b>ถอดไม่ได้</b>
-        // (เดิม = plaintext ⇒ ผู้เรียกตัดตัวเลขจาก base64 ลงแบบ) · คอลัมน์ PII เป็นเลขสั้น/JSON — plaintext จริงไม่มีรูปนี้
-        return new(PiiCipherState.Undecryptable, stored);
+        // ฝ่ายค้าน 274-10 LOW-2: รูป ciphertext ตัดสินด้วย IsUnreadable ตัวเดียว (ไม่มีช่องว่างเลย) — ตรงกับ PiiReprotectPass.CandidateSql
+        if (!IsUnreadable(stored)) return new(PiiCipherState.Plaintext, stored);
+        Inspection outer;
+        if (TryDecrypt(stored, currentKey, out var p)) outer = new(PiiCipherState.Current, p);
+        else
+        {
+            outer = default;
+            for (var i = 0; i < previousKeys.Count && outer.State == PiiCipherState.Empty; i++)
+                if (TryDecrypt(stored, previousKeys[i], out p)) outer = new(PiiCipherState.Previous, p, i);
+            // รอบ 274 (ฝ่ายค้าน MED-1): ไม่มีคำนำหน้าแต่รูปเป็น ciphertext รุ่นก่อน (base64 ≥ 40 ตัว ≥ nonce+tag) และถอดไม่ออกทุกคีย์ = <b>ถอดไม่ได้</b>
+            // (เดิม = plaintext ⇒ ผู้เรียกตัดตัวเลขจาก base64 ลงแบบ) · คอลัมน์ PII เป็นเลขสั้น/JSON — plaintext จริงไม่มีรูปนี้
+            if (outer.State == PiiCipherState.Empty) return new(PiiCipherState.Undecryptable, stored);
+        }
+        return Unwrap(outer, currentKey, previousKeys, kind);
+    }
+
+    /// <summary>รอบ 274-10 — <b>แกะชั้นซ้อน</b> (ที่มา: ช่วงที่ถอดคีย์เดิมไม่ได้ API คืน ciphertext ดิบ แล้วทางเข้าที่ไม่มีด่าน (สร้างพนักงาน · HRIS sync · นำเข้าไฟล์ที่ส่งออกไว้)
+    /// เขียนสตริงนั้นกลับลงช่อง ⇒ converter เข้ารหัสซ้ำด้วยคีย์ปัจจุบัน) · ถอดชั้นในด้วยชุดคีย์เดียวกัน (ปัจจุบัน → เดิม) ≤ <see cref="MaxNestedDepth"/> ชั้น ·
+    /// รับค่าที่แกะได้เฉพาะเมื่อ "ใช้ได้จริง" (<see cref="AcceptsUnwrapped"/>) — ไม่ผ่าน = คงสถานะเดิม + <c>NestedUnresolved</c> (ห้ามแต่งค่า)</summary>
+    private static Inspection Unwrap(Inspection outer, string currentKey, IReadOnlyList<string> previousKeys, PiiValueKind kind)
+    {
+        var plain = outer.Plain!;
+        // เครื่องหมายใน plaintext มาจาก EncryptOnSave เท่านั้น (ค่าที่ขึ้นต้นด้วยเครื่องหมายเองก็ถูกห่อเพิ่มอีกชั้น — LOW-1) ⇒ ตัดหนึ่งชั้นได้ค่าที่ส่งมาตรงตัว · ไม่แกะ
+        if (plain.StartsWith(UserCipherMarker, StringComparison.Ordinal))
+        {
+            var sent = plain[UserCipherMarker.Length..];
+            return outer with { Plain = sent, NestedUnresolved = IsUnreadable(sent) };
+        }
+        if (!IsUnreadable(plain)) return outer;
+        // ฝ่ายค้าน 274-10 MED-1: คอลัมน์นอก allow-list (เช่น CustomerSignerProfile ที่ผู้ลงนามนิรนามเขียน/อ่านกลับได้) ห้ามแกะ — กัน oracle ย้อนหลัง
+        if (kind == PiiValueKind.NoUnwrap) return outer with { NestedUnresolved = true };
+        var inner = plain;
+        var layers = 0;
+        while (IsUnreadable(inner) && layers < MaxNestedDepth)
+        {
+            if (!TryDecryptAny(inner, currentKey, previousKeys, out var next)) break;
+            inner = next;
+            layers++;
+        }
+        if (layers == 0 || !AcceptsUnwrapped(inner, kind)) return outer with { NestedUnresolved = true };
+        return new(PiiCipherState.Nested, inner, outer.KeyIndex, layers);
+    }
+
+    /// <summary>รอบ 274-10: ค่าที่แกะจากชั้นซ้อนใช้ได้ไหม — ยังเป็น ciphertext/มีเครื่องหมายผู้ใช้ = ไม่ได้ ·
+    /// เลขประจำตัวผู้เสียภาษี = ตัวเลข (ขีด/ช่องว่างได้) 13 หลักที่ผ่าน mod-11 เท่านั้น</summary>
+    private static bool AcceptsUnwrapped(string? value, PiiValueKind kind)
+    {
+        if (string.IsNullOrWhiteSpace(value) || IsUnreadable(value) || value.StartsWith(UserCipherMarker, StringComparison.Ordinal)) return false;
+        if (kind != PiiValueKind.ThaiTaxId) return true;
+        return value.All(c => char.IsAsciiDigit(c) || c == '-' || c == ' ') && ThaiTaxId.IsValid(value);
+    }
+
+    private static bool TryDecryptAny(string stored, string currentKey, IReadOnlyList<string> previousKeys, out string plain)
+    {
+        if (TryDecrypt(stored, currentKey, out plain)) return true;
+        foreach (var k in previousKeys)
+            if (TryDecrypt(stored, k, out plain)) return true;
+        return false;
     }
 
     /// <summary>รอบ 274: ค่าที่ <b>ได้มาจาก</b> converter แล้วยังเป็น ciphertext (enc1 หรือรุ่นก่อนไม่มีคำนำหน้า) = ถอดรหัสไม่ได้ ·
-    /// ตัวตัดสินเดียวของผู้อ่านปลายทาง (ไฟล์ยื่น · ไฟล์ สปส. · ไฟล์โอน · export · import matching) — ห้ามตัดตัวเลขจากค่านี้</summary>
+    /// ตัวตัดสินเดียวของผู้อ่านปลายทาง (ไฟล์ยื่น · ไฟล์ สปส. · ไฟล์โอน · export · import matching) — ห้ามตัดตัวเลขจากค่านี้ ·
+    /// <b>ฝ่ายค้าน 274-10 LOW-2:</b> เป็นกติการูป ciphertext ตัวเดียวของ <see cref="Inspect"/> และ <c>PiiReprotectPass.CandidateSql</c> ด้วย —
+    /// ค่าที่มีช่องว่าง/ขึ้นบรรทัดตรงไหนก็ตาม<b>ไม่ใช่</b> ciphertext (converter ไม่เคยเขียนช่องว่าง · base64 decoder ข้ามช่องว่างได้ จึงต้องตัดสินเอง)</summary>
     public static bool IsUnreadable(string? valueFromEntity)
     {
-        var t = valueFromEntity?.Trim();
-        return !string.IsNullOrEmpty(t) && (EncryptionHelper.IsEncrypted(t) || EncryptionHelper.LooksLikeLegacyCiphertext(t));
+        if (string.IsNullOrEmpty(valueFromEntity) || valueFromEntity.Any(char.IsWhiteSpace)) return false;
+        return EncryptionHelper.IsEncrypted(valueFromEntity) || EncryptionHelper.LooksLikeLegacyCiphertext(valueFromEntity);
     }
+
+    /// <summary>ฝ่ายค้าน 274-10 LOW-1: ค่าที่ขึ้นต้นด้วยเครื่องหมายภายในของ converter — ด่านเข้า (<c>EmployeeRecordEdit.CipherInputProblem</c>) ปฏิเสธ</summary>
+    public static bool HasInternalMarker(string? value)
+        => value != null && value.TrimStart().StartsWith(UserCipherMarker, StringComparison.Ordinal);
 
     /// <summary>รอบ 274 (ฝ่ายค้าน LOW-3): ค่าที่ส่งออกไฟล์/ตาราง (export · แม่แบบนำเข้า) — ถอดรหัสไม่ได้ ⇒ ป้าย ไม่ส่ง ciphertext ดิบ</summary>
     public const string UnreadableExportText = "⛔ ถอดรหัสไม่ได้";
@@ -121,6 +202,12 @@ public class EncryptedColumnConverter : ValueConverter<string?, string?>
     {
         if (string.IsNullOrEmpty(value)) return value;
         if (IsUnreadable(value) && PassThrough.ContainsKey(Fingerprint(value))) return value;   // ค่าเดิมที่อ่านมาแล้วถอดไม่ออก — คงไว้
+        EncryptionWriteGuard.ThrowIfBlocked("ข้อมูลส่วนบุคคล");   // รอบ 275 แพ็ก A (MED-2): คีย์ของเครื่องนี้ไม่ตรงกับที่ระบบใช้ ⇒ ไม่เข้ารหัสค่าใหม่ (อ่านไม่กระทบ)
+        // รอบ 274-10: ciphertext ที่ผู้ใช้/ทางเข้าส่งมาเป็นค่า (ด่านข้อความไทยอยู่ที่ EmployeeRecordEdit.CipherInputProblem) — ห่อพร้อมเครื่องหมาย
+        // ⇒ ฝั่งอ่านไม่แกะ (Unwrap) · ไม่มีเครื่องหมาย = แถวซ้อนรุ่นเก่าที่แกะได้
+        // ฝ่ายค้าน 274-10 LOW-1: ค่าที่ขึ้นต้นด้วยเครื่องหมายเองก็ห่อเพิ่ม ⇒ ฝั่งอ่านตัดเครื่องหมายหนึ่งชั้นได้ค่าที่ส่งมาตรงตัวเสมอ (ไม่ตัดคำนำหน้าเงียบ ๆ)
+        if (IsUnreadable(value) || value.StartsWith(UserCipherMarker, StringComparison.Ordinal))
+            return EncryptionHelper.Encrypt(UserCipherMarker + value, _key);
         return EncryptionHelper.Encrypt(value, _key);
     }
 
@@ -129,9 +216,9 @@ public class EncryptedColumnConverter : ValueConverter<string?, string?>
     /// ไม่มีคำนำหน้าแต่ดูเหมือน ciphertext รุ่นก่อนรอบ 231 ⇒ ลองถอดชุดเดียวกัน (ได้ = ciphertext เก่า · บันทึกครั้งถัดไปจะได้คำนำหน้า) ·
     /// อื่น ๆ = plaintext เก่า pass-through (รูปแบบเดียวกับ <c>SecretProtector.Inspect</c>)</summary>
     [return: NotNullIfNotNull(nameof(value))]
-    private static string? DecryptOnRead(string? value)
+    private static string? DecryptOnRead(string? value, PiiValueKind kind)
     {
-        var r = Inspect(value, _key, _previousKeys);
+        var r = Inspect(value, _key, _previousKeys, kind);
         if (r.State == PiiCipherState.Undecryptable)
         {
             // ciphertext เสียหาย / คีย์ถูกหมุนโดยไม่ตั้ง ENCRYPTION_KEY_PREVIOUS ⇒ คืนค่าเดิม + จำไว้ให้ EncryptOnSave ปล่อยผ่าน (ไม่ห่อซ้อน)
@@ -139,7 +226,9 @@ public class EncryptedColumnConverter : ValueConverter<string?, string?>
             PassThrough.TryAdd(Fingerprint(value!), 0);
             return value;
         }
-        if (r.State == PiiCipherState.Previous && _previousKeys[r.KeyIndex] == EncryptionKeyResolver.DevKey) NoteDevKeyRead();
+        if (r.KeyIndex >= 0 && _previousKeys[r.KeyIndex] == EncryptionKeyResolver.DevKey) NoteDevKeyRead();
+        // รอบ 274-10: ชั้นในใช้ไม่ได้ ⇒ คืน ciphertext ชั้นใน (ผู้อ่านปลายทางเห็น IsUnreadable) · ไม่ใส่ PassThrough: ถ้า EF เขียนค่านี้กลับ
+        // จะถูกห่อพร้อมเครื่องหมาย (ความหมายเดิม — ยังใช้ไม่ได้) ไม่ใช่ถูกปล่อยเป็น ciphertext ชั้นในดิบที่อาจถอดได้ (oracle)
         return r.Plain;
     }
 
@@ -159,4 +248,19 @@ public enum PiiCipherState
     Previous,
     /// <summary>มีคำนำหน้า enc1: แต่ถอดไม่ออกทุกคีย์ — กู้ไม่ได้จนกว่าจะได้คีย์เดิมคืน หรือกรอกใหม่</summary>
     Undecryptable,
+    /// <summary>รอบ 274-10: เข้ารหัสซ้อน (ciphertext ถูกเข้ารหัสอีกชั้น) และแกะได้เป็นค่าที่ใช้ได้ — อ่านถูกแล้ว ·
+    /// งานย้ายคีย์เขียนใหม่เป็นชั้นเดียวบนคีย์ปัจจุบัน</summary>
+    Nested,
+}
+
+/// <summary>รอบ 274-10: ชนิดค่าของคอลัมน์ PII — ใช้ตัดสินค่าที่แกะจากชั้นซ้อน (<see cref="EncryptedColumnConverter.AcceptsUnwrapped"/>)</summary>
+public enum PiiValueKind
+{
+    /// <summary>ค่าตั้งต้น — <b>ไม่แกะชั้นซ้อน</b> (ฝ่ายค้าน 274-10 MED-1) · ใช้กับทุกคอลัมน์ที่ไม่ได้อยู่ใน allow-list
+    /// (CustomerSignerProfile · ImportStaging JSON ฯลฯ) — ค่าซ้อนคืน ciphertext ชั้นในตามเดิม</summary>
+    NoUnwrap,
+    /// <summary>allow-list: ข้อความของพนักงาน (เลขบัญชี/ประกันสังคม/พาสปอร์ต) — แกะได้เมื่อค่าข้างในไม่ใช่ ciphertext อีก</summary>
+    Text,
+    /// <summary>เลขประจำตัวผู้เสียภาษี/เลขบัตรประชาชน — ต้องเป็น 13 หลักที่ผ่าน mod-11</summary>
+    ThaiTaxId,
 }

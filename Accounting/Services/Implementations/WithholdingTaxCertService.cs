@@ -320,7 +320,10 @@ public partial class WithholdingTaxCertService : IWithholdingTaxCertService
             ?? throw new KeyNotFoundException("ไม่พบบริษัท");
 
         // รอบ 271: ช่องการผูก (ผูกกับ · ลบ/ยกเลิกได้ไหม · อาจนับซ้ำ) — ตัวเดียวกับรายการ
-        return (await DecorateLinkAsync(companyId, new List<WithholdingTaxCert> { cert }, new List<WithholdingTaxCertResponse> { MapToResponse(cert, company) }))[0];
+        var decorated = (await DecorateLinkAsync(companyId, new List<WithholdingTaxCert> { cert }, new List<WithholdingTaxCertResponse> { MapToResponse(cert, company) }))[0];
+        // รอบ 275 แพ็ก E (คำตัดสิน 4.2 · ฝ่ายค้าน LOW (ข)): ข้อความเดียวกับ PDF จากสำเนา ณ วันออก · พาสปอร์ต<b>ปิดบัง</b>เป็นค่าตั้งต้น —
+        // คอนโทรลเลอร์ขอเลขเต็มเฉพาะผู้มี pii:view (WhtCertPayeeNote.Of(cert, includePii: true))
+        return decorated with { PayeeReferenceNote = Accounting.Helpers.WhtCertPayeeNote.Of(cert, includePii: false) };
     }
 
     /// <summary>ทางเดิม (แบบ/ปี/เดือน) — รอบ 271 เดินทางเดียวกับ <see cref="GetListAsync"/> (ตัวกรองฝั่งเซิร์ฟเวอร์ + ช่องการผูก)</summary>
@@ -1653,15 +1656,18 @@ public partial class WithholdingTaxCertService : IWithholdingTaxCertService
             DividendSubRow: l.DividendSubRow, DividendCreditRate: l.DividendCreditRate);
     }
 
+    /// <summary>รอบ 275 แพ็ก B (275-B-6 (ข)): ผู้ถูกหักบนหน้าใบ/หน้าพิมพ์ = สำเนา ณ วันออก (Helpers/WhtPayeeSnapshot ตัวเดียวกับ PDF)</summary>
+    private static Contact PayeeOf(WithholdingTaxCert w) => Accounting.Helpers.WhtPayeeSnapshot.Of(w)!;
+
     private static WithholdingTaxCertResponse MapToResponse(WithholdingTaxCert w, Company company) => new(
         w.Id, w.CertificateNumber, w.CompanyId,
         company.Name, company.TaxId, company.BranchCode,
         ComposeFullAddress(company.Address, company.SubDistrict, company.District, company.Province, company.PostalCode,
             company.Moo, company.BuildingNumber, company.StreetName, company.BuildingName),
-        w.PayeeContactId, w.PayeeContact.Name, w.PayeeContact.TaxId,
-        w.PayeeContact.BranchCode,
-        ComposeFullAddress(w.PayeeContact.Address, w.PayeeContact.SubDistrict, w.PayeeContact.District, w.PayeeContact.Province, w.PayeeContact.PostalCode,
-            w.PayeeContact.Moo, w.PayeeContact.BuildingNumber, w.PayeeContact.StreetName, w.PayeeContact.BuildingName),
+        w.PayeeContactId, PayeeOf(w).Name, PayeeOf(w).TaxId,
+        PayeeOf(w).BranchCode,
+        ComposeFullAddress(PayeeOf(w).Address, PayeeOf(w).SubDistrict, PayeeOf(w).District, PayeeOf(w).Province, PayeeOf(w).PostalCode,
+            PayeeOf(w).Moo, PayeeOf(w).BuildingNumber, PayeeOf(w).StreetName, PayeeOf(w).BuildingName),
         w.TaxFormType, GetTaxFormName(w.TaxFormType),
         w.TaxYear, w.TaxMonth, w.CertificateType, w.Status,
         w.TotalIncomeAmount, w.TotalTaxAmount,
@@ -1676,8 +1682,8 @@ public partial class WithholdingTaxCertService : IWithholdingTaxCertService
         PayerConditionIndex: Accounting.Helpers.WhtCertFormText.PayerConditionIndex(w.CertificateType),
         DividendBlock: Accounting.Helpers.WhtCertFormText.DividendBlock(w.Lines),
         PayerNameLine: Accounting.Helpers.WhtCertFormText.PartyName(null, company.Name, company.TaxId, company.BranchCode, company.BranchName),
-        PayeeNameLine: Accounting.Helpers.WhtCertFormText.PartyName(w.PayeeContact.TitleTh, w.PayeeContact.Name, w.PayeeContact.TaxId,
-            w.PayeeContact.BranchCode, w.PayeeContact.BranchName),
+        PayeeNameLine: Accounting.Helpers.WhtCertFormText.PartyName(PayeeOf(w).TitleTh, PayeeOf(w).Name, PayeeOf(w).TaxId,
+            PayeeOf(w).BranchCode, PayeeOf(w).BranchName),
         TotalTaxAmountInWords: Accounting.Helpers.ThaiBahtText.Format(w.TotalTaxAmount),
         ExchangeRateUsed: w.ExchangeRateUsed, ExchangeRateBasis: w.ExchangeRateBasis,
         PartnerDeliveryLabel: Accounting.Helpers.PartnerExchangeRules.WhtDeliveryLabel(w.PartnerDeliveredAt, w.PartnerDeliveryError));

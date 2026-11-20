@@ -206,7 +206,7 @@ public class MemberProfileDbTests
     /// (idempotent · เหมือนตอนบูตจริง) เพื่อให้เทสต์เดินบนด่านฐานจริง</summary>
     private static async Task EnsureDefaultIndexAsync(AccountingDbContext db)
     {
-        foreach (var sql in MemberProfileMigration.Statements()) await db.Database.ExecuteSqlRawAsync(sql);
+        await DbTestDatabase.ApplyDdlAsync(db, MemberProfileMigration.Statements());
     }
 
     [Fact]

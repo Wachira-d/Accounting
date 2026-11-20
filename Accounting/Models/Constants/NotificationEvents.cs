@@ -149,6 +149,21 @@ public static class NotificationEvents
     public const string ApprovalGranted    = "approval.granted";
     public const string ApprovalRejected   = "approval.rejected";
 
+    // ===== รอบ 276: คำขออนุมัติพื้นฐานของเอกสาร (ไม่มีกฎอนุมัติที่ตรง + ผู้ขออนุมัติเองไม่ได้ เช่นผู้ใช้ "เฉพาะร่าง") =====
+    /// <summary>ผู้สร้างกด "ส่งขออนุมัติ" — ผู้รับ = บทบาท <see cref="NotificationRecipientRoles.DocumentApprover"/> ตามตารางของบริษัท ·
+    /// ค่าตั้งต้น = กระดิ่ง + อีเมล + LINE ส่วนตัว (+ กลุ่ม LINE ของบริษัทถ้าผูกไว้) — <c>NotificationAudiencePolicy.DefaultMatrix</c> ·
+    /// ผู้ส่งเดียว <c>DocumentApprovalRequestService</c> · ข้อความไม่มีชื่อลูกค้า/เลขผู้เสียภาษี (ไปถึงกลุ่มได้ · คำตัดสิน 276-6)</summary>
+    public const string DocumentApprovalRequested = "document.approval_requested";
+    /// <summary>ผู้อนุมัติตีกลับพร้อมเหตุผล — ผู้รับระบุตัว = ผู้ขอ</summary>
+    public const string DocumentApprovalReturned  = "document.approval_returned";
+    /// <summary>ใบที่ขอไว้ได้รับการอนุมัติ (ออกเลขแล้ว) — ผู้รับระบุตัว = ผู้ขอ · ผู้ส่ง: hook ท้าย <c>ApproveDocumentAsync</c></summary>
+    public const string DocumentApprovalGranted   = "document.approval_granted";
+
+    // ===== รอบ 277: ทีม/คำเชิญ =====
+    /// <summary>ผู้ถูกเชิญตอบรับคำเชิญเข้าบริษัทแล้ว — ถึงเจ้าของ (กระดิ่ง + อีเมล · ไม่เข้ากลุ่ม LINE: ข้อความมีอีเมลผู้รับเชิญ) ·
+    /// ผู้เชิญไม่ได้ตั้งบทบาท ⇒ ข้อความบอก "รอคุณตั้งสิทธิ์" + ลิงก์หน้าจัดการทีม · ผู้ส่งเดียว <c>CompanyInvitationService.AcceptAsync</c></summary>
+    public const string TeamInvitationAccepted = "team.invitation_accepted";
+
     // ===== Subscription / billing =====
     public const string SubscriptionTrialStarted    = "subscription.trial_started";
     public const string SubscriptionTrialEnding     = "subscription.trial_ending";
@@ -236,6 +251,10 @@ public static class NotificationEvents
         ("Approval", ApprovalRequired, "มีรายการรอการอนุมัติ"),
         ("Approval", ApprovalGranted, "อนุมัติคำขอแล้ว"),
         ("Approval", ApprovalRejected, "ปฏิเสธคำขอ"),
+        ("Approval", DocumentApprovalRequested, "พนักงานส่งเอกสารร่างขออนุมัติ (ไม่มีกฎอนุมัติที่ตรง) — ถึงผู้อนุมัติเอกสาร"),
+        ("Approval", DocumentApprovalReturned, "เอกสารที่ขออนุมัติถูกตีกลับพร้อมเหตุผล — ถึงผู้ขอ"),
+        ("Approval", DocumentApprovalGranted, "เอกสารที่ขออนุมัติได้รับการอนุมัติแล้ว — ถึงผู้ขอ"),
+        ("Approval", TeamInvitationAccepted, "ผู้ถูกเชิญตอบรับคำเชิญเข้าบริษัทแล้ว (ถ้ายังไม่ได้ตั้งบทบาท — รอเจ้าของตั้งสิทธิ์)"),
         ("Lodging",  LodgingPaymentUnconfirmed, "ที่พัก: เงินเข้า/ส่งสลิปแล้วแต่ยืนยันห้องไม่ได้ (ต้องตัดสิน)"),
         ("Lodging",  LodgingBookingCreated, "ที่พัก: มีการจองใหม่จากเว็บ"),
         ("Lodging",  LodgingSlipUploaded, "ที่พัก: แขกส่งสลิปรอตรวจ"),
@@ -263,10 +282,13 @@ public static class NotificationRecipientRoles
     public const string Owner = "Owner";
     /// <summary>รอบ 264: ผู้มีสิทธิ์ตั้งค่าบริษัท (perm:CompanySettings.Edit) + เจ้าของ — คนที่กดยอมรับคำขอเชื่อมคู่ค้าได้</summary>
     public const string CompanyAdmin = "CompanyAdmin";
+    /// <summary>รอบ 276: ผู้อนุมัติเอกสารได้ (เจ้าของ + นักบัญชี + บทบาทที่ให้สิทธิ์อนุมัติเอกสาร · ไม่รวมผู้ "เฉพาะร่าง") —
+    /// ตัวตัดสินเดียว <c>Helpers/DocumentApproverDirectory</c> (ด่านเดียวกับปุ่มอนุมัติ <c>DocumentPermissionHelper.CanApproveAsync</c>)</summary>
+    public const string DocumentApprover = "DocumentApprover";
 
     public static readonly IReadOnlyList<string> All = new[]
     {
-        Requester, DirectManager, DepartmentHead, HrAdmin, Accounting, Owner, CompanyAdmin
+        Requester, DirectManager, DepartmentHead, HrAdmin, Accounting, Owner, CompanyAdmin, DocumentApprover
     };
 
     /// <summary>รอบ 258 (E-H1 · F2 ข้อ 5): ป้ายไทยของบทบาทผู้รับ — ตัวตั้งตัวเดียว ส่งให้หน้าเว็บผ่านแคตตาล็อก
@@ -280,5 +302,6 @@ public static class NotificationRecipientRoles
         [Accounting] = "ฝ่ายบัญชี",
         [Owner] = "เจ้าของบริษัท",
         [CompanyAdmin] = "ผู้ดูแลตั้งค่าบริษัท",
+        [DocumentApprover] = "ผู้อนุมัติเอกสาร (เจ้าของ/บัญชี)",
     };
 }

@@ -62,6 +62,12 @@ public interface ISecretProtector
     /// default สำหรับตัวแทนในเทสต์: ใช้ได้ = <see cref="SecretState.Current"/> · ไม่ได้ = <see cref="SecretState.WrongKey"/></summary>
     SecretState Inspect(string? value)
         => string.IsNullOrEmpty(value) ? SecretState.Empty : IsUsable(value) ? SecretState.Current : SecretState.WrongKey;
+
+    /// <summary>รอบ 275 แพ็ก A (T4 M-4): ลายนิ้วมือของคีย์ปัจจุบัน (<see cref="EncryptionKeyResolver.Fingerprint"/>) — null = ตัวแทนในเทสต์ (ไม่ตรวจคีย์ข้ามเครื่อง)</summary>
+    string? CurrentKeyFingerprint => null;
+
+    /// <summary>รอบ 275 แพ็ก A: ลายนิ้วมือของคีย์เดิมทุกตัวในห่วงโซ่ถอด (ใช้ตัดสินว่า "ลายนิ้วมือในฐานเป็นคีย์ที่เราเพิ่งหมุนมา" หรือ "อีกเครื่องใช้คีย์อื่น")</summary>
+    IReadOnlyList<string> PreviousKeyFingerprints => Array.Empty<string>();
 }
 
 public class SecretProtector : ISecretProtector
@@ -79,14 +85,28 @@ public class SecretProtector : ISecretProtector
     /// <summary>รอบ 219 เฟส 0 (P0-4): คีย์มาจาก <see cref="EncryptionKeyResolver"/> ตัวเดียวกับคอลัมน์ PII ใน <c>Program.cs</c>
     /// (env <c>ENCRYPTION_KEY</c> ชนะ <c>Security:EncryptionKey</c>) · production + ไม่มีคีย์/เป็น dev key ⇒ throw ตอนสร้าง (boot ไม่ขึ้น) ·
     /// ฝ่ายค้านรอบ 219 B2: ค่าที่เคยเข้ารหัสด้วยคีย์เดิม (config เดิม/dev key) ยังถอดได้ผ่าน <see cref="EncryptionKeyResolver.LegacyCandidates"/>
-    /// แล้ว <c>SecretReprotectJob</c> เข้ารหัสใหม่ด้วยคีย์ปัจจุบัน · รอบ 231 B1: <see cref="MigrateCipherPrefixConfigKey"/> เปิดประตูห่อค่าไม่มีคำนำหน้า</summary>
+    /// แล้ว <c>SecretReprotectJob</c> เข้ารหัสใหม่ด้วยคีย์ปัจจุบัน · รอบ 231 B1: <see cref="MigrateCipherPrefixConfigKey"/> เปิดประตูห่อค่าไม่มีคำนำหน้า
+    /// <para>รอบ 275 แพ็ก A (T4 H-1): คีย์เดิม = <see cref="EncryptionKeyResolver.DecryptKeyChain"/> <b>ตัวเดียวกับคอลัมน์ PII</b> (รวม <c>ENCRYPTION_KEY_PREVIOUS</c>
+    /// และ <c>_2</c>…<c>_9</c>) — เดิมใช้แค่ <c>LegacyCandidates</c> ⇒ หมุนคีย์ env→env แล้วความลับทุกตัวเป็น WrongKey และงานย้ายย้ายไม่ได้</para></summary>
     public SecretProtector(IConfiguration config, IHostEnvironment env, ILogger<SecretProtector> logger)
-        : this(Primary(config, env), logger,
-            EncryptionKeyResolver.LegacyCandidates(Primary(config, env),
-                Environment.GetEnvironmentVariable("ENCRYPTION_KEY"), config["Security:EncryptionKey"]),
+        : this(Primary(config, env), logger, KeyChain(config, env),
             string.Equals(config[MigrateCipherPrefixConfigKey], "true", StringComparison.OrdinalIgnoreCase))
     {
     }
+
+    /// <summary>รอบ 275 แพ็ก A (H-1): ห่วงโซ่คีย์ถอดของความลับ = ตัวเดียวกับคอลัมน์ PII</summary>
+    private static IReadOnlyList<string> KeyChain(IConfiguration config, IHostEnvironment env)
+    {
+        return EncryptionKeyResolver.DecryptKeyChain(Primary(config, env), Environment.GetEnvironmentVariable,
+            config["Security:EncryptionKey"], config[PreviousKeyConfigKey]);
+    }
+
+    /// <summary>config ของคีย์เดิม (ใช้เมื่อไม่มี env <c>ENCRYPTION_KEY_PREVIOUS</c>) — ชื่อเดียวกับที่ <c>Program.cs</c> ส่งให้คอลัมน์ PII</summary>
+    public const string PreviousKeyConfigKey = "Security:EncryptionKeyPrevious";
+
+    public string? CurrentKeyFingerprint => EncryptionKeyResolver.Fingerprint(_key);
+
+    public IReadOnlyList<string> PreviousKeyFingerprints => _legacyKeys.Select(EncryptionKeyResolver.Fingerprint).ToList();
 
     private static string Primary(IConfiguration config, IHostEnvironment env)
         => EncryptionKeyResolver.RequireUsable(
@@ -114,6 +134,7 @@ public class SecretProtector : ISecretProtector
     {
         if (string.IsNullOrEmpty(plaintext)) return plaintext;
         SecretInputRule.Check(plaintext);
+        EncryptionWriteGuard.ThrowIfBlocked("ความลับ");   // รอบ 275 แพ็ก A (MED-2): คีย์ของเครื่องนี้ไม่ตรงกับที่ระบบใช้ ⇒ ไม่เขียน (อ่านไม่กระทบ)
         return EncryptionHelper.Encrypt(plaintext, _key);
     }
 

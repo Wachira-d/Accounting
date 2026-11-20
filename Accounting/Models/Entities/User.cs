@@ -84,6 +84,10 @@ public class CompanyUser
     public bool IsDefault { get; set; } = false;
     public DateTime JoinedAt { get; set; } = DateTime.UtcNow;
 
+    /// <summary>รอบ 278 (ฝ่ายค้าน HIGH-1): ผู้ใช้เปิดเอง — "อนุญาตให้ระบบภายนอก (API key ของคนอื่น) ระบุฉันเป็นผู้จัดทำ" ·
+    /// ปิด (ค่าตั้งต้น) ⇒ <c>preparerUserId</c>/<c>preparerEmail</c> ผูกได้เฉพาะผู้เรียกเอง (ผู้ออกคีย์)</summary>
+    public bool AllowExternalPreparerBinding { get; set; }
+
     /// <summary>สาขาที่ผู้ใช้คนนี้ทำงานได้ — CSV ของ Guid · **null/ว่าง = ทุกสาขา**
     /// (พฤติกรรมเดิมทุกประการ สำหรับบริษัทสาขาเดียวและเจ้าของ)
     ///
@@ -95,4 +99,18 @@ public class CompanyUser
     /// <para>เก็บเป็น CSV ไม่ใช่ตารางแยก เพราะเป็นรายการสั้น (สาขาไม่กี่แห่ง) อ่านทุกครั้ง
     /// ที่เปิดกะ และไม่ต้อง query ข้าม — ถ้าวันหนึ่งต้องมี metadata ต่อสาขา ค่อยแยกตาราง</para></summary>
     public string? AllowedBranchIds { get; set; }
+
+    /// <summary>รอบ 276 — "เห็นเฉพาะเอกสารที่ตัวเองสร้าง" (ตั้งโดยเจ้าของ · ค่าตั้งต้น false = พฤติกรรมเดิม) · มีผลรวมกับค่าของบทบาท
+    /// (<see cref="CompanyRole.OwnDocumentsOnly"/>) ผ่านตัวตัดสินเดียว <c>Helpers/DocumentRestrictionPolicy.Effective</c> ·
+    /// เปิดแล้ว ⇒ บังคับ "เฉพาะร่าง" ด้วย (คำตัดสิน 276-2) · ผู้อ่าน: <c>Filters/DocumentRestrictionFilter</c> (ทุกคำขอ) + ตัวกรองแถว EF ของ Documents</summary>
+    public bool OwnDocumentsOnly { get; set; }
+
+    /// <summary>รอบ 276 — "สร้าง/แก้ได้เฉพาะร่าง" (อนุมัติ/ออกเลข/ยกเลิก/ลงบัญชี/รับชำระไม่ได้ · ขออนุมัติได้) · ผู้อ่าน: <c>DocumentRestrictionFilter</c> +
+    /// <c>Helpers/DocumentRestrictionGuard</c> ใน <c>ApproveDocumentAsync</c>/<c>VoidDocumentAsync</c></summary>
+    public bool DraftDocumentsOnly { get; set; }
+
+    /// <summary>รอบ 277 — เข้าร่วมผ่านคำเชิญที่ผู้เชิญไม่ได้เลือกบทบาท ⇒ <b>ยังไม่มีสิทธิ์ใด ๆ</b> (ทุก API ของบริษัท 403 · หน้าเว็บแสดงหน้าต้อนรับ) จนกว่า
+    /// เจ้าของตั้งบทบาท · ค่าตั้งต้น false = สมาชิกเดิมทุกคนพฤติกรรมเดิม · ตัวตัดสิน <c>Helpers/PendingMemberAccess</c> · ผู้อ่าน: <c>TenantAccessMiddleware</c>
+    /// + <c>RolePermissionService.GetMyPermissionsAsync</c> · ผู้ปลด: <c>CompanyService.UpdateUserRoleAsync</c> / <c>RolePermissionService.AssignRoleAsync</c></summary>
+    public bool AccessPending { get; set; }
 }

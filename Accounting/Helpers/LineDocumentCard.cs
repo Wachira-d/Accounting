@@ -29,9 +29,11 @@ public static class LineDocumentCard
     /// <param name="PageUrl">รอบ 267 P3: ลิงก์หน้าเอกสาร (https · null = ไม่มี) — มีค่า ⇒ ปุ่ม <paramref name="PageButton"/> (ป้ายจาก <c>CustomerShareRule.PageButtonLabel</c>) +
     /// ปุ่มชำระเมื่อผู้ใช้ติ๊ก (<paramref name="PayUrl"/>) · ไม่ซ้อนปุ่มดู PDF (หน้ามีดาวน์โหลด) · ผู้เรียกตัดสินสิทธิ์ของปลายทางด้วย <c>DocumentLineSendRule.PageLinkAllowed</c> ก่อนส่งค่ามา</param>
     /// <param name="SignedCopy">รอบ 267 P3: การ์ด "ฉบับเซ็น" กลับไป LINE เดิมหลังลูกค้าลงนาม (บรรทัดขอบคุณ + ปุ่ม "ฉบับเซ็น" ไปหน้าเอกสาร)</param>
+    /// <param name="SettledAmountLabel">รอบ 275 LOW-1: ป้ายยอดของใบเสร็จรับชำระ (ตัวโหลดเดียวกับกระดาษ) · null = "ยอดรวม" เดิม</param>
     public sealed record Input(string CompanyName, bool ViaNextAcc, string Language, string Title, string DocNumber,
         decimal? Amount, string? Currency, DateTime? DueDate, string? ContactName, string? PayUrl, bool IsGroup, bool AmountIsOutstanding = true,
-        string? ViewUrl = null, bool PaymentReceived = false, string? PageUrl = null, string? PageButton = null, bool SignedCopy = false);
+        string? ViewUrl = null, bool PaymentReceived = false, string? PageUrl = null, string? PageButton = null, bool SignedCopy = false,
+        string? SettledAmountLabel = null);
 
     public sealed record Card(string AltText, object Contents);
 
@@ -53,7 +55,8 @@ public static class LineDocumentCard
         };
         if (i.PaymentReceived) body.Add(new { type = "text", text = l.LineCardPaymentReceived, size = "sm", color = "#15803d", weight = "bold", wrap = true });
         if (i.SignedCopy) body.Add(new { type = "text", text = l.LineCardSignedReceived, size = "sm", color = "#15803d", weight = "bold", wrap = true });
-        if (amount != null) body.Add(Row(i.AmountIsOutstanding ? l.LineCardAmountDue : l.TotalGrand, amount, bold: true));
+        // รอบ 275 แพ็ก C (T3 LOW-1): ใบเสร็จรับชำระที่ไม่ถือ VAT ของใบต้นทาง ⇒ ป้าย "ยอดรับชำระ" จากตัวโหลดเดียวกับกระดาษ (SettlementReceiptTotalsLoader) — ผู้เรียกส่งมา
+        if (amount != null) body.Add(Row(i.AmountIsOutstanding ? l.LineCardAmountDue : i.SettledAmountLabel ?? l.TotalGrand, amount, bold: true));
         if (due != null) body.Add(Row(l.DueDate, due, bold: false));
         if (!string.IsNullOrWhiteSpace(i.ContactName)) body.Add(Row(l.LineCardTo, Clean(i.ContactName!, 120), bold: false));
 

@@ -35,6 +35,10 @@ public static class TaxSlipRefHash
     public static string? BankTxn(string? bankCode, string? value) => Canon(value) is { Length: > 0 } c ? Mac("txn", (bankCode ?? "-") + ":" + c) : null;
 
     /// <summary>4 ตัวท้าย (ป้าย "••1234") — ว่าง ⇒ null</summary>
+    /// <summary>รอบ 275 แพ็ก D (ผู้ประสานงาน): ค่าเทียบของเลขผู้เสียภาษี 13 หลักเต็ม (HMAC กุญแจเดียวกับแฮชอื่นของเส้นนี้ — เมล็ดถาวร <c>HmacSeedBootstrap</c> แพ็ก A MED-4) ·
+    /// เลขบนแถวเก็บแบบปิดบังเปิดแค่ 7 หลักแรก ⇒ เทียบบริษัทด้วยค่านี้ ไม่ใช่ด้วยเลขปิดบัง · ไม่ใช่ 13 หลัก ⇒ null</summary>
+    public static string? TaxId(string? value) => ThaiTaxId.Normalize(value) is { Length: 13 } d ? Mac("taxid", d) : null;
+
     public static string? Last4(string? value) => Canon(value) is { Length: > 0 } c ? c[^Math.Min(4, c.Length)..] : null;
 
     public const string PostbackPrefix = "tsc";

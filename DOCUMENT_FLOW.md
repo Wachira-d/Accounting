@@ -2477,6 +2477,33 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   `GetDocumentSignaturesAsync` (ไม่ส่งภาพลายเซ็นที่ไม่นับ) ⑤ `CrossTenantWorkflowService.ApproveIncomingAsync` บทบาท Customer **บันทึก hash** (ทางเข้าที่สาม) ·
   ใบที่อนุมัติก่อนรอบนี้ด้วยลายเซ็นที่ไม่ตรงเนื้อหา ย้อนตรวจไม่ได้ (ไม่มี hash) — คงพิมพ์ตามเดิม
 
+### 2.8a ช่องลายเซ็นฝั่งบริษัท — ผู้จัดทำ ↔ ผู้มีอำนาจลงนาม เป็นคนเดียวกัน (รอบ 278 · คำตัดสิน 278-1…278-8 · สถานะปัจจุบัน)
+- **ที่มา**: QT-20261119-0001 (ระบบภายนอกสร้างผ่าน API key ที่ `POST /api/companies/{id}/documents`) ช่อง 0 "ผู้เสนอราคา" = `PreparerName` "K.นัท" +
+  `PreparerSignatureBase64` จาก payload · ช่อง 1 "ผู้มีอำนาจลงนาม" = ผู้ออก API key (`ApiKeyMiddleware` ตั้ง NameIdentifier = `ApiKey.CreatedByUserId` ⇒
+  CreatedBy/UpdatedBy) ซึ่งไม่ได้อัปโหลดลายเซ็นในโปรไฟล์ ⇒ ช่องว่าง ทั้งที่เป็นคนเดียวกัน
+- **แหล่งของแต่ละช่อง** (`PdfGenerationService.ResolveSignersAsync` ตัวเดียว ⇒ HTML · QuestPDF · พรีวิว `generate-html` ใน documents.html · หน้าลูกค้า (PDF)):
+  ช่อง 0 = ผู้ใช้ CreatedBy → ทับด้วยผู้จ่ายเงิน PV (`Payment.PayerSignature*`) / ผู้จัดทำจาก payload (`PreparerName`/`PreparerSignatureBase64` — สร้าง · PUT ·
+  integration invoice/expense/PV) · ช่อง 1 (เฉพาะใบอนุมัติแล้ว) = ผู้อนุมัติใน `DocumentApprovals` → UpdatedBy → (ใบ settlement) CreatedBy → ผู้มีอำนาจลงนามที่บริษัทตั้ง
+  (`UseCustomAuthorizedSignatory` · ไม่ใช่ผู้ใช้) → ลายเซ็นเจ้าของเมื่อไม่มีชื่อเลย · API v1 (`DocumentsV1Controller`) CreatedBy = `api:v1` ไม่รับผู้จัดทำ ⇒ ช่อง 0 ว่าง ·
+  LINE/OCR/convert/clone/recurring: CreatedBy = ผู้กด/ผู้ตั้งรายการ · `PreparerName`/`PreparerUserId` **ไม่สืบทอด** ลงใบลูก (ผู้จัดทำของใบลูกคือผู้แปลง — เดิมเป็นแบบนี้อยู่แล้ว)
+- **กุญแจ (ห้ามเทียบความคล้ายชื่อ)**: ① `Document.PreparerUserId` — API ส่ง `preparerUserId`/`preparerEmail` (Create/UpdateDocumentRequest) · ต้องเป็นสมาชิกบริษัท **และ**
+  เป็นผู้เรียกเอง (API key = ผู้ออกคีย์) หรือผู้ใช้นั้นเปิด `CompanyUser.AllowExternalPreparerBinding` เอง · อื่น ๆ ⇒ 400 พร้อมเหตุ · ใบที่ออกแล้วเปลี่ยนการผูกไม่ได้ (400) ·
+  ② **ชื่อเล่นต่อบริษัท** (`SignerAliases` · หน้าลายเซ็นของฉัน → `api/companies/{id}/signer-identity/me`) ตรงทั้งคำกับ `PreparerName` · **มีผลเมื่อเจ้าของบริษัทอนุมัติ**
+  (เจ้าของยื่นเอง = อนุมัติในตัว) · ปฏิเสธ: คำกลาง (`SignatureSlotIdentity.GenericWords` + ขึ้นต้น ฝ่าย/แผนก/ทีม) · ชื่อ-สกุล/ชื่อใต้ลายเซ็น/ชื่อเล่นของสมาชิกคนอื่นในทุกบริษัทที่ผู้ขอเป็นสมาชิก ·
+  ตรวจซ้ำตอนอนุมัติ · ลบ = ยกเลิกทันที · เพิ่ม/อนุมัติ/ยกเลิกเป็น audit ของแถว `SignerAlias` · PDPA ลบบัญชีลบแถว · เจ้าของมีชื่อเล่นเดียวกันสองคน = กำกวม ⇒ ไม่รวม
+- **แช่แข็งตอนออกเอกสาร** (`AccountingDbContext.StampSignerFreeze` — ทุกทางเข้าที่บันทึกผ่าน SaveChanges เมื่อสถานะเข้าชุด "ออกแล้ว" ครั้งแรก): `SignersFrozenAt` +
+  `SignerSnapshotJson` (ผู้ใช้ที่ผูก · ชนิดกุญแจ · ชื่อ/ตำแหน่งตามโปรไฟล์วันนั้น · RuleCode — อยู่ใน audit ของเอกสาร) · เปลี่ยนชื่อเล่น/โปรไฟล์ทีหลังไม่แก้ใบที่ออกแล้ว ·
+  **ใบที่ออกก่อนรอบนี้** ⇒ `Round278Migration` เขียน snapshot ว่าง (พิมพ์เหมือนก่อนการรวม) · ใบที่สถานะถูกเปลี่ยนด้วย SQL ตรง = null ⇒ ไม่รวม (บูตถัดไปได้ snapshot ว่าง)
+- **เมื่อเป็นคนเดียวกัน** (`MergeSameSignerSlotsAsync` ก่อนกฎผู้ลงนาม): ชื่อทั้งสองช่อง = ชื่อตามโปรไฟล์ที่แช่แข็ง (ไม่เลือกจากความยาว) · ตำแหน่งคงของช่องตัวเอง (ว่าง ⇒ ตำแหน่งในโปรไฟล์) ·
+  **รูปเดียวกันทั้งสองช่อง (คำตัดสิน 278-9 — คำสั่งเจ้าของ · แทน 278-5)**: รูปในโปรไฟล์ของผู้ใช้ที่ผูก (ยืนยันแล้ว) เป็นหลัก · โปรไฟล์ไม่มีรูป ⇒ รูปที่ระบบภายนอกส่งมา ·
+  ไม่มีทั้งคู่ ⇒ คงของเดิม · แหล่งรูป (`profile`/`payload`/`none`) แช่แข็งใน snapshot ตอนออก · **ผูกไม่ได้ = ไม่แตะเลย** (ช่องผู้มีอำนาจลงนามไม่ได้รูปจาก payload) ·
+  หน้าลายเซ็นของฉันเตือนว่าระบบอาจใช้รูปที่ระบบภายนอกส่งมาแทนผู้ใช้เมื่อโปรไฟล์ไม่มีรูป ·
+  ช่อง 0 ถือเป็นของผู้ใช้นั้น ⇒ `DocumentStampPolicy`/`DepartedSignerRule` ตัดสินด้วยตัวตนเดียว · **คงสองช่อง ไม่ยุบ** (ป้ายตามชนิดเอกสารเป็นบทบาทคนละหน้าที่ · ช่อง 2 ของลูกค้าอิงตำแหน่ง)
+- **ปุ่ม "ปรับผู้ลงนาม"** (หน้าพิมพ์ใน documents.html · `POST signer-identity/documents/{id}/refresh`): เจ้าของบริษัท · ต้องมีเหตุผล · ชนิดที่ไม่ใช่ใบกำกับ/ใบเสร็จ/ใบลด-เพิ่มหนี้/ใบสำคัญจ่าย/
+  ใบสำคัญรับ/ใบรับรองแทนใบเสร็จ/ขายเงินสด/ใบเสร็จ settlement · ลูกค้ายังไม่เซ็น/ยอมรับ (`QuotationAcceptedAt` · เซ็นรับของ · ลายเซ็นลูกค้าในขั้นอนุมัติ) ⇒ แช่แข็งใหม่ด้วยกุญแจปัจจุบัน +
+  audit (ก่อน/หลัง · เหตุผล · `SIGNER-REFRESH`) · เงื่อนไขฝั่งใบอยู่ใน `SignatureSlotIdentity.RefreshBlockedReason` (ส่งเป็น `DocumentResponse.SignerRefreshBlockedReason`)
+- เทสต์: `SignatureSlotIdentityR278Tests` (pure) · Db `SignatureSlotsR278DbTests` · กติกา `_R278_WHY` + negative R278-1…3
+
 ### 2.8b Delivery e-sign — ลูกค้าเซ็นรับสินค้าออนไลน์ (Proof of Delivery)
 > **รอบ 267 P1 (สถานะปัจจุบัน):** เหมือน §2.8 — `POST /document/{id}/delivery-sign-link` คืนลิงก์หน้าเอกสารของใบ (§2.12n) · ช่วงเซ็นรับ 14 วันจากวันส่ง ·
 > หน้า `delivery-sign.html` รับ token ของหน้าเอกสาร และลิงก์รุ่นก่อน (คอลัมน์ `DeliverySignToken` เก็บ hash) จนหมดอายุ
@@ -4880,6 +4907,26 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
     e-Tax by Email ตอนอนุมัติ = ตั้ง "ตารางส่งอีเมล" ทริกเกอร์อนุมัติ (คิวเดินทาง e-Tax ให้เอง — §3.3a) · ค่าตั้ง `EtaxByEmailAutoSendOnApprove`/`EtaxByEmailEmbedXml`
     ถูกลบในรอบ 244 (คำตัดสิน 244-4 · คอลัมน์ในฐานคงอยู่ ไม่มีผู้อ่าน)
 
+### 3.2-276 ผู้ใช้ "เห็นเฉพาะเอกสารที่ตัวเองสร้าง" / "สร้าง-แก้ได้เฉพาะร่าง" + ส่งขออนุมัติพื้นฐาน (รอบ 276 · คำตัดสิน 276-1…8 · `erp-review/2026-11-20/dev-276-own-docs-approval.md`)
+- **ค่าตั้ง** `CompanyUser.OwnDocumentsOnly/DraftDocumentsOnly` (หน้า "ทีม" · เจ้าของตั้ง · ตั้งบนเจ้าของ/ตัวเองไม่ได้ · audit) + `CompanyRole.*` ชื่อเดียวกัน (หน้า "บทบาท") ·
+  ค่าที่มีผล = ผู้ใช้ ∪ บทบาท (`Helpers/DocumentRestrictionPolicy.Effective`) · เจ้าของ/SystemAdmin ไม่ถูกจำกัด · **เห็นเฉพาะของตัวเอง ⇒ เฉพาะร่างเสมอ** (276-2) · ค่าตั้งต้น false = พฤติกรรมเดิม
+- **ด่านทุกคำขอ** `Filters/DocumentRestrictionFilter` (global หลัง TenantGuard): ตั้งขอบเขตบน DbContext ⇒ ตัวกรองแถว EF ของ `Documents`
+  (`CreatedBy` = id ผู้ใช้ หรืออีเมลผู้ใช้) · เห็นเฉพาะของตัวเอง = เรียกได้เฉพาะรายการ `DocumentRestrictionPolicy.Routes` (list/get/export/PDF/แปลง/คัดลอก/ไฟล์แนบของเอกสาร/
+  ข้อมูลหลักของฟอร์ม) — อื่น ๆ (รายงาน · แดชบอร์ด · GL · ธนาคาร · ค้นหาทั่วระบบ · แชต AI · มือถือ · OCR) 403 · id เอกสารของคนอื่นใน route/entity/ไฟล์แนบ = **404** ·
+  เฉพาะร่าง = ทางเขียนต้องอยู่ในรายการเขียน · แก้/ลบ/แนบไฟล์ได้เฉพาะใบ Draft/Rejected
+- **ด่านชั้น service** `DocumentRestrictionGuard.EnsureMayFinalizeAsync` ใน `ApproveDocumentAsync` (ทุกทางอนุมัติ — ผู้กระทำ id/อีเมล หรือคำขอนี้ถูกจำกัด) + `VoidDocumentAsync` ⇒ 403 `R276-DRAFT-ONLY`
+- **ส่งขออนุมัติ** `POST document/{id}/approval-request` (ใบ Draft/Rejected · สิทธิ์สร้างชนิดนั้น): กฎอนุมัติที่ตรง ⇒ `ApprovalService.SubmitForApprovalAsync` (เส้นเดิม) ·
+  ไม่มีกฎ + ผู้ขออนุมัติเองได้ ⇒ 409 "กดอนุมัติได้เลย" (พฤติกรรมเดิม) · ไม่มีกฎ + อนุมัติเองไม่ได้ ⇒ **เส้นพื้นฐาน**: ใบ → `WaitingApproval` · แถว `DocumentApprovalRequests` (Pending) ·
+  แจ้ง `document.approval_requested` ถึงบทบาท `DocumentApprover` (`Helpers/DocumentApproverDirectory` = ด่านเดียวกับปุ่มอนุมัติ ไม่รวมผู้เฉพาะร่าง) ผ่าน `NotificationEngine`
+  (กระดิ่ง + อีเมล + LINE ส่วนตัว + กลุ่ม LINE ของบริษัทเมื่อผูก — ค่าตั้งต้น `NotificationAudiencePolicy.DefaultMatrix` · บริษัทปรับที่หน้าแจ้งเตือน) · ข้อความไม่มีชื่อลูกค้า/เลขภาษี
+- ผู้อนุมัติ: ปุ่ม "อนุมัติ" (endpoint เดิม — เลขออกตอนนี้) / "ตีกลับ" `…/approval-request/return` (เหตุผลบังคับ ⇒ ใบ `Rejected` + แจ้งผู้ขอ `document.approval_returned`) ·
+  ผู้ขอห้ามอนุมัติ/ตีกลับใบที่ตัวเองขอ (`EnsureNotSelfApprovalAsync`) · อนุมัติแล้ว ⇒ `OnDocumentApprovedAsync` ปิดคำขอ + แจ้งผู้ขอ `document.approval_granted` ·
+  ผู้ขอ**แก้ระหว่างรอไม่ได้** (กติกาเดิม) — `…/withdraw` ⇒ Draft (276-5) · คิว `GET document-approval-queue` (หน้า approval) · สถานะ/ปุ่มบนใบ `GET document/{id}/approval-request`
+- **ชุดแก้ฝ่ายค้าน (276-9…16):** ด่านผูกผู้ใช้+บริษัท (ทางเข้าไม่มี {companyId} ใช้ค่าเข้มสุด · `accountant-workspace` ปิด) · LINE เดิน policy เดียวกับเว็บ ·
+  แจ้งเตือนกรองผู้เห็นเฉพาะของตัวเอง (ส่งใหม่ + รายการเก่า) · ทางเขียนยกตัวกรองแถวหลังตรวจ id (ด่านระดับบริษัทเห็นทั้งบริษัท) + อนุมัติใบเกินของผู้ถูกจำกัด = บล็อก ·
+  id ใน body ⇒ 404 · แก้ผู้ติดต่อเดิมไม่ได้ · `Document.CreatedByUserId` · OCR สร้างร่างจากสแกนของตัวเอง (เว็บ = LINE)
+- เลื่อน: POST ความเห็น · แชต AI/ค้นหาทั่วระบบ สำหรับผู้เห็นเฉพาะของตัวเอง (dev-276 §5)
+
 ### 3.3 Send (Approved → Sent)
 - **Endpoint**: `POST /documents/{id}/send-email`
 - **Controller**: `DocumentController.cs:43` → `IDocumentEmailService`
@@ -5209,6 +5256,52 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
     ไม่มีลำดับการรับให้ไล่ (ใบรุ่นนั้นลงแบบขายสด) ⇒ บางส่วน = ยอดรับ &lt; ยอดใบในบิลรวม · แสดงผลอย่างเดียว ไม่มี migration
   - ไม่มี throw ใหม่ · ไม่เปลี่ยนค่าที่ persist (ยอด/VAT/งวด) · กติกาเพิ่ม `_R273_*` +6 · ฝ่ายค้าน R273-4…7
 - Last verified `commit f929120b` · ชุดแก้ฝ่ายค้าน `commit 1efe61da`
+
+### 3.4b-275 ใบเสร็จ = ใบกำกับภาษี ณ วันรับเงิน (ม.78/1) — ตัวตัดสินเดียว + งวดงานบริการ (รอบ 275 แพ็ก C · สถานะปัจจุบัน)
+
+- **ตัวตัดสินเดียว** `Helpers/SettlementTaxInvoiceRole.Decide` (pure) ← ตัวโหลด `Services/Implementations/SettlementTaxInvoiceLoader` (รายการตัดยอดจาก
+  `SettlementReceiptTotalsLoader.LedgerEventsAsync` ตัวเดียวกับแถวยอดใบเสร็จ · ตัวไล่ยอด `SettlementReceiptTotals.Walk` ตัวเดียว) — แทนสูตร "งวดเดียว" 4 สำเนา
+  (`CreatePaymentAsync` `PaidAmount − เงิน − ภาษีหัก` · `IssueReceiptForPaymentAsync` นับจำนวนการชำระ · ย้ายการรับชำระ `PaidAmount ≤ 0.05` · งานหลังรับชำระ) · รูปแบบเดิมเหลือ 0 จุด
+  (`tools/required_call_site_check.py` `_R275C_FORMULA` forbid) · ผู้เรียกที่เหลือของ `SettlementReceiptPolicy.CarriesTaxInvoiceRole` = แผนหลังยกเลิกทาง e-Tax เท่านั้น
+- **ผล** (`Mode`): `FullCopy` = รับครบงวดเดียว (ไม่มีการตัดยอดใดก่อน — การรับ · ใบลดหนี้ · ช่องทางอื่น — และปิดยอด · "ยอดที่ครั้งนี้ตัด" = เงิน + ค่าธรรมเนียม + บรรทัดปรับ)
+  ⇒ คัดลอกบรรทัด/ยอดใบแจ้งหนี้ (เส้นเดิม) · `Installment` = **งวดของงานบริการ** (ภาษีขายพัก 21913 — ตัวจำแนกเดียวกับตอนลงบัญชี) ⇒ ใบกำกับรายงวด บรรทัดเดียว
+  "รับชำระค่าบริการ (บางส่วน) ตามใบแจ้งหนี้เลขที่ …" VAT = ยอดที่ตัดหนี้รวมภาษีหักงวดนี้ × VAT/(มูลค่า+VAT) ของใบ (7/107) · งวดที่ปิดยอดถือ VAT ที่เหลือ (ผลรวม = VAT ทั้งใบทุกสตางค์) ·
+  `None` = ใบรับเปล่า (ใบกำกับต้นทาง · ใบกำกับของการขายนี้ถือ VAT ครบแล้ว · ขายสินค้ารับเป็นงวด = คงเดิม) · **ไม่เดา** (`NeedsHumanDecision`): ใบลดหนี้ก่อนรับ (MED-2) ·
+  การตัดยอดที่ไล่ไม่ได้ (หักมัดจำ) ⇒ ไม่ออกใบกำกับเอง ขึ้นคิวให้ผู้ทำบัญชี
+- **ทุกทางเข้า**: บันทึกรับชำระ (มือ · gateway/LINE/public pay · integration · นำเข้า) `CreatePaymentAsync` · ออกใบย้อนหลัง/รายใบของการรับหลายใบ `IssueReceiptForPaymentCoreAsync` ·
+  ย้ายการรับชำระ `BuildSettlementMoveFactsAsync` (ผลอยู่ใน `SettlementMoveSnapshot.TargetTaxInvoicePlan`) · ออกใบแทน (`Reissue` — ใบแทนถือยอดเดิม `CarryIssued`) ·
+  ปุ่มคิว · ตัวประมาณงานหลังรับชำระ `MayCarryVat` — ทุกเส้นสร้างใบผ่าน `CreateSettlementReceiptAsync(taxInvoicePlan:)` ตัวเดียว
+- **การรับที่ต้องมีใบกำกับออกใบเสมอ** (ปลดติ๊ก "ออกใบเสร็จ" ไม่มีผลเมื่อ `CarriesRole`) · เส้นมือ: ใบแจ้งหนี้งานบริการรับบางส่วนได้แล้ว
+  (`VatInvoiceSettlementGate.PartialRefusalForSingleDocument`) · ขายสินค้า/ไม่รู้ว่าพัก ⇒ ด่านเดิม · รับบางส่วนแล้วตัวตัดสินไม่ออกใบกำกับ ⇒ ปฏิเสธ
+  (`InstallmentWithoutTaxInvoiceRefusal` · `RD-78/1-PARTIAL-VAT-INVOICE` — หน้ารับชำระเสนอ "แปลงเป็นใบกำกับภาษีก่อน" จากรหัสกฎ ไม่มีสำเนาเงื่อนไขใน JS) ·
+  ทางเข้าจัดสรรหลายใบ/เงินรอจัดสรร/ย้าย คงด่านเดิม
+- **GL + ภ.พ.30 (MED-3)**: งวดงานบริการย้าย 21913 → 21911 **เฉพาะ VAT ของงวดนั้น** (`TryReclassifyUndueOutputVatAsync(vatDueNow, forPaymentId)` · JE ติดป้าย
+  `JournalEntry.Note = R275C-INSTALLMENT-PAY:{paymentId}`) · `OutputVatDueAt` ประทับงวดแรกเท่านั้น · ใบเสร็จรายงวดเป็นเจ้าของภาษีของงวดตัวเอง (`OutputVatOwnership` Receipt branch ·
+  ใบแจ้งหนี้ `OwnedByVatReceipt` ⇒ ไม่นับซ้ำ) ณ `TaxPointDate` = วันรับเงินของงวด · ยกเลิกการรับงวดหนึ่ง (ยังเหลืองวดอื่น) ⇒ กลับเฉพาะ JE ที่ผูก
+  (`UndoInstallmentReclassOnPaymentVoidAsync` — ด่านงวด/ใบกำกับที่ถึงกรมสรรพากรเดียวกับการถอยทั้งก้อน) · รับครบ/ไม่ออกใบกำกับ ⇒ ย้ายทั้งก้อนตามเดิม
+  · ทางเข้าที่ส่งการรับถึงตัวกลับของงวด (`voidedPaymentId`): ยกเลิกการรับใบเดียว/cascade (`VoidPaymentAsync` → `ReversePaymentInternalAsync`) · ยกเลิกการรับหลายใบ ·
+    **ย้ายการรับชำระ** (`MoveSettlementAsync` — เดิมไม่ส่ง ⇒ ย้ายงวดหนึ่งออกจากใบที่ยังเหลือการรับอื่นแล้ว VAT ของงวดนั้นค้าง 21911 ของใบเดิม) ·
+    ยกเลิกการจัดสรรเงินรอจัดสรรไม่ต้องส่ง (ย้ายทั้งก้อน ไม่มี JE ผูกการรับ)
+- **วันที่ (MED-4 — ยืนยันจากโค้ด)**: `CreatePaymentAsync`/`CreateMultiDocPaymentAsync` normalize `PaymentDate` ด้วย `ThaiDate.CalendarDateUtc` ที่ต้นทาง (gateway ส่ง instant UTC ⇒
+  เงินเข้า 00:00–06:59 น. วันที่ 1 เดิมลงวันสุดท้ายของเดือนก่อน) · การรับที่บันทึกไปแล้วไม่ถูกแก้ (ไม่แก้ย้อนหลัง)
+- **คิว "รับเงินแล้วยังไม่มีใบกำกับภาษี"** (คำตัดสิน 4.1: ใบเก่าไม่แก้ย้อนหลัง) — `SettlementTaxInvoiceLoader.QueueAsync` (อ่านอย่างเดียว · tenant) ⇒ `GET api/companies/{cid}/document/received-without-tax-invoice` ·
+  Autopilot `ReceivedWithoutTaxInvoice` · ปุ่ม `POST …/document/payments/{paymentId}/tax-invoice/{documentId}` (สิทธิ์สร้าง+อนุมัติ+ยกเลิกใบเสร็จ) ⇒ ตัวตัดสินเดียว → ยกเลิกใบรับเปล่าของการรับนี้
+  (ถึงกรมสรรพากรแล้ว ⇒ 409) → ออกใบกำกับแทน (`ReplacesDocumentId` · audit chain) ในธุรกรรมเดียว · ใบเก่าที่ภาษีย้ายทั้งก้อนแล้ว ⇒ `TaxPointDate` = `OutputVatDueAt` (ภ.พ.30 ที่ยื่นแล้วไม่เปลี่ยน) ·
+  ขายสินค้าไม่เข้าคิว · แถวที่ต้องให้คนตัดสินพาไปที่ใบแจ้งหนี้พร้อมเหตุ
+- **ข้อความบนใบเสร็จ (MED-5)**: บรรทัด/หมายเหตุ/หน่วยที่ persist ผ่าน `DocumentLabels` (`SettlementReceiptLine` · `SettlementReceiptNote` · `SettlementUnitItem`) ตามภาษาของใบตอนออก —
+  ใบที่ออกแล้วไม่แก้ · e-Tax XML/สอง renderer อ่านบรรทัด/ยอดของใบตัวเดียวกัน (ใบกำกับรายงวด = แถวยอดปกติ "ยอดรวมก่อน VAT / VAT")
+- **อื่น**: ตัวโหลดรายการตัดยอดไม่นับการรับที่ถูกยกเลิก (`Payment.IsDeleted` — ตาราง Payments ไม่มี query filter · เดิมพิมพ์เป็น "รับชำระก่อนหน้า") · การ์ด LINE ของใบเสร็จรับชำระใช้ป้าย/ยอด
+  "ยอดรับชำระ" จากตัวโหลดเดียวกับกระดาษ (LOW-1) · ข้อความ `WhyCannotIssue` ของการรับหลายใบชี้ปุ่มออกใบเสร็จรายใบ (LOW-3)
+- **ชุดแก้ฝ่ายค้าน (สถานะปัจจุบัน — แทนข้อความที่ขัดกันข้างบน · Last verified `commit 0e43cd18`)**:
+  - **invariant ปิดยอดแล้ว 21913 ของใบ (+ ใบลดหนี้/เพิ่มหนี้ลูก) = 0 ทุกเส้น** — `TryReclassifyUndueOutputVatAsync` ย้ายที่เหลือทั้งหมดเมื่อใบปิดยอด (รับชำระ · รับหลายใบ · หักมัดจำ · จัดสรร) ·
+    งวดปิดของงานบริการถือ "ภาษีที่ยังพัก" (`UndueVatRemaining` — สุทธิหลังใบลดหนี้/มัดจำ) ⇒ ใบลดหนี้ก่อน/ระหว่างงวดไม่เป็นทางตันอีก · ใบลดหนี้/เพิ่มหนี้ที่แตะ 21913 ของใบที่ภาษีถูกถือโดยใบกำกับ ณ วันรับเงิน
+    ไม่นับใน ภ.พ.30 ซ้ำ (`TaxService.AdjustmentsNettedInTaxInvoiceReceiptsAsync` — แถวเตือน excluded)
+  - **ใบผสมอัตรา**: ใบกำกับรายงวดหนึ่งบรรทัดต่ออัตรา (`SplitByRate`) · มูลค่า × อัตรา = VAT · งวดปิดไม่พิมพ์ "(บางส่วน)" · ไม่ได้บันทึกภาษีหักของงวด ⇒ ถอดด้วยสัดส่วนของใบ
+  - **ใบเก่าที่ภาษีรายงานทั้งใบแล้ว** (คำตัดสิน 275-C-10): ใบกำกับที่ออก (คิว/รับงวดถัดไป) = หลักฐานกระดาษ `Document.VatReportedOnSource` — ไม่เป็นเจ้าของแถว ภ.พ.30/§87
+    (`OutputVatOwnership.RuleReportedOnSource` · ใบแจ้งหนี้ยังเป็นเจ้าของตามที่ยื่น) · ไม่ย้ายภาษีซ้ำ · ออกทีละรายการ — แทนทาง "ออกทุกงวดพร้อมกัน" เดิม · migration `ADD COLUMN IF NOT EXISTS "VatReportedOnSource"`
+  - **รับหลายใบ**: ตัดสินต่อใบ ย้ายภาษีตามส่วนผูกการรับ · ยกเลิกถอยเฉพาะ JE ของการรับนั้น · **หลังยกเลิกทาง e-Tax** ใช้ผลตัวตัดสินของการรับแรก (`EtaxCancelFollowUpFacts.FirstPaymentPlan`)
+  - **วันที่**: แปลงเป็นวันที่ไทยเฉพาะค่าที่ระบุว่าเป็น UTC (`ThaiDate.PaymentCalendarDate`) · การรับเดิมที่ข้ามเดือน ⇒ `GET document/payment-date-review` (อ่านอย่างเดียว)
+- เทสต์ `SettlementTaxInvoiceRoleTests` · `Db/SettlementTaxInvoiceRoleDbTests` · Last verified `commit 96bb5262`
 
 ### 3.4c ผูกใบเสร็จ/เงินที่รับไว้แล้วกับใบแจ้งหนี้ — เจ้าเดียวกัน (รอบ 266 แพ็ก A · `erp-review/2026-11-12/team-266-manual-doc-link.md` · DECISIONS 266-1-x)
 
@@ -5973,6 +6066,32 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
   **หมุนคีย์แบบ rolling deploy:** instance ใหม่ต้องตั้ง `ENCRYPTION_KEY_PREVIOUS` = คีย์เดิม · **ห้าม**มี instance เก่า (คีย์เดิมเป็นคีย์ปัจจุบัน) รันพร้อม instance ใหม่
   — instance เก่าอ่านแถวที่ย้ายแล้วไม่ออก และเขียนแถวใหม่ด้วยคีย์เดิม (ระบบไม่มีด่านข้าม instance ⇒ ปิดเครื่องเก่าก่อนเปิดใหม่ · ลบคีย์เดิมเมื่อ JobRunLog `PiiReprotect` สำเร็จและรายงานไม่มีแถวรอย้ายคีย์) ·
   ทางออกอื่นของคอลัมน์ชุดเดียวกัน: ไฟล์ สปส. (`SsoInsuredNumber.CitizenIdForFile` — enc1 ⇒ ว่าง) · ไฟล์โอนเงินเดือน (`PayrollBankTransfer` — enc1 ⇒ ไม่พร้อมโอน "เลขบัญชีถอดรหัสไม่ได้") · production ปฏิเสธคีย์ placeholder · คำตัดสิน 274-1…7 (`erp-review/2026-09-29/DECISIONS.md`)
+- **รอบ 275 แพ็ก A — คีย์และความลับ** (T4 H-1/M-1/M-2/M-4/M-5 · คำตัดสิน 275-A-1…7 · runbook `docs/runbooks/encryption-key-rotation.md`):
+  **ห่วงโซ่คีย์ถอดตัวเดียว** `EncryptionKeyResolver.DecryptKeyChain` ใช้ทั้งคอลัมน์ PII และ `SecretProtector` (เดิมความลับไม่อ่าน `ENCRYPTION_KEY_PREVIOUS` ⇒ หมุนคีย์แล้ว SMTP/LINE/Omise/e-Tax/webhook ดับทั้งชุด) ·
+  รับคีย์เดิมหลายตัว (หลายบรรทัด หรือ `_2`…`_9`) · `SecretReprotectJob` รันหลังบูต 3 นาทีแล้วทุก 6 ชม. (JobLock · audit `SEC-KEY-REPROTECT` · JobRunLog รวมล้ม · watermark "ไม่มีความลับบนคีย์เดิมเหลือ") ·
+  **ลายนิ้วมือคีย์** `SiteSettings.EncryptionKeyFingerprint*` — งานย้ายคีย์ทั้งสองตรวจก่อน (`EncryptionKeyFingerprintRule`): `Mismatch`/`RotatedBack` ⇒ ไม่เขียนแถว + LogError + JobRunLog ล้ม · ผู้ดูแลแพลตฟอร์มยืนยันคีย์ (`POST api/admin/encryption-health/accept-current-key` · audit) ·
+  **ผู้อ่านความลับที่เอาไปใช้** ผ่าน `Helpers/SecretUse` — ตั้งไว้แต่ถอดไม่ได้ ⇒ webhook ขาออกไม่ส่ง (แถวประวัติบอกเหตุ) · webhook CMS ขาเข้าไม่ตรวจด้วยกุญแจว่าง · e-Tax ไม่เซ็น/ไม่ส่ง (เหตุบนแถว) ·
+  อีเมลบริษัท/ระบบตอบล้มพร้อมเหตุ (`UnusableSecretEmailSender`) · Google/LINE/Facebook login ปฏิเสธ (Facebook ไม่ข้ามตรวจ app id) · Omise/ธนาคาร/LINE OA/ลงนาม callback บอก "ใช้ไม่ได้" แทน "ยังไม่ได้ตั้งค่า" ·
+  **DTO พนักงาน** ไม่ส่ง ciphertext: ป้าย `⛔ ถอดรหัสไม่ได้` + `IdentityProblem`/`BankAccountProblem`/`PiiProblemText` · ฟอร์มส่งป้ายกลับ = คงค่าเดิม · ฟอร์มแสดงกล่องเหตุ + ขอบแดงที่ช่อง ·
+  **หน้า "สุขภาพข้อมูลเข้ารหัส"** `/pages/encryption-health.html` (ความลับ `GET encryption-health/secrets` · สิทธิ์ตั้งค่าบริษัท + PII `GET payroll/tax-identity-health` เดิม) · มุมผู้ดูแลใน admin › งานเบื้องหลัง (`GET api/admin/encryption-health`) ·
+  ข้อความถึงผู้ใช้บริษัทไม่ชี้ URL ดิบ/ชื่อ env (`EncryptionHealthText`)
+  **ฝ่ายค้านแพ็ก A:** heartbeat ลายนิ้วมือต่อเครื่องทุก 5 นาที (`EncryptionKeyHeartbeats`) · หมุนคีย์ = `RotationPending` (ไม่ย้าย) จนทุกเครื่องใน 15 นาทีล่าสุดรายงานคีย์ใหม่หรือผู้ดูแลยืนยันลายนิ้วมือที่ระบุ ·
+  เครื่องคีย์ไม่ตรงหยุดเข้ารหัสค่าใหม่ (`EncryptionWriteGuard` · 503) · กุญแจ HMAC สลิปภาษี/OTP จากเมล็ดถาวร (`HmacSeedBootstrap` · สลิปเดิมหลังหมุนยังถูกกันซ้ำ) · คำตัดสิน 275-A-8…12
+- **รอบ 275 แพ็ก E — เก็บกวาดหลังรอบ 274** (T4 H-2/H-3/M-3/M-6/L-7/L-8 · คำตัดสิน 4.2 · 275-E-1…6 · `erp-review/2026-11-20/dev-275-E.md`):
+  **ผู้ไม่มีเลข 13 หลัก — รับทราบรายคน** (`Employee.TaxIdWaiverAcknowledgedAt/By/Reason` · `Round275EMigration` · ทางเขียนเดียว `Helpers/EmployeeTaxIdWaiver` · audit chain) ·
+  ตัวตัดสินเดียว `EmployeeTaxIdentity.ForFiling` (Ok · WaivedNoId · NeedsAcknowledgement · Unusable) ใช้ที่ 50 ทวิ รายเดือน (`IssueMonthlyPnd1CertsAsync` — ผู้ติดต่อไม่มีเลขผูกกับ `Employee.ContactId`) ·
+  50 ทวิ รายปี · ไฟล์ ภ.ง.ด.1/1ก (`Pnd1FilingData.Build`: ไม่มีเลข + ภาษี > 0 + ยังไม่รับทราบ ⇒ กันแถว · รับทราบ ⇒ เลข 0 + ℹ️ · ภาษี 0 เส้นเดิม) · ด่านนำส่งผ่านเพราะใบครบ ·
+  เลข checksum ผิด/ถอดรหัสไม่ได้รับทราบไม่ได้ · ข้อความประกอบ "ไม่มีเลข 13 หลัก · เลขหนังสือเดินทาง …" บน 50 ทวิ จากตัวโหลดเดียว `Helpers/WhtCertPayeeNote` (HTML + QuestPDF + `wht.html` ผ่าน `PayeeReferenceNote`) ·
+  ไฟล์ สปส. กันเลขบัตรผิดเฉพาะคนที่ไม่มีเลข ปกส. (F3) · ใบมือ ภ.ง.ด.1 ผู้รับไม่อยู่ในไทยเลขต่างประเทศไม่กันทั้งไฟล์ (F12) · ชื่อผู้ติดต่อพนักงานต่างชาติ = ชื่ออังกฤษ (`PayrollPnd1Certs.PayeeName` · L-7)
+  **ผู้ติดต่อเลขขยะจากเงินเดือน** (`Helpers/PayrollJunkPayee`): รายงาน `GET payroll/junk-payee-contacts` → ซ่อมเฉพาะแถวที่เลือก `POST …/repair` (แผนจากเซิร์ฟเวอร์: แก้เลข / ย้ายใบไปผู้ติดต่อเลขถูก + ปิดใช้ตัวขยะ ·
+  ประทับสำเนาผู้ถูกหักใหม่ · งวดที่ยื่น ภ.ง.ด.1 แล้วต้องยืนยันยื่นเพิ่มเติม · audit) · ระหว่างรอซ่อมห้ามเป็นผู้ถูกหัก ภ.ง.ด.3/53 (`AccountingDbContext.GuardPayrollJunkPayees` · `RD-50TWI-PAYROLL-JUNK-PAYEE`) ·
+  รายงานสุขภาพ: ผู้รับ 50 ทวิ ตรวจเลขบนใบ (สำเนา ณ วันออก) เฉพาะ ภ.ง.ด.1 + ภ.ง.ด.3/53 ผู้รับในไทย (M-3 · `Issue.PayeeContactInvalid`) · ทางไปต่อตามงวด (`PayeeAction` — งวดที่ยื่นแล้วไม่สั่ง "สร้างเอกสารใหม่") ·
+  แถวพักนำเข้าถอดไม่ได้ ⇒ `IMPORT-ROW-UNREADABLE` ข้อความไทย · ย้อนการนำเข้าปฏิเสธเฉพาะแถวนั้น (M-6) · หน้าจอ: `/pages/encryption-health.html` ส่วนที่ 3–4
+  **ฝ่ายค้านแพ็ก E (275-E-3…9 ฉบับแก้):** เลข ปกส. ที่ปล่อยเลขบัตรผิดผ่านต้อง 13 หลัก + mod-11 · ไม่มีทางลัด CountryCode — แถวใบมือในไฟล์และรายงานใช้ `ForFiling` ·
+  ผู้รับใบมือรับทราบที่ `Contact.TaxIdWaiver*` · เลข 0 ในช่อง 5 = ⚠️ "ยังไม่ยืนยันกับสเปก RD" (คำถาม 275-E-7) · ซ่อมใบในงวดที่ยื่นแล้ว = **ใบแทน** (`SupersededByCertId` · ใบเดิมคงอยู่) +
+  รายการค้าง `Pnd1AmendmentsRequired` (หน้าสุขภาพฯ ส่วนที่ 5 + กระดิ่ง · `GET/POST payroll/pnd1-amendments`) จนบันทึกการยื่นเพิ่มเติม · ยืนยันทีละงวด ·
+  กุญแจ "สร้างโดยเงินเดือน" `PayrollJunkPayee.IsPayrollCreated` (รายงาน + ด่าน SaveChanges) · ได้เลขถูก ⇒ ล้างการรับทราบ (`ClearTaxIdWaiversWhenIdValid`) ·
+  พาสปอร์ตบนใบจากสำเนา ณ วันออก (`WhtPayeeSnapshot.WaiverOf`) — DTO ปิดบังเว้นแต่ pii:view · ถอนการรับทราบต้องมีเหตุ (`POST …/tax-id-waiver/revoke`)
 - **รอบ 200 ทีม R (กวาดค้างรอบ 189)**: ฐานภาษีสะสม (YTD) ของงวดก่อน = `PayrollIncomeBase.PriorTaxBase(TaxableGross, GrossIncome)` (D-09 — เดิม gross
   รวมสวัสดิการยกเว้น ⇒ หักเกินงวดหลัง · แถวเก่าที่ TaxableGross = 0 ใช้ gross เหมือนเดิม) · PVD = `PayrollIncomeBase.PvdContribution(proratedBaseSalary, %)`
   (D-10 — เดิมเต็มเดือน + ไม่ปัด) · เพดานสมทบปัด AwayFromZero (D-08) · กำหนดนำส่ง สปส. + เงินเพิ่ม §49 = `Helpers/SsoLateFee` ตัวเดียว
@@ -6401,6 +6520,30 @@ _Last verified against codebase: 2026-11-13 · commit 76130af2 (รอบแร�
 (2) RD-WHT-002 ฟ้องเมื่อ |ยอดหัว − Σ| > 0.50 แม้ Σ = 0 (ติ๊กออกครบแต่หัวค้าง) · (3) `Apply` คำนวณแถว [สรุป] ต่อผู้ถูกหักใหม่ (`PayeeSummaryOf`) ทุกครั้งที่ติ๊ก/แก้บรรทัด ·
 (4) ภ.ง.ด.91: แถวผลต่างภาษี `TAX_ADDITIONAL`/`TAX_REFUND` (ภาษีคำนวณ − ที่หักไว้) ไม่นับเข้า "ภาษีหักนำส่งแล้ว (ทั้งปี)" — ตอนสร้างก็ไม่นับ แต่เดิมกดบันทึกบรรทัดแล้วถูกบวกเข้า ⇒ ความหมายเปลี่ยนตามว่าเคยกดบันทึก ·
 แถว [สรุป] ของ ภ.ง.ด. บนจอล็อกช่องยอด (readonly + tooltip — ระบบคำนวณจากบรรทัด · ห้าม silent no-op) · `GeneratePnd91Report` เดินทาง `Apply` เดียวกันแล้ว · รายงาน ภ.ง.ด.91 ที่เคยกดบันทึกไว้ (ยอดหัวรวมผลต่าง) ⇒ กดบันทึก/สร้างใหม่หนึ่งครั้งได้ยอดหักจริง
+
+#### 5.3a-0b รายงาน ภ.ง.ด. ↔ ทะเบียน 50 ทวิ: สร้างใหม่ · ร่างล้าสมัย · ด่านยื่นฝั่งเซิร์ฟเวอร์ (รอบ 275 แพ็ก B · `erp-review/2026-11-20/audit-T2-wht-pnd-vat.md` H1 H2 M1–M5 L1 L2 L4 · คำตัดสิน 275-B-1…6)
+
+| เรื่อง | เดิม | ตอนนี้ |
+| --- | --- | --- |
+| "สร้างใหม่" คืนติ๊ก (ภ.ง.ด.2/3/53/54) | เก็บ `DocumentId` ของ**ทุก**บรรทัดที่นับ ⇒ แถวใบร่าง/ยังไม่ออกใบของเอกสารเดียวกันถูกติ๊กเข้าเอง · หลังคืนติ๊กเรียกแค่ `RecalcVatTotals` (ยอดหัวค้าง) | คืนเฉพาะแถวที่ระบบตัดออกและผู้ใช้ติ๊กเข้าเอง (คีย์ เอกสาร+ใบ+คำอธิบาย `Helpers/WhtReportLineRule.RestoreKey`) · หลังคืนติ๊ก `RecalcWhtTotals` + `RecalcPp36Totals` (ตัวตั้ง `WhtReportTotals.Apply`) |
+| บรรทัดรายงานอ้างใบ | มีแค่ `DocumentId` | `TaxReportLine.WhtCertId` (migration `ADD COLUMN IF NOT EXISTS` · บรรทัดเก่า null) — ตั้งโดย `GenerateWhtReport` ทุกบรรทัดจากใบ (ออกแล้ว/ร่าง/e-Withholding) · echo ใน `TaxReportLineResponse.WhtCertId` |
+| แถบร่างล้าสมัย (`GET tax/stale-drafts`) | ชุดเดียวกับสร้างอัตโนมัติ (ภ.พ.30 · 3 · 53) · ลายเซ็นต่อเอกสาร | ชุดตรวจ `TaxReportDraftFreshness.CheckedTaxTypes` = ภ.พ.30 · ภ.ง.ด.1/2/3/53/54 · ภ.พ.36 (สร้างอัตโนมัติยังเป็น 3 ชนิดเดิม) · ภ.ง.ด. คีย์ต่อใบ (`WhtSignature`: ใบ\|ประเภทเงินได้ → ชนิดบรรทัด ร่าง/ออกแล้ว/e-WHT + ยอด + เลขผู้เสียภาษี + สาขา + ชื่อ) ⇒ เห็นการออก/ยกเลิก/ผูก/เปลี่ยนผูก (รอบ 271)/ใบมือไม่มีเอกสาร/แก้ผู้ถูกหัก · ภ.พ.36 ต่อเอกสาร · ภ.ง.ด.1 = รายงานรุ่นเก่า ⇒ ขึ้นเสมอ `CanRegenerate=false` + ทางไปต่อ (เมนู Export ยื่นภาษี) · ตัวเทียบเดียว `TaxService.DraftFreshnessAsync` · ไม่เทียบบรรทัด JE ล้วน (ยอดฐานเป็นค่าประมาณที่แก้ได้ — ข้อความบอก) |
+| ร่างที่สร้างก่อนรอบ 275 | — | ไม่มี `WhtCertId` ⇒ ขึ้นแถบหนึ่งครั้ง (ข้อความบอก "สร้างก่อนรอบ 275") · ยื่นถูกบล็อกจนกด "สร้างใหม่" — ไม่มี migration ข้อมูล (สร้างใหม่ = ทางซ่อม · audit ก่อน/หลัง) |
+| ยื่น (`FileTaxReportUnlockedAsync`) + ไฟล์ e-Filing ของรายงาน (`BuildPndAsync`/`BuildPp36Async`) | ตัวตรวจก่อนยื่นเป็น GET ที่หน้าเว็บเรียกเอง (ล้มแล้วกดยื่นต่อได้) · ไม่เทียบทะเบียน | ด่านเดียว `TaxService.EnsureReportFileableAsync`: (1) `TaxComplianceChecker` มี Error ⇒ 400 `TAX-PRECHECK-ERROR-275` (ข้อแรก + ทางแก้) (2) ภ.ง.ด.2/3/53/54/ภ.พ.36 ไม่ตรงข้อมูลสด ⇒ 409 `TAX-DRAFT-STALE-275` "กดสร้างใหม่" (3) ภ.ง.ด.1 รุ่นเก่า ⇒ 409 `TAX-PND1-LEGACY-275` · ด่าน "ยังไม่ออก 50 ทวิ" คงบล็อกที่การยื่น + เตือนบนไฟล์ (D2-B1a) · ทางยื่นอื่น: rd-ack ทำได้เฉพาะรายงานที่ยื่นแล้ว · ไม่มี job ยื่นเอง · เมนู Export (`TaxFilingExportService`) คิดจากทะเบียนสดอยู่แล้ว |
+| ตัวตรวจก่อนยื่น | switch มี ภ.พ.30/1/2/3/53 · ค่าคลาดเคลื่อน 0.50 · RD-WHT-005 บอก "เปิดบรรทัดเติมเลข" (ทำไม่ได้) | + ภ.ง.ด.54 (invariant เดียวกัน · ไม่ฟ้องเลขผู้เสียภาษีของผู้รับต่างประเทศ) + ภ.พ.36 (`RD-PP36-001/002`) · ค่าคลาดเคลื่อน 0.00 (`HeaderTolerance`) · RD-WHT-005 ทางแก้ = เติมเลขที่ผู้ติดต่อแล้วสร้างใหม่ |
+| ด่าน "ยังไม่ออก 50 ทวิ" (`WhtUnissuedCertGate.BlockMessage`) | บอก "ติ๊กรายการที่ไม่ใช่การจ่ายจริงออก" (ติ๊กออกอยู่แล้ว ⇒ ยังบล็อก) | ทางไปต่อ 3 ทาง: ออกใบแล้วสร้างใหม่ · แก้ยอดหักที่เอกสาร/ยกเลิกเอกสารแล้วสร้างใหม่ · ติ๊ก "ใช้" พร้อมเหตุผล |
+| แก้บรรทัด (`UpdateTaxReportUnlockedAsync`) | แก้คำอธิบายลบคำนำหน้าของระบบได้ · แก้ยอดบรรทัดจาก 50 ทวิ ได้ · ติ๊กแถวเตือนเข้าไม่มีร่องรอย | `WhtReportLineRule`: คำนำหน้าแถวระบบ (ยังไม่ออกใบ/ใบร่าง/JE 21915/e-WHT/เอกสารยกเลิก) และบรรทัดจากใบ ⇒ คำอธิบายล็อก · บรรทัดจากใบ ⇒ ยอดล็อก (ค่าที่ส่งมาเท่าเดิมไม่นับเป็นการแก้) ⇒ 400 `WHT-REPORT-LOCKED-275` · ติ๊กแถวระบบเข้ายอด ⇒ ต้องมี `IncludeReason` (400 `WHT-REPORT-INCLUDE-275`) + `AddChainedAuditLog` (ผู้กด · เหตุผล · RuleCode · LegalReference) · จอ: ช่อง readonly + tooltip จาก `LockReason` · ปุ่มบันทึกถามเหตุผลครั้งเดียวเมื่อมีแถว `IncludeNeedsReason` ที่ถูกติ๊กเข้า |
+| แถว [สรุป] ผู้ถูกหัก | สร้างก่อนบรรทัด JE ล้วน · คีย์เลขผู้เสียภาษีอย่างเดียว | สร้างหลัง JE · คีย์ เลข + สาขา (`WhtReportTotals.SummaryBranchKey` · แถวสรุปรุ่นเก่าที่ไม่มีสาขาเทียบเลขอย่างเดียว) · ยังไม่เพิ่ม/ลบแถวสรุปเมื่อติ๊กข้าม 1↔2 (แสดงผลเท่านั้น — ยอดถูก) |
+
+**ชุดแก้ฝ่ายค้าน + คำตัดสินแทนเจ้าของ (275-B-6…10):** ด่านทะเบียนเฉพาะร่าง — รายงานที่ยื่นแล้วสร้างไฟล์ได้เสมอ + คำเตือน "ยื่นเพิ่มเติม" เมื่อทะเบียนขยับ (`EFilingExport.ReviewNote` → `X-Filing-Review-Note`) ·
+ด่านเซิร์ฟเวอร์บล็อกเฉพาะ `TaxComplianceChecker.ServerBlockingCodes` (RD-WHT-002/005 · RD-PND1-002 · RD-PP36-001 — ยอด ภ.พ.30 ติดลบยื่นได้) ·
+ยอดของบรรทัดในลายเซ็นล็อก (ภ.ง.ด. จากใบ/เอกสาร · ภ.พ.36 จากเอกสาร) · สร้างใหม่คืนการติ๊ก**ออก** (`Helpers/RegenerateUntick`) · ลายเซ็นใส่ `DocumentId` ·
+`Round275BMigration`: `WhtCertId` เติมย้อนหลังเฉพาะที่จับคู่ได้แน่นอน + `WithholdingTaxCerts.PayeeSnapshotJson` (backfill จากผู้ติดต่อ) · แถบร่างล้าสมัย ≤ 6 เดือน ·
+**ยกเลิก PV** ⇒ 50 ทวิ ที่ผูกด้วยมือ (`LinkedAt`) หลุดการผูก ("ยังไม่ผูก" · audit · แจ้งผู้กด) ส่วนใบที่ระบบสร้างยกเลิกตาม — ล้ม ⇒ แจ้งผู้กด (`Helpers/WhtCertVoidCascade`) ·
+**ตัวตนผู้ถูกหัก ณ วันออก** (`Helpers/WhtPayeeSnapshot` · ประทับที่ `AccountingDbContext.SaveChanges` เมื่อเข้าสถานะออกแล้ว/เปลี่ยนผู้ถูกหัก) — HTML + QuestPDF · หน้าใบ (`MapToResponse`) · รายงาน/ไฟล์ ภ.ง.ด. จากทะเบียน ใช้สำเนา · ใบร่างใช้ผู้ติดต่อสด ·
+แก้ผู้ติดต่อหลังออกใบ ⇒ ใบที่ออกแล้วไม่เปลี่ยน (ทางแก้ = ยกเลิกแล้วออกใหม่) · ยังเลื่อน: ฉบับยื่นเพิ่มเติมของงวดเดิม (§4 ข้อ 1) · 50 ทวิ เงินเดือนรายปี (ไม่บันทึก) ใช้ข้อมูลพนักงานตามเดิม
+ล็อกจุดเรียก: `tools/required_call_site_check.py` `_R275B_*` (12) + ฝ่ายค้าน R275B-1…6 · เทสต์ TEST_PLAN §รอบ 275 แพ็ก B
+_Last verified against codebase: 2026-11-20 · รอบ 275 แพ็ก B · commit 33b2c7de · ชุดแก้ฝ่ายค้าน 24aad79a_
 
 #### 5.3a-1 ฐานยอด ภ.ง.ด.3/53/54 ของหน้า "นำส่งภาษี" + ปฏิทิน (แก้ 2026-09-16)
 
@@ -8980,6 +9123,20 @@ retention ช่วงนี้เทียบช่วงก่อน + เส�
 
 **ตาราง**: CreditPackages · CreditPasses · CreditLedgerEntries · CreditClassSessions · CreditClassBookings (`DatabaseMigrationHelper.CourseCreditStatements`) · CreditPassFreezes + คอลัมน์สมาชิก/ค่าตอบแทน (`Helpers/CourseCreditMembershipMigration` · รอบ 209 P5)
 
+### 6.277 เมนูตามสิทธิ์ + คำเชิญเข้าบริษัท (รอบ 277 · คำตัดสิน 277-1…7 · `erp-review/2026-11-20/dev-277-menu-invite.md`)
+- **เมนู**: `GET api/company/{id}/roles/my-permissions` ส่ง `permissionDeniedMenuIds` จากตารางเดียว `Helpers/MenuPermissionMap` (แดชบอร์ด/บริหารการเงิน/รายงานผู้บริหาร/FP&A = Reports.Dashboard ·
+  งบรวม = Reports.Financial · รอบโอน = Settlement.View · ที่พัก = Lodging.Manage · + หน้ารับชำระของรอบ 201) ตรวจด้วย `IPermissionService.HasPermissionAsync` ตัวเดียวกับ API ·
+  `layout.js` `hasMenuAccess` ตัด · `landingUrl()` = แดชบอร์ดถ้ามีสิทธิ์ ไม่งั้นเมนูแรกที่เข้าได้ ไม่มีเลย = `/pages/no-access.html` · `ensurePageAccess('dashboard')` ใน app.html/simple.html
+  ก่อนยิง API · `_enforceRoleAccess` บนแดชบอร์ดพาไปหน้าแรกเงียบ ๆ · ช่องค้นหา/command palette/แถบล่างมือถือ (`data-menu`)/ลิงก์ "หน้าหลัก" กรองด้วย `hasMenuAccess` · เปิด URL ตรงหน้าอื่นยังได้ข้อความเหตุจาก API
+- **เชิญ** `POST api/company/{id}/users {email, role?, companyRoleId?, ownDocumentsOnly, draftDocumentsOnly}` (เจ้าของ) ⇒ **ทุกอีเมลได้คำเชิญ** (ผู้มีบัญชีไม่ถูกยัดเข้าบริษัท) ·
+  ด่านที่นั่ง `EnsureSeatAsync` ใต้ล็อก · เชิญซ้ำ = แถวเดิม (token ใหม่) · `GET …/invitations` (แถวรอตอบรับ/หมดอายุ) · `POST …/invitations/{id}/resend` · `DELETE …/invitations/{id}` · audit chain
+- **token**: สุ่ม 32 ไบต์ เก็บ `CompanyInvitations.TokenHash` (SHA-256 · `CompanyInvitationPolicy.HashToken`) · `Token` ดิบ = null (Round277Migration ย้ายค่าเดิม) · อายุ 7 วัน · ใช้ครั้งเดียว
+- **ตอบรับ** ตัวเดียว `CompanyInvitationService.AcceptAsync` (ปุ่มรับ `POST api/invitations/accept` · สมัครฟอร์ม/SSO ผ่าน `AuthService.ConsumeInvitationAsync`): ล็อกที่นั่งบริษัท → ตรวจ (สถานะ/อายุ/อีเมลตรง) →
+  P2-2 บทบาทแพลตฟอร์ม → ที่นั่งซ้ำ → `CompanyUser` (บทบาท/บทบาทกำหนดเอง/จำกัดเอกสาร หรือ `AccessPending` เมื่อไม่เลือกบทบาท) → audit → แจ้ง `team.invitation_accepted` ถึงเจ้าของ ·
+  สมัครผ่านลิงก์ **ไม่สร้างบริษัท** แม้ส่งชื่อบริษัทมา · หน้า `accept-invitation.html` แยก "มีบัญชีแล้ว ⇒ เข้าสู่ระบบ" / "ยังไม่มี ⇒ สมัคร (ไม่ต้องสร้างบริษัท)" จาก `accountExists`
+- **ยังไม่มีสิทธิ์** (`CompanyUser.AccessPending`): `TenantAccessMiddleware` ปฏิเสธทุก API ของบริษัท 403 `TEAM-ACCESS-PENDING` ยกเว้น `PendingMemberAccess.IsAllowed` (GET my-permissions) ·
+  หน้าเว็บอยู่ที่ `/pages/no-access.html` · เจ้าของ `PUT users/{id}/role` หรือผูกบทบาทกำหนดเอง ⇒ ปลด + audit
+
 ## 7. Validation gates (compliance — กฎเหล็ก #2)
 
 | Gate | Where | กระทำ |
@@ -9791,6 +9948,36 @@ _Last verified against codebase: 2026-11-16 (รอบ 271 ชุดแก้ฝ
 
 ยังรอเจ้าของ: สลิปจริงธนาคารอื่น/สปส./ใบแจ้งชำระของกรม (เพิ่มแถวตาราง) · ผู้ให้บริการอีเมลขาเข้า (adapter) · backlog: สลิปเดียวหลายแบบ · ยื่นเพิ่มเติม · ค่าธรรมเนียมธนาคาร · อ่านใบแจ้งชำระ PDF อัตโนมัติ
 
+**รอบ 275 แพ็ก D — โต๊ะสลิปครบวงจร (ผลตรวจ `erp-review/2026-11-20/audit-T1-line-slip-payment.md` · คำตัดสิน 4.3 + 275-D-1…4 · รายงาน `erp-review/2026-11-20/dev-275-D.md`):**
+- **ทางไปต่อของสลิปที่ไม่มีผู้สมัคร (H1)** — โต๊ะมีสามการกระทำต่อแถวที่รอพนักงาน: (ก) **บันทึกเอง** `StaffManualRemitAsync` — เลือกบริษัท (ชุดที่ช่องทางผูกเท่านั้น) · งวดค้างจาก `GetDashboardAsync` ·
+  เงินเพิ่ม/เบี้ยปรับ · บัญชี ⇒ `TaxSlipDeskRule.ManualProblem` (ภาษี+เงินเพิ่ม+เบี้ยปรับ = ยอดบนสลิปทุกสตางค์ · OCR อ่านยอดไม่ได้ ⇒ พนักงานกรอกยอดที่อ่านเอง ประทับลงแถวใต้ล็อก + audit) ⇒
+  `ApplyAsync(ManualEntry)` → `RemitAsync` ตัวเดียว (ยอดภาษี = ยอดค้างในสมุด · ความยินยอม/หนังสือมอบอำนาจ/ผู้ยื่นภาษีของลูกค้า) · ไม่มีผู้อนุมัติคนที่สอง (4.3) · (ข) **ผูกกับรายการนำส่งที่มีอยู่**
+  `TaxSlipRemitService.LinkAsync` — บันทึกมือที่หน้านำส่งไว้ก่อน ⇒ แนบสลิปเป็นหลักฐาน · `SlipEvidenceId` · การ์ด "บันทึกการชำระแล้ว" (`StaffLinked`) แทน "ไม่ได้บันทึก" · (ค) **ไม่บันทึก** — การ์ดเดิม แต่
+  **ไฟล์ไม่ลบทันที** (ลบเมื่อครบ 90 วัน · M4) · ตัวเลือกทั้งหมดคำนวณที่ server (`GET slips/{id}/manual-options`)
+- **สถานะใต้ล็อก (H2 · L9)** — `ApplyAsync`/`LinkAsync` ล็อกแถวแล้ว `ReloadAsync` (ไม่เชื่อค่าใน tracker) ปฏิเสธทุกสถานะที่ไม่ใช่รอตัดสิน · ทางล้มของ `ApplyAndReplyAsync` อ่านแถวใหม่ — บันทึก/ปิดแล้ว ⇒
+  ไม่แตะ ไม่ส่งการ์ด · ปุ่มเลือกในกลุ่ม/ปุ่ม "ไม่บันทึก" claim แบบ atomic (`ExecuteUpdate … WHERE Status`) · หน้าปิดปุ่มระหว่างรอ
+- **ปุ่มที่ล้มแน่นอน (M2)** — `TaxSlipDeskRule.CandidateBlocker` (ยอดสลิปไม่ตรง · ใบขอชำระปิด · งวดนำส่งแล้ว ยกเว้น ภ.พ.36/กท.20ก) ⇒ ผู้สมัครแสดงเหตุแต่เลือกไม่ได้ · พนักงานกดล้ม = 409 อย่างเดียว ไม่ส่งการ์ดเข้ากลุ่ม ไม่เปลี่ยนเหตุเดิม ·
+  ข้อความ exception ชนิดทั่วไป (`InvalidOperationException`/`KeyNotFoundException`) ไม่ถึงกลุ่ม (L2)
+- **ยกเลิกรายการนำส่ง (M1)** — `VoidRemittanceAsync` → `TaxSlipRemitService.ReleaseOnVoidAsync`: สลิปกลับ `ToStaff` (`TAX-SLIP-VOIDED`) · ใบขอชำระที่ปิดด้วยรายการนั้นกลับ `Open` (หรือ `Expired`) ·
+  บันทึกใหม่อ่านไฟล์จากไฟล์แนบเดิมของลูกค้า (สำเนาถูกลบหลังแนบครั้งแรก)
+- **กันซ้ำต่อช่องทาง (M3)** — ไฟล์เดิมจากกลุ่ม/ผู้ส่งอื่นที่แถวเดิมยังรอพนักงาน ⇒ ประมวลแถวเดิมใหม่ด้วยชุดบริษัทของช่องทางใหม่ (`TaxSlipChannelRedirect`) · แถวบันทึกแล้ว/รอลูกค้า ⇒ "ได้รับไปแล้ว" เหมือนเดิม
+- **ระยะเก็บ (M4 · 275-D-3)** — `TaxSlipOpenAge`: รอพนักงานเกิน 2 วัน ⇒ กระดิ่งวันละครั้ง (`StaffRemindedAt`) · เกิน 90 วัน ⇒ `Expired` + การ์ด `OpenExpired` ตามจริง · แถว `Rejected`/`Expired` ลบไฟล์เมื่อครบ 90 วัน
+  (`PurgeClosedFilesAsync` · เดิมตัวกรองว่างเสมอ) · แถว `TAX-SLIP-OCR-OFF` อ่านใหม่เมื่อ OCR กลับมา (ไม่ใช่สลิปรัฐ ⇒ ปิด + ลบรูปทันที) · แถว `Received` ค้าง > 10 นาที ⇒ ประมวลใหม่ (L5)
+- **เส้น 260/262 (M5 · M6 · L8)** — `LineChatSlipRule.Decide` เรียก `GovPaymentSlip.Identify` ก่อนจับคู่ — สลิปจ่ายหน่วยงานรัฐในแชต OA ของร้าน ⇒ ไม่แจ้งโอนเข้าใบแจ้งหนี้ (`Reasons.GovernmentSlip` + คำตอบตามจริง) ·
+  สลิปโอนทั่วไปในกลุ่มของ OA กลาง ⇒ การ์ด `TransferNotTax` (บอกว่าพนักงานได้รับแจ้ง) + กระดิ่ง (ไม่เก็บรูป) · "สมทบ" นับเป็นคำของรัฐเฉพาะเมื่อคู่ป้ายจ่ายบิล (L8)
+- **ใบขอชำระ (M7)** — ตัวตั้ง `TaxPaymentRequestLifecycle` · นำส่งงวดใดก็ตาม (มือ `RemitAsync` · สลิป · ผูก) ⇒ ใบที่เปิดของงวดนั้น `Paid` (`TaxPaymentRequestService.CloseOnRemitAsync`) · Control Code หมดอายุ ⇒ `Expired` + การ์ด
+  (`TaxSlipJob` → `ExpireDueAsync`) · ยกเลิก ⇒ การ์ด "อย่าชำระตามใบนี้" · ใบที่เปิดได้ทีละใบต่อ (บริษัท·แบบ·งวด)
+- **ตรวจทาน (M8)** — "ไม่พบเงินออก" ตรวจซ้ำได้ 60 วัน · ยังไม่มีรายการเดินบัญชีหลังช่วงตรวจ ⇒ "ยังไม่ได้ตรวจ" (ไม่ใช่ไม่พบ) · ผลเดิมไม่กระดิ่งซ้ำ · L3 งวดนำส่งแล้วยอดเท่าสลิป ⇒ `AlreadyRemitted` (ไม่ใช่ "ไม่พบ") · L4 ตัวเลือกของลูกค้าไม่หายหลังรอความยินยอม · L6 สลิปที่พักเข้าคิวมีกระดิ่ง
+
+- **ชุดแก้ฝ่ายค้านแพ็ก D** — ผูก/บันทึกเองตรวจเลขผู้เสียภาษี (`TaxSlipDeskRule.SlipTaxIdOther`) + หน่วยงานกับแบบ (`AgencyTypeProblem` · หน่วยงานจาก `GovPaymentSlip.AgencyHint` เมื่อไม่มีแถวผู้รับชำระ) ·
+  งานเบื้องหลัง (ปิดแถวรอนาน · ใบขอชำระหมดอายุ · ยกเลิกใบ · ทางล้มของเส้นอัตโนมัติ) เขียนแบบ `UPDATE … WHERE Status = expected` ทีละแถว การ์ดเฉพาะแถวที่เปลี่ยน ·
+  การ์ดสรุปใบเดียวต่อกลุ่ม/บริษัทต่อรอบ + เพดาน 20 · สลิปที่ปล่อยหลัง void นับอายุจาก `ReleasedAt` · ใบขอชำระปิดเฉพาะเมื่อยอด/Control Code ตรง (`PaidBy`) · void ⇒ ใบกลับเปิด + การ์ด `PaymentRequestReopened` ·
+  ใบที่มีสลิปเปิดอ้างไม่หมดอายุ
+- **เลขผู้เสียภาษีเต็ม (ผู้ประสานงาน)** — แถวสลิปเก็บค่าเทียบ `TaxIdHash` (`TaxSlipRefHash.TaxId` · HMAC กุญแจเมล็ดถาวรของแพ็ก A MED-4) เพราะเลขปิดบังเปิดแค่ 7 หลักแรก ·
+  `TaxSlipDeskRule.TaxIdVerdict` → Match/Mismatch/Undecided/NoTaxId · แถวเก่าไม่มีค่าเทียบและ 7 หลักแรกตรง ⇒ Undecided = พนักงานต้องติ๊ก "ตรวจเลขบนรูปแล้ว" (audit `TaxSlipTaxIdConfirmedByStaff`) ห้ามปล่อยผ่านเงียบ — commit f32c38ed
+
+_Last verified against codebase: 2026-11-20 (รอบ 275 แพ็ก D — §TAX272 โต๊ะสลิปครบวงจร: บันทึกเอง/ผูกรายการ/ไม่บันทึกตามจริง · สถานะใต้ล็อก · ยกเลิกแล้วปล่อยสลิป · retention จริง · วงจรใบขอชำระ — build + Db test ในเครื่องนี้ — commit 2c247bd4)_
+
 _Last verified against codebase: 2026-11-16 (รอบ 272 แพ็ก P1–P6 — §TAX272: GovPaymentSlip (98037@KBank) · TaxSlipMatch (D-2/D-3) · ProviderConsent (ทาง B) · ใบขอชำระ · RemitAsync ตัวเดียว · ตรวจทานหลังนำส่ง · อีเมลขาเข้าหลัง interface — build + test + Db test ผ่านในเครื่องนี้ (PostgreSQL) — commit cd71dee0)_
 _Last verified against codebase: 2026-11-19 (รอบ 273 — §5.3a-0 ตัวตรวจก่อนยื่น ภ.ง.ด. RD-WHT-002 นับแถว [สรุป]/ติ๊กออกซ้ำ ⇒ ×2: ตัวตั้งเดียว `Helpers/WhtReportTotals` ใช้ร่วมยอดหัว/ตัวตรวจ/ไฟล์ยื่น · ข้อมูลเดิมถูกอยู่แล้ว ไม่ต้อง migration · Db `WhtPreCheckDoubleCountDbTests` + pure `WhtReportTotalsTests` · กติกา `_R273W_*` — commit c488a356)_
 _Last verified against codebase: 2026-11-19 (รอบ 272 ชุดแก้ฝ่ายค้าน — §TAX272: H1 ExpectedAmount · H2 OCR ไม่พร้อม ⇒ คิว · H3 alignment อีเมล · M1–M7 · L1–L8 — build + test + Db test ผ่านในเครื่องนี้ (PostgreSQL) — commit 7c5a3cb4)_
@@ -9808,3 +9995,53 @@ _Last verified against codebase: 2026-11-19 (รอบ 273 ชุดแก้ฝ
 
 _Last verified against codebase: 2026-11-19 (รอบ 274 ผลตรวจฝ่ายค้าน HIGH-1/MED-1/MED-2/LOW-1…5 — ไฟล์ ภ.ง.ด.1/1ก ที่มีแถวถูกกันไม่ออก · ciphertext รุ่นก่อน · งานย้ายคีย์เป็นระยะ+ผลจริง ·
 ไฟล์ สปส. · export — build + test 23,540 ผ่านในเครื่องนี้ (รวม Db) — commit aa7fb732)_
+
+_Last verified against codebase: 2026-11-20 (รอบ 274-10 — เลขที่ถูกเข้ารหัสซ้อนกลับมาอ่านได้โดยไม่ต้องกรอกใหม่: `EncryptedColumnConverter.Inspect` แกะชั้นซ้อน ≤ 3 ชั้น
+(เลขบัตร/ผู้เสียภาษีรับเฉพาะ 13 หลัก mod-11 · อื่น ๆ ต้องไม่ใช่ ciphertext) · `PiiReprotectPass` เขียนชั้นเดียว + audit `PiiNestedUnwrapped` · รายงานไม่บอกกรอกใหม่สำหรับแถวที่แกะได้ ·
+ทุกทางเข้าพนักงาน (แก้ไข/สร้าง/HRIS sync/นำเข้า) ปฏิเสธ ciphertext ด้วย `EmployeeRecordEdit.CipherInputProblem` · ciphertext ของแถวนั้นเองส่งกลับมา = คงค่าเดิม ·
+คำตัดสิน 274-10 — commit 7c75b438)_
+
+_Last verified against codebase: 2026-11-20 (รอบ 274-11 ผลตรวจฝ่ายค้าน 274-10 — แกะชั้นซ้อนเฉพาะ allow-list 5 คอลัมน์พนักงาน (ค่าตั้งต้น `NoUnwrap` · ผู้ลงนามนิรนามไม่ถูกแกะ) ·
+เครื่องหมายภายในปฏิเสธที่ด่านเข้า + อ่านกลับตรงตัว · รูป ciphertext ตัวเดียว (มีช่องว่าง = ไม่ใช่) ทั้ง Inspect และ SQL · งานย้ายคีย์ข้ามการสแกนเมื่อชุดคีย์เดิมสแกนครบ ≤ 7 วัน ·
+HRIS sync สถานะ "เตือน" — คำตัดสิน 274-11 — commit 55b251d9)_
+_Last verified against codebase: 2026-11-20 (รอบ 275 แพ็ก A — คีย์และความลับ: ห่วงโซ่คีย์ถอดเดียว (PII = ความลับ) · คีย์เดิมหลายตัว · ลายนิ้วมือคีย์กันหลายเครื่อง ·
+`SecretUse` ด่านเดียวของผู้อ่านความลับ · DTO พนักงานไม่ส่ง ciphertext · หน้า "สุขภาพข้อมูลเข้ารหัส" · เทสต์ `KeysSecretsRound275ATests` + Db `KeysSecretsRound275ADbTests` · กติกา `_R275A_` — commit 2e7199e0 + bc9b6d73)_
+
+_Last verified against codebase: 2026-11-20 (รอบ 275 แพ็ก C — §3.4b-275: ใบเสร็จ = ใบกำกับภาษี ณ วันรับเงินจากตัวตัดสินเดียว `SettlementTaxInvoiceRole`
+(ยุบสูตรงวดเดียว 4 สำเนา · ค่าธรรมเนียม/บรรทัดปรับ/ภาษีหัก/ใบลดหนี้) · งานบริการรับเป็นงวด = ใบกำกับรายงวด VAT ตามส่วน + ย้าย 21913 ตามส่วนผูกการรับ · คิว "รับเงินแล้วยังไม่มีใบกำกับ" ·
+วันที่ปฏิทินไทยที่ต้นทางการรับชำระ · ข้อความใบเสร็จผ่าน DocumentLabels · คำตัดสิน 275-C-1…9) — commit 96bb5262_
+
+_Last verified against codebase: 2026-11-20 (รอบ 275 แพ็ก A ผลตรวจฝ่ายค้าน MED-1…4 + LOW — heartbeat/ยืนยันลายนิ้วมือที่ระบุ · ประตูเขียนค่าเข้ารหัส · หมุนรอทุกเครื่อง · เมล็ด HMAC ถาวร ·
+เทสต์ `EncryptionWriteGuardRound275ATests` + Db `KeysSecretsRound275ADbTests` — commit 17305b6a)_
+
+_Last verified against codebase: 2026-11-20 (รอบ 276 — ผู้ใช้เห็นเฉพาะเอกสารที่ตัวเองสร้าง/สร้าง-แก้ได้เฉพาะร่าง: ตัวกรองแถว EF ของ Documents ·
+`DocumentRestrictionFilter` รายการอนุญาต + 404 · ด่าน Approve/Void ชั้น service · ส่งขออนุมัติพื้นฐาน/ถอน/ตีกลับ + แจ้งผ่านเครื่องแจ้งเตือนกลาง ·
+คำตัดสิน 276-1…8 — commit 69740aef + 4456de7a)_
+_Last verified against codebase: 2026-11-20 (รอบ 276 ชุดแก้ฝ่ายค้าน — ด่านผูกผู้ใช้+บริษัท · LINE · แจ้งเตือน · ด่านระดับบริษัทในทางเขียน · id ใน body ·
+ผู้ติดต่อ · CreatedByUserId · OCR — คำตัดสิน 276-9…16 — commit 8a2514f3 + 9ca871bb)_
+
+_Last verified against codebase: 2026-11-20 (รอบ 277 — §6.277 เมนูตามสิทธิ์จากเซิร์ฟเวอร์ (`MenuPermissionMap` · `landingUrl` · หน้าต้อนรับ) + คำเชิญเข้าบริษัท
+(ทุกอีเมลได้คำเชิญ · แถวรอตอบรับ/ส่งซ้ำ/ยกเลิก · token hash · ตอบรับตัวเดียว · ไม่สร้างบริษัท · ยังไม่มีสิทธิ์จนเจ้าของตั้ง) — commit a1ae70d2 + d93800f2)_
+
+_Last verified against codebase: 2026-11-20 (รอบ 275 แพ็ก C ต่อ — กติกา `_R275C_` ที่อยู่หลัง `__main__` รันจริงแล้ว: `VoidPaymentAsync` ส่งการรับที่ยกเลิกผ่าน
+`ReversePaymentInternalAsync` อยู่แล้ว (ไม่ใช่บั๊ก — กติกาชี้ผิดชั้น) · **ย้ายการรับชำระไม่ส่ง `voidedPaymentId` (บั๊กจริง แก้แล้ว)** · ตัวตรวจรองรับเมธอด `=>` ·
+checker ใหม่ `main_guard_tail_check.py` — commit ea8b0253)_
+
+
+_Last verified against codebase: 2026-11-20 (รอบ 275 แพ็ก E — รับทราบรายคนผู้ไม่มีเลข 13 หลัก (ตัวตัดสินเดียว ForFiling: 50 ทวิ · ไฟล์ ภ.ง.ด.1/1ก · ด่านนำส่ง) ·
+พาสปอร์ตประกอบบน 50 ทวิ · ไฟล์ สปส. ตามเลข ปกส. · เครื่องมือรายงาน+ซ่อมผู้ติดต่อเลขขยะจากเงินเดือน + ด่าน ภ.ง.ด.3/53 · รายงานสุขภาพกรองแบบ/ประเทศ ·
+แถวนำเข้าถอดไม่ได้ข้อความไทย · คำตัดสิน 275-E-1…6 — commit 09a52c66)_
+
+_Last verified against codebase: 2026-11-20 (รอบ 278 — ช่องลายเซ็นผู้จัดทำ ↔ ผู้มีอำนาจลงนามคนเดียวกัน: `Helpers/SignatureSlotIdentity` ตัดสินด้วยกุญแจ
+(PreparerUserId · ผู้ใช้เดียวกัน · ชื่อเล่นที่ผู้ใช้ประกาศ) · รวมใน `ResolveSignersAsync` ก่อนกฎผู้ลงนาม · §2.8a — commit 5304acd3)_
+
+_Last verified against codebase: 2026-11-20 (รอบ 275 แพ็ก E ชุดแก้ฝ่ายค้าน MED-1…3 + LOW (ก)–(ช) — เลข ปกส. 13 หลัก mod-11 · ForFiling แถวใบมือ (ไม่มีทางลัด CountryCode) + รับทราบที่ผู้ติดต่อ ·
+ใบแทน 50 ทวิ ในงวดที่ยื่นแล้ว + รายการค้างยื่น ภ.ง.ด.1 เพิ่มเติม · กุญแจสร้างโดยเงินเดือน · ล้างการรับทราบเมื่อได้เลข · พาสปอร์ตจากสำเนา ณ วันออก (ปิดบัง/pii:view) ·
+คำตัดสิน 275-E-3…9 ฉบับแก้ — commit ca4fef5d)_
+
+_Last verified against codebase: 2026-11-20 (รอบ 278 ชุดแก้ฝ่ายค้าน HIGH-1/2/3 + MED — ช่องผู้มีอำนาจลงนามไม่รับรูป payload · preparerUserId ผูกได้เฉพาะผู้เรียกเอง/ผู้เปิดสิทธิ์ ·
+ชื่อเล่นต่อบริษัทต้องเจ้าของอนุมัติ · แช่แข็งผู้ลงนามตอนออก (`StampSignerFreeze` · ใบเก่า = ไม่รวม) · ปุ่มปรับผู้ลงนามของเจ้าของ · §2.8a — commit b8960a48)_
+
+_Last verified against codebase: 2026-11-20 (รอบ 278-9 คำสั่งเจ้าของ — ผูกด้วยกุญแจที่ยืนยันแล้ว ⇒ รูปเดียวกันทั้งสองช่อง โปรไฟล์เป็นหลัก ไม่มีจึงใช้รูปจากระบบภายนอก ·
+แหล่งรูปแช่แข็งใน snapshot · §2.8a — commit a5d1162c)_
+

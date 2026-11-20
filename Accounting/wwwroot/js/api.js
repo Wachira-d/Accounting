@@ -2143,7 +2143,8 @@ const API = {
       externalApproveQuotation: (documentId, d) => API.post(`${base}/external/quotations/${documentId}/approve`, d),
       // Team / Members
       getMembers: () => API.get(`/api/company/${companyId}/users`),
-      addMember: (email, role) => API.post(`/api/company/${companyId}/users`, { email, role }),
+      // รอบ 277: role = null ⇒ "ยังไม่กำหนดบทบาท" (ผู้รับเข้าแบบยังไม่มีสิทธิ์) · extra = { companyRoleId, ownDocumentsOnly, draftDocumentsOnly }
+      addMember: (email, role, extra) => API.post(`/api/company/${companyId}/users`, Object.assign({ email, role: role || null }, extra || {})),
       updateMemberRole: (userId, role) => API.put(`/api/company/${companyId}/users/${userId}/role`, { role }),
       updateMemberName: (userId, fullName) => API.put(`/api/company/${companyId}/users/${userId}/name`, { fullName }),
       removeMember: (userId) => API.del(`/api/company/${companyId}/users/${userId}`),

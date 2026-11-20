@@ -90,12 +90,20 @@ public class TenantAccessMiddleware
         {
             var row = await db.CompanyUsers
                 .Where(cu => cu.CompanyId == companyId.Value && cu.UserId == userId.Value)
-                .Select(cu => new { cu.Role, cu.CompanyRoleId })
+                .Select(cu => new { cu.Role, cu.CompanyRoleId, cu.AccessPending })
                 .FirstOrDefaultAsync();
             if (row == null)
             {
                 context.Response.StatusCode = 403;
                 await context.Response.WriteAsJsonAsync(new { success = false, message = "ไม่มีสิทธิ์เข้าถึงบริษัทนี้" });
+                return;
+            }
+            // รอบ 277 (คำตัดสิน 277-4): ตอบรับคำเชิญแบบ "ยังไม่กำหนดบทบาท" ⇒ ทุก API ของบริษัทปิดจนกว่าเจ้าของตั้งสิทธิ์
+            // (ผ่านได้เฉพาะ endpoint ในรายการของ PendingMemberAccess — หน้าเว็บต้องรู้สถานะเพื่อแสดงหน้าต้อนรับ)
+            if (row.AccessPending && !PendingMemberAccess.IsAllowed(context.Request.Method, path))
+            {
+                context.Response.StatusCode = 403;
+                await context.Response.WriteAsJsonAsync(new { success = false, message = PendingMemberAccess.DeniedMessage, ruleCode = PendingMemberAccess.RuleCode });
                 return;
             }
             userRole = row.Role;
@@ -106,14 +114,21 @@ public class TenantAccessMiddleware
             // Schema may be mid-migration (CompanyRoleId column not yet added).
             // Fall back to a query that doesn't touch the new column so users can
             // still access their companies while the auto-migration catches up.
+            // รอบ 277 (ฝ่ายค้าน): เส้นสำรองต้องไม่ข้ามด่านสมาชิกรอสิทธิ์ — อ่าน AccessPending ด้วยเสมอ (คอลัมน์ไม่มี = โยน = 500 · fail closed)
             var fallback = await db.CompanyUsers
                 .Where(cu => cu.CompanyId == companyId.Value && cu.UserId == userId.Value)
-                .Select(cu => new { cu.Role })
+                .Select(cu => new { cu.Role, cu.AccessPending })
                 .FirstOrDefaultAsync();
             if (fallback == null)
             {
                 context.Response.StatusCode = 403;
                 await context.Response.WriteAsJsonAsync(new { success = false, message = "ไม่มีสิทธิ์เข้าถึงบริษัทนี้" });
+                return;
+            }
+            if (fallback.AccessPending && !PendingMemberAccess.IsAllowed(context.Request.Method, path))
+            {
+                context.Response.StatusCode = 403;
+                await context.Response.WriteAsJsonAsync(new { success = false, message = PendingMemberAccess.DeniedMessage, ruleCode = PendingMemberAccess.RuleCode });
                 return;
             }
             userRole = fallback.Role;

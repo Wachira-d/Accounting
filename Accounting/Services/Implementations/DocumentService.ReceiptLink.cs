@@ -94,6 +94,7 @@ public partial class DocumentService
         }
         var targetServesAfter = false;
         var carriesVat = false;
+        SettlementTaxInvoiceRole.Decision? targetPlan = null;
         if (target != null)
         {
             // สภาพของใบปลายทาง "หลังย้าย" (ไม่ track · ตัวคำนวณสถานะเดียวกับเส้นย้าย DocumentSettlementState.Apply)
@@ -111,9 +112,17 @@ public partial class DocumentService
                 ComputeServedAsReceipt(targetAfter, (await LoadDocIdsWithSeparateReceiptAsync(_db, companyId, new[] { target.Id })).Contains(target.Id),
                     receiptMode, settledAfter),
                 target.DocumentDate, payment.PaymentDate);
-            carriesVat = SettlementReceiptPolicy.CarriesTaxInvoiceRole(target.DocumentType, target.VatAmount,
-                singleShotFull: target.PaidAmount <= 0.05m && target.BalanceDue - amount <= 0.005m,
-                liveVatReceiptExists: await LiveVatReceiptExistsAsync(companyId, target.Id, exceptReceiptId: null));
+            // รอบ 275 แพ็ก C (T3 HIGH-1): ตัวตัดสินเดียวกับเส้นรับชำระ — ใบปลายทาง "หลังย้าย" (ยอดค้างหลังรับก้อนนี้) · การรับก้อนนี้ = ยอดที่ย้าย (+ ค่าธรรมเนียม/
+            // บรรทัดปรับ/ภาษีหักของการชำระใบเดียว) · เดิม PaidAmount ≤ 0.05 (สำเนาที่สาม — ไม่เห็นใบลดหนี้/ค่าธรรมเนียม)
+            var moveMe = rows.Count > 0
+                ? new SettlementReceiptTotals.ThisSettlement(payment.PaymentDate, payment.CreatedAt, amount, 0m, 0m, 0m)
+                : SettlementTaxInvoiceLoader.ThisOf(payment);
+            var targetFacts = await SettlementTaxInvoiceLoader.FactsAsync(_db, companyId, target, moveMe, payment.Id, excludeAllocationIds: null, exceptReceiptId: null);
+            targetPlan = SettlementTaxInvoiceRole.Decide(targetFacts with
+            {
+                SourcesOutstandingNow = Math.Max(0m, target.BalanceDue - (moveMe.CashAmount + moveMe.FeeAmount + moveMe.AdjustmentAmount)),
+            });
+            carriesVat = targetPlan.CarriesRole;
         }
         var issueForTarget = receipt == null && carriesVat && !targetServesAfter;
         var needVoidReceipt = receipt != null;
@@ -211,7 +220,7 @@ public partial class DocumentService
             IssueReceiptForTarget: issueForTarget,
             PermissionProblem: permissionProblem);
         var source = receipt != null ? ReceiptLinkFacts.Source(receipt) : ReceiptLinkFacts.SettlementPayment(payment, settles, move.Amount);
-        return new SettlementMoveSnapshot(payment.Id, source, move, receipt?.Id);
+        return new SettlementMoveSnapshot(payment.Id, source, move, receipt?.Id, targetPlan);
     }
 
     /// <summary>
@@ -414,8 +423,9 @@ public partial class DocumentService
                 }
 
                 // ── ภาษีขายฝั่งถอน: ใบเดิมไม่เหลือเงินรับ ⇒ ถอยภาษีขายถึงกำหนด (ตัวเดียวกับยกเลิกการรับชำระ) · งวดปิด/ยื่นแล้ว = throw ⇒ ทั้งธุรกรรม rollback ──
+                //    รอบ 275 แพ็ก C (ต่อ): ใบเดิมยังเหลือการรับอื่น + การรับนี้ย้ายภาษีตามส่วนของงวด (JE ผูกการรับ) ⇒ ถอยเฉพาะ VAT ของงวดนี้ (เดิมไม่ส่งการรับ ⇒ ค้าง 21911)
                 if (await UndoOutputVatOnPaymentVoidAsync(companyId, fromDoc, receiptDecision, oldReceipt, PaymentVoidCause.User,
-                        "ย้ายการรับชำระ", payment.PaymentNumber) is string fromVatNotice)
+                        "ย้ายการรับชำระ", payment.PaymentNumber, voidedPaymentId: payment.Id) is string fromVatNotice)
                     notices.Add(fromVatNotice);
                 await _db.SaveChangesAsync();
 
@@ -448,7 +458,8 @@ public partial class DocumentService
                             OverridePaymentAccountId = payment.OverridePaymentAccountId, Notes = payment.Notes, ProjectId = payment.ProjectId,
                             CreatedBy = payment.CreatedBy,
                         };
-                        replacement = await CreateSettlementReceiptAsync(companyId, toDoc, receiptOf, actor, issueApproved: true, carryVatFromSource: carryVat);
+                        replacement = await CreateSettlementReceiptAsync(companyId, toDoc, receiptOf, actor, issueApproved: true, carryVatFromSource: carryVat,
+                            taxInvoicePlan: carryVat ? snap.TargetTaxInvoicePlan : null, installmentTaxPointDate: payment.PaymentDate);
                         if (oldReceipt != null)
                         {
                             replacement.ReplacesDocumentId = oldReceipt.Id;

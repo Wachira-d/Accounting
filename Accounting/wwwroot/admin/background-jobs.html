@@ -26,6 +26,11 @@
       <div class="admin-card-header"><span class="admin-card-title">🛠️ งานเบื้องหลังของระบบ</span></div>
       <div class="job-grid" id="grid"></div>
     </div>
+    <!-- รอบ 275 แพ็ก A (T4 M-1/M-4): สุขภาพคีย์เข้ารหัส — ข้อมูล/ข้อความจากเซิร์ฟเวอร์ (GET api/admin/encryption-health) · ลายนิ้วมือไม่ใช่คีย์ -->
+    <div class="admin-card">
+      <div class="admin-card-header"><span class="admin-card-title">🔐 สุขภาพคีย์เข้ารหัส (ENCRYPTION_KEY)</span></div>
+      <div id="keyHealth">กำลังโหลด...</div>
+    </div>
     <div class="admin-card">
       <div class="admin-card-header"><span class="admin-card-title">📋 ผลการรันล่าสุด (JobRunLog)</span></div>
       <div id="runLog">กำลังโหลด...</div>
@@ -55,7 +60,38 @@
         { label:'ประมวลผล Subscription ที่หมดอายุ', fn:'processExpiredSubs' },
         { label:'ส่งการแจ้งเตือน Subscription', fn:'processNotifications' },
       ],
-      init() { AdminLayout.init('background-jobs'); this.render(); this.loadRuns(); },
+      init() { AdminLayout.init('background-jobs'); this.render(); this.loadRuns(); this.loadKey(); },
+      async loadKey() {
+        const box = document.getElementById('keyHealth');
+        const esc = v => AdminLayout.esc(v == null ? '' : String(v));
+        try {
+          const d = (await AdminAPI.get('/encryption-health')).data;
+          if (!d) { box.innerHTML = '<div style="color:var(--admin-danger);padding:16px">ไม่ได้รับผลตรวจ</div>'; return; }
+          const job = (j, name) => !j ? `<div>${esc(name)}: ยังไม่มีผลรัน</div>`
+            : `<div>${esc(name)}: ${new Date(j.finishedAt).toLocaleString('th-TH')} — ${j.success ? '✓' : '✗'} ${esc(j.message)}</div>`;
+          const cols = (d.secrets.columns || []).filter(c => Object.keys(c.states).some(k => k !== 'Current' && k !== 'Empty'));
+          box.innerHTML = `<div style="padding:12px 16px;font-size:13px;line-height:1.7">
+              <div>ลายนิ้วมือคีย์เครื่องนี้ <code>${esc(d.key.current)}</code> · ที่ระบบบันทึก <code>${esc(d.key.stored || '-')}</code> · ผล <b>${esc(d.key.verdict)}</b> · คีย์เดิมในห่วงโซ่ ${d.key.previousKeyCount} ตัว</div>
+              ${d.key.adminMessage ? `<div style="color:#b91c1c;margin:6px 0">${esc(d.key.adminMessage)}</div>` : ''}
+              ${(d.key.instances || []).length ? `<div style="font-size:12px;margin:4px 0">เครื่องที่รายงานคีย์ (15 นาทีล่าสุด = ยังทำงาน):<br>${d.key.instances.map(i =>
+                `<code>${esc(i.fingerprint)}</code> ${esc(i.instanceId)} · ${new Date(i.seenAt).toLocaleString('th-TH')}${i.recent ? '' : ' (เงียบ)'}${i.isStored ? ' · ✓ คีย์ที่ระบบบันทึก' : ''}`
+                + (d.key.needsAdmin && !i.isStored ? ` <button class="btn-secondary" style="font-size:11px" data-fp="${esc(i.fingerprint)}" onclick="Page.acceptKey(this)">ยืนยันลายนิ้วมือนี้</button>` : '')).join('<br>')}</div>` : ''}
+              <div>ความลับทุกบริษัท: ตรวจ ${d.secrets.scanned} ค่า · ใช้ไม่ได้ ${d.secrets.unusable} · ยังอยู่บนคีย์เดิม ${d.secrets.legacyKeyRemaining} · รอห่อ enc1 ${d.secrets.pendingWrap}</div>
+              ${cols.length ? `<div style="font-size:12px;color:#64748b">${cols.map(c => esc(c.label) + ': ' + Object.entries(c.states).map(([k, v]) => esc(k) + '=' + v).join(' ')).join('<br>')}</div>` : ''}
+              ${job(d.secretJob, 'งานย้ายคีย์ความลับ')}${job(d.piiJob, 'งานย้ายคีย์ PII')}
+              <div style="margin-top:6px;color:${d.previousKeyRemovable ? '#16a34a' : '#92400e'}">${esc(d.previousKeyRemovableText)}</div>
+              <div style="font-size:12px;color:#94a3b8">ขั้นตอนหมุนคีย์: ${esc(d.runbook)}</div></div>`;
+        } catch (e) { box.innerHTML = `<div style="color:var(--admin-danger);padding:16px">${AdminLayout.esc(e.message)}</div>`; }
+      },
+      async acceptKey(btn) {
+        // ฝ่ายค้าน MED-1: ยืนยัน "ลายนิ้วมือที่เลือก" — เซิร์ฟเวอร์ปฏิเสธ (409) ถ้าเครื่องที่รับคำขอไม่ได้ใช้คีย์นั้น
+        const fingerprint = btn.dataset.fp;
+        const reason = prompt('ยืนยันว่าลายนิ้วมือ ' + fingerprint + ' คือคีย์ที่ถูก (ตรวจ ENCRYPTION_KEY ทุกเครื่องแล้ว) — ระบุเหตุผล (บันทึกลงประวัติการตรวจสอบ)');
+        if (!reason) return;
+        btn.disabled = true;
+        try { const r = await AdminAPI.post('/encryption-health/accept-fingerprint', { fingerprint, reason }); alert(r.message || 'บันทึกแล้ว'); this.loadKey(); }
+        catch (e) { alert(e.message); btn.disabled = false; }
+      },
       async loadRuns() {
         try {
           const res = await AdminAPI.jobRuns(50);

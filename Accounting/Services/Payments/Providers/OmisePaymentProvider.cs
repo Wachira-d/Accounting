@@ -115,15 +115,15 @@ public class OmisePaymentProvider : IPaymentProvider
     {
         var raw = cfg.Mode == PaymentProviderMode.Live
             ? cfg.LiveSecretKeyProtected : cfg.TestSecretKeyProtected;
-        var key = _secrets.Unprotect(raw);
-        if (string.IsNullOrWhiteSpace(key))
+        // รอบ 275 แพ็ก A (T4 S2): แยก "ยังไม่ได้ตั้ง" กับ "ตั้งไว้แต่ถอดไม่ได้ (คีย์เข้ารหัสถูกหมุน)" — เดิมบอก "ยังไม่ได้ตั้งค่า" ทั้งสองกรณี (เหตุไม่ตรง · F2 ข้อ 7) ·
+        // คง InvalidOperationException (ผู้เรียกในไฟล์นี้/settlement/auto-charge จับชนิดนี้เป็นเหตุปฏิเสธ — ข้อความไทยถึงผู้ใช้)
+        var label = cfg.Mode == PaymentProviderMode.Live ? " secret key สำหรับโหมดใช้งานจริง" : " secret key สำหรับโหมดทดสอบ";
+        var opened = SecretUse.Open(_secrets, label, raw);
+        if (!opened.Ok || string.IsNullOrWhiteSpace(opened.Value))
             // fail loud: คีย์ว่างแปลว่ายังตั้งค่าไม่เสร็จ — ถ้าปล่อยผ่าน ผู้ใช้จะเห็นแค่
             // "จ่ายไม่สำเร็จ" โดยไม่รู้ว่าต้องไปแก้ที่ไหน
-            throw new InvalidOperationException(
-                cfg.Mode == PaymentProviderMode.Live
-                    ? "ยังไม่ได้ตั้งค่า secret key สำหรับโหมดใช้งานจริง"
-                    : "ยังไม่ได้ตั้งค่า secret key สำหรับโหมดทดสอบ");
-        return key;
+            throw new InvalidOperationException(opened.Problem ?? SecretUse.NotConfiguredText(label));
+        return opened.Value!;
     }
 
     /// <summary>public key ที่ปลอดภัยจะส่งให้เบราว์เซอร์ — ไม่ผ่าน protector

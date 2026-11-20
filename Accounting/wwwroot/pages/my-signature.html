@@ -30,6 +30,30 @@
         (ใบกำกับภาษี / ใบเสร็จ / ใบสำคัญจ่าย ฯลฯ) เป็นการตั้งค่าส่วนตัวของคุณเอง — ทุกคนแก้ของตัวเองได้ ไม่ต้องมีสิทธิ์ผู้ดูแล</p>
       </div>
 
+      <!-- รอบ 278: กุญแจผูกช่อง "ผู้จัดทำ" กับตัวฉัน ต่อบริษัท — กติกาทั้งหมดอยู่ที่เซิร์ฟเวอร์ (Helpers/SignatureSlotIdentity) หน้านี้แสดงอย่างเดียว -->
+      <div class="card" id="signerIdentityCard" style="margin-bottom:16px">
+        <h3 style="font-weight:600;margin-bottom:8px">ช่องผู้จัดทำจากระบบภายนอก (บริษัทนี้)</h3>
+        <div class="form-group">
+          <label class="form-label" for="sigAliases">ชื่อเล่นที่ระบบภายนอกใช้เรียกฉัน</label>
+          <textarea id="sigAliases" class="form-input" rows="2" placeholder="บรรทัดละหนึ่งชื่อ เช่น K.นัท"></textarea>
+          <div id="sigAliasStatus" style="font-size:12px;margin-top:4px"></div>
+          <p style="font-size:12px;color:#64748b;margin-top:4px">เอกสารที่ส่งเข้ามาทาง API ระบุผู้จัดทำด้วยชื่อนี้ (ตรงทั้งคำ) และฉันเป็นผู้มีอำนาจลงนาม ⇒ ระบบพิมพ์ชื่อตามโปรไฟล์ของฉันทั้งสองช่อง
+            · ชื่อเล่นใหม่<b>มีผลเมื่อเจ้าของบริษัทอนุมัติ</b> และใช้กับเอกสารที่ออกหลังจากนั้นเท่านั้น · ห้ามใช้ชื่อของคนอื่นหรือคำกลาง (บัญชี/แอดมิน/ฝ่าย…)</p>
+          <p id="sigPayloadImageNotice" style="font-size:12px;color:#92400e;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;padding:6px 8px;margin-top:6px">
+            ⚠️ เมื่อชื่อเล่นได้รับอนุมัติ หรือเปิด "อนุญาตให้ระบบภายนอกระบุฉันเป็นผู้จัดทำ" ระบบ<b>อาจใช้รูปลายเซ็นที่ระบบภายนอกส่งมาแทนคุณ</b>
+            ทั้งช่องผู้จัดทำและช่องผู้มีอำนาจลงนาม ในเอกสารที่คุณยังไม่มีรูปลายเซ็นในโปรไฟล์ · ถ้าไม่ต้องการ ให้อัปโหลดรูปลายเซ็นของคุณเองด้านล่าง
+            (รูปในโปรไฟล์จะถูกใช้เป็นหลักทั้งสองช่องเสมอ)</p>
+        </div>
+        <label style="display:flex;gap:8px;align-items:center;font-size:14px">
+          <input type="checkbox" id="sigAllowBinding" /> อนุญาตให้ระบบภายนอกระบุฉันเป็นผู้จัดทำ (preparerUserId / preparerEmail)
+        </label>
+        <div style="margin-top:8px"><button class="btn btn-primary" type="button" onclick="Page.saveSignerIdentity()">บันทึกส่วนนี้</button></div>
+        <div id="sigPendingBox" style="display:none;margin-top:16px">
+          <h4 style="font-weight:600">ชื่อเล่นที่รออนุมัติ (เจ้าของบริษัท)</h4>
+          <div id="sigPendingList"></div>
+        </div>
+      </div>
+
       <div class="card">
         <div class="form-group">
           <label class="form-label">ชื่อ-นามสกุล (ใต้ลายเซ็น)</label>
@@ -39,7 +63,6 @@
           <label class="form-label">ตำแหน่ง</label>
           <input id="sigTitle" type="text" class="form-input" placeholder="เช่น ผู้จัดการ / กรรมการ" />
         </div>
-
         <!-- วิธีที่ 1: วาดลายเซ็นบนระบบ -->
         <div class="form-group">
           <label class="form-label">✍️ วิธีที่ 1 — วาดลายเซ็นบนระบบ (เมาส์ / นิ้ว / ปากกาสไตลัส)</label>
@@ -87,8 +110,50 @@
         if (!Layout.init('my-signature')) return;
         Layout.setTitle('ลายเซ็นของฉัน');
         await this.loadSignature();
+        await this.loadSignerIdentity();   // รอบ 278
       },
 
+      async loadSignerIdentity() {
+        const cid = Layout.getCompanyId(); if (!cid) { document.getElementById('signerIdentityCard').style.display = 'none'; return; }
+        try {
+          const j = await API.get(`/api/companies/${cid}/signer-identity/me`);
+          if (j && j.success) this._renderSignerIdentity(j.data || {});
+        } catch (e) { document.getElementById('sigAliasStatus').textContent = e.message || 'โหลดไม่สำเร็จ'; }
+      },
+      _renderSignerIdentity(d) {
+        const list = d.aliases || [];
+        document.getElementById('sigAliases').value = list.map(a => a.alias).join('\n');
+        document.getElementById('sigAliasStatus').innerHTML = list.map(a =>
+          `<span style="margin-right:8px">${Layout.esc(a.alias)} — ${a.status === 'approved' ? '✅ อนุมัติแล้ว' : '⏳ รอเจ้าของอนุมัติ'}</span>`).join('');
+        document.getElementById('sigAllowBinding').checked = !!d.allowExternalPreparerBinding;
+        const pending = d.pending || [];
+        document.getElementById('sigPendingBox').style.display = d.isOwner && pending.length ? 'block' : 'none';
+        document.getElementById('sigPendingList').innerHTML = pending.map(p =>
+          `<div style="display:flex;gap:8px;align-items:center;margin:4px 0">${Layout.esc(p.userName)}: <b>${Layout.esc(p.alias)}</b>
+            <button class="btn btn-primary" type="button" onclick="Page.decideAlias('${Layout.jsArg(p.id)}', true)">อนุมัติ</button>
+            <button class="btn" type="button" onclick="Page.decideAlias('${Layout.jsArg(p.id)}', false)">ปฏิเสธ</button></div>`).join('');
+      },
+      async saveSignerIdentity() {
+        const cid = Layout.getCompanyId(); if (!cid) return;
+        try {
+          // "" = ล้างรายชื่อ (ห้าม || null — ล้างแล้วบันทึกต้องมีผล)
+          const j = await API.put(`/api/companies/${cid}/signer-identity/me`, {
+            aliases: document.getElementById('sigAliases').value,
+            allowExternalPreparerBinding: document.getElementById('sigAllowBinding').checked });
+          if (!j || !j.success) throw new Error((j && j.message) || 'บันทึกไม่สำเร็จ');
+          this._renderSignerIdentity(j.data || {});
+          Layout.toast(j.message || 'บันทึกแล้ว');
+        } catch (e) { Layout.toast(e.message || 'บันทึกไม่สำเร็จ', 'error'); }
+      },
+      async decideAlias(id, approve) {
+        const cid = Layout.getCompanyId(); if (!cid) return;
+        try {
+          const j = await API.post(`/api/companies/${cid}/signer-identity/aliases/${id}/${approve ? 'approve' : 'reject'}`, {});
+          if (!j || !j.success) throw new Error((j && j.message) || 'ทำรายการไม่สำเร็จ');
+          Layout.toast(j.message || 'เรียบร้อย');
+          await this.loadSignerIdentity();
+        } catch (e) { Layout.toast(e.message || 'ทำรายการไม่สำเร็จ', 'error'); }
+      },
       async loadSignature() {
         try {
           const j = await API.getProfile();

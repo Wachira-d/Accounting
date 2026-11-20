@@ -290,7 +290,7 @@ public class SubmitOnceRound217DbTests
 
     private static async Task EnsureIdempotencyTableAsync(AccountingDbContext db)
     {
-        foreach (var sql in SubmitOnceMigration.Statements()) await db.Database.ExecuteSqlRawAsync(sql);
+        await DbTestDatabase.ApplyDdlAsync(db, SubmitOnceMigration.Statements());
     }
 
     private sealed record HttpResult(int Status, string Body, string? IdemStatus, IReadOnlyList<string> Logs);

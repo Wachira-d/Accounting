@@ -109,7 +109,21 @@ public class CmsWebhookController : ControllerBase
         var matched = false;
         foreach (var gw in gateways)
         {
-            var secret = _secretProtector?.Unprotect(gw.WebhookSecret!) ?? gw.WebhookSecret!;
+            // รอบ 275 แพ็ก A (T4 M-5 · S4): เดิม Unprotect คืน "" เมื่อถอดไม่ได้ ⇒ VerifyHmac(body, sig, "") = ตรวจลายเซ็นด้วยกุญแจว่าง (fail-open บนทางเข้าสาธารณะ) ·
+            // ตอนนี้: ตั้งไว้แต่ใช้ไม่ได้ ⇒ ข้ามช่องทางนี้ + LogError (ผู้ดูแลเห็นเหตุ) · ห้ามตรวจด้วยกุญแจว่างทุกกรณี
+            string? secret = gw.WebhookSecret;
+            if (_secretProtector != null)
+            {
+                var opened = SecretUse.Open(_secretProtector, "Webhook Secret ของช่องทางชำระบนเว็บไซต์", gw.WebhookSecret);
+                if (!opened.Ok)
+                {
+                    if (opened.Unusable)
+                        _logger.LogError("Webhook ช่องทางชำระ {GatewayId} ของเว็บ {SiteId}: {Problem}", gw.Id, siteId, opened.Problem);
+                    continue;
+                }
+                secret = opened.Value;
+            }
+            if (string.IsNullOrEmpty(secret)) continue;
             if (VerifyHmac(body, signature, secret))
             { matched = true; break; }
         }

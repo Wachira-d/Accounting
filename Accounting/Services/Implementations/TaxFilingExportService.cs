@@ -500,7 +500,7 @@ public class TaxFilingExportService : ITaxFilingExportService
 
         int seq = 1;
         var missingSsn = 0;
-        Accounting.Helpers.SsoInsuredNumber.ThrowIfUnusable("สปส.1-10", allDetails.Select(d => d.Employee).Select(e => (e.EmployeeCode, (string?)$"{e.FirstNameTh} {e.LastNameTh}".Trim(), e.CitizenId)));   // รอบ 274 LOW-5
+        Accounting.Helpers.SsoInsuredNumber.ThrowIfUnusable("สปส.1-10", allDetails.Select(d => d.Employee).Select(e => (e.EmployeeCode, (string?)$"{e.FirstNameTh} {e.LastNameTh}".Trim(), e.CitizenId, e.SocialSecurityNumber)));   // รอบ 274 LOW-5
         foreach (var detail in allDetails)
         {
             var emp = detail.Employee;
@@ -592,7 +592,7 @@ public class TaxFilingExportService : ITaxFilingExportService
         var issues = new List<string>();
         var rows = new List<Dictionary<string, object?>>();
         var rowNo = 1; // แถวข้อมูลใน Excel เริ่มที่ 2 (แถว 1 = หัวตาราง)
-        Accounting.Helpers.SsoInsuredNumber.ThrowIfUnusable("สปส.1-10 (Excel)", allDetails.Select(d => d.Employee).Select(e => (e.EmployeeCode, (string?)$"{e.FirstNameTh} {e.LastNameTh}".Trim(), e.CitizenId)));   // รอบ 274 LOW-5
+        Accounting.Helpers.SsoInsuredNumber.ThrowIfUnusable("สปส.1-10 (Excel)", allDetails.Select(d => d.Employee).Select(e => (e.EmployeeCode, (string?)$"{e.FirstNameTh} {e.LastNameTh}".Trim(), e.CitizenId, e.SocialSecurityNumber)));   // รอบ 274 LOW-5
         foreach (var d in allDetails)
         {
             rowNo++;
@@ -679,7 +679,7 @@ public class TaxFilingExportService : ITaxFilingExportService
         var branchSeq = company.BranchCode ?? "00000";
         sb.AppendLine($"H|{company.TaxId}|{branchSeq}|{company.Name}|{period}|{newEmployees.Count}");
         int seq = 1;
-        Accounting.Helpers.SsoInsuredNumber.ThrowIfUnusable("สปส.1-03", newEmployees.Select(e => (e.EmployeeCode, (string?)$"{e.FirstNameTh} {e.LastNameTh}".Trim(), e.CitizenId)));   // รอบ 274 LOW-5
+        Accounting.Helpers.SsoInsuredNumber.ThrowIfUnusable("สปส.1-03", newEmployees.Select(e => (e.EmployeeCode, (string?)$"{e.FirstNameTh} {e.LastNameTh}".Trim(), e.CitizenId, e.SocialSecurityNumber)));   // รอบ 274 LOW-5
         foreach (var emp in newEmployees)
         {
             sb.AppendLine($"D|{seq++}|{Accounting.Helpers.SsoInsuredNumber.CitizenIdForFile(emp.CitizenId)}|{TitleCode(emp.TitleTh)}|{emp.FirstNameTh}|{emp.LastNameTh}" +
@@ -724,7 +724,7 @@ public class TaxFilingExportService : ITaxFilingExportService
         sb.AppendLine($"H|{company.TaxId}|{branchSeq}|{company.Name}|{period}|{leavers.Count}");
         int seq = 1;
         var missingSsn = 0;
-        Accounting.Helpers.SsoInsuredNumber.ThrowIfUnusable("สปส.6-09", leavers.Select(e => (e.EmployeeCode, (string?)$"{e.FirstNameTh} {e.LastNameTh}".Trim(), e.CitizenId)));   // รอบ 274 LOW-5
+        Accounting.Helpers.SsoInsuredNumber.ThrowIfUnusable("สปส.6-09", leavers.Select(e => (e.EmployeeCode, (string?)$"{e.FirstNameTh} {e.LastNameTh}".Trim(), e.CitizenId, e.SocialSecurityNumber)));   // รอบ 274 LOW-5
         foreach (var emp in leavers)
         {
             var (ssn, _) = Accounting.Helpers.SsoInsuredNumber.Resolve(emp.SocialSecurityNumber, emp.CitizenId);
@@ -764,7 +764,7 @@ public class TaxFilingExportService : ITaxFilingExportService
         var rows = new List<PndTextFileFormat.Row>();
         foreach (var cert in certs.OrderBy(c => c.CertificateNumber))
         {
-            var contact = cert.PayeeContact;
+            var contact = Accounting.Helpers.WhtPayeeSnapshot.Of(cert);   // รอบ 275 แพ็ก B (275-B-6 (ข)): ตัวตน ณ วันออก
             // เงื่อนไขการหักภาษี (Col11): 1 = หัก ณ ที่จ่าย · 2 = ออกให้ตลอดไป · 3 = ออกให้ครั้งเดียว — ตัวเดียว WhtGrossUp.FilingCondition
             // (รอบ 204: เดิม `is 2 ? 2 : 1` ⇒ ใบ "ออกให้ครั้งเดียว" ยื่นเป็นเงื่อนไข 1)
             var condition = Accounting.Helpers.WhtGrossUp.FilingCondition(cert.CertificateType);
@@ -923,6 +923,7 @@ public class TaxFilingExportService : ITaxFilingExportService
         var pnd91Blocked = new List<string>();
         byEmployee = byEmployee.Where(x =>
         {
+            // รอบ 275 แพ็ก E ฝ่ายค้าน LOW (ช): ภ.ง.ด.91 ตั้งใจใช้ Inspect ไม่ใช่ ForFiling — แบบ 91 เป็นแบบของผู้มีเงินได้เอง (ไม่ใช่การหัก ณ ที่จ่าย/50 ทวิ) · การรับทราบ "ไม่มีเลข" ของคำตัดสิน 4.2 ใช้เฉพาะ ภ.ง.ด.1 · เลขใช้ไม่ได้/ไม่มี = กันแถวพร้อมเหตุเหมือนเดิม
             var id = EmployeeTaxIdentity.Inspect(x.Employee.TaxId, x.Employee.CitizenId);
             if (id.Problem is not (TaxIdProblem.Undecryptable or TaxIdProblem.Invalid)) return true;
             pnd91Blocked.Add($"{x.Employee.EmployeeCode} {x.Employee.FirstNameTh} {x.Employee.LastNameTh} — {id.Reason}");
@@ -1110,7 +1111,7 @@ public class TaxFilingExportService : ITaxFilingExportService
             .ToList();
         if (flagged.Count == 0) return "";
         var samples = flagged.Take(3)
-            .Select(x => $"{x.Cert.PayeeContact?.Name ?? x.Cert.CertificateNumber} {x.Line.TaxRate:0.##}%"
+            .Select(x => $"{Accounting.Helpers.WhtPayeeSnapshot.Of(x.Cert)?.Name ?? x.Cert.CertificateNumber} {x.Line.TaxRate:0.##}%"
                 + (x.Decision.RatePercent is decimal r ? $" (ม.70 {r:0.##}%)" : $" ({x.Decision.RuleCode})"))
             .ToList();
         return $" · ⚠️ {flagged.Count} บรรทัดอัตราไม่ตรงตัวตัดสิน ม.70 — " + string.Join(", ", samples)

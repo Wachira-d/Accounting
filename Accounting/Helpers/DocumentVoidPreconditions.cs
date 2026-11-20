@@ -455,7 +455,9 @@ public static class DocumentVoidPreconditions
 
         var first = f.LivePayments.OrderBy(p => p.PaymentDate).ThenBy(p => p.PaymentId).First();
         var singleFull = f.LivePayments.Count == 1 && !first.HasAllocations && f.SourceFullyPaid;
-        var carries = SettlementReceiptPolicy.CarriesTaxInvoiceRole(f.SourceType, f.SourceVat, singleFull, liveVatReceiptExists: false)
+        // รอบ 275 แพ็ก C (ฝ่ายค้าน MED-4): ผู้เรียกส่งผลของตัวตัดสินเดียว (งวดงานบริการ = ใบกำกับรายงวด) · ไม่ส่ง = กติกาเดิม
+        var carries = (f.FirstPaymentPlan?.CarriesRole
+                ?? SettlementReceiptPolicy.CarriesTaxInvoiceRole(f.SourceType, f.SourceVat, singleFull, liveVatReceiptExists: false))
             && first.ReceiptVat <= 0.005m;
         // รอบ 200 ทีม V1H (คำตัดสินข้อ 52): การขายที่ต้องมีใบกำกับ (ใบแจ้งหนี้ถือ VAT) แต่การรับชำระที่ยังมีผลไม่ใช่ "รับครบงวดเดียว" (หลายงวด ·
         // บางส่วน · รับรวมกับเอกสารอื่น) ⇒ ใบกำกับต้องออก<b>รายงวด</b>ตามจุดความรับผิด §78/1 ซึ่งระบบยังออกอัตโนมัติไม่ได้ (📋 backlog) — เดิมยกเลิกใบเสร็จแล้ว
@@ -668,8 +670,11 @@ public sealed record EtaxCancelLivePayment(Guid PaymentId, DateTime PaymentDate,
 /// <param name="OtherLiveVatReceipt">มีใบเสร็จถือ VAT อื่น (นอกจากใบที่กำลังยกเลิก) ที่ยังมีผล</param>
 /// <param name="ReclassPeriodLock">เหตุที่เดือนของ JE ย้ายภาษีขายปิด/ยื่นแล้ว (null = เปิด)</param>
 /// <param name="FirstPaymentPeriodLock">เหตุที่เดือนของวันรับเงินครั้งแรกที่ยังมีผลปิด/ยื่นแล้ว (null = เปิด/ไม่มี)</param>
+/// <param name="FirstPaymentPlan">รอบ 275 แพ็ก C (ฝ่ายค้าน MED-4): ผลของตัวตัดสินเดียว <see cref="SettlementTaxInvoiceRole"/> ของการรับที่ยังมีผลครั้งแรก
+/// (ไม่นับใบที่กำลังยกเลิก) — ไม่ส่ง = กติกาเดิม (รับครบงวดเดียว)</param>
 public sealed record EtaxCancelFollowUpFacts(DocumentType SourceType, decimal SourceVat, bool SourceFullyPaid, DateTime? OutputVatDueAt,
-    bool OtherLiveVatReceipt, IReadOnlyList<EtaxCancelLivePayment> LivePayments, string? ReclassPeriodLock, string? FirstPaymentPeriodLock);
+    bool OtherLiveVatReceipt, IReadOnlyList<EtaxCancelLivePayment> LivePayments, string? ReclassPeriodLock, string? FirstPaymentPeriodLock,
+    SettlementTaxInvoiceRole.Decision? FirstPaymentPlan = null);
 
 /// <param name="UndoReclass">ถอยภาษีขายถึงกำหนด (ลงวันที่ของ JE ย้ายภาษีเอง)</param>
 /// <param name="ReclassAt">ย้ายภาษีขายถึงกำหนดใหม่ ณ วันรับเงินนี้ (null = ไม่ย้าย)</param>

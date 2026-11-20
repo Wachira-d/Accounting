@@ -7,6 +7,11 @@ namespace Accounting.Models.Entities;
 /// </summary>
 public class Document : TenantEntity
 {
+    /// <summary>รอบ 276 (ฝ่ายค้าน LOW-10) — ผู้สร้างเป็น id ผู้ใช้ (ไม่ใช่ข้อความ) · ประทับตอนบันทึกครั้งแรกที่ <c>AccountingDbContext.StampDocumentCreators</c>
+    /// จาก <c>CreatedBy</c> (id/อีเมลสมาชิก) หรือผู้ใช้ของคำขอที่ถูกจำกัด (เอกสารที่ระบบสร้างในคำขอของเขา เช่น OCR) · null = ระบบสร้าง/ไม่รู้ผู้สร้าง ·
+    /// ผู้อ่าน: ตัวกรองแถว "เห็นเฉพาะของตัวเอง" (ตัวหลัก — ข้อความเป็นทางสำรองของแถวเก่า) · Round276Migration เติมแถวเก่าที่จับคู่ได้แน่นอน</summary>
+    public Guid? CreatedByUserId { get; set; }
+
     public string DocumentNumber { get; set; } = null!;    // running number
     public DocumentType DocumentType { get; set; }
     public DocumentStatus Status { get; set; } = DocumentStatus.Draft;
@@ -376,6 +381,9 @@ public class Document : TenantEntity
     public bool IsSettlementReceipt { get; set; }
     /// <summary>Payment ต้นทางที่ออกใบเสร็จหลักฐานนี้ (คู่กับ IsSettlementReceipt).</summary>
     public Guid? SettlementPaymentId { get; set; }
+    /// <summary>รอบ 275 แพ็ก C (คำตัดสิน 275-C-10): ใบเสร็จที่ทำหน้าที่ใบกำกับภาษี ณ วันรับเงินของใบแจ้งหนี้รุ่นเก่าที่ภาษีขายทั้งใบ<b>รายงานแล้วที่ใบแจ้งหนี้</b>
+    /// ⇒ หลักฐานกระดาษเท่านั้น ไม่เป็นเจ้าของแถว ภ.พ.30/§87 (<c>OutputVatOwnership</c>) — ระบบตั้งเอง (<c>SettlementTaxInvoiceRole.Decision.VatReportedOnSource</c>)</summary>
+    public bool VatReportedOnSource { get; set; }
 
     /// <summary>"รับรู้ของกำพร้า" (รอบ 200 · DECISIONS ข้อ 10): เอกสารที่การลงบัญชีรอบโอนสร้างให้รอบที่ถูกยกเลิกไปแล้ว และ<b>ยกเลิกไม่ได้จริง</b>
     /// (e-Tax ตอบรับ · รายงานล็อก · 50 ทวิ ยื่นแล้ว · ใบที่อ้างมันยกเลิกไม่ได้) — ผู้มีสิทธิ์ลงบัญชีรอบโอนรับรู้พร้อมเหตุผลแล้ว ⇒ ไม่บล็อกการลงบัญชี
@@ -802,6 +810,19 @@ public class Document : TenantEntity
     /// URI or raw base64. Rendered in the preparer slot when present.</summary>
     public string? PreparerSignatureBase64 { get; set; }
 
+    /// <summary>รอบ 278: ผู้ใช้ในระบบที่ผู้เรียก API ระบุว่าเป็น "ผู้จัดทำ" ตัวจริงของใบนี้ (<c>preparerUserId</c>/<c>preparerEmail</c> ใน payload ·
+    /// ตรวจว่าเป็นสมาชิกบริษัทตอนรับ) — กุญแจให้ <c>Helpers/SignatureSlotIdentity</c> ตัดสินว่าช่องผู้จัดทำกับช่องผู้มีอำนาจลงนามเป็นคนเดียวกัน ·
+    /// null = ไม่ระบุ (ใช้กุญแจอื่น: ผู้ใช้เดียวกัน / ชื่ออื่นที่ผู้ใช้ประกาศในโปรไฟล์)</summary>
+    public Guid? PreparerUserId { get; set; }
+
+    /// <summary>รอบ 278 (ฝ่ายค้าน HIGH-3): เวลาที่ผู้ลงนามถูกแช่แข็ง (เอกสารเข้าสถานะออกแล้วครั้งแรก — ประทับใน <c>AccountingDbContext.StampSignerFreeze</c>
+    /// ทุกทางเข้า) · null บนใบที่ออกแล้ว = ไม่รวมช่อง</summary>
+    public DateTime? SignersFrozenAt { get; set; }
+
+    /// <summary>รอบ 278: ผลแช่แข็งการรวมช่องผู้จัดทำ ↔ ผู้มีอำนาจลงนาม (<c>SignatureSlotIdentity.Snapshot</c> — ผู้ใช้ที่ผูก · ชนิดกุญแจ · ชื่อ/ตำแหน่งตามโปรไฟล์วันนั้น ·
+    /// RuleCode) · ใบที่ออกก่อนรอบนี้ = snapshot ว่าง (ไม่รวม — Round278Migration) · เปลี่ยนได้ทางเดียว: ปุ่มปรับผู้ลงนาม (เจ้าของ · เหตุผล · audit)</summary>
+    public string? SignerSnapshotJson { get; set; }
+
     // ===== Tax Point (จุดความรับผิดในการเสีย VAT) §78 / §78/1 / §78/2 =====
     /// <summary>วันส่งมอบสินค้า (input ของ tax point §78 ขายสินค้า). Null =
     /// ยังไม่ส่งมอบ/ไม่ระบุ.</summary>
@@ -1132,6 +1153,11 @@ public class Contact : TenantEntity
     /// จึงได้รับยกเว้น hard-block §86/4 (เลข 13 หลัก/สาขา) ตอนอนุมัติ.</summary>
     public bool IsWalkInCustomer { get; set; }
     public bool IsActive { get; set; } = true;
+    /// <summary>รอบ 275 แพ็ก E ฝ่ายค้าน MED-2 (คำตัดสิน 4.2): ผู้ทำบัญชีรับทราบรายคนว่าผู้รับเงินได้ใน ภ.ง.ด.1 รายนี้ไม่มีเลขประจำตัว 13 หลัก (เช่น ต่างชาติ) ·
+    /// มีผลเฉพาะเมื่อไม่มีเลขเลย · ได้เลขที่ถูกต้องภายหลัง ⇒ ระบบล้างค่านี้เอง (SaveChanges) · ทางเขียนเดียว <c>Helpers/EmployeeTaxIdWaiver</c> (audit)</summary>
+    public DateTime? TaxIdWaiverAcknowledgedAt { get; set; }
+    public Guid? TaxIdWaiverAcknowledgedBy { get; set; }
+    public string? TaxIdWaiverReason { get; set; }
 
     // ───── Per-contact GL account overrides ─────
     // Default at the system level is the first level-4+ account starting

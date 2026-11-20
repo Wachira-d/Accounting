@@ -52,8 +52,7 @@ public class NotificationService : INotificationService
 
     public async Task<List<NotificationResponse>> GetUserNotificationsAsync(Guid userId, int limit = 50)
     {
-        var notifications = await _db.Set<Notification>()
-            .Where(n => n.UserId == userId)
+        var notifications = await (await VisibleAsync(userId))
             .OrderByDescending(n => n.CreatedAt)
             .Take(limit)
             .ToListAsync();
@@ -62,10 +61,27 @@ public class NotificationService : INotificationService
             n.Id, n.Type, n.Title, n.Message, n.ActionUrl, n.IsRead, n.CreatedAt, Accounting.Helpers.NotificationLink.InternalPath(n.ActionUrl))).ToList();
     }
 
+    /// <summary>รอบ 276 (ฝ่ายค้าน MED-3): แจ้งเตือนของผู้ใช้ — บริษัทที่เขา "เห็นเฉพาะเอกสารที่ตัวเองสร้าง" เหลือเฉพาะเรื่องของเอกสารที่เขาสร้าง
+    /// (แถวเก่าที่ส่งก่อนตั้งค่าจำกัดก็ถูกกรอง) · ตัวตัดสินบริษัท <c>DocumentRestrictionGuard.OwnOnlyCompanyIdsAsync</c></summary>
+    private async Task<IQueryable<Notification>> VisibleAsync(Guid userId)
+    {
+        var q = _db.Set<Notification>().Where(n => n.UserId == userId);
+        // รอบ 277 (ฝ่ายค้าน): บริษัทที่ผู้ใช้ยังรอสิทธิ์ — ไม่แสดงแจ้งเตือนของบริษัทนั้น (รวมแถวเก่าที่ค้าง/ส่งมาจากทางอื่นที่ไม่ผ่าน NotificationEngine)
+        var pending = await Accounting.Helpers.CompanyMembership.PendingCompanyIdsAsync(_db, userId);
+        if (pending.Count > 0) q = q.Where(n => n.CompanyId == null || !pending.Contains(n.CompanyId.Value));
+        var ownOnly = await Accounting.Helpers.DocumentRestrictionGuard.OwnOnlyCompanyIdsAsync(_db, userId);
+        if (ownOnly.Count == 0) return q;
+        var uid = userId.ToString();
+        return q.Where(n => n.CompanyId == null || !ownOnly.Contains(n.CompanyId.Value)
+            || (n.EntityType == "Document" && _db.Documents.IgnoreQueryFilters().Any(d => d.Id == n.EntityId && d.CompanyId == n.CompanyId
+                && (d.CreatedByUserId == userId || (d.CreatedByUserId == null && d.CreatedBy == uid)))));
+    }
+
     public async Task<NotificationCountResponse> GetCountAsync(Guid userId)
     {
-        var total = await _db.Set<Notification>().CountAsync(n => n.UserId == userId);
-        var unread = await _db.Set<Notification>().CountAsync(n => n.UserId == userId && !n.IsRead);
+        var visible = await VisibleAsync(userId);
+        var total = await visible.CountAsync();
+        var unread = await visible.CountAsync(n => !n.IsRead);
         return new NotificationCountResponse(total, unread);
     }
 

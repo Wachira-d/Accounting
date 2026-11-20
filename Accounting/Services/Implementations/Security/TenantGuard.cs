@@ -64,8 +64,8 @@ public class TenantGuard : ITenantGuard
             return new TenantCheckResult(cached, cached ? null : "ไม่ใช่สมาชิกของบริษัทนี้");
 
         // ตรวจ CompanyUsers — ตารางที่ระบบใช้ track membership อยู่แล้ว
-        var isMember = await _db.Set<Models.Entities.CompanyUser>().AsNoTracking()
-            .AnyAsync(cu => cu.CompanyId == companyId && cu.UserId == userId);
+        // รอบ 277: สมาชิกรอสิทธิ์ (AccessPending) ไม่ผ่าน — ตัวกรองเดียว CompanyMembership
+        var isMember = await Accounting.Helpers.CompanyMembership.ActiveRow(_db, companyId, userId).AsNoTracking().AnyAsync();
         _cache[key] = isMember;
         return new TenantCheckResult(isMember, isMember ? null : "user ไม่ใช่สมาชิกของ company นี้");
     }

@@ -53,6 +53,8 @@ public static class GovPaymentSlip
     };
 
     /// <summary>คำที่บอกว่าเป็นการชำระหน่วยงานรัฐ (ใช้แยก "ไม่รู้จัก" ออกจาก "ไม่ใช่สลิปรัฐ")</summary>
+    private const string WeakGovWord = "สมทบ";
+    private static readonly string[] BillLabels = { "Biller", "Comp Code", "Comp. Code", "Bill Payment", "จ่ายบิล", "ชำระบิล", "ชําระบิล" };
     private static readonly string[] GovWords = { "Revenue Department", "กรมสรรพากร", "สรรพากร", "Revenue Dept", "สำนักงานประกันสังคม", "Social Security", "ประกันสังคม", "สมทบ", "e-Payment ภาษี" };
 
     /// <param name="TaxId">Ref1 = เลขผู้เสียภาษี 13 หลัก (checksum ผ่านแล้ว) — เฉพาะ Identified</param>
@@ -75,7 +77,9 @@ public static class GovPaymentSlip
         var t = text ?? reading.Text ?? "";
         var bill = reading.Bill;
         var bank = PayerBank(reading, t);
-        var anyGovWord = GovWords.Any(w => Has(t, w));
+        // รอบ 275 แพ็ก D (L8): "สมทบ" คำเดียวพบในบันทึกช่วยจำของการโอนทั่วไปได้ ("เงินสมทบงานบุญ") ⇒ นับเป็นคำของรัฐเฉพาะเมื่ออยู่คู่ป้ายจ่ายบิล (Comp Code/Biller)
+        var anyGovWord = GovWords.Where(w => w != WeakGovWord).Any(w => Has(t, w))
+            || (Has(t, WeakGovWord) && (bill?.CompCode != null || BillLabels.Any(l => Has(t, l))));
         if (bill?.CompCode is string comp)
         {
             var byComp = Billers.Where(b => b.CompCode == comp).ToList();
@@ -105,6 +109,16 @@ public static class GovPaymentSlip
         return anyGovWord
             ? Unknown("สลิปนี้ดูเป็นการชำระหน่วยงานรัฐ แต่ไม่พบรหัสผู้รับชำระ (Comp Code) ที่อยู่ในตารางที่ยืนยันแล้ว")
             : new Result(Kind.NotGovernment, null, null, null, RuleCode, "ไม่ใช่สลิปชำระหน่วยงานรัฐที่รู้จัก");
+    }
+
+    /// <summary>รอบ 275 แพ็ก D (ฝ่ายค้าน MED-1): หน่วยงานที่ข้อความบนสลิปบ่งบอก — ใช้กับสลิปที่ระบุแถวผู้รับชำระไม่ได้ (เช่น สปส. ยังไม่มีแถว Auto)
+    /// เพื่อกันพนักงานลงสลิปหน่วยงานหนึ่งเป็นแบบของอีกหน่วยงาน · คำชื่อของแถวในตาราง (คำอ่อน "สมทบ" ต้องคู่ป้ายจ่ายบิล · L8) · ตรงหลายหน่วยงาน/ไม่ตรงเลย ⇒ null (ไม่รู้)</summary>
+    public static Agency? AgencyHint(OcrSlipText.Reading reading, string? text = null)
+    {
+        var t = text ?? reading.Text ?? "";
+        var billLabel = reading.Bill?.CompCode != null || BillLabels.Any(l => Has(t, l));
+        var hits = Billers.Where(b => b.NameWords.Any(w => w == WeakGovWord ? billLabel && Has(t, w) : Has(t, w))).Select(b => b.Agency).Distinct().ToList();
+        return hits.Count == 1 ? hits[0] : null;
     }
 
     private static Result Unknown(string reason) => new(Kind.UnknownGovernment, null, null, null, UnknownAgencyRuleCode, reason);

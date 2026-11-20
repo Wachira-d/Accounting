@@ -34,6 +34,8 @@ public static class OutputVatOwnership
     public const string RuleZeroVatNotTaxInvoice = "PP30-ZERO-VAT-NOT-TAX-INVOICE";
     /// <summary>รอบ 269 ชุดสอง M5 — ใบแจ้งหนี้ที่ถูกใบกำกับแทน<b>บางส่วน</b> (ใบกำกับที่ออกแล้วถือยอดยกเว้นน้อยกว่าใบแจ้งหนี้) ⇒ ใบแจ้งหนี้ยังถือยอดยกเว้นส่วนที่เหลือ</summary>
     public const string RuleSupersededExemptRemainder = "PP30-EXEMPT-REMAINDER-AFTER-SUPERSEDE";
+    /// <summary>รอบ 275 แพ็ก C (275-C-10) — ใบเสร็จที่ทำหน้าที่ใบกำกับของใบแจ้งหนี้ที่ภาษีขายทั้งใบรายงานแล้วที่ใบแจ้งหนี้ (ก่อนรอบ 275) = หลักฐานกระดาษ ไม่เป็นเจ้าของแถว</summary>
+    public const string RuleReportedOnSource = "OUT-VAT-REPORTED-ON-SOURCE";
 
     /// <summary>ใบนี้อยู่นอก ภ.พ.30 ทุกช่องทั้งสองฝั่งไหม (ตัวตัดสินเดียว — loop หลัก · ปุ่มดึง · ช่องยอดขาย/ซื้อ)</summary>
     public static bool IsOutsidePp30(Document d) => d.IsOpeningBalance;
@@ -59,7 +61,8 @@ public static class OutputVatOwnership
         decimal Gl21913Net,                // ยอด Cr−Dr บน 21913 ของ JE ที่ใบนี้เป็นต้นทาง
         bool IsOpeningBalance = false,     // รอบ 269 H1 — ใบยอดยกมา
         bool RelatedIsRollupBillingNote = false,    // รอบ 269 H2 — ใบอ้างเป็นใบวางบิลรวม (BillingNoteKind.IsRollup)
-        decimal? SupersedingExemptBase = null);     // รอบ 269 ชุดสอง M5 — ยอดยกเว้นรวมบนใบกำกับที่ออกแล้วซึ่งอ้างใบแจ้งหนี้นี้ (null = ไม่ถูกแทน/ไม่รู้)
+        decimal? SupersedingExemptBase = null,      // รอบ 269 ชุดสอง M5 — ยอดยกเว้นรวมบนใบกำกับที่ออกแล้วซึ่งอ้างใบแจ้งหนี้นี้ (null = ไม่ถูกแทน/ไม่รู้)
+        bool VatReportedOnSource = false);          // รอบ 275 แพ็ก C (275-C-10) — ใบกำกับกระดาษของใบแจ้งหนี้รุ่นเก่าที่ภาษีรายงานที่ใบแจ้งหนี้แล้ว
 
     public static Facts FactsOf(Document d, bool supersededByTaxInvoice, bool ownedByVatReceipt, decimal gl21913Net,
         DocumentType? relatedType, DateTime? relatedOutputVatDueAt, bool relatedIsRollupBillingNote = false,
@@ -68,7 +71,7 @@ public static class OutputVatOwnership
             d.RelatedDocumentId.HasValue, relatedType, relatedOutputVatDueAt,
             d.IsDeposit, d.DepositOutputVatDeferred, d.DepositAppliedToDocumentId.HasValue, d.DepositOutputVatRecognizedAt,
             supersededByTaxInvoice, ownedByVatReceipt, gl21913Net, IsOutsidePp30(d), relatedIsRollupBillingNote,
-            supersedingExemptBase);
+            supersedingExemptBase, d.VatReportedOnSource);
 
     /// <param name="Owns">ใบนี้เป็นเจ้าของภาษีขาย และ VAT ถึงกำหนดแล้ว</param>
     /// <param name="EffectivelyDeferred">มัดจำที่ VAT พัก (ธง หรือ GL 21913 ค้าง) — วันที่ถึงกำหนด = วันรับรู้</param>
@@ -100,6 +103,9 @@ public static class OutputVatOwnership
 
     public static Decision Decide(Facts f)
     {
+        if (f.VatReportedOnSource && f.Type is DocumentType.Receipt or DocumentType.ReceiptVoucher)
+            return Not(Branch.None, RuleReportedOnSource,
+                "ใบกำกับภาษีนี้ออกให้ใบแจ้งหนี้ที่รายงานภาษีขายทั้งใบไปแล้ว (ก่อนรอบ 275) — แถว ภ.พ.30 อยู่ที่ใบแจ้งหนี้ตามที่ยื่น ไม่นับซ้ำ");
         var branch = BranchOf(f);
         switch (branch)
         {

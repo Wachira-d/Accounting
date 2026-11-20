@@ -200,6 +200,10 @@ public class EFilingExport : TenantEntity
 
     public DateTime GeneratedAt { get; set; } = DateTime.UtcNow;
     public string? GeneratedBy { get; set; }
+
+    /// <summary>รอบ 275 แพ็ก B (ฝ่ายค้าน HIGH-1): คำเตือนของคำขอนี้ (ไม่เก็บ) — รายงานที่ยื่นแล้วแต่ทะเบียน 50 ทวิ/เอกสารขยับหลังยื่น ⇒ "พิจารณายื่นเพิ่มเติม"</summary>
+    [System.ComponentModel.DataAnnotations.Schema.NotMapped]
+    public string? ReviewNote { get; set; }
 }
 
 // ============================================================

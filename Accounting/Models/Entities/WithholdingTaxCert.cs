@@ -63,6 +63,9 @@ public class WithholdingTaxCert : TenantEntity
     public Guid? SupersededByCertId { get; set; }
     /// <summary>D5: ผู้ใช้ยืนยันว่าใบมือนี้ไม่มีใบสำคัญจ่ายในระบบ (เหตุผล) — ป้าย "ยังไม่ผูก" เปลี่ยนเป็น "ไม่มีใบสำคัญจ่าย" · null = ยังไม่ยืนยัน</summary>
     public string? NoSourceDocumentReason { get; set; }
+    /// <summary>รอบ 275 แพ็ก B (คำตัดสิน 275-B-6 (ข)): สำเนาชื่อ/เลข/สาขา/ที่อยู่ผู้ถูกหัก ณ วันออก (JSON) — ประทับที่ SaveChanges เมื่อเข้าสถานะออกแล้ว ·
+    /// ผู้อ่านผ่าน <c>Helpers/WhtPayeeSnapshot.Of</c> เท่านั้น · null = ร่าง/ใบเก่าที่เติมไม่ได้ (ใช้ผู้ติดต่อสด)</summary>
+    public string? PayeeSnapshotJson { get; set; }
 
     public ICollection<WithholdingTaxCertLine> Lines { get; set; } = new List<WithholdingTaxCertLine>();
 }

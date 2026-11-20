@@ -94,6 +94,8 @@ public static class LineChatSlipRule
         public const string DuplicateRef = "DuplicateRef";
         public const string SystemError = "SystemError";
         public const string IntakeOff = "IntakeOff";
+        /// <summary>รอบ 275 แพ็ก D (M6): สลิปชำระหน่วยงานรัฐ (ภาษี/ประกันสังคม) — ไม่ใช่การโอนจ่ายร้าน ห้ามจับคู่กับเอกสารค้างชำระด้วยยอด</summary>
+        public const string GovernmentSlip = "GovernmentSlip";
 
         public static string Label(string? code) => code switch
         {
@@ -106,6 +108,7 @@ public static class LineChatSlipRule
             DuplicateRef => "เลขอ้างอิงที่อ่านได้ซ้ำกับสลิปที่รับไว้แล้ว (รูปต่างกัน) — เทียบรูปกับรายการเดิมก่อนผูก (OCR อาจอ่านเลขผู้รับเงิน/Ref1 ที่เหมือนกันทุกใบ)",
             SystemError => "ระบบขัดข้องระหว่างบันทึกการแจ้งโอน — ผูกเองได้",
             IntakeOff => "ร้านปิดรับสลิปทางแชตก่อนลูกค้ากดเลือกใบ",
+            GovernmentSlip => "สลิปนี้เป็นการชำระหน่วยงานรัฐ (ภาษี/ประกันสังคม) ไม่ใช่การโอนจ่ายเอกสารของร้าน — ระบบไม่จับคู่กับเอกสารค้างชำระ",
             GrossBeforeWht => "ยอดสลิปเท่ายอดเต็มก่อนหัก ณ ที่จ่าย (ลูกค้าอาจไม่ได้หัก) — เกินยอดค้าง: ตรวจว่าจะรับส่วนเกินเป็นเงินรอจัดสรร หรือรอหนังสือ 50 ทวิ",
             _ => "ยังไม่ผูกเอกสาร",
         };
@@ -130,6 +133,8 @@ public static class LineChatSlipRule
     {
         if (ownContactIds.Count == 0) return new Decision(Outcome.None, Array.Empty<SlipMatch>(), Reasons.Unbound);
         if (reading == null || !reading.HasAnyAmount) return new Decision(Outcome.None, Array.Empty<SlipMatch>(), Reasons.Unreadable);
+        // รอบ 275 แพ็ก D (M6): สลิปจ่ายหน่วยงานรัฐ (ตัวจำแนกเดียวกับเส้นสลิปภาษี 272) ⇒ ไม่จับคู่ด้วยยอด (เดิมสลิป ภ.ง.ด. ยอดเท่าใบแจ้งหนี้ค้าง ⇒ แจ้งโอนเข้าใบนั้น)
+        if (GovPaymentSlip.Identify(reading).IsGovernment) return new Decision(Outcome.None, Array.Empty<SlipMatch>(), Reasons.GovernmentSlip);
         var amounts = reading.Amount is decimal sure ? new[] { R(sure) } : reading.Amounts.Select(R).Where(a => a > 0m).Distinct().ToArray();
         var matches = new List<SlipMatch>();
         var grossHit = false;
@@ -248,6 +253,10 @@ public static class LineChatSlipRule
         public const string PdfNotSlip = "ได้รับไฟล์แล้วค่ะ — ไฟล์นี้ไม่ใช่สลิปโอนเงิน ระบบจึงไม่ได้เก็บไว้ · ถ้าต้องการแจ้งโอน กรุณาส่งรูปหรือ PDF ของสลิปหน้าเดียว";
 
         public const string StaffWillCheck = "ได้รับรูปแล้วค่ะ — ถ้าเป็นสลิปโอนเงิน ทางร้านจะตรวจและผูกกับเอกสารให้";
+
+        /// <summary>รอบ 275 แพ็ก D (M6): สลิปชำระภาษี/ประกันสังคมที่ส่งในแชตของร้าน — บอกตามจริงว่าไม่ได้แจ้งโอนเข้าเอกสารใด</summary>
+        public const string GovernmentSlip = "ได้รับรูปแล้วค่ะ — สลิปนี้เป็นการชำระภาษี/ประกันสังคม ระบบจึงไม่ได้แจ้งโอนเข้าเอกสารของร้าน · ทางร้านจะตรวจให้ "
+            + "(ถ้าเป็นสลิปภาษีที่ต้องให้สำนักงานบัญชีบันทึก กรุณาส่งในกลุ่ม LINE ที่ผูกกับสำนักงานบัญชี)";
 
         public const string DownloadFailed = "ได้รับรูปแล้ว แต่ระบบดึงรูปไม่สำเร็จค่ะ — กรุณาส่งสลิปอีกครั้ง";
 
