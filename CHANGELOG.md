@@ -7405,4 +7405,4 @@ _รอบ 275 แพ็ก C (ต่อ — กติกาที่ไม่�
 VAT ของงวดนั้นค้าง 21911 ของใบเดิม (ภ.พ.30 เกิน) — แก้ + Db test · (2) `QueueAsync` เป็น `=>` ส่งต่อ ⇒ ชี้ `QueueCoreAsync` · (3) ตัวตรวจไม่รู้จักเมธอด `=>`
 (`TaxService.LoadInvoiceIdsOwnedByVatReceiptAsync` มีด่าน 275-C-10 อยู่จริง) ⇒ `method_body` รองรับ expression body · (4) เคส R275C-1/5 แทนข้อความตัวแรกของไฟล์ที่อยู่ในเมธอดอื่น
 ⇒ ใช้ข้อความเฉพาะเมธอด + เคส R275C-6/7 · (5) checker ใหม่ `tools/main_guard_tail_check.py` ฟ้องโค้ดระดับโมดูลหลัง guard ทุกไฟล์ใน `tools/` (81 ไฟล์ · พบ 0 จุดอื่น) —
-commit <sha-r275c2>_
+commit ea8b0253_

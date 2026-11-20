@@ -9983,4 +9983,4 @@ _Last verified against codebase: 2026-11-20 (รอบ 277 — §6.277 เมน
 
 _Last verified against codebase: 2026-11-20 (รอบ 275 แพ็ก C ต่อ — กติกา `_R275C_` ที่อยู่หลัง `__main__` รันจริงแล้ว: `VoidPaymentAsync` ส่งการรับที่ยกเลิกผ่าน
 `ReversePaymentInternalAsync` อยู่แล้ว (ไม่ใช่บั๊ก — กติกาชี้ผิดชั้น) · **ย้ายการรับชำระไม่ส่ง `voidedPaymentId` (บั๊กจริง แก้แล้ว)** · ตัวตรวจรองรับเมธอด `=>` ·
-checker ใหม่ `main_guard_tail_check.py` — commit <sha-r275c2>)_
+checker ใหม่ `main_guard_tail_check.py` — commit ea8b0253)_
