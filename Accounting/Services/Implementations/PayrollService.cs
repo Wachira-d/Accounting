@@ -532,6 +532,7 @@ public class PayrollService : IPayrollService
     {
         var inserted = 0; var updated = 0; var skipped = 0;
         var errors = new List<string>();
+        var syncWarnings = new List<string>();   // ฝ่ายค้าน 274-10 LOW-4
 
         foreach (var r in request.Rows)
         {
@@ -580,12 +581,12 @@ public class PayrollService : IPayrollService
                     // แต่**ไม่เก็บเลขนั้น** (ไฟล์ สปส. ใช้เลขบัตรแทน) และบอกในผลลัพธ์ — ไม่ล้มทั้งแถวเพราะช่องรอง
                     var syncSsoNo = EmployeeRecordEdit.SsoInsuredNumber(r.SocialSecurityNumber, null);
                     if (syncSsoNo.Error != null)
-                        errors.Add($"{r.EmployeeCode}: สร้างพนักงานแล้วแต่ไม่บันทึกเลขประกันสังคม — {syncSsoNo.Error}");
+                        syncWarnings.Add($"{r.EmployeeCode}: สร้างพนักงานแล้วแต่ไม่บันทึกเลขประกันสังคม — {syncSsoNo.Error}");
                     // รอบ 274-10: ciphertext จากระบบต้นทาง (เช่นข้อมูลที่ดึงจากเราไปตอนถอดรหัสไม่ได้) ห้ามเก็บเป็นค่า — สร้างพนักงานได้ แต่ไม่เก็บช่องนั้น + บอกในผลลัพธ์
                     var syncCitizenCipher = EmployeeRecordEdit.CipherInputProblem(r.CitizenId, "เลขบัตรประชาชน");
-                    if (syncCitizenCipher != null) errors.Add($"{r.EmployeeCode}: สร้างพนักงานแล้วแต่ไม่บันทึกเลขบัตร — {syncCitizenCipher}");
+                    if (syncCitizenCipher != null) syncWarnings.Add($"{r.EmployeeCode}: สร้างพนักงานแล้วแต่ไม่บันทึกเลขบัตร — {syncCitizenCipher}");
                     var syncBankCipher = EmployeeRecordEdit.CipherInputProblem(r.BankAccountNumber, "เลขบัญชีธนาคาร");
-                    if (syncBankCipher != null) errors.Add($"{r.EmployeeCode}: สร้างพนักงานแล้วแต่ไม่บันทึกเลขบัญชี — {syncBankCipher}");
+                    if (syncBankCipher != null) syncWarnings.Add($"{r.EmployeeCode}: สร้างพนักงานแล้วแต่ไม่บันทึกเลขบัญชี — {syncBankCipher}");
                     var newEmp = new Employee
                     {
                         CompanyId = companyId,
@@ -627,7 +628,10 @@ public class PayrollService : IPayrollService
         }
 
         await _db.SaveChangesAsync();
-        return new SyncEmployeesResponse(inserted, updated, skipped, errors);
+        // ฝ่ายค้าน 274-10 LOW-4: สร้างแล้วแต่ไม่เก็บบางช่อง = "เตือน" ที่สถานะงาน (คงอยู่ใน errors ด้วยเพื่อจอเดิมที่แสดง errors)
+        errors.AddRange(syncWarnings);
+        return new SyncEmployeesResponse(inserted, updated, skipped, errors,
+            EmployeeRecordEdit.SyncStatus(skipped, syncWarnings.Count), syncWarnings);
     }
 
     public async Task<EmployeeResponse?> GetEmployeeByExternalAsync(Guid companyId, string externalSystem, string externalId)

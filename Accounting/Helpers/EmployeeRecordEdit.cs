@@ -35,6 +35,9 @@ public static class EmployeeRecordEdit
         var t = value?.Trim();
         if (string.IsNullOrEmpty(t)) return null;
         if (SecretInputRule.CipherPrefixProblem(t, fieldLabel) is string p) return p;
+        // ฝ่ายค้าน 274-10 LOW-1: เครื่องหมายภายในของ converter (อักขระควบคุม) ไม่ใช่ข้อมูล
+        if (EncryptedColumnConverter.HasInternalMarker(t))
+            return $"{fieldLabel}: ค่านี้มีอักขระควบคุมภายในของระบบ ไม่ใช่ค่าจริง — กรอกค่าจริง";
         return EncryptedColumnConverter.IsUnreadable(t)
             ? $"{fieldLabel}: ค่านี้เป็นข้อความที่ระบบเข้ารหัสไว้ (ciphertext) ไม่ใช่ค่าจริง — กรอกค่าจริง"
             : null;
@@ -153,6 +156,14 @@ public static class EmployeeRecordEdit
                 + "เว้นว่างถ้าใช้เลขบัตรประชาชนเป็นเลขผู้ประกันตน");
         return FieldEdit.Set(stripped);
     }
+
+    public const string SyncOk = "สำเร็จ";
+    public const string SyncWarn = "เตือน";
+    public const string SyncSkipped = "มีรายการที่ข้าม";
+
+    /// <summary>ฝ่ายค้าน 274-10 LOW-4: สถานะงาน HRIS sync — ข้ามแถว ⇒ "มีรายการที่ข้าม" · สร้างแล้วแต่ไม่เก็บบางช่อง ⇒ "เตือน" (ห้ามตอบ "สำเร็จ" เงียบ ๆ) · อื่น ๆ "สำเร็จ"</summary>
+    public static string SyncStatus(int skipped, int warnings)
+        => skipped > 0 ? SyncSkipped : warnings > 0 ? SyncWarn : SyncOk;
 
     /// <summary>วันเริ่มงานที่รับได้ — ไม่เกิน 1 ปีข้างหน้า (กติกาเดียวของทั้งสร้างและแก้ไข)</summary>
     public static string? StartDateError(DateTime startDate, DateTime utcNow)

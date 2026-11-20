@@ -1,4 +1,7 @@
+using Accounting.Data;
 using Accounting.Helpers;
+using Accounting.Models.Entities;
+using Microsoft.EntityFrameworkCore;
 using Xunit;
 
 namespace Accounting.Tests;
@@ -47,7 +50,7 @@ public class PiiNestedCipherRound274_10Tests
         Assert.Equal((PiiCipherState.Nested, ValidId, 2), (r2.State, r2.Plain, r2.NestedLayers));
 
         var outerOld = Nest("123-4-56789-0", NewKey, EncryptionKeyResolver.DevKey);   // เลขบัญชี · ชั้นนอกคีย์เดิม
-        var r3 = EncryptedColumnConverter.Inspect(outerOld, NewKey, Prev);
+        var r3 = EncryptedColumnConverter.Inspect(outerOld, NewKey, Prev, PiiValueKind.Text);
         Assert.Equal((PiiCipherState.Nested, "123-4-56789-0", 0), (r3.State, r3.Plain, r3.KeyIndex));
 
         // เกิน MaxNestedDepth ⇒ ไม่แกะ (ค่าในสุดยังเป็น ciphertext) — คงเป็นซ้อนที่ใช้ไม่ได้
@@ -79,7 +82,7 @@ public class PiiNestedCipherRound274_10Tests
             Assert.Equal(EmployeeIdentityHealth.Issue.NestedCipher, EmployeeIdentityHealth.Classify(nested, NewKey, Prev)!.Value.Issue);
         }
         // คอลัมน์ข้อความ (เลขบัญชี) — plaintext ที่ไม่ใช่ ciphertext รับได้
-        Assert.Equal(PiiCipherState.Nested, EncryptedColumnConverter.Inspect(Nest("12345", EncryptionKeyResolver.DevKey, NewKey), NewKey, Prev).State);
+        Assert.Equal(PiiCipherState.Nested, EncryptedColumnConverter.Inspect(Nest("12345", EncryptionKeyResolver.DevKey, NewKey), NewKey, Prev, PiiValueKind.Text).State);
     }
 
     [Fact]
@@ -122,7 +125,9 @@ public class PiiNestedCipherRound274_10Tests
         // ทิศตรงข้าม: ชั้นในเป็นเลขผิด ⇒ คอลัมน์เลขประจำตัวคืน ciphertext ชั้นใน (ถอดไม่ได้ในสายตาผู้อ่าน) · คอลัมน์ข้อความคืนค่าที่แกะได้
         var badNested = Nest(BadChecksum, cur, cur);
         Assert.True(EncryptedColumnConverter.IsUnreadable((string?)conv.ConvertFromProvider(badNested)));
-        Assert.Equal(BadChecksum, (string?)new EncryptedColumnConverter().ConvertFromProvider(badNested));
+        Assert.Equal(BadChecksum, (string?)new EncryptedColumnConverter(PiiValueKind.Text).ConvertFromProvider(badNested));
+        // ฝ่ายค้าน MED-1: converter ค่าตั้งต้น (นอก allow-list) ไม่แกะ — คืน ciphertext ชั้นในตามเดิม
+        Assert.True(EncryptedColumnConverter.IsUnreadable((string?)new EncryptedColumnConverter().ConvertFromProvider(badNested)));
     }
 
     // ───────── ด่านฝั่งเขียน (กันเกิดซ้ำ) ─────────
@@ -156,5 +161,98 @@ public class PiiNestedCipherRound274_10Tests
         var fix = EmployeeRecordEdit.ThaiIdNumber(ValidId, stuck, "เลขบัตรประชาชน");
         Assert.True(fix.Changes);
         Assert.Equal(ValidId, fix.Value);
+    }
+
+    // ───────── ผลตรวจฝ่ายค้าน 274-10 ─────────
+
+    private static AccountingDbContext OfflineDb() => new(new DbContextOptionsBuilder<AccountingDbContext>()
+        .UseNpgsql("Host=127.0.0.1;Port=1;Database=offline;Username=none;Password=none").Options);
+
+    [Fact]
+    public void ฝ่ายค้าน_MED1_แกะชั้นซ้อนเฉพาะ_allowlist_พนักงาน_ผู้ลงนามนิรนามไม่ถูกแกะ()
+    {
+        using var db = OfflineDb();
+        var kinds = Accounting.Services.Background.PiiReprotectPass.Columns(db)
+            .Where(c => c.Kind != PiiValueKind.NoUnwrap).Select(c => $"{c.Table}.{c.Property}:{c.Kind}").OrderBy(x => x, StringComparer.Ordinal).ToArray();
+        Assert.Equal(new[]
+        {
+            "Employees.BankAccountNumber:Text", "Employees.CitizenId:ThaiTaxId", "Employees.PassportNumber:Text",
+            "Employees.SocialSecurityNumber:Text", "Employees.TaxId:ThaiTaxId",
+        }, kinds);
+
+        // ผู้ลงนามนิรนามวาง ciphertext ของพนักงาน (ถอดได้) ไว้เป็นชื่อในแถวเก่า (ก่อนรอบนี้ — ไม่มีเครื่องหมาย) ⇒ Prefill ต้องไม่ได้ plaintext
+        var (cur, _) = EncryptedColumnConverter.Keys;
+        var victim = EncryptionHelper.Encrypt(ValidId, cur);
+        var legacyRow = EncryptionHelper.Encrypt(victim, cur);
+        var et = db.Model.FindEntityType(typeof(CustomerSignerProfile))!;
+        foreach (var name in new[] { "FirstName", "LastName", "Title", "Email" })
+        {
+            var conv = (EncryptedColumnConverter)et.FindProperty(name)!.GetValueConverter()!;
+            Assert.Equal(PiiValueKind.NoUnwrap, conv.Kind);
+            var read = (string?)conv.ConvertFromProvider(legacyRow);
+            Assert.Equal(victim, read);
+            Assert.NotEqual(ValidId, read);
+        }
+        // ทิศตรงข้าม: คอลัมน์พนักงานใน allow-list แกะได้
+        var emp = (EncryptedColumnConverter)db.Model.FindEntityType(typeof(Employee))!.FindProperty(nameof(Employee.CitizenId))!.GetValueConverter()!;
+        Assert.Equal(ValidId, (string?)emp.ConvertFromProvider(legacyRow));
+    }
+
+    [Fact]
+    public void ฝ่ายค้าน_LOW1_เครื่องหมายภายใน_ด่านเข้าปฏิเสธ_ค่าที่ขึ้นต้นด้วยเครื่องหมายอ่านกลับตรงตัว()
+    {
+        var marked = EncryptedColumnConverter.UserCipherMarker + ValidId;
+        Assert.NotNull(EmployeeRecordEdit.CipherInputProblem(marked, "เลขบัญชีธนาคาร"));
+        Assert.NotNull(EmployeeRecordEdit.ThaiIdNumber(marked, null, "เลขบัตรประชาชน").Error);
+        // ถ้าหลุดด่านมาถึง converter: ห่อเพิ่มอีกชั้น ⇒ อ่านกลับได้ค่าที่ส่งมาตรงตัว (ไม่ตัดคำนำหน้าเงียบ ๆ)
+        foreach (var kind in new[] { PiiValueKind.NoUnwrap, PiiValueKind.Text, PiiValueKind.ThaiTaxId })
+        {
+            var conv = new EncryptedColumnConverter(kind);
+            Assert.Equal(marked, (string?)conv.ConvertFromProvider((string)conv.ConvertToProvider(marked)!));
+        }
+        Assert.Null(EmployeeRecordEdit.CipherInputProblem("123-4-56789-0", "เลขบัญชีธนาคาร"));
+    }
+
+    [Fact]
+    public void ฝ่ายค้าน_LOW2_ข้อความที่มีช่องว่างไม่ใช่ciphertext_กติกาเดียวกับSQL()
+    {
+        var c = EncryptionHelper.Encrypt(ValidId, NewKey);
+        Assert.True(EncryptedColumnConverter.IsUnreadable(c));
+        foreach (var v in new[] { " " + c, c + " ", c[..20] + " " + c[20..], c + "\n" })
+        {
+            Assert.False(EncryptedColumnConverter.IsUnreadable(v));
+            Assert.Equal(PiiCipherState.Plaintext, EncryptedColumnConverter.Inspect(v, NewKey, Prev, PiiValueKind.ThaiTaxId).State);
+        }
+        var legacy = c[EncryptionHelper.CipherPrefix.Length..];
+        Assert.True(EncryptedColumnConverter.IsUnreadable(legacy));
+        Assert.False(EncryptedColumnConverter.IsUnreadable(legacy[..30] + " " + legacy[30..]));
+        Assert.Contains("!~ '\\s'", Accounting.Services.Background.PiiReprotectPass.CandidateSql("X"));
+        // ด่านเข้ายังเข้ม: ciphertext ที่มีช่องว่างหัวท้าย = ปฏิเสธ (ตัดช่องว่างก่อนตรวจ)
+        Assert.NotNull(EmployeeRecordEdit.CipherInputProblem(" " + c + " ", "เลขบัญชีธนาคาร"));
+    }
+
+    [Fact]
+    public void ฝ่ายค้าน_LOW3_งานย้ายคีย์ข้ามการสแกนเมื่อชุดคีย์เดิมสแกนครบแล้ว_เปลี่ยนคีย์หรือเกิน7วันสแกนใหม่()
+    {
+        var fp = Accounting.Services.Background.PiiReprotectPass.KeySetFingerprint(NewKey, Prev);
+        Assert.Equal(16, fp.Length);
+        Assert.DoesNotContain(NewKey, fp);
+        Assert.NotEqual(fp, Accounting.Services.Background.PiiReprotectPass.KeySetFingerprint(NewKey, Array.Empty<string>()));
+        Assert.NotEqual(fp, Accounting.Services.Background.PiiReprotectPass.KeySetFingerprint("other-key", Prev));
+        Assert.Equal(fp, Accounting.Services.Background.PiiReprotectPass.KeySetFingerprint(NewKey, new[] { EncryptionKeyResolver.DevKey }));
+        var now = new DateTime(2026, 11, 20, 0, 0, 0, DateTimeKind.Utc);
+        Assert.True(Accounting.Services.Background.PiiReprotectPass.CanSkipScan(now.AddHours(-6), now));
+        Assert.False(Accounting.Services.Background.PiiReprotectPass.CanSkipScan(null, now));               // ยังไม่เคยสแกนครบด้วยชุดคีย์นี้
+        Assert.False(Accounting.Services.Background.PiiReprotectPass.CanSkipScan(now.AddDays(-8), now));    // ตาข่าย 7 วัน
+        Assert.False(Accounting.Services.Background.PiiReprotectPass.CanSkipScan(now.AddHours(1), now));    // เวลาในอนาคต (นาฬิกาเพี้ยน) ไม่เชื่อ
+        Assert.StartsWith("[pii-keyset:" + fp, Accounting.Services.Background.PiiReprotectPass.FullScanTag(fp));
+    }
+
+    [Fact]
+    public void ฝ่ายค้าน_LOW4_สถานะงาน_sync_เตือนเมื่อไม่เก็บบางช่อง()
+    {
+        Assert.Equal(EmployeeRecordEdit.SyncOk, EmployeeRecordEdit.SyncStatus(0, 0));
+        Assert.Equal(EmployeeRecordEdit.SyncWarn, EmployeeRecordEdit.SyncStatus(0, 2));
+        Assert.Equal(EmployeeRecordEdit.SyncSkipped, EmployeeRecordEdit.SyncStatus(1, 2));
     }
 }
