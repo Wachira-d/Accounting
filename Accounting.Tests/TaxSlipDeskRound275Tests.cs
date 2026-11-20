@@ -78,7 +78,7 @@ public class TaxSlipDeskRound275Tests
         Assert.NotNull(TaxSlipDeskRule.LinkProblem(8_558m, 8_558m, false, null, slipTaxIdOtherCompany: true));
         var masked = TaxSlipReplyCard.MaskTaxId(SlipCorpusRound272.ClientTaxId);
         Assert.False(TaxSlipDeskRule.SlipTaxIdOther(masked, SlipCorpusRound272.ClientTaxId));
-        Assert.True(TaxSlipDeskRule.SlipTaxIdOther(masked, SlipCorpusRound272.OtherClientTaxId));
+        Assert.True(TaxSlipDeskRule.SlipTaxIdOther(masked, "0105536000011"));   // 7 หลักแรกต่าง (เลขที่เก็บเปิดแค่ 7 หลักแรก — PiiMask.TaxId)
         Assert.False(TaxSlipDeskRule.SlipTaxIdOther(null, SlipCorpusRound272.OtherClientTaxId));   // สลิปไม่มีเลข ⇒ ไม่รู้
         // หน่วยงานจากข้อความ: สลิป สปส. จริง (Biller ID + "สมทบ") ⇒ สปส. · สลิปโอนทั่วไป ⇒ ไม่รู้
         Assert.Equal(GovPaymentSlip.Agency.SocialSecurityOffice, GovPaymentSlip.AgencyHint(OcrSlipText.Parse(C.KbizBillSso.Text, 2026, C.KbizBillSso.Qr)));
