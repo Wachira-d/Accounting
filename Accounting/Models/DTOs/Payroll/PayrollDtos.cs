@@ -172,11 +172,15 @@ public record SyncEmployeesRequest(
     string ExternalSystem,
     List<CreateEmployeeRequest> Rows);
 
+/// <param name="Status">ฝ่ายค้าน 274-10 LOW-4: สถานะงาน sync จากเซิร์ฟเวอร์ (<see cref="global::Accounting.Helpers.EmployeeRecordEdit.SyncStatus"/>) — "สำเร็จ" · "เตือน" (สร้างแล้วแต่ไม่เก็บบางช่อง) · "มีรายการที่ข้าม"</param>
+/// <param name="Warnings">รายการที่สร้างพนักงานแล้วแต่ไม่เก็บบางช่อง (อยู่ใน <paramref name="Errors"/> ด้วยเพื่อจอเดิม)</param>
 public record SyncEmployeesResponse(
     int Inserted,
     int Updated,
     int Skipped,
-    List<string> Errors);
+    List<string> Errors,
+    string Status = global::Accounting.Helpers.EmployeeRecordEdit.SyncOk,
+    List<string>? Warnings = null);
 
 public record CreatePayrollItemRequest(
     string Code, string Name, string? NameEn,
