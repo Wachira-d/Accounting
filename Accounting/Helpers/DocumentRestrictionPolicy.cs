@@ -84,6 +84,8 @@ public static class DocumentRestrictionPolicy
         DocumentEntityOnly = 2,
         /// <summary>attachmentId ใน route ต้องเป็นไฟล์ของเอกสาร</summary>
         AttachmentOfDocument = 4,
+        /// <summary>scanId/fileAttachmentId ใน route ต้องเป็นสแกน/ไฟล์ที่ผู้ใช้คนนี้อัปโหลดเอง (ฝ่ายค้าน LOW-12: OCR สร้างร่างของตัวเอง)</summary>
+        OwnScan = 8,
     }
 
     /// <summary>หนึ่งทางเข้าที่ผู้ถูกจำกัดเรียกได้ · <paramref name="OwnScope"/> = ผู้ "เห็นเฉพาะของตัวเอง" เรียกได้ · <paramref name="DraftWrite"/> = ทางเขียนที่ผู้ "เฉพาะร่าง" เรียกได้</summary>
@@ -139,7 +141,7 @@ public static class DocumentRestrictionPolicy
         new("GET", D + "contacts/{contactid:guid}", true, false),
         new("GET", D + "contacts/{contactid:guid}/smart-defaults", true, false),
         new("POST", D + "contacts", true, true),
-        new("PUT", D + "contacts/{contactid:guid}", true, true),
+        // ฝ่ายค้าน MED-6: ผู้ถูกจำกัด "สร้าง" ผู้ติดต่อใหม่ได้ (จำเป็นต่อการทำร่าง) แต่ **แก้ของเดิมไม่ได้** (บัญชีธนาคาร · เลขภาษี · วงเงิน) — PUT ไม่อยู่ในรายการ ⇒ 403 + เหตุ
         new("POST", D + "contacts/parse-address", true, true),
         new("GET", C + "product", true, false),
         new("GET", C + "product/{productid:guid}", true, false),
@@ -165,13 +167,71 @@ public static class DocumentRestrictionPolicy
         new("POST", C + "ai/credit-note/classify-reason", true, true),
         new("POST", C + "ai-feedback/record", true, true),
         new("POST", C + "withholding-tax-certs/gross-up-preview", true, true),
+        // ── OCR สร้างร่างของตัวเอง (ฝ่ายค้าน LOW-12 · กฎเหล็ก #3) — สแกน/ไฟล์ต้องเป็นของผู้ใช้คนนี้ · นำเข้าสต็อก/ลงทะเบียนสินทรัพย์/ลง JE/คิวตรวจ/ตั้งค่า ไม่อยู่ ──
+        new("POST", C + "ocr/upload", true, true),
+        new("POST", C + "ocr/scan/{fileattachmentid:guid}", true, true, RouteCheck.OwnScan),
+        new("POST", C + "ocr/{scanid:guid}/retry", true, true, RouteCheck.OwnScan),
+        new("GET", C + "ocr/{scanid:guid}", true, false, RouteCheck.OwnScan),
+        new("GET", C + "ocr/{scanid:guid}/image", true, false, RouteCheck.OwnScan),
+        new("GET", C + "ocr/{scanid:guid}/line-preview", true, false, RouteCheck.OwnScan),
+        new("POST", C + "ocr/{scanid:guid}/create-document", true, true, RouteCheck.OwnScan),
+        new("POST", C + "ocr/{scanid:guid}/link-document/{documentid:guid}", true, true, RouteCheck.OwnScan | RouteCheck.DraftStatus),
+        new("POST", C + "ocr/{scanid:guid}/line-fields", true, true, RouteCheck.OwnScan),
+        new("POST", C + "ocr/{scanid:guid}/modify-line", true, true, RouteCheck.OwnScan),
+        new("POST", C + "ocr/{scanid:guid}/line-project", true, true, RouteCheck.OwnScan),
+        new("POST", C + "ocr/{scanid:guid}/lines-project", true, true, RouteCheck.OwnScan),
+        new("POST", C + "ocr/{scanid:guid}/match-contact/{contactid:guid}", true, true, RouteCheck.OwnScan),
+        new("POST", C + "ocr/{scanid:guid}/match-walk-in", true, true, RouteCheck.OwnScan),
+        new("POST", C + "ocr/{scanid:guid}/correct", true, true, RouteCheck.OwnScan),
+        new("DELETE", C + "ocr/{scanid:guid}", true, true, RouteCheck.OwnScan),
+        new("GET", C + "ocr/quota", true, false),
         // ── บัญชีผู้ใช้/บริษัท (หัวหน้าจอ · เมนู) ──
         new("GET", "company/{companyid:guid}", true, false),
         new("GET", "company/{companyid:guid}/roles/my-permissions", true, false),
+
+        // ── ทางเข้าที่ไม่มี {companyId} ใน route (ฝ่ายค้าน — ด่านระดับ "ผู้ใช้ + บริษัทที่ทำงานอยู่") ──
+        // ข้อมูลส่วนตัว/ข้อมูลอ้างอิงสาธารณะ ไม่ใช่ข้อมูลของบริษัท · ภาพรวมข้ามบริษัท (accountant-workspace) · บิลค่าบริการ · ส่งแจ้งเตือน ไม่อยู่ ⇒ 403
+        new("GET", "me/permissions", true, false),
+        new("GET", "company", true, false),
+        new("GET", "notification", true, false),          // รายการกรองแถวที่ NotificationService (ฝ่ายค้าน MED-3)
+        new("GET", "notification/count", true, false),
+        new("POST", "notification/mark-read", true, true),
+        new("POST", "notification/mark-all-read", true, true),
+        new("POST", "mobile/devices", true, true),
+        new("DELETE", "mobile/devices/{devicetoken}", true, true),
+        new("GET", "invitations/by-token/{token}", true, false),
+        new("POST", "invitations/accept", true, true),
+        new("GET", "subscription/plans", true, false),
+        new("GET", "subscription/feature-catalog", true, false),
+        new("GET", "integration/link-patterns", true, false),
+        new("GET", "auth/*", true, false),
+        new("POST", "auth/*", true, true),
+        new("PUT", "auth/*", true, true),
+        new("GET", "gov/*", true, false),
+        new("GET", "dbd/*", true, false),
+        new("GET", "reference/*", true, false),
+        new("GET", "signatures", true, false),           // ลายเซ็นของตัวเอง (my-signature)
+        new("GET", "signatures/default", true, false),
+        new("POST", "signatures", true, true),
+        new("POST", "signatures/{signatureid:guid}/set-default", true, true),
+        new("DELETE", "signatures/{signatureid:guid}", true, true),
     };
 
     private static readonly Dictionary<(string, string), RouteRule> ByKey =
-        Routes.ToDictionary(r => (r.Method.ToUpperInvariant(), NormalizeTemplate(r.Template)));
+        Routes.Where(r => !r.Template.EndsWith("/*")).ToDictionary(r => (r.Method.ToUpperInvariant(), NormalizeTemplate(r.Template)));
+
+    /// <summary>แถวแบบ "คำนำหน้า/*" — ทั้งกลุ่มที่เป็นข้อมูลส่วนตัว/อ้างอิง (auth · ข้อมูลราชการ)</summary>
+    private static readonly List<(string Method, string Prefix, RouteRule Rule)> ByPrefix =
+        Routes.Where(r => r.Template.EndsWith("/*"))
+            .Select(r => (r.Method.ToUpperInvariant(), NormalizeTemplate(r.Template[..^1]), r)).ToList();
+
+    internal static RouteRule? Find(string method, string? template)
+    {
+        var m = method.ToUpperInvariant();
+        var t = NormalizeTemplate(template);
+        if (ByKey.TryGetValue((m, t), out var rule)) return rule;
+        return ByPrefix.FirstOrDefault(p => p.Method == m && t.StartsWith(p.Prefix, StringComparison.Ordinal)).Rule;
+    }
 
     public enum Verdict { Allow, DenyOwnScope, DenyDraftOnly }
 
@@ -185,13 +245,44 @@ public static class DocumentRestrictionPolicy
     public static Decision Decide(Restriction r, string method, string? template)
     {
         if (!r.IsRestricted) return new Decision(Verdict.Allow, null, null, null);
-        ByKey.TryGetValue((method.ToUpperInvariant(), NormalizeTemplate(template)), out var rule);
+        var rule = Find(method, template);
         if (r.OwnDocumentsOnly && rule is not { OwnScope: true })
             return new Decision(Verdict.DenyOwnScope, OwnScopeDeniedMessage, OwnScopeRuleCode, rule);
         if (r.DraftOnly && IsWrite(method) && rule is not { DraftWrite: true })
             return new Decision(Verdict.DenyDraftOnly, DraftOnlyDeniedMessage(), DraftOnlyRuleCode, rule);
         return new Decision(Verdict.Allow, null, null, rule);
     }
+
+    /// <summary>คำสั่ง LINE (บอทของบริษัท) — ชนิดเทียบกับทางเข้าเว็บที่ทำงานเดียวกัน</summary>
+    public enum LineCommand
+    {
+        /// <summary>"ดูยอด" = ยอดเงินเข้า/ออกทั้งบริษัท (รายงาน — เว็บ: อ่านได้ตามสิทธิ์เดิม · เห็นเฉพาะของตัวเอง = ไม่ได้)</summary>
+        CompanySummary,
+        /// <summary>"ถาม" = ผู้ช่วย AI ที่ค้นข้อมูลทั้งบริษัท (เว็บ: แชตไม่อยู่ในรายการทั้งสองแบบ)</summary>
+        AskAssistant,
+        /// <summary>"บันทึก"/ส่งรูป = สร้างร่าง (ได้ทั้งสองแบบ — อนุมัติอัตโนมัติไม่ทำ)</summary>
+        CreateDraft,
+        /// <summary>ปุ่ม "อนุมัติเลย" (เว็บ: อนุมัติไม่อยู่ในรายการเขียน)</summary>
+        Approve,
+    }
+
+    /// <summary>ผู้ถูกจำกัดใช้คำสั่ง LINE นี้ได้ไหม (null = ได้ · ข้อความ = เหตุที่ตอบในแชต) — ตัวตัดสินเดียวกับเว็บ (คำสั่งที่เทียบเท่า)</summary>
+    public static string? LineCommandDenied(Restriction r, LineCommand cmd)
+    {
+        if (!r.IsRestricted) return null;
+        return cmd switch
+        {
+            LineCommand.CompanySummary when r.OwnDocumentsOnly => "⛔ " + OwnScopeDeniedMessage,
+            LineCommand.AskAssistant => "⛔ ผู้ช่วย AI ค้นข้อมูลทั้งบริษัท — บัญชีของคุณถูกจำกัดเอกสารจึงใช้คำสั่งนี้ไม่ได้ (ส่งรูปใบเสร็จ/\"บันทึก\" เพื่อสร้างร่างได้ตามปกติ)",
+            LineCommand.Approve => "⛔ " + DraftOnlyDeniedMessage("อนุมัติ"),
+            _ => null,
+        };
+    }
+
+    /// <summary>ฝ่ายค้าน MED-4: ผลตรวจใบซ้ำที่ชี้ใบของผู้ใช้อื่น — คืนแค่ "มีใบซ้ำ + เหตุ" (ไม่มี id/เลข/ผู้ติดต่อ/ยอดของใบนั้น)</summary>
+    public static Accounting.Models.DTOs.Document.DuplicateDocumentCandidate RedactDuplicate(
+        Accounting.Models.DTOs.Document.DuplicateDocumentCandidate c, DateTime enteredDate, decimal enteredAmount) =>
+        new(Guid.Empty, "(ใบของผู้ใช้อื่น — แจ้งผู้ดูแล/บัญชีตรวจ)", c.DocumentType, enteredDate.Date, enteredAmount, "", null, null, c.MatchReason, c.IsStrong);
 
     /// <summary>สถานะที่ผู้ "เฉพาะร่าง" แก้/ลบ/แนบไฟล์ได้</summary>
     public static bool IsEditableDraftStatus(DocumentStatus s) => s is DocumentStatus.Draft or DocumentStatus.Rejected;

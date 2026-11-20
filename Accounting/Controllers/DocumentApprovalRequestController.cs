@@ -41,10 +41,27 @@ public class DocumentApprovalRequestController : ControllerBase
                     : $"ไม่มีสิทธิ์ส่งขออนุมัติเอกสาร {DocumentTypeNames.Title(t, "th")} (ต้องมีสิทธิ์สร้างเอกสารชนิดนี้)"));
     }
 
+    /// <summary>ฝ่ายค้าน LOW-8: ด่านอ่านของเอกสาร — ฝั่ง (รายรับ/รายจ่าย) + ชั้นความลับ ตัวเดียวกับหน้าเอกสาร · มองไม่เห็น = 404 (ไม่บอกว่ามีใบ)</summary>
+    private async Task<bool> MayViewAsync(Guid companyId, Guid documentId)
+    {
+        var row = await Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.FirstOrDefaultAsync(
+            _db.Documents.Where(d => d.Id == documentId && d.CompanyId == companyId).Select(d => new { d.DocumentType, d.Sensitivity }));
+        if (row == null) return false;
+        var uid = JwtHelper.GetUserIdFromClaims(User);
+        if (!(await DocumentPermissionHelper.VisibleDirectionsAsync(_perms, companyId, uid)).Allows(row.DocumentType)) return false;
+        if (!SensitivityAccess.NeedsCheck(row.Sensitivity)) return true;
+        return HttpContext.RequestServices.GetService(typeof(Accounting.Services.Interfaces.ISensitivityService)) is not Accounting.Services.Interfaces.ISensitivityService sens
+            || await sens.CanViewAsync(companyId, uid, row.Sensitivity);
+    }
+
     [HttpGet("api/companies/{companyId:guid}/document/{documentId:guid}/approval-request")]
     public async Task<ActionResult<ApiResponse<DocumentApprovalStateResponse>>> GetState(Guid companyId, Guid documentId)
-        => Ok(new ApiResponse<DocumentApprovalStateResponse>(true,
+    {
+        if (!await MayViewAsync(companyId, documentId))
+            return NotFound(new ApiResponse<DocumentApprovalStateResponse>(false, null, DocumentRestrictionPolicy.NotFoundMessage));
+        return Ok(new ApiResponse<DocumentApprovalStateResponse>(true,
             await _svc.GetStateAsync(companyId, documentId, JwtHelper.GetUserIdFromClaims(User))));
+    }
 
     [HttpPost("api/companies/{companyId:guid}/document/{documentId:guid}/approval-request")]
     public async Task<ActionResult<ApiResponse<DocumentApprovalSubmitResult>>> Request(Guid companyId, Guid documentId,

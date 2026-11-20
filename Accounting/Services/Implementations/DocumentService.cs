@@ -6932,6 +6932,8 @@ public partial class DocumentService : IDocumentService
         // ผู้ส่งขออนุมัติห้ามอนุมัติใบที่ตัวเองขอ (SoD ของเส้นพื้นฐาน)
         await DocumentRestrictionGuard.EnsureMayFinalizeAsync(_db, companyId, approvedBy, "อนุมัติ/ออกเลขเอกสาร");
         await DocumentApprovalRequestService.EnsureNotSelfApprovalAsync(_db, companyId, documentId, approvedBy);
+        if (await RestrictedCreatorOverConvertAsync(companyId, doc) is string overConvert)
+            throw new BusinessRuleException(overConvert, RestrictedOverConvertRuleCode, 409);
 
         if (doc.Status != DocumentStatus.Draft && doc.Status != DocumentStatus.WaitingApproval)
             throw new InvalidOperationException("อนุมัติได้เฉพาะเอกสาร Draft หรือ WaitingApproval เท่านั้น");
@@ -8176,7 +8178,8 @@ public partial class DocumentService : IDocumentService
         var seen = new HashSet<Guid>();
         if (excludeDocumentId.HasValue) seen.Add(excludeDocumentId.Value);
 
-        var baseQuery = _db.Documents.AsNoTracking()
+        // รอบ 276 (ฝ่ายค้าน MED-4): ตรวจใบซ้ำทั้งบริษัทเสมอ (ไม่ผ่านตัวกรองแถว "เห็นเฉพาะของตัวเอง") — ใบที่ผู้ใช้มองไม่เห็นคืนเฉพาะผลตัดสินท้ายเมธอด
+        var baseQuery = _db.Documents.AsNoTracking().IgnoreQueryFilters()
             .Where(d => d.CompanyId == companyId && !d.IsDeleted
                 && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected);
 
@@ -8236,6 +8239,13 @@ public partial class DocumentService : IDocumentService
             }
         }
 
+        if (_db.DocumentOwnerScopeUserId != null && candidates.Count > 0)
+        {
+            var ids = candidates.Select(c => c.Id).ToList();
+            var visible = (await _db.Documents.AsNoTracking().Where(d => ids.Contains(d.Id)).Select(d => d.Id).ToListAsync()).ToHashSet();
+            candidates = candidates.Select(c => visible.Contains(c.Id) ? c
+                : Accounting.Helpers.DocumentRestrictionPolicy.RedactDuplicate(c, documentDate, amount)).ToList();
+        }
         return new DuplicateCheckResult(candidates.Any(c => c.IsStrong), candidates);
     }
 

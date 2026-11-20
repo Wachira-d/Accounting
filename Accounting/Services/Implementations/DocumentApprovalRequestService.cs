@@ -166,8 +166,9 @@ public class DocumentApprovalRequestService : IDocumentApprovalRequestService
             {
                 Title = $"ขออนุมัติ{DocumentTypeNames.Title(doc.DocumentType, "th")}",
                 // คำตัดสิน 276-6: ไม่มีชื่อลูกค้า/เลขผู้เสียภาษี (ข้อความเดียวกันถึงกลุ่ม LINE) — ชนิด · ยอด · ผู้ขอ · หมายเหตุ
-                Message = $"{names.GetValueOrDefault(userId, "พนักงาน")} ส่งเอกสารร่างขออนุมัติ · ยอดรวม {doc.TotalAmount:N2} บาท"
-                    + (row.Note == null ? "" : $"\nหมายเหตุ: {row.Note}"),
+                Message = $"{names.GetValueOrDefault(userId, "พนักงาน")} ส่งเอกสารร่างขออนุมัติ · ยอดรวม {doc.TotalAmount:N2} บาท",
+                // ฝ่ายค้าน LOW-9: หมายเหตุอิสระของผู้ขอถึงเฉพาะช่องส่วนตัว (กระดิ่ง/อีเมล/LINE ส่วนตัว) — ไม่เข้ากลุ่ม LINE
+                PrivateNote = row.Note,
                 ActionUrl = $"/pages/documents.html?id={doc.Id}",
                 EntityType = "Document", EntityId = doc.Id,
                 BellType = NotificationType.ApprovalRequired,
@@ -262,7 +263,8 @@ public class DocumentApprovalRequestService : IDocumentApprovalRequestService
     /// <summary>ด่าน SoD ของเส้นพื้นฐาน: ผู้ส่งขออนุมัติห้ามอนุมัติใบที่ตัวเองขอ (ทุกทางเข้า) · ผู้กระทำที่ไม่ใช่ id ผู้ใช้ (ป้ายระบบ/อีเมล) ไม่ใช่ด่านนี้</summary>
     public static async Task EnsureNotSelfApprovalAsync(AccountingDbContext db, Guid companyId, Guid documentId, string? approvedBy)
     {
-        if (!Guid.TryParse(approvedBy, out var uid)) return;
+        // ฝ่ายค้าน LOW-7: ผู้กระทำทาง LINE เป็นอีเมล — แปลงเป็น id สมาชิกก่อนเทียบ (ป้ายระบบ = ไม่ใช่ด่านนี้)
+        if (await DocumentRestrictionGuard.ActorUserIdAsync(db, companyId, approvedBy) is not Guid uid) return;
         var selfPending = await db.DocumentApprovalRequests.AsNoTracking()
             .AnyAsync(r => r.CompanyId == companyId && r.DocumentId == documentId
                 && r.Status == DocumentApprovalRequestStatus.Pending && r.RequestedByUserId == uid);
@@ -279,7 +281,7 @@ public class DocumentApprovalRequestService : IDocumentApprovalRequestService
             .ToListAsync();
         if (pending.Count == 0) return;
         var now = DateTime.UtcNow;
-        Guid? approver = Guid.TryParse(approvedBy, out var a) ? a : null;
+        var approver = await DocumentRestrictionGuard.ActorUserIdAsync(db, companyId, approvedBy);
         foreach (var p in pending)
         {
             p.Status = DocumentApprovalRequestStatus.Approved;
