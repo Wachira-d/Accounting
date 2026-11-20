@@ -2234,6 +2234,22 @@ try
         app.Logger.LogError(ex, "รอบ 245: ย้าย Contact.LineUserId เป็นปลายทาง legacy ไม่สำเร็จ — จะลองใหม่ตอนบูตถัดไป");
     }
 
+    // รอบ 275 แพ็ก A ฝ่ายค้าน MED-4: กุญแจ HMAC (แฮชสลิปภาษี · OTP ผู้ลงนาม) จากเมล็ดถาวรใน SiteSettings — ไม่หมุนตาม ENCRYPTION_KEY ·
+    // MED-2: ตรวจลายนิ้วมือคีย์ของเครื่องนี้ตั้งแต่บูต (ส่ง heartbeat + ตั้งประตูเขียนค่าเข้ารหัส) — ล้ม = LogError (ไม่ล้มแอป · งานเบื้องหลังตรวจซ้ำทุก 5 นาที)
+    try
+    {
+        var bootSecrets = scope.ServiceProvider.GetRequiredService<Accounting.Helpers.ISecretProtector>();
+        var hmacSeed = await Accounting.Helpers.HmacSeedBootstrap.EnsureAsync(db, bootSecrets,
+            Accounting.Helpers.EncryptionKeyResolver.CurrentOrDev(app.Configuration["Security:EncryptionKey"]), app.Logger);
+        Accounting.Helpers.HmacSeedBootstrap.Configure(hmacSeed);
+        await Accounting.Services.Implementations.Security.EncryptionKeyFingerprintService.CheckKeyAsync(db, bootSecrets, persist: true, app.Logger,
+            applyWriteGuard: true);
+    }
+    catch (Exception ex)
+    {
+        app.Logger.LogError(ex, "รอบ 275: ตั้งกุญแจ HMAC ถาวร/ตรวจลายนิ้วมือคีย์ตอนบูตไม่สำเร็จ — ใช้กุญแจจาก ENCRYPTION_KEY ไปก่อน · งานเบื้องหลังตรวจคีย์ซ้ำ");
+    }
+
     // รอบ 252 ฝ่ายค้าน WP-09 รอบสอง L7: ล้างเลขบุคคลธรรมดาใน feedback ตรวจของจริง 50 ทวิ ที่เก็บก่อนรอบนี้ (ครั้งเดียว · marker OneShotDataFixes) ·
     // ล้ม = ธุรกรรมย้อน + ไม่มี marker ⇒ บูตถัดไปทำใหม่ · log Error (ไม่ล้มทั้งแอป — คำขอใหม่ปิดบังแล้วตั้งแต่รอบนี้)
     try

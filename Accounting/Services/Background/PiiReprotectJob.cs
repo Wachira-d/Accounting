@@ -226,10 +226,12 @@ public class PiiReprotectJob : BackgroundService
             // รอบ 275 แพ็ก A (T4 M-4): คีย์ของเครื่องนี้ไม่ตรงกับที่ระบบใช้ ⇒ ไม่ย้ายแถว (ย้าย = เขียนด้วยคีย์ที่เครื่องอื่นอ่านไม่ได้) · ตัวตัดสินเดียวกับฝั่งความลับ
             if (scope.ServiceProvider.GetService<ISecretProtector>() is { } keyProbe)
             {
-                var key = await Accounting.Services.Implementations.Security.EncryptionKeyFingerprintService.CheckAsync(db, keyProbe, persist: true, _logger, stoppingToken);
+                var key = await Accounting.Services.Implementations.Security.EncryptionKeyFingerprintService.CheckKeyAsync(db, keyProbe, persist: true, _logger,
+                    stoppingToken, applyWriteGuard: true);
                 if (!key.AllowsRekey)
                 {
-                    if (recorder != null) await recorder.RecordAsync(JobName, false, "ไม่ย้ายคีย์: " + key.AdminMessage, 0, startedAt);
+                    // ฝ่ายค้าน LOW: รอบที่ข้ามการสแกนลงชื่อแยก — ไม่ทับผลสแกนเต็มรอบล่าสุด (ธง "ถอดคีย์เดิมได้" อ่านชื่อ JobName)
+                    if (recorder != null) await recorder.RecordAsync(JobName + "Skipped", false, "ไม่ย้ายคีย์: " + key.AdminMessage, 0, startedAt);
                     return;
                 }
             }

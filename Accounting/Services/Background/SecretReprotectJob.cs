@@ -52,6 +52,7 @@ public static class SecretReprotectPass
         ("Documents", _) => "ไม่ต้องทำอะไร — ระบบออกลิงก์ชำระเงินใหม่ให้เองเมื่อส่งเอกสารครั้งถัดไป",
         ("ContactNotifyEndpoints", _) => "ให้ผู้รับผูก LINE ใหม่ (ถ้าผู้ดูแลระบบยืนยันว่าคีย์เข้ารหัสถูกต้องแล้ว)",
         ("LineGroupBindCodes", _) => "ไม่ต้องทำอะไร — รหัสผูกกลุ่มหมดอายุเอง",
+        ("SiteSettings", "HmacSeedProtected") => "ผู้ดูแลแพลตฟอร์มตั้งคีย์เดิมเป็นคีย์ถอด (ห้ามลบค่านี้ — แฮชสลิปภาษี/OTP เดิมผูกกับมัน)",
         ("SiteSettings", _) => "ผู้ดูแลแพลตฟอร์มกรอกค่าใหม่ในหน้าผู้ดูแลระบบ",
         _ => "กรอกค่าใหม่ในหน้าตั้งค่า หรือแจ้งผู้ดูแลระบบให้ตรวจคีย์เข้ารหัส",
     };
@@ -79,6 +80,7 @@ public static class SecretReprotectPass
         ["SiteSettings.GoogleClientSecret"] = "Google Client Secret (เข้าสู่ระบบ)",
         ["SiteSettings.FacebookAppSecret"] = "Facebook App Secret (เข้าสู่ระบบ)",
         ["SiteSettings.LineLoginChannelSecret"] = "LINE Login Channel Secret (เข้าสู่ระบบ)",
+        ["SiteSettings.HmacSeedProtected"] = "เมล็ดกุญแจ HMAC ของระบบ (แฮชสลิปภาษี · OTP) — ตั้งคีย์เดิมให้ครบ ห้ามกรอกใหม่",
         ["PaymentProviderConfigs.TestSecretKeyProtected"] = "คีย์ลับโหมดทดสอบของช่องทางรับชำระ",
         ["PaymentProviderConfigs.LiveSecretKeyProtected"] = "คีย์ลับโหมดใช้งานจริงของช่องทางรับชำระ",
         ["BankConnections.EncryptedCredentials"] = "ข้อมูลเข้าสู่ระบบธนาคาร (bank feed)",
@@ -228,7 +230,8 @@ public static class SecretReprotectPass
                 Col<SiteSettings>(r => r.LineMessagingChannelSecret),
                 Col<SiteSettings>(r => r.GoogleClientSecret),
                 Col<SiteSettings>(r => r.FacebookAppSecret),
-                Col<SiteSettings>(r => r.LineLoginChannelSecret));
+                Col<SiteSettings>(r => r.LineLoginChannelSecret),
+                Col<SiteSettings>(r => r.HmacSeedProtected));   // รอบ 275 ฝ่ายค้าน MED-4: เมล็ด HMAC ถาวร — ห่อใหม่ตามคีย์ ค่าข้างในไม่เปลี่ยน
         await Pass(Scope(db.PaymentProviderConfigs.IgnoreQueryFilters()), "PaymentProviderConfigs", r => r.CompanyId,
             Col<PaymentProviderConfig>(r => r.TestSecretKeyProtected),
             Col<PaymentProviderConfig>(r => r.LiveSecretKeyProtected));
@@ -277,14 +280,26 @@ public class SecretReprotectJob : BackgroundService
     public const string JobName = "SecretReprotect";
     /// <summary>รอบ 275 แพ็ก A: รันเป็นระยะเหมือนฝั่ง PII — ตั้งคีย์เดิมแล้วความลับถูกย้ายโดยไม่ต้องรีสตาร์ตอีกรอบ</summary>
     public static readonly TimeSpan Interval = TimeSpan.FromHours(6);
+    /// <summary>ชื่องานของรอบที่<b>ข้ามการสแกน</b> (คีย์ไม่ตรง/รอยืนยันการหมุน) — แยกชื่อ ⇒ ไม่ทับผลสแกนเต็มรอบล่าสุดที่ธง "ถอดคีย์เดิมได้" อ่าน (ฝ่ายค้าน LOW)</summary>
+    public const string SkippedJobName = JobName + "Skipped";
 
+    /// <summary>รอบ 275 ฝ่ายค้าน MED-2/MED-3: ทุก <see cref="EncryptionKeyFingerprintService.HeartbeatInterval"/> ส่ง heartbeat + ตรวจคีย์ (ตั้งประตูเขียนของเครื่องนี้) ·
+    /// สแกน/ย้ายเต็มทุก <see cref="Interval"/> หรือทันทีเมื่อคีย์เพิ่งกลับมาใช้ย้ายได้ (เช่น หมุนครบทุกเครื่อง/ผู้ดูแลยืนยัน)</summary>
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         try { await Task.Delay(TimeSpan.FromMinutes(3), stoppingToken); } catch { return; }
+        DateTime? lastFull = null, lastSkipLog = null;
+        var lastAllowed = true;
         while (!stoppingToken.IsCancellationRequested)
         {
-            await RunOnceAsync(stoppingToken);
-            try { await Task.Delay(Interval, stoppingToken); } catch { return; }
+            var now = DateTime.UtcNow;
+            // บันทึกรอบที่ข้าม (ชื่อแยก) ไม่เกินรอบละ Interval — ไม่ท่วม JobRunLog ทุก 5 นาที
+            var logSkip = lastSkipLog == null || now - lastSkipLog >= Interval;
+            var allowed = await RunOnceAsync(stoppingToken, full: lastFull == null || now - lastFull >= Interval || !lastAllowed, logSkip);
+            if (allowed == true) lastFull = DateTime.UtcNow;
+            if (allowed == false && logSkip) lastSkipLog = now;
+            if (allowed != null) lastAllowed = allowed.Value;
+            try { await Task.Delay(Accounting.Services.Implementations.Security.EncryptionKeyFingerprintService.HeartbeatInterval, stoppingToken); } catch { return; }
         }
     }
 
@@ -298,7 +313,8 @@ public class SecretReprotectJob : BackgroundService
            + (r.SkippedConcurrent == 0 ? "" : $" · ข้าม {r.SkippedConcurrent} ค่าที่ผู้ใช้เพิ่งแก้")
            + (r.LegacyKeyRemaining == 0 ? " · ✓ ไม่มีความลับบนคีย์เดิมเหลือ" : $" · ยังอยู่บนคีย์เดิม {r.LegacyKeyRemaining} ค่า (รอบถัดไปย้ายต่อ)");
 
-    private async Task RunOnceAsync(CancellationToken stoppingToken)
+    /// <returns>true = สแกนเต็มแล้ว · false = คีย์ไม่ให้ย้าย · null = ไม่ได้สแกน (ยังไม่ถึงรอบ) หรือล้ม</returns>
+    private async Task<bool?> RunOnceAsync(CancellationToken stoppingToken, bool full, bool logSkip = true)
     {
         var startedAt = DateTime.UtcNow;
         IJobRunRecorder? recorder = null;
@@ -309,12 +325,14 @@ public class SecretReprotectJob : BackgroundService
             var protector = scope.ServiceProvider.GetRequiredService<ISecretProtector>();
             recorder = scope.ServiceProvider.GetService<IJobRunRecorder>();
             // T4 M-4: เครื่องนี้ใช้คีย์ที่ระบบใช้อยู่จริงไหม — ไม่ตรง ⇒ ไม่ย้าย (ย้าย = เขียนด้วยคีย์ที่เครื่องอื่นอ่านไม่ได้)
-            var key = await Accounting.Services.Implementations.Security.EncryptionKeyFingerprintService.CheckAsync(db, protector, persist: true, _logger, stoppingToken);
+            var key = await Accounting.Services.Implementations.Security.EncryptionKeyFingerprintService.CheckKeyAsync(db, protector, persist: true, _logger,
+                stoppingToken, applyWriteGuard: true);
             if (!key.AllowsRekey)
             {
-                if (recorder != null) await recorder.RecordAsync(JobName, false, "ไม่ย้ายคีย์: " + key.AdminMessage, 0, startedAt);
-                return;
+                if (logSkip && recorder != null) await recorder.RecordAsync(SkippedJobName, false, "ไม่ย้ายคีย์: " + key.AdminMessage, 0, startedAt);
+                return false;
             }
+            if (!full) return null;
             await JobLock.RunExclusiveAsync(db, AdvisoryLockKey.BackgroundJob, nameof(SecretReprotectJob), async () =>
             {
                 var r = await SecretReprotectPass.RunAsync(db, protector, stoppingToken, logger: _logger);
@@ -323,8 +341,9 @@ public class SecretReprotectJob : BackgroundService
                 // สำเร็จ = งานรันจบ (ค่าที่ถอดไม่ออกเป็นงานของผู้ใช้ — อยู่ในข้อความ + หน้ารายงานรายแถว)
                 if (recorder != null) await recorder.RecordAsync(JobName, true, summary, r.Reprotected, startedAt);
             }, _logger, ct: stoppingToken);
+            return true;
         }
-        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { return null; }
         catch (Exception ex)
         {
             // ล้มดัง 3 ที่: LogError · JobRunLog (สถานะงาน) · หน้า "สุขภาพข้อมูลเข้ารหัส" แสดง "งานย้ายคีย์ล้ม"
@@ -334,6 +353,7 @@ public class SecretReprotectJob : BackgroundService
                 try { await recorder.RecordAsync(JobName, false, "ล้ม: " + ex.Message, 0, startedAt); }
                 catch (Exception rex) { _logger.LogError(rex, "SecretReprotectJob: บันทึกผลรันล้มไม่สำเร็จ"); }
             }
+            return null;
         }
     }
 }

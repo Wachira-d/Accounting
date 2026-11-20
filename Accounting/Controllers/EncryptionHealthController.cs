@@ -33,7 +33,7 @@ public class EncryptionHealthController : ControllerBase
     public async Task<ActionResult<ApiResponse<object>>> GetSecrets(Guid companyId, CancellationToken ct)
     {
         var r = await SecretReprotectPass.RunAsync(_db, _secrets, ct, onlyCompanyId: companyId, inspectOnly: true);
-        var key = await EncryptionKeyFingerprintService.CheckAsync(_db, _secrets, persist: false, null, ct);
+        var key = await EncryptionKeyFingerprintService.CheckKeyAsync(_db, _secrets, persist: false, null, ct);
         var job = await LastRunAsync(_db, SecretReprotectJob.JobName, ct);
         return Ok(new ApiResponse<object>(true, new
         {
@@ -77,7 +77,7 @@ public class AdminEncryptionHealthController : ControllerBase
     [HttpGet]
     public async Task<ActionResult<ApiResponse<object>>> Get(CancellationToken ct)
     {
-        var key = await EncryptionKeyFingerprintService.CheckAsync(_db, _secrets, persist: false, null, ct);
+        var key = await EncryptionKeyFingerprintService.CheckKeyAsync(_db, _secrets, persist: false, null, ct);
         var r = await SecretReprotectPass.RunAsync(_db, _secrets, ct, inspectOnly: true);
         var piiJob = await _db.JobRunLogs.AsNoTracking().Where(j => j.JobName == PiiReprotectJob.JobName && j.FinishedAt != null)
             .OrderByDescending(j => j.FinishedAt).Select(j => new { j.FinishedAt, j.Success, j.Message, j.ItemsProcessed }).FirstOrDefaultAsync(ct);
@@ -90,6 +90,12 @@ public class AdminEncryptionHealthController : ControllerBase
             {
                 Verdict = key.Verdict.ToString(), key.Current, key.Stored, key.StoredAt, key.AdminMessage,
                 PreviousKeyCount = _secrets.PreviousKeyFingerprints.Count,
+                NeedsAdmin = EncryptionKeyFingerprintRule.NeedsAdmin(key.Verdict),
+                // ฝ่ายค้าน MED-1: ลายนิ้วมือของแต่ละเครื่องที่ส่ง heartbeat — ผู้ดูแลเลือก "ลายนิ้วมือ" ที่ถูก ไม่ใช่ "เครื่องที่รับคำขอ"
+                Instances = (key.Instances ?? Array.Empty<EncryptionKeyFingerprintService.Instance>()).Select(i => new
+                {
+                    i.InstanceId, i.Fingerprint, i.SeenAt, i.Recent, IsStored = i.Fingerprint == key.Stored, IsThisInstance = i.Fingerprint == key.Current && i.InstanceId == EncryptionKeyFingerprintService.InstanceId,
+                }),
             },
             Secrets = new
             {
@@ -112,16 +118,16 @@ public class AdminEncryptionHealthController : ControllerBase
         }));
     }
 
-    public sealed record AcceptKeyRequest(string? Reason);
+    public sealed record AcceptKeyRequest(string? Fingerprint, string? Reason);
 
-    /// <summary>ยืนยันว่าคีย์ของเครื่องนี้คือคีย์ที่ถูก (หลังตรวจ ENCRYPTION_KEY ทุกเครื่องแล้ว) — audit chain พร้อมเหตุผล</summary>
-    [HttpPost("accept-current-key")]
-    public async Task<ActionResult<ApiResponse<object>>> AcceptCurrentKey([FromBody] AcceptKeyRequest req, CancellationToken ct)
+    /// <summary>ฝ่ายค้าน MED-1: ยืนยัน "ลายนิ้วมือที่ระบุ" (เลือกจากรายการเครื่อง) — เครื่องที่รับคำขอต้องใช้คีย์นั้น ไม่ตรง ⇒ 409 · ใช้ทั้งกรณีคีย์ไม่ตรงและยืนยันการหมุน · audit chain พร้อมเหตุผล</summary>
+    [HttpPost("accept-fingerprint")]
+    public async Task<ActionResult<ApiResponse<object>>> AcceptFingerprint([FromBody] AcceptKeyRequest req, CancellationToken ct)
     {
         var uid = JwtHelper.GetUserIdFromClaims(User);
-        var status = await EncryptionKeyFingerprintService.AcceptCurrentAsync(_db, _secrets, uid == Guid.Empty ? null : uid,
+        var status = await EncryptionKeyFingerprintService.AcceptAsync(_db, _secrets, req?.Fingerprint ?? "", uid == Guid.Empty ? null : uid,
             User?.Identity?.Name, req?.Reason ?? "", ct);
         return Ok(new ApiResponse<object>(true, new { Verdict = status.Verdict.ToString(), status.AdminMessage },
-            EncryptionKeyFingerprintRule.IsProblem(status.Verdict) ? "ยังไม่ตรง" : "บันทึกคีย์ปัจจุบันแล้ว — งานย้ายคีย์จะทำงานรอบถัดไป"));
+            EncryptionKeyFingerprintRule.NeedsAdmin(status.Verdict) ? "ยังไม่ตรง" : "บันทึกลายนิ้วมือที่เลือกแล้ว — งานย้ายคีย์ทำงานภายใน 5 นาที"));
     }
 }

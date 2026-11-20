@@ -6033,6 +6033,8 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
   **DTO พนักงาน** ไม่ส่ง ciphertext: ป้าย `⛔ ถอดรหัสไม่ได้` + `IdentityProblem`/`BankAccountProblem`/`PiiProblemText` · ฟอร์มส่งป้ายกลับ = คงค่าเดิม · ฟอร์มแสดงกล่องเหตุ + ขอบแดงที่ช่อง ·
   **หน้า "สุขภาพข้อมูลเข้ารหัส"** `/pages/encryption-health.html` (ความลับ `GET encryption-health/secrets` · สิทธิ์ตั้งค่าบริษัท + PII `GET payroll/tax-identity-health` เดิม) · มุมผู้ดูแลใน admin › งานเบื้องหลัง (`GET api/admin/encryption-health`) ·
   ข้อความถึงผู้ใช้บริษัทไม่ชี้ URL ดิบ/ชื่อ env (`EncryptionHealthText`)
+  **ฝ่ายค้านแพ็ก A:** heartbeat ลายนิ้วมือต่อเครื่องทุก 5 นาที (`EncryptionKeyHeartbeats`) · หมุนคีย์ = `RotationPending` (ไม่ย้าย) จนทุกเครื่องใน 15 นาทีล่าสุดรายงานคีย์ใหม่หรือผู้ดูแลยืนยันลายนิ้วมือที่ระบุ ·
+  เครื่องคีย์ไม่ตรงหยุดเข้ารหัสค่าใหม่ (`EncryptionWriteGuard` · 503) · กุญแจ HMAC สลิปภาษี/OTP จากเมล็ดถาวร (`HmacSeedBootstrap` · สลิปเดิมหลังหมุนยังถูกกันซ้ำ) · คำตัดสิน 275-A-8…12
 - **รอบ 200 ทีม R (กวาดค้างรอบ 189)**: ฐานภาษีสะสม (YTD) ของงวดก่อน = `PayrollIncomeBase.PriorTaxBase(TaxableGross, GrossIncome)` (D-09 — เดิม gross
   รวมสวัสดิการยกเว้น ⇒ หักเกินงวดหลัง · แถวเก่าที่ TaxableGross = 0 ใช้ gross เหมือนเดิม) · PVD = `PayrollIncomeBase.PvdContribution(proratedBaseSalary, %)`
   (D-10 — เดิมเต็มเดือน + ไม่ปัด) · เพดานสมทบปัด AwayFromZero (D-08) · กำหนดนำส่ง สปส. + เงินเพิ่ม §49 = `Helpers/SsoLateFee` ตัวเดียว
@@ -6484,7 +6486,7 @@ _Last verified against codebase: 2026-11-13 · commit 76130af2 (รอบแร�
 **ตัวตนผู้ถูกหัก ณ วันออก** (`Helpers/WhtPayeeSnapshot` · ประทับที่ `AccountingDbContext.SaveChanges` เมื่อเข้าสถานะออกแล้ว/เปลี่ยนผู้ถูกหัก) — HTML + QuestPDF · หน้าใบ (`MapToResponse`) · รายงาน/ไฟล์ ภ.ง.ด. จากทะเบียน ใช้สำเนา · ใบร่างใช้ผู้ติดต่อสด ·
 แก้ผู้ติดต่อหลังออกใบ ⇒ ใบที่ออกแล้วไม่เปลี่ยน (ทางแก้ = ยกเลิกแล้วออกใหม่) · ยังเลื่อน: ฉบับยื่นเพิ่มเติมของงวดเดิม (§4 ข้อ 1) · 50 ทวิ เงินเดือนรายปี (ไม่บันทึก) ใช้ข้อมูลพนักงานตามเดิม
 ล็อกจุดเรียก: `tools/required_call_site_check.py` `_R275B_*` (12) + ฝ่ายค้าน R275B-1…6 · เทสต์ TEST_PLAN §รอบ 275 แพ็ก B
-_Last verified against codebase: 2026-11-20 · รอบ 275 แพ็ก B · commit 33b2c7de_
+_Last verified against codebase: 2026-11-20 · รอบ 275 แพ็ก B · commit 33b2c7de · ชุดแก้ฝ่ายค้าน 24aad79a_
 
 #### 5.3a-1 ฐานยอด ภ.ง.ด.3/53/54 ของหน้า "นำส่งภาษี" + ปฏิทิน (แก้ 2026-09-16)
 
@@ -9935,6 +9937,9 @@ _Last verified against codebase: 2026-11-20 (รอบ 275 แพ็ก A — �
 _Last verified against codebase: 2026-11-20 (รอบ 275 แพ็ก C — §3.4b-275: ใบเสร็จ = ใบกำกับภาษี ณ วันรับเงินจากตัวตัดสินเดียว `SettlementTaxInvoiceRole`
 (ยุบสูตรงวดเดียว 4 สำเนา · ค่าธรรมเนียม/บรรทัดปรับ/ภาษีหัก/ใบลดหนี้) · งานบริการรับเป็นงวด = ใบกำกับรายงวด VAT ตามส่วน + ย้าย 21913 ตามส่วนผูกการรับ · คิว "รับเงินแล้วยังไม่มีใบกำกับ" ·
 วันที่ปฏิทินไทยที่ต้นทางการรับชำระ · ข้อความใบเสร็จผ่าน DocumentLabels · คำตัดสิน 275-C-1…9) — commit 96bb5262_
+
+_Last verified against codebase: 2026-11-20 (รอบ 275 แพ็ก A ผลตรวจฝ่ายค้าน MED-1…4 + LOW — heartbeat/ยืนยันลายนิ้วมือที่ระบุ · ประตูเขียนค่าเข้ารหัส · หมุนรอทุกเครื่อง · เมล็ด HMAC ถาวร ·
+เทสต์ `EncryptionWriteGuardRound275ATests` + Db `KeysSecretsRound275ADbTests` — commit 17305b6a)_
 `SecretUse` ด่านเดียวของผู้อ่านความลับ · DTO พนักงานไม่ส่ง ciphertext · หน้า "สุขภาพข้อมูลเข้ารหัส" · เทสต์ `KeysSecretsRound275ATests` + Db `KeysSecretsRound275ADbTests` · กติกา `_R275A_` — commit (เติมในคอมมิตตามหลัง))_
 _Last verified against codebase: 2026-11-20 (รอบ 276 — ผู้ใช้เห็นเฉพาะเอกสารที่ตัวเองสร้าง/สร้าง-แก้ได้เฉพาะร่าง: ตัวกรองแถว EF ของ Documents ·
 `DocumentRestrictionFilter` รายการอนุญาต + 404 · ด่าน Approve/Void ชั้น service · ส่งขออนุมัติพื้นฐาน/ถอน/ตีกลับ + แจ้งผ่านเครื่องแจ้งเตือนกลาง ·
