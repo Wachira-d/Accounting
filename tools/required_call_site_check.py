@@ -21666,8 +21666,8 @@ RULES += [
          why=_R275D_WHY + "M7 นำส่งงวดใดก็ตาม (มือ/สลิป) ⇒ ใบขอชำระที่เปิดของงวดนั้นปิด"),
     dict(file=_R275D_INTAKE, method="ApplyAndReplyAsync",
          must=["_db.ChangeTracker.Clear()", "Statuses.Open.Contains(fresh.Status)", "cardReason"],
-         before=[("Statuses.Open.Contains(fresh.Status)", "fresh.Status = Statuses.ToStaff"),
-                 ("throw new BusinessRuleException(", "fresh.Status = Statuses.ToStaff")],
+         before=[("Statuses.Open.Contains(fresh.Status)", "MoveToStaffIfOpenAsync("),
+                 ("throw new BusinessRuleException(", "MoveToStaffIfOpenAsync(")],
          why=_R275D_WHY + "H2 ทางล้มห้ามเขียนทับแถวที่บันทึก/ปิดแล้ว · M2 พนักงานกดล้ม = 409 ไม่ส่งการ์ด · L2 ข้อความ exception ทั่วไปไม่ถึงกลุ่ม"),
     dict(file=_R275D_INTAKE, method="StaffRemitAsync", must=["TaxSlipDeskRule.CandidateBlocker(", "ApplyAndReplyAsync("],
          before=[("TaxSlipDeskRule.CandidateBlocker(", "ApplyAndReplyAsync(")],
@@ -21705,7 +21705,32 @@ RULES += [
     dict(file="Services/Implementations/TaxSlipReviewService.cs", method="ReviewAsync", must=["verdict == r.ReviewStatus", "recheckFrom"],
          why=_R275D_WHY + "M8 ผลไม่พบเงินออกตรวจซ้ำได้ ไม่ประทับถาวร · ผลเดิมไม่กระดิ่งซ้ำ"),
 ]
+RULES += [   # รอบ 275 แพ็ก D ชุดแก้ฝ่ายค้าน (MED-1…3 · LOW-1…4)
+    dict(file=_R275D_INTAKE, method="MoveToStaffIfOpenAsync", must=["Statuses.Open.Contains(s.Status)", "ExecuteUpdateAsync("],
+         why=_R275D_WHY + "ฝ่ายค้าน LOW-4 ทางล้มย้ายเข้าคิวแบบมีเงื่อนไข (ไม่ทับแถวที่บันทึก/ปิดระหว่างนี้)"),
+    dict(file=_R275D_INTAKE, method="ProcessAsync", must=["MoveToStaffIfOpenAsync("],
+         why=_R275D_WHY + "ฝ่ายค้าน LOW-4 ทางล้มของเส้นอัตโนมัติ"),
+    dict(file=_R275D_INTAKE, method="AgeOpenRowsAsync",
+         must=["s.Status == Statuses.ToStaff)", "ExecuteUpdateAsync(", "if (done == 0) break;", "s.ReleasedAt ?? s.CreatedAt", "TaxSlipOpenAge.ExpireCapPerChannelPerRun"],
+         forbid=["FinishAsync("],
+         why=_R275D_WHY + "ฝ่ายค้าน MED-2 เขียนแบบมีเงื่อนไขทีละแถว การ์ดเฉพาะแถวที่เปลี่ยน · MED-3 อายุจากเวลาที่ปล่อย · LOW-1 การ์ดสรุป + เพดาน"),
+    dict(file=_R275D_REQ, method="ExpireDueForAsync",
+         must=["x.Status == TaxPaymentRequestLifecycle.Open)", "if (done == 0) continue;", "heldBySlip", "ExpireCapPerClientPerRun"],
+         why=_R275D_WHY + "ฝ่ายค้าน MED-2/LOW-1/LOW-2 หมดอายุแบบมีเงื่อนไข · การ์ดสรุปต่อบริษัท · ข้ามใบที่มีสลิปเปิดอ้าง"),
+    dict(file=_R275D_REQ, method="CloseOnRemitAsync", must=["TaxPaymentRequestLifecycle.PaidBy("],
+         why=_R275D_WHY + "ฝ่ายค้าน LOW-3 ปิดเฉพาะใบที่ยอด/Control Code ตรง"),
+    dict(file=_R275D_REQ, method="CancelAsync", must=["r.Status == TaxPaymentRequestLifecycle.Open)", "ExecuteUpdateAsync("],
+         why=_R275D_WHY + "ฝ่ายค้าน MED-2 (คลาสเดียวกัน) ยกเลิกไม่ทับชำระแล้ว"),
+    dict(file=_R275D_REMIT, method="ReleaseOnVoidAsync", must=["slip.ReleasedAt = nowUtc", "r.ReopenedAt = nowUtc"],
+         why=_R275D_WHY + "ฝ่ายค้าน MED-3/LOW-3 ปล่อยแล้วนับอายุใหม่ · ใบกลับเปิดต้องแจ้งกลุ่ม"),
+    dict(file=_R275D_REMIT, method="LinkAsync", must=["TaxSlipDeskRule.SlipTaxIdOther(", "slip.Agency, rec.RemittanceType"],
+         why=_R275D_WHY + "ฝ่ายค้าน MED-1 ผูก: เลขผู้เสียภาษี + หน่วยงานกับแบบ"),
+    dict(file=_R275D_INTAKE, method="StaffManualRemitAsync", must=["TaxSlipDeskRule.SlipTaxIdOther(row.TaxIdMasked, co.TaxId), row.Agency"],
+         why=_R275D_WHY + "ฝ่ายค้าน MED-1 บันทึกเอง: หน่วยงานบนสลิปกับแบบ (สลิป สปส. ห้ามลงเป็น ภ.ง.ด.)"),
+]
 REVIEWER_CASES += [
+    ("R275D-6", "AgeOpenRowsAsync", "if (done == 0) break;", "", True),
+    ("R275D-7", "LinkAsync", "slip.Agency, rec.RemittanceType", "null, null", True),
     ("R275D-1", "LockedSlipAsync", "await _db.Entry(slip).ReloadAsync(ct);", "", True),                       # กลับไปเชื่อ tracker (H2)
     ("R275D-2", "ApplyAndReplyAsync", "if (!Statuses.Open.Contains(fresh.Status))", "if (false)", True),         # ทางล้มเขียนทับ Remitted
     ("R275D-3", "StaffRejectAsync", "var n = await _db.TaxSlipEvidences", "await _storage.DeleteAsync(\"x\", ct); var n = await _db.TaxSlipEvidences", True),   # ลบไฟล์ทันที (M4)

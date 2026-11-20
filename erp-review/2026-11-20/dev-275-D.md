@@ -36,6 +36,18 @@
 | L8 "สมทบ" | ✅ | นับเป็นคำของรัฐเฉพาะเมื่อคู่ป้ายจ่ายบิล · สลิป สปส. จริง (Biller ID) ยังเป็นสลิปรัฐ |
 | L9 Rejected ที่ไฟล์ยังไม่ลบบันทึกได้ | ✅ | ปิดพร้อม H2 (`LockedSlipAsync`) |
 
+## ชุดแก้ฝ่ายค้าน (ไม่พบ HIGH)
+
+| ข้อ | ที่แก้ |
+| --- | --- |
+| MED-1 ผูก/บันทึกเองตรวจแค่ยอด | `TaxSlipDeskRule.SlipTaxIdOther` (ตัวเดียว · ย้ายจาก intake) + `AgencyTypeProblem` (สลิปกรมสรรพากร ⇒ แบบของกรมเท่านั้น · สลิป สปส. ⇒ สปส.1-10 เท่านั้น) ใน `LinkProblem`/`ManualProblem` · หน่วยงานของสลิปที่ไม่มีแถวผู้รับชำระมาจาก `GovPaymentSlip.AgencyHint` (ประทับตอนรับ/อ่านใหม่) · เทสต์สองทิศ pure + Db `MED1_*` |
+| MED-2 ปิดแถว/ใบหมดอายุเขียนทับสถานะที่เพิ่ง commit | `AgeOpenRowsAsync` · `ExpireDueForAsync` · `CancelAsync` = `UPDATE … WHERE Status = expected` ทีละแถว · การ์ดเฉพาะแถวที่เปลี่ยน · Db test แข่งเวลา (ถือล็อกแถวในอีกธุรกรรม) `MED2_*` ×2 |
+| MED-3 สลิปที่ปล่อยหลัง void นับอายุจาก CreatedAt | คอลัมน์ `TaxSlipEvidences.ReleasedAt` · อายุ = `ReleasedAt ?? CreatedAt` |
+| LOW-1 การ์ดรอบแรกหลัง deploy | การ์ดสรุปใบเดียวต่อกลุ่ม/ผู้ส่ง (สลิป) และต่อบริษัท (ใบขอชำระ) ต่อรอบ · เพดาน 20 ต่อกลุ่ม/บริษัทต่อรอบ |
+| LOW-2 หมดอายุทั้งที่มีสลิปเปิดอ้าง | ข้ามใบที่มีแถวสลิปสถานะรอตัดสินอ้าง `TaxPaymentRequestId` |
+| LOW-3 ปิดใบด้วยการนำส่งบางส่วน · void แล้วไม่แจ้ง | `TaxPaymentRequestLifecycle.PaidBy` (ยอดรวมเท่าใบ + Control Code ถ้ารู้) · void ⇒ `ReopenedAt` ⇒ `TaxSlipJob` ส่งการ์ด `PaymentRequestReopened` ครั้งเดียว (`ReopenNoticeAt`) |
+| LOW-4 ทางล้มของเส้นอัตโนมัติ | `MoveToStaffIfOpenAsync` (conditional) ใช้ที่ ApplyAndReplyAsync · ProcessAsync catch · postback catch |
+
 ## ตรวจแล้วไม่ใช่บั๊ก / ปรับจากผลตรวจ
 
 - M2 ผลตรวจรวม `BooksMismatch`/`BooksChanged` ไว้ใน "ล้มทุกครั้งโดยโครงสร้าง" — **ไม่จริงทั้งหมด**: ด่านคือยอดค้างในสมุด ณ ตอนกด (`ExpectedAmount`) ถ้าผู้ทำบัญชีแก้สมุดแล้วกดได้ ⇒ ไม่บล็อกปุ่ม (บล็อกเฉพาะ ยอดสลิปไม่ตรง · ใบขอชำระปิด · งวดนำส่งแล้ว)

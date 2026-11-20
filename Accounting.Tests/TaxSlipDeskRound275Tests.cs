@@ -62,6 +62,41 @@ public class TaxSlipDeskRound275Tests
         Assert.NotNull(TaxSlipDeskRule.LinkProblem(null, 1_500m, false, null));
     }
 
+    [Fact]
+    public void ฝ่ายค้านMED1_หน่วยงานบนสลิปกับแบบ_และเลขผู้เสียภาษี_สองทิศ()
+    {
+        const string sso = nameof(GovPaymentSlip.Agency.SocialSecurityOffice), rd = nameof(GovPaymentSlip.Agency.RevenueDepartment);
+        Assert.NotNull(TaxSlipDeskRule.AgencyTypeProblem(sso, "WhtPnd53"));      // สลิป สปส. ลงเป็น ภ.ง.ด.53 ไม่ได้
+        Assert.Null(TaxSlipDeskRule.AgencyTypeProblem(sso, "SsoSps110"));
+        Assert.NotNull(TaxSlipDeskRule.AgencyTypeProblem(rd, "SsoSps110"));
+        Assert.Null(TaxSlipDeskRule.AgencyTypeProblem(rd, "WhtPnd53"));
+        Assert.Null(TaxSlipDeskRule.AgencyTypeProblem(null, "WhtPnd53"));       // ไม่รู้หน่วยงาน ⇒ ไม่บล็อก
+        Assert.NotNull(TaxSlipDeskRule.ManualProblem("WhtPnd53", 8_558m, 0m, 0m, 8_558m, null, Today, Today, slipAgency: sso));
+        Assert.Null(TaxSlipDeskRule.ManualProblem("SsoSps110", 8_558m, 0m, 0m, 8_558m, null, Today, Today, slipAgency: sso));
+        Assert.NotNull(TaxSlipDeskRule.LinkProblem(8_558m, 8_558m, false, null, false, sso, "WhtPnd53"));
+        Assert.Null(TaxSlipDeskRule.LinkProblem(8_558m, 8_558m, false, null, false, sso, "SsoSps110"));
+        Assert.NotNull(TaxSlipDeskRule.LinkProblem(8_558m, 8_558m, false, null, slipTaxIdOtherCompany: true));
+        var masked = TaxSlipReplyCard.MaskTaxId(SlipCorpusRound272.ClientTaxId);
+        Assert.False(TaxSlipDeskRule.SlipTaxIdOther(masked, SlipCorpusRound272.ClientTaxId));
+        Assert.True(TaxSlipDeskRule.SlipTaxIdOther(masked, SlipCorpusRound272.OtherClientTaxId));
+        Assert.False(TaxSlipDeskRule.SlipTaxIdOther(null, SlipCorpusRound272.OtherClientTaxId));   // สลิปไม่มีเลข ⇒ ไม่รู้
+        // หน่วยงานจากข้อความ: สลิป สปส. จริง (Biller ID + "สมทบ") ⇒ สปส. · สลิปโอนทั่วไป ⇒ ไม่รู้
+        Assert.Equal(GovPaymentSlip.Agency.SocialSecurityOffice, GovPaymentSlip.AgencyHint(OcrSlipText.Parse(C.KbizBillSso.Text, 2026, C.KbizBillSso.Qr)));
+        Assert.Null(GovPaymentSlip.AgencyHint(OcrSlipText.Parse(C.KbizTransferMemo.Text, 2026, C.KbizTransferMemo.Qr)));
+        Assert.Equal(GovPaymentSlip.Agency.RevenueDepartment, GovPaymentSlip.AgencyHint(OcrSlipText.Parse(SlipCorpusRound272.KbizRd(), 2026)));
+    }
+
+    [Fact]
+    public void ฝ่ายค้านLOW3_ใบขอชำระปิดเฉพาะเมื่อยอดและControlCodeตรง()
+    {
+        Assert.True(TaxPaymentRequestLifecycle.PaidBy(10_150m, "h1", 10_150m, null));
+        Assert.True(TaxPaymentRequestLifecycle.PaidBy(10_150m, "h1", 10_150m, "h1"));
+        Assert.False(TaxPaymentRequestLifecycle.PaidBy(10_150m, "h1", 10_000m, null));   // บางส่วน
+        Assert.False(TaxPaymentRequestLifecycle.PaidBy(10_150m, "h1", 10_150m, "h2"));   // สลิปของใบอื่น
+        Assert.Contains("รอชำระ", TaxSlipReplyCard.Text(TaxSlipReplyCard.Kind.PaymentRequestReopened, new(FormLabel: "ภ.ง.ด.53 งวด ก.ย. 2569"), false));
+        Assert.Contains("3 ใบ", TaxSlipReplyCard.Text(TaxSlipReplyCard.Kind.OpenExpired, new(HeldCount: 3, RecordedAt: Today), false));   // LOW-1 การ์ดสรุป
+    }
+
     [Theory]
     [InlineData("ToStaff", 1, null, TaxSlipOpenAge.AgeAction.None)]
     [InlineData("ToStaff", 3, null, TaxSlipOpenAge.AgeAction.Remind)]
