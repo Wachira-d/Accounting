@@ -23,6 +23,7 @@ context" ล้มทั้ง solution (Accounting.Tests พังตามด�
   ที่เหลือ (this.x, ชื่อชนิด, enum, namespace) ไม่แตะ
 """
 import re
+import unicodedata
 import sys
 from pathlib import Path
 
@@ -172,6 +173,10 @@ def split_args(s: str):
     yield cur
 
 
+def _is_ident_char(ch: str) -> bool:
+    return ch.isalnum() or ch == "_" or unicodedata.category(ch).startswith("M")
+
+
 def method_bodies(src: str):
     """หา "บล็อกที่มีพารามิเตอร์" ทุกตัวในไฟล์ — เมธอด · constructor · local function
 
@@ -225,7 +230,9 @@ def method_bodies(src: str):
         while p2 >= 0 and src[p2].isspace():
             p2 -= 1
         e2 = p2
-        while p2 >= 0 and (src[p2].isalnum() or src[p2] == "_"):
+        # ชื่อเมธอดภาษาไทย (เทสต์) มีสระ/วรรณยุกต์ที่เป็น combining mark (หมวด M) ซึ่ง isalnum() = False
+        # ⇒ เดิมตัดชื่อเหลือว่าง แล้วข้ามเมธอดแม่ไปตรวจ local function แยก ⇒ ฟ้องตัวแปรที่ capture มาผิด
+        while p2 >= 0 and _is_ident_char(src[p2]):
             p2 -= 1
         name = src[p2 + 1:e2 + 1]
         if not name or name in KEYWORDS_STMT or name in NOT_A_CALL:
