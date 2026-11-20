@@ -7356,6 +7356,19 @@ _รอบ 275 แพ็ก A (2026-11-20 · คีย์และความ�
 DTO พนักงานส่งป้าย ⛔ แทน ciphertext + ฟอร์มบอกชัด (ฝ่ายค้าน 274-10 MED-2) · หน้า `/pages/encryption-health.html` + มุมผู้ดูแล · runbook `docs/runbooks/encryption-key-rotation.md` ·
 คำตัดสิน 275-A-1…7 · pure + Db `KeysSecretsRound275A*` · กติกา `_R275A_` — commit (เติมในคอมมิตตามหลัง)_
 
+_รอบ 275 แพ็ก D ชุดแก้ฝ่ายค้าน (ไม่พบ HIGH): MED-1 ผูก/บันทึกเองตรวจเลขผู้เสียภาษี + หน่วยงานกับแบบ (`AgencyTypeProblem` · `GovPaymentSlip.AgencyHint`) · MED-2 งานเบื้องหลัง/ยกเลิกใบเขียนแบบมีเงื่อนไขทีละแถว + Db test แข่งเวลา · MED-3 `ReleasedAt` · LOW-1 การ์ดสรุปต่อกลุ่ม + เพดาน 20 · LOW-2 ใบที่มีสลิปเปิดอ้างไม่หมดอายุ · LOW-3 `PaidBy` + การ์ดใบกลับเปิด (`ReopenedAt`/`ReopenNoticeAt`) · LOW-4 `MoveToStaffIfOpenAsync` — คอลัมน์ใหม่ 3 (Round272Migration)_
+คำตัดสิน 275-A-1…7 · pure + Db `KeysSecretsRound275A*` · กติกา `_R275A_` — commit 2e7199e0 + bc9b6d73_
+
+_Last verified against codebase: 2026-11-20 (รอบ 275 แพ็ก C — ใบเสร็จ/ใบกำกับภาษี ณ วันรับเงิน: ตัวตัดสินเดียว `Helpers/SettlementTaxInvoiceRole` ยุบสูตร "งวดเดียว" 4 สำเนา
+(บันทึกรับชำระ · ออกใบย้อนหลัง · ย้ายการรับชำระ · งานหลังรับชำระ — นับค่าธรรมเนียม/บรรทัดปรับ/ภาษีหัก/ใบลดหนี้ตามลำดับเหตุการณ์ผ่านตัวไล่ยอด `SettlementReceiptTotals.Walk` ตัวเดียว) ·
+คำตัดสิน 4.1/275-C-1: งานบริการรับเป็นงวด ⇒ ใบกำกับทุกงวด VAT ตามส่วน + ย้าย 21913 ตามส่วนผูกการรับ + ถอยเฉพาะงวดเมื่อยกเลิก · ขายสินค้าคงเดิม · ใบลดหนี้ก่อนรับ/ตัดยอดที่ไล่ไม่ได้ ⇒ คิวให้คนตัดสิน ·
+คิว "รับเงินแล้วยังไม่มีใบกำกับ" (API + Autopilot + ปุ่มออกใบกำกับแทนใบรับเปล่า · ใบเก่าไม่แก้ย้อนหลัง) · MED-4 วันที่ปฏิทินไทยที่ต้นทางการรับชำระ · MED-5 ข้อความใบเสร็จผ่าน DocumentLabels ·
+LOW-1 การ์ด LINE "ยอดรับชำระ" · LOW-3 · ตัวโหลดรายการตัดยอดไม่นับการรับที่ถูกยกเลิก · เทสต์ `SettlementTaxInvoiceRoleTests` · Db `SettlementTaxInvoiceRoleDbTests` · กติกา `_R275C_*` — commit 96bb5262)_
+
+_รอบ 275 แพ็ก B ชุดแก้ฝ่ายค้าน + คำตัดสินแทนเจ้าของ 275-B-6…10 (2026-11-20): HIGH-1 ด่านทะเบียนเฉพาะร่าง (รายงานที่ยื่นแล้วสร้างไฟล์ได้ + คำเตือนยื่นเพิ่มเติม) ·
+MED-1/2 ยอดของบรรทัดในลายเซ็นล็อก (แก้ที่ต้นทาง) · MED-3 ด่านเซิร์ฟเวอร์บล็อกเฉพาะ `ServerBlockingCodes` · MED-4 สร้างใหม่คืนการติ๊กออก (`RegenerateUntick`) ·
+LOW ลายเซ็นใส่ DocumentId · `Round275BMigration` เติม WhtCertId ย้อนหลังที่จับคู่ได้แน่นอน · แถบ ≤ 6 เดือน · 275-B-6 (ก) ยกเลิก PV ⇒ ใบผูกด้วยมือหลุดการผูก (`WhtCertVoidCascade`) ·
+(ข) สำเนาผู้ถูกหัก ณ วันออก `WithholdingTaxCerts.PayeeSnapshotJson` (`WhtPayeeSnapshot` · ประทับที่ SaveChanges · backfill) — renderer ×2 · หน้าใบ · รายงาน/ไฟล์ — commit (เติมในคอมมิตตามหลัง)_
 _รอบ 276 (2026-11-20 · ความต้องการเจ้าของ "เห็นเฉพาะเอกสารที่ตัวเองสร้าง + เฉพาะร่าง + กดแจ้งให้บัญชีอนุมัติ · แจ้ง LINE กลุ่ม/ส่วนตัว/อีเมล/ในระบบ"):
 ค่าตั้งต่อผู้ใช้/บทบาท (`CompanyUser`/`CompanyRole.OwnDocumentsOnly/DraftDocumentsOnly` · Round276Migration) · ตัวตัดสิน `Helpers/DocumentRestrictionPolicy` ·
 ด่าน `Filters/DocumentRestrictionFilter` + ตัวกรองแถว EF ของ Documents · ด่าน Approve/Void ชั้น service (`DocumentRestrictionGuard`) ·

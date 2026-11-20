@@ -208,7 +208,8 @@ public class TaxSlipIntakeService
         {
             CompanyId = providerId, Source = source, ExternalMessageId = extId, SourceKey = sourceKey,
             ContactId = binding.ContactIds.Count == 1 ? binding.ContactIds[0] : null, FileSha256 = sha, StoragePath = path, ContentType = sniffed,
-            Agency = agency.Row?.Agency.ToString(), BankCode = payerBank, BankTxnHash = txnHash, BankTxnLast4 = TaxSlipRefHash.Last4(bill?.TxnNo),
+            Agency = (agency.Row?.Agency ?? GovPaymentSlip.AgencyHint(reading))?.ToString(),   /* ฝ่ายค้าน MED-1: สลิปที่ไม่มีแถวผู้รับชำระ (สปส.) ยังรู้หน่วยงานจากข้อความ */
+            BankCode = payerBank, BankTxnHash = txnHash, BankTxnLast4 = TaxSlipRefHash.Last4(bill?.TxnNo),
             ControlCodeHash = TaxSlipRefHash.ControlCode(agency.ControlCode), ControlCodeLast4 = TaxSlipRefHash.Last4(agency.ControlCode),
             TaxIdMasked = agency.TaxId != null ? TaxSlipReplyCard.MaskTaxId(agency.TaxId) : null,
             Amount = reading.Amount, Fee = bill?.Fee, SlipDate = reading.Date, Status = Statuses.Received, ShowAmounts = binding.ShowAmounts,
@@ -345,9 +346,9 @@ public class TaxSlipIntakeService
         {
             _logger.LogError(ex, "ประมวลสลิปภาษี {Slip} ล้ม — เข้าคิวพนักงาน", row.Id);
             _db.ChangeTracker.Clear();
-            var fresh = await _db.TaxSlipEvidences.FirstOrDefaultAsync(s => s.Id == row.Id && s.CompanyId == row.CompanyId, CancellationToken.None);
-            if (fresh == null || !Statuses.Open.Contains(fresh.Status)) return;   // รอบ 275 D (H2): แถวที่ปิด/บันทึกแล้วห้ามถูกตั้งกลับ
-            fresh.Status = Statuses.ToStaff; fresh.RuleCode = "TAX-SLIP-FAILED"; fresh.Reason = Clip("ระบบล้มระหว่างประมวล: " + ex.Message, 500); fresh.UpdatedAt = DateTime.UtcNow;
+            // รอบ 275 D (H2 · ฝ่ายค้าน LOW-4): แถวที่ปิด/บันทึกแล้วห้ามถูกตั้งกลับ — เขียนแบบมีเงื่อนไข
+            var fresh = await MoveToStaffIfOpenAsync(row.Id, row.CompanyId, "TAX-SLIP-FAILED", Clip("ระบบล้มระหว่างประมวล: " + ex.Message, 500), CancellationToken.None);
+            if (fresh == null) return;
             await _channel.SendSlipCardAsync(fresh, TaxSlipReplyCard.Text(Card.Failed, new(), fresh.ShowAmounts), replyToken, emailTo, null, CancellationToken.None);
             await _db.SaveChangesAsync(CancellationToken.None);
             await NotifyStaffAsync(fresh, CancellationToken.None);
@@ -562,12 +563,22 @@ public class TaxSlipIntakeService
         }
         // รอบ 275 แพ็ก D (M2): พนักงานกดแล้วล้ม ⇒ ตอบผู้กด 409 อย่างเดียว — ไม่ส่งการ์ดเข้ากลุ่มลูกค้า ไม่เปลี่ยนเหตุเดิมของแถว (เดิมกด 3 ครั้ง = การ์ด 3 ใบ)
         if (staffUserId != null) throw new BusinessRuleException("บันทึกไม่ได้ — " + failure, failureCode, 409);
-        fresh.Status = Statuses.ToStaff;
-        fresh.RuleCode = Clip(failureCode, 40);
-        fresh.Reason = Clip(failure, 500);
-        fresh.UpdatedAt = DateTime.UtcNow;
-        await FinishAsync(fresh, Card.ToStaff, f with { Reason = cardReason }, replyToken, emailTo, staff: true, ct);
+        // ฝ่ายค้าน LOW-4: เขียนแบบมีเงื่อนไข — อีกคำขอบันทึก/ปิดแถวระหว่างอ่านกับเขียน ⇒ ไม่แตะ ไม่ส่งการ์ด
+        var moved = await MoveToStaffIfOpenAsync(slipId, providerId, Clip(failureCode, 40), Clip(failure, 500), ct);
+        if (moved == null) return false;
+        await FinishAsync(moved, Card.ToStaff, f with { Reason = cardReason }, replyToken, emailTo, staff: true, ct);
         return false;
+    }
+
+    /// <summary>รอบ 275 แพ็ก D (ฝ่ายค้าน LOW-4 · H2): ย้ายแถวเข้าคิวพนักงาน<b>เฉพาะเมื่อยังรอตัดสิน</b> (<c>UPDATE … WHERE Status IN Open</c>) · คืนแถวที่ track แล้ว (อ่านใหม่) หรือ null = แถวปิด/บันทึกไปแล้ว</summary>
+    private async Task<TaxSlipEvidence?> MoveToStaffIfOpenAsync(Guid slipId, Guid providerId, string? ruleCode, string? reason, CancellationToken ct)
+    {
+        _db.ChangeTracker.Clear();
+        var now = DateTime.UtcNow;
+        var done = await _db.TaxSlipEvidences.Where(s => s.Id == slipId && s.CompanyId == providerId && Statuses.Open.Contains(s.Status))
+            .ExecuteUpdateAsync(u => u.SetProperty(s => s.Status, Statuses.ToStaff).SetProperty(s => s.RuleCode, ruleCode).SetProperty(s => s.Reason, reason)
+                .SetProperty(s => s.UpdatedAt, (DateTime?)now), ct);
+        return done == 0 ? null : await _db.TaxSlipEvidences.FirstAsync(s => s.Id == slipId && s.CompanyId == providerId, ct);
     }
 
     private async Task AskChoiceAsync(TaxSlipEvidence row, TaxSlipMatch.Decision d, TaxSlipReplyCard.Facts facts, string? replyToken, string? emailTo, CancellationToken ct)
@@ -644,13 +655,8 @@ public class TaxSlipIntakeService
             // ฝ่ายค้าน 272 M5: ล้มทุกชนิด ⇒ แถวเข้าคิวพนักงานจริง + กระดิ่ง (ไม่ค้าง Received)
             _logger.LogError(ex, "บันทึกสลิปภาษี {Slip} หลังลูกค้าเลือกในกลุ่มล้ม — เข้าคิวพนักงาน", slipId);
             _db.ChangeTracker.Clear();
-            var fresh = await _db.TaxSlipEvidences.FirstOrDefaultAsync(s => s.Id == slipId && s.CompanyId == providerId, CancellationToken.None);
-            if (fresh != null && Statuses.Open.Contains(fresh.Status))
-            {
-                fresh.Status = Statuses.ToStaff; fresh.RuleCode = "TAX-SLIP-FAILED"; fresh.Reason = Clip("ระบบล้มหลังลูกค้าเลือกรายการ: " + ex.Message, 500); fresh.UpdatedAt = DateTime.UtcNow;
-                await _db.SaveChangesAsync(CancellationToken.None);
-                await NotifyStaffAsync(fresh, CancellationToken.None);
-            }
+            var fresh = await MoveToStaffIfOpenAsync(slipId, providerId, "TAX-SLIP-FAILED", Clip("ระบบล้มหลังลูกค้าเลือกรายการ: " + ex.Message, 500), CancellationToken.None);
+            if (fresh != null) await NotifyStaffAsync(fresh, CancellationToken.None);
             return TaxSlipReplyCard.Text(Card.Failed, new(), false);
         }
     }
@@ -748,7 +754,7 @@ public class TaxSlipIntakeService
                 continue;
             }
             row.Status = Statuses.Received; row.RuleCode = null; row.Reason = null; row.UpdatedAt = nowUtc;
-            row.Amount = reading.Amount; row.SlipDate = reading.Date; row.Fee = reading.Bill?.Fee; row.Agency = agency.Row?.Agency.ToString();
+            row.Amount = reading.Amount; row.SlipDate = reading.Date; row.Fee = reading.Bill?.Fee; row.Agency = (agency.Row?.Agency ?? GovPaymentSlip.AgencyHint(reading))?.ToString();
             row.ControlCodeHash = TaxSlipRefHash.ControlCode(agency.ControlCode); row.ControlCodeLast4 = TaxSlipRefHash.Last4(agency.ControlCode);
             row.TaxIdMasked = agency.TaxId != null ? TaxSlipReplyCard.MaskTaxId(agency.TaxId) : null;
             await _db.SaveChangesAsync(ct);
@@ -758,39 +764,77 @@ public class TaxSlipIntakeService
         return n;
     }
 
-    /// <summary>รอบ 275 แพ็ก D (M4 · คำตัดสิน 275-D-3): แถวที่รอพนักงานนาน ⇒ กระดิ่งซ้ำวันละครั้ง · เกิน 90 วัน ⇒ ปิดเป็น Expired + การ์ดตามจริง (ไฟล์ลบตามระยะเก็บของแถวที่ปิด)</summary>
-    private async Task<int> AgeOpenRowsAsync(Guid providerId, DateTime nowUtc, CancellationToken ct)
+    /// <summary>รอบ 275 แพ็ก D (M4 · คำตัดสิน 275-D-3): แถวที่รอพนักงานนาน ⇒ กระดิ่งซ้ำวันละครั้ง · เกิน 90 วัน ⇒ ปิดเป็น Expired + การ์ดตามจริง (ไฟล์ลบตามระยะเก็บของแถวที่ปิด) ·
+    /// ฝ่ายค้าน MED-2: อ่านแบบไม่ track แล้วเขียน<b>แบบมีเงื่อนไขทีละแถว</b> (<c>WHERE Status = ToStaff</c> — พนักงานบันทึก/ปฏิเสธที่ commit ระหว่างนี้ชนะ) · การ์ดเฉพาะแถวที่เปลี่ยนจริง ·
+    /// MED-3 อายุนับจาก <c>ReleasedAt</c> (ปล่อยหลังยกเลิกรายการนำส่ง) ถ้ามี · LOW-1 การ์ดสรุปใบเดียวต่อกลุ่มต่อรอบ + เพดานต่อกลุ่ม</summary>
+    public async Task<int> AgeOpenRowsAsync(Guid providerId, DateTime nowUtc, CancellationToken ct = default)
     {
         var remindCut = nowUtc.AddDays(-TaxSlipOpenAge.RemindAfterDays);
-        var rows = await _db.TaxSlipEvidences.Where(s => s.CompanyId == providerId && s.Status == Statuses.ToStaff && s.CreatedAt < remindCut)
-            .OrderBy(s => s.CreatedAt).Take(100).ToListAsync(ct);
+        var rows = await _db.TaxSlipEvidences.AsNoTracking()
+            .Where(s => s.CompanyId == providerId && s.Status == Statuses.ToStaff && (s.ReleasedAt ?? s.CreatedAt) < remindCut)
+            .OrderBy(s => s.ReleasedAt ?? s.CreatedAt).Take(200).ToListAsync(ct);
         var n = 0;
         var remind = new List<TaxSlipEvidence>();
+        var expired = new List<TaxSlipEvidence>();
+        var perChannel = new Dictionary<string, int>();
         foreach (var row in rows)
         {
-            switch (TaxSlipOpenAge.Decide(row.Status, row.CreatedAt, row.StaffRemindedAt, nowUtc))
+            var since = row.ReleasedAt ?? row.CreatedAt;
+            switch (TaxSlipOpenAge.Decide(row.Status, since, row.StaffRemindedAt, nowUtc))
             {
                 case TaxSlipOpenAge.AgeAction.Expire:
-                    row.Status = Statuses.Expired; row.RuleCode = TaxSlipOpenAge.ExpiredRuleCode;
-                    row.Reason = "รอพนักงานตรวจเกิน " + TaxSlipOpenAge.ExpireAfterDays + " วัน — ปิดโดยไม่บันทึก"; row.ResolvedAt = nowUtc; row.UpdatedAt = nowUtc;
-                    row.FileSha256 = "expired:" + row.Id.ToString("N"); row.BankTxnHash = null;   // ส่งไฟล์เดิมใหม่ได้ (แถวใหม่)
+                {
+                    var key = row.Source + ":" + row.SourceKey;
+                    perChannel.TryGetValue(key, out var used);
+                    if (used >= TaxSlipOpenAge.ExpireCapPerChannelPerRun) break;   // ที่เหลือรอบถัดไป
+                    var reason = "รอพนักงานตรวจเกิน " + TaxSlipOpenAge.ExpireAfterDays + " วัน — ปิดโดยไม่บันทึก";
+                    var sha = "expired:" + row.Id.ToString("N");   // ส่งไฟล์เดิมใหม่ได้ (แถวใหม่)
+                    var done = await _db.TaxSlipEvidences.Where(s => s.Id == row.Id && s.CompanyId == providerId && s.Status == Statuses.ToStaff)
+                        .ExecuteUpdateAsync(u => u.SetProperty(s => s.Status, Statuses.Expired).SetProperty(s => s.RuleCode, TaxSlipOpenAge.ExpiredRuleCode)
+                            .SetProperty(s => s.Reason, reason).SetProperty(s => s.ResolvedAt, (DateTime?)nowUtc).SetProperty(s => s.UpdatedAt, (DateTime?)nowUtc)
+                            .SetProperty(s => s.FileSha256, sha).SetProperty(s => s.BankTxnHash, (string?)null), ct);
+                    if (done == 0) break;   // พนักงานตัดสินไปแล้วระหว่างนี้ — ไม่แตะ ไม่ส่งการ์ด
+                    perChannel[key] = used + 1;
                     _db.AddChainedAuditLog(new AuditLog
                     {
                         CompanyId = providerId, Action = Accounting.Models.Enums.AuditAction.Update, EntityType = nameof(TaxSlipEvidence), EntityId = row.Id.ToString(),
-                        NewValues = JsonSerializer.Serialize(new { @event = "TaxSlipOpenExpired", days = TaxSlipOpenAge.ExpireAfterDays, ruleCode = row.RuleCode }), Timestamp = nowUtc,
+                        NewValues = JsonSerializer.Serialize(new { @event = "TaxSlipOpenExpired", days = TaxSlipOpenAge.ExpireAfterDays, ruleCode = TaxSlipOpenAge.ExpiredRuleCode }),
+                        Timestamp = nowUtc,
                     });
-                    await FinishAsync(row, Card.OpenExpired, new(ControlLast4: row.ControlCodeLast4, RecordedAt: row.CreatedAt), null, null, staff: false, ct);
+                    expired.Add(row);
                     n++;
                     break;
+                }
                 case TaxSlipOpenAge.AgeAction.Remind:
-                    row.StaffRemindedAt = nowUtc;
-                    remind.Add(row);
+                {
+                    var done = await _db.TaxSlipEvidences.Where(s => s.Id == row.Id && s.CompanyId == providerId && s.Status == Statuses.ToStaff)
+                        .ExecuteUpdateAsync(u => u.SetProperty(s => s.StaffRemindedAt, (DateTime?)nowUtc), ct);
+                    if (done == 1) remind.Add(row);
                     break;
+                }
+            }
+        }
+        if (expired.Count > 0)
+        {
+            await _db.SaveChangesAsync(ct);   // audit
+            // การ์ดสรุปใบเดียวต่อกลุ่ม/ผู้ส่ง (ส่งผ่านแถวแรกของกลุ่ม · ผลการส่งประทับทุกแถวในกลุ่ม)
+            foreach (var g in expired.GroupBy(r => r.Source + ":" + r.SourceKey))
+            {
+                var list = g.ToList();
+                var carrier = await _db.TaxSlipEvidences.FirstAsync(s => s.Id == list[0].Id && s.CompanyId == providerId, ct);
+                await _channel.SendSlipCardAsync(carrier, TaxSlipReplyCard.Text(Card.OpenExpired,
+                    new(ControlLast4: list.Count == 1 ? carrier.ControlCodeLast4 : null, RecordedAt: list.Min(r => r.ReleasedAt ?? r.CreatedAt), HeldCount: list.Count),
+                    carrier.ShowAmounts), null, null, null, ct);
+                foreach (var r in list.Skip(1))
+                {
+                    var t = await _db.TaxSlipEvidences.FirstAsync(s => s.Id == r.Id && s.CompanyId == providerId, ct);
+                    t.LastCardText = carrier.LastCardText; t.LastCardOutcome = carrier.LastCardOutcome; t.LastCardAt = carrier.LastCardAt;
+                }
+                await _db.SaveChangesAsync(ct);
             }
         }
         if (remind.Count > 0)
         {
-            await _db.SaveChangesAsync(ct);
             if (_notify != null)
             {
                 try
@@ -798,7 +842,7 @@ public class TaxSlipIntakeService
                     await _notify.DispatchAsync(providerId, NotificationEvents.TaxSlipNeedsStaff, new NotificationContext
                     {
                         Title = "⏰ สลิปภาษีของลูกค้ารอตรวจเกิน " + TaxSlipOpenAge.RemindAfterDays + " วัน " + remind.Count + " ใบ",
-                        Message = "ใบเก่าสุดรับเมื่อ " + TaxSlipReplyCard.ThaiDay(remind.Min(r => r.CreatedAt)) + " · ครบ " + TaxSlipOpenAge.ExpireAfterDays
+                        Message = "ใบเก่าสุดรอตั้งแต่ " + TaxSlipReplyCard.ThaiDay(remind.Min(r => r.ReleasedAt ?? r.CreatedAt)) + " · ครบ " + TaxSlipOpenAge.ExpireAfterDays
                             + " วันระบบปิดโดยไม่บันทึกและแจ้งลูกค้า",
                         ActionUrl = "/pages/tax-slip-desk.html",
                     });
@@ -993,15 +1037,13 @@ public class TaxSlipIntakeService
                 .Select(b => new { b.Id, b.BankName, b.AccountNumber }).ToListAsync(ct);
             list.Add(new ClientManualView(co.Id, co.Name, pending,
                 recs.Select(r => new RemittanceView(r.Id, FormLabel(r.RemittanceType, r.PeriodYear, r.PeriodMonth), r.Total, r.PayDate,
-                    TaxSlipDeskRule.LinkProblem(row.Amount, r.Total, false, r.SlipEvidenceId))).ToList(),
+                    TaxSlipDeskRule.LinkProblem(row.Amount, r.Total, false, r.SlipEvidenceId,
+                        TaxSlipDeskRule.SlipTaxIdOther(row.TaxIdMasked, co.TaxId), row.Agency, r.RemittanceType))).ToList(),
                 accs.Select(a => new AccountView(a.Id, AccountLabel(a.BankName, a.AccountNumber), false)).ToList(),
-                SlipTaxIdOther(row, co.TaxId) ? "เลขผู้เสียภาษีบนสลิปไม่ตรงบริษัทนี้" : null));
+                TaxSlipDeskRule.SlipTaxIdOther(row.TaxIdMasked, co.TaxId) ? "เลขผู้เสียภาษีบนสลิปไม่ตรงบริษัทนี้" : null));
         }
         return new ManualOptions(row.Id, row.Amount, row.SlipDate, row.Amount == null, row.SlipDate == null, list);
     }
-
-    private static bool SlipTaxIdOther(TaxSlipEvidence row, string? companyTaxId)
-        => row.TaxIdMasked != null && ThaiTaxId.Normalize(companyTaxId).Length == 13 && TaxSlipReplyCard.MaskTaxId(companyTaxId) != row.TaxIdMasked;
 
     /// <param name="SlipAmount">ยอดบนสลิปที่พนักงานอ่านเอง — ใช้เฉพาะเมื่อระบบอ่านไม่ได้</param>
     /// <param name="PayDate">วันที่จ่ายตามสลิป — ใช้เฉพาะเมื่อระบบอ่านวันที่ไม่ได้</param>
@@ -1024,7 +1066,7 @@ public class TaxSlipIntakeService
         var co = await _db.Companies.AsNoTracking().Where(c => c.Id == m.ClientCompanyId).Select(c => new { c.Name, c.TaxId }).FirstAsync(ct);
         var payDate = row.SlipDate ?? m.PayDate?.Date;
         if (TaxSlipDeskRule.ManualProblem(m.RemittanceType, m.Tax, m.Surcharge, m.Penalty, row.Amount, m.SlipAmount, payDate,
-                ThaiDate.CalendarDateUtc(DateTime.UtcNow), SlipTaxIdOther(row, co.TaxId)) is { } problem)
+                ThaiDate.CalendarDateUtc(DateTime.UtcNow), TaxSlipDeskRule.SlipTaxIdOther(row.TaxIdMasked, co.TaxId), row.Agency) is { } problem)
             throw new BusinessRuleException(problem, TaxSlipDeskRule.ManualRuleCode, 400);
         var label = await ClientAccountLabelAsync(m.ClientCompanyId, m.BankAccountId, ct);
         var cand = new TaxSlipMatch.Candidate(m.ClientCompanyId, m.RemittanceType, m.PeriodYear, m.PeriodMonth,

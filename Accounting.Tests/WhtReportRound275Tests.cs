@@ -193,4 +193,89 @@ public class WhtReportRound275Tests
         Assert.Equal(100m, legacy.TaxAmount);   // รุ่นเก่า: เลขอย่างเดียว (พฤติกรรมเดิม)
         Assert.Equal(100m, r.TotalTaxWithheld); // ยอดหัวไม่รวมแถวสรุป
     }
+
+    // ═════ ชุดแก้ฝ่ายค้านรอบ 275 แพ็ก B ═════
+
+    [Fact]
+    public void R275BF_MED4_คืนติ๊กออก_จับคู่เอกสารใบประเภทคำอธิบาย_บรรทัดรุ่นเก่าไม่มีใบจับคู่ได้()
+    {
+        var doc = Guid.NewGuid();
+        var cert = Guid.NewGuid();
+        var excluded = new[] { new RegenerateUntick.Key(doc, cert, "40(8)", "WT-1 — ค่าบริการ"), new RegenerateUntick.Key(null, null, "40(8)", "JV-9") };
+        Assert.True(RegenerateUntick.Matches(excluded, new(doc, cert, "40(8)", "WT-1 — ค่าบริการ")));
+        Assert.True(RegenerateUntick.Matches(excluded, new(null, null, "40(8)", "JV-9")));
+        // ทิศตรงข้าม: ใบอื่น · ประเภทอื่น · คำอธิบายอื่น (ร่าง → ออกแล้ว) ⇒ ไม่ติ๊กออกตาม
+        Assert.False(RegenerateUntick.Matches(excluded, new(doc, Guid.NewGuid(), "40(8)", "WT-1 — ค่าบริการ")));
+        Assert.False(RegenerateUntick.Matches(excluded, new(doc, cert, "40(2)", "WT-1 — ค่าบริการ")));
+        Assert.False(RegenerateUntick.Matches(excluded, new(doc, cert, "40(8)", "WT-2 — ค่าบริการ")));
+        // บรรทัดเดิมไม่มีตัวอ้างใบ (ก่อนรอบ 275) ⇒ จับคู่โดยไม่ดูใบ
+        var legacy = new[] { new RegenerateUntick.Key(doc, null, "40(8)", "WT-1 — ค่าบริการ") };
+        Assert.True(RegenerateUntick.Matches(legacy, new(doc, cert, "40(8)", "WT-1 — ค่าบริการ")));
+    }
+
+    [Fact]
+    public void R275BF_MED1_MED2_ยอดของบรรทัดในลายเซ็นล็อก_JEล้วนแก้ได้_ภพ30ไม่แตะ()
+    {
+        var doc = Guid.NewGuid();
+        Assert.True(WhtReportLineRule.AmountsLocked(TaxType.VatPp36, null, doc));                // ภ.พ.36 จากเอกสาร
+        Assert.True(WhtReportLineRule.AmountsLocked(TaxType.WithholdingTax53, null, doc));       // แถว "ยังไม่ออกหนังสือรับรอง"
+        Assert.False(WhtReportLineRule.AmountsLocked(TaxType.WithholdingTax53, null, null));     // JE ล้วน (ไม่อยู่ในลายเซ็น)
+        Assert.False(WhtReportLineRule.AmountsLocked(TaxType.VatPp36, null, null));
+        Assert.False(WhtReportLineRule.AmountsLocked(TaxType.VAT, null, doc));
+        Assert.Contains("แก้ยอดที่เอกสาร", WhtReportLineRule.LockReason(TaxType.VatPp36, "PV-1", null, doc));
+        Assert.Contains("ระบุเหตุผล", WhtReportLineRule.LockReason(TaxType.WithholdingTax3, WhtUnissuedCertGate.UnissuedCertMarker + " — x", null, doc));
+    }
+
+    [Fact]
+    public void R275BF_LOW_ใบเดิมเปลี่ยนเอกสารที่ผูก_ยอดเท่าเดิม_ลายเซ็นเห็น()
+    {
+        var c = Guid.NewGuid();
+        var v = Cmp(new[] { Line(c, Guid.NewGuid(), "WT-1 — ค่าบริการ", 1_000m, 30m) }, new[] { Line(c, Guid.NewGuid(), "WT-1 — ค่าบริการ", 1_000m, 30m) });
+        Assert.True(v.Stale);
+        Assert.Equal(1, v.Changed);
+    }
+
+    [Fact]
+    public void R275BF_MED3_ด่านเซิร์ฟเวอร์บล็อกเฉพาะกติกาที่ตั้งใจ()
+    {
+        var codes = Accounting.Services.Implementations.Tax.TaxComplianceChecker.ServerBlockingCodes;
+        foreach (var c in new[] { "RD-WHT-002", "RD-WHT-005", "RD-PND1-002", "RD-PP36-001" }) Assert.Contains(c, codes);
+        foreach (var c in new[] { "RD-VAT-001", "RD-VAT-002", "RD-PP36-002", "RD-GEN-001", "RD-DEADLINE" }) Assert.DoesNotContain(c, codes);
+    }
+
+    [Fact]
+    public void R275BF_HIGH1_ยื่นแล้วทะเบียนขยับ_เตือนยื่นเพิ่มเติม_ไม่ใช่ให้สร้างใหม่()
+    {
+        var note = TaxReportDraftFreshness.FiledDriftNote("x");
+        Assert.Contains("ยื่นแล้ว", note);
+        Assert.Contains("ยื่นแบบเพิ่มเติม", note);
+    }
+
+    [Fact]
+    public void R275BF_B6ก_ใบผูกด้วยมือหลุดการผูก_ใบที่ระบบสร้างยกเลิกตาม()
+    {
+        Assert.True(WhtCertVoidCascade.UnlinkInsteadOfVoid(new DateTime(2026, 11, 1, 0, 0, 0, DateTimeKind.Utc)));
+        Assert.False(WhtCertVoidCascade.UnlinkInsteadOfVoid(null));
+        Assert.Contains("ยังไม่ผูก", WhtCertVoidCascade.UnlinkedNotice("WT-1", "PV-1"));
+    }
+
+    [Fact]
+    public void R275BF_B6ข_สำเนาผู้ถูกหักณวันออก_ชนะผู้ติดต่อสด_ไม่มีสำเนาใช้สด_สำเนาเสียใช้สด()
+    {
+        var at = new Contact { Name = "บริษัท เดิม จำกัด", TaxId = Tin, BranchCode = "00000", TitleTh = "บริษัท", Province = "กรุงเทพมหานคร" };
+        var cert = new WithholdingTaxCert { PayeeContactId = Guid.NewGuid(), PayeeSnapshotJson = WhtPayeeSnapshot.Serialize(at) };
+        cert.PayeeContact = new Contact { Name = "บริษัท ใหม่ จำกัด", TaxId = "0105556000033", BranchCode = "00002", CountryCode = "TH" };
+        var p = WhtPayeeSnapshot.Of(cert)!;
+        Assert.Equal("บริษัท เดิม จำกัด", p.Name);
+        Assert.Equal(Tin, p.TaxId);
+        Assert.Equal("00000", p.BranchCode);
+        Assert.Equal("กรุงเทพมหานคร", p.Province);
+        Assert.NotSame(cert.PayeeContact, p);   // ไม่ผูกกับ navigation
+        cert.PayeeSnapshotJson = null;
+        Assert.Same(cert.PayeeContact, WhtPayeeSnapshot.Of(cert));
+        cert.PayeeSnapshotJson = "{not json";
+        Assert.Same(cert.PayeeContact, WhtPayeeSnapshot.Of(cert));
+        Assert.True(WhtPayeeSnapshot.ShouldStamp(Accounting.Models.DTOs.Tax.WithholdingTaxCertStatus.Issued));
+        Assert.False(WhtPayeeSnapshot.ShouldStamp(Accounting.Models.DTOs.Tax.WithholdingTaxCertStatus.Draft));
+    }
 }

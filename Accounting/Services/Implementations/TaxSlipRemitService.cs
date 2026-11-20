@@ -212,7 +212,9 @@ public class TaxSlipRemitService
                 ?? throw new TaxSlipGateException("ไม่พบรายการนำส่งของบริษัทนี้", TaxSlipDeskRule.LinkRuleCode);
             await _db.Entry(rec).ReloadAsync(ct);
             var recTotal = rec.Amount + rec.LateFee + rec.Penalty + rec.OtherFine;
-            if (TaxSlipDeskRule.LinkProblem(slip.Amount, recTotal, rec.IsDeleted, rec.SlipEvidenceId) is { } problem)
+            if (TaxSlipDeskRule.LinkProblem(slip.Amount, recTotal, rec.IsDeleted, rec.SlipEvidenceId,
+                    TaxSlipDeskRule.SlipTaxIdOther(slip.TaxIdMasked, await _db.Companies.AsNoTracking().Where(co => co.Id == a.ClientCompanyId).Select(co => co.TaxId).FirstOrDefaultAsync(ct)),
+                    slip.Agency, rec.RemittanceType) is { } problem)
                 throw new TaxSlipGateException(problem + " — ไม่ผูก", TaxSlipDeskRule.LinkRuleCode);
             var verdict = await _consent.CheckForWriteAsync(a.ClientCompanyId, a.ProviderId, rec.RemittanceType, recTotal, ct);
             if (!verdict.AllowsStaffClick && !a.StaffIsClientTaxFiler)
@@ -228,7 +230,7 @@ public class TaxSlipRemitService
             rec.ControlCodeLast4 ??= slip.ControlCodeLast4;
             rec.UpdatedAt = DateTime.UtcNow;
             // ใบขอชำระของงวดนั้นที่ยังเปิด ⇒ ชำระแล้ว (ตัวตั้งเดียวกับ RemitAsync)
-            await TaxPaymentRequestService.CloseOnRemitAsync(_db, a.ClientCompanyId, rec.RemittanceType, rec.PeriodYear, rec.PeriodMonth, rec.Id, slip.Id, ct);
+            await TaxPaymentRequestService.CloseOnRemitAsync(_db, a.ClientCompanyId, rec.RemittanceType, rec.PeriodYear, rec.PeriodMonth, rec.Id, slip.Id, recTotal, slip.ControlCodeHash, ct);
             var payload = JsonSerializer.Serialize(new
             {
                 @event = "TaxSlipLinkedToRemittance", slipId = slip.Id, remittanceId = rec.Id, type = rec.RemittanceType, year = rec.PeriodYear, month = rec.PeriodMonth,
@@ -288,6 +290,7 @@ public class TaxSlipRemitService
                 slip.ResolvedAt = null;
                 slip.ResolvedByUserId = null;
                 slip.StaffRemindedAt = null;
+                slip.ReleasedAt = nowUtc;   // ฝ่ายค้าน MED-3: อายุคิวนับใหม่จากเวลาที่ปล่อย
                 slip.UpdatedAt = nowUtc;
                 db.AddChainedAuditLog(new AuditLog { CompanyId = pid, Action = AuditAction.Update, EntityType = nameof(TaxSlipEvidence), EntityId = slip.Id.ToString(),
                     NewValues = JsonSerializer.Serialize(new { @event = "TaxSlipReleasedByVoid", remittanceId = rec.Id, clientId = rec.CompanyId, reason = why, ruleCode = VoidedRuleCode }),
@@ -302,6 +305,7 @@ public class TaxSlipRemitService
             r.Status = TaxPaymentRequestLifecycle.StatusAfterVoid(r.ControlCodeExpiresAt, nowUtc);
             r.StatutoryRemittanceId = null;
             r.TaxSlipEvidenceId = null;
+            r.ReopenedAt = nowUtc; r.ReopenNoticeAt = null;   // ฝ่ายค้าน LOW-3: งานเบื้องหลังแจ้งกลุ่มตามจริง
             r.UpdatedAt = nowUtc;
         }
         return (slips, reqs.Count);

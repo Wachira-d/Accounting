@@ -29,7 +29,7 @@ public static class SecretUse
     }
 
     /// <summary>ข้อความเมื่อตั้งไว้แต่ใช้ไม่ได้ — ตัวประกอบเดียว (ผู้เรียกทุกตัวและหน้า "สุขภาพข้อมูลเข้ารหัส" ใช้ประโยคเดียวกัน)</summary>
-    public static string UnusableText(string label, SecretState state)
+    internal static string UnusableText(string label, SecretState state)
     {
         var l = label.Trim();
         return $"{l} ที่บันทึกไว้ใช้ไม่ได้ ({SecretWarnings.ReasonFor(state) ?? "ถอดรหัสไม่ได้"}) — กรอก{l}ใหม่ในหน้าตั้งค่า "

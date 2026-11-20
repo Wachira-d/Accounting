@@ -111,6 +111,16 @@ public static class GovPaymentSlip
             : new Result(Kind.NotGovernment, null, null, null, RuleCode, "ไม่ใช่สลิปชำระหน่วยงานรัฐที่รู้จัก");
     }
 
+    /// <summary>รอบ 275 แพ็ก D (ฝ่ายค้าน MED-1): หน่วยงานที่ข้อความบนสลิปบ่งบอก — ใช้กับสลิปที่ระบุแถวผู้รับชำระไม่ได้ (เช่น สปส. ยังไม่มีแถว Auto)
+    /// เพื่อกันพนักงานลงสลิปหน่วยงานหนึ่งเป็นแบบของอีกหน่วยงาน · คำชื่อของแถวในตาราง (คำอ่อน "สมทบ" ต้องคู่ป้ายจ่ายบิล · L8) · ตรงหลายหน่วยงาน/ไม่ตรงเลย ⇒ null (ไม่รู้)</summary>
+    public static Agency? AgencyHint(OcrSlipText.Reading reading, string? text = null)
+    {
+        var t = text ?? reading.Text ?? "";
+        var billLabel = reading.Bill?.CompCode != null || BillLabels.Any(l => Has(t, l));
+        var hits = Billers.Where(b => b.NameWords.Any(w => w == WeakGovWord ? billLabel && Has(t, w) : Has(t, w))).Select(b => b.Agency).Distinct().ToList();
+        return hits.Count == 1 ? hits[0] : null;
+    }
+
     private static Result Unknown(string reason) => new(Kind.UnknownGovernment, null, null, null, UnknownAgencyRuleCode, reason);
 
     private static string AgencyLabel(Agency a) => a switch

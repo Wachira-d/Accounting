@@ -2061,6 +2061,35 @@ public class DocumentController : ControllerBase
         return Ok(new ApiResponse<IssuedReceiptResult>(true, result, msg));
     }
 
+    /// <summary>รอบ 275 แพ็ก C — คิว "รับเงินแล้วยังไม่มีใบกำกับภาษี" (อ่านอย่างเดียว · คำตัดสิน 4.1: ใบเก่าไม่แก้ย้อนหลัง ผู้ทำบัญชีออกใบกำกับเพิ่มจากคิว)</summary>
+    [HttpGet("received-without-tax-invoice")]
+    public async Task<ActionResult<ApiResponse<IReadOnlyList<ReceivedWithoutTaxInvoiceRow>>>> ReceivedWithoutTaxInvoice(Guid companyId, CancellationToken ct)
+    {
+        var rows = await _documentService.ReceivedWithoutTaxInvoiceAsync(companyId, ct);
+        return Ok(new ApiResponse<IReadOnlyList<ReceivedWithoutTaxInvoiceRow>>(true, rows, null));
+    }
+
+    /// <summary>รอบ 275 แพ็ก C — ปุ่ม "ออกใบกำกับภาษี ณ วันรับเงิน" ของคิว: ยกเลิกใบรับเปล่าของการรับนี้ (ถ้ามี) + ออกใบเสร็จที่ถือ VAT ตามตัวตัดสินเดียว ·
+    /// สิทธิ์ = สร้าง + อนุมัติ + ยกเลิกใบเสร็จ (ใบที่ระบบออกเป็นเลขจริงทันที)</summary>
+    [HttpPost("payments/{paymentId:guid}/tax-invoice/{documentId:guid}")]
+    public async Task<ActionResult<ApiResponse<IssuedReceiptResult>>> IssueTaxInvoiceForPayment(Guid companyId, Guid paymentId, Guid documentId)
+    {
+        var uid = JwtHelper.GetUserIdFromClaims(User);
+        foreach (var (perm, what) in new[] { (DocPerm.Create, "ออกใบกำกับภาษี ณ วันรับเงินของ"), (DocPerm.Approve, "อนุมัติใบเสร็จรับเงินของ"),
+                     (DocPerm.Void, "ยกเลิกใบเสร็จรับเงินเพื่อออกใบกำกับแทนของ") })
+        {
+            var deny = await DenyDocAsync(companyId, uid, DocumentType.Receipt, perm, what);
+            if (deny != null) return Forbid403<IssuedReceiptResult>(deny);
+        }
+        var result = await _documentService.IssueTaxInvoiceForPaymentAsync(companyId, paymentId, documentId, uid.ToString());
+        var msg = result.AlreadyExisted
+            ? $"การรับชำระนี้มีใบเสร็จที่ทำหน้าที่ใบกำกับภาษีอยู่แล้ว: {result.ReceiptNumber}"
+            : result.IsDraft
+                ? "สร้างใบกำกับภาษี/ใบเสร็จรับเงินเป็น \"ร่าง\" แล้ว — รอผู้มีสิทธิ์อนุมัติเพื่อออกเลขจริง"
+                : $"ออกใบกำกับภาษี/ใบเสร็จรับเงิน {result.ReceiptNumber} ลงวันที่ {result.ReceiptDate.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture)} แล้ว";
+        return Ok(new ApiResponse<IssuedReceiptResult>(true, result, msg));
+    }
+
     /// <param name="DocumentIds">เอกสารที่จะอนุมัติ (≤ 200)</param>
     /// <param name="AcknowledgeWarnings">รอบ 199 ทีม W: <b>ไม่รับ true</b> (400 BULK-APPROVE-BLANKET-ACK-REFUSED) — คงช่องไว้เพื่อปฏิเสธดัง ๆ
     /// แทนการเพิกเฉยเงียบ ๆ · ดู <c>ApprovalAcknowledgement.BulkBlanketAckRefusal</c></param>

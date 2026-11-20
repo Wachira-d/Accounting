@@ -293,14 +293,119 @@ public class TaxSlipDeskRound275DbTests
         // M7: ตัวตั้งปิดใบขอชำระของงวด (แบบนำส่งครั้งเดียวต่องวด) แล้วยกเลิกรายการ ⇒ ใบกลับเปิด
         using var dq = DbTestDatabase.TryCreateContext()!;
         var fake = new StatutoryRemittance { CompanyId = s.Client, RemittanceType = "WhtPnd53", PeriodYear = P2.Year, PeriodMonth = P2.Month, PayDate = DateTime.UtcNow };
-        Assert.Equal(1, await TaxPaymentRequestService.CloseOnRemitAsync(dq, s.Client, "WhtPnd53", P2.Year, P2.Month, fake.Id, null));
-        Assert.Equal(0, await TaxPaymentRequestService.CloseOnRemitAsync(dq, s.Client, "VatPp36", P2.Year, P2.Month, fake.Id, null));   // ภ.พ.36 หลายครั้งต่องวด ⇒ ไม่ปิดเอง
+        // ฝ่ายค้าน LOW-3: บันทึกบางส่วน (60 จาก 100) ⇒ ใบยังเปิด · Control Code ของสลิปไม่ตรงใบ ⇒ ยังเปิด
+        Assert.Equal(0, await TaxPaymentRequestService.CloseOnRemitAsync(dq, s.Client, "WhtPnd53", P2.Year, P2.Month, fake.Id, null, 60m, null));
+        Assert.Equal(0, await TaxPaymentRequestService.CloseOnRemitAsync(dq, s.Client, "WhtPnd53", P2.Year, P2.Month, fake.Id, null, 100m, "other-hash"));
+        Assert.Equal(1, await TaxPaymentRequestService.CloseOnRemitAsync(dq, s.Client, "WhtPnd53", P2.Year, P2.Month, fake.Id, null, 100m, null));
+        Assert.Equal(0, await TaxPaymentRequestService.CloseOnRemitAsync(dq, s.Client, "VatPp36", P2.Year, P2.Month, fake.Id, null, 100m, null));   // ภ.พ.36 หลายครั้งต่องวด ⇒ ไม่ปิดเอง
         await dq.SaveChangesAsync();
         Assert.Equal(TaxPaymentRequestLifecycle.Paid, (await dq.TaxPaymentRequests.AsNoTracking().SingleAsync(r => r.Id == req.Id)).Status);
         var (_, reopened) = await TaxSlipRemitService.ReleaseOnVoidAsync(dq, fake, "ทดสอบ", DateTime.UtcNow);
         await dq.SaveChangesAsync();
         Assert.Equal(1, reopened);
-        Assert.Equal(TaxPaymentRequestLifecycle.Open, (await dq.TaxPaymentRequests.AsNoTracking().SingleAsync(r => r.Id == req.Id)).Status);
+        var back = await dq.TaxPaymentRequests.AsNoTracking().SingleAsync(r => r.Id == req.Id);
+        Assert.Equal((TaxPaymentRequestLifecycle.Open, true, (DateTime?)null), (back.Status, back.ReopenedAt != null, back.ReopenNoticeAt));   // LOW-3: รอแจ้งกลุ่มตามจริง
+        Assert.NotNull(released.ReleasedAt);   // MED-3: อายุคิวนับจากเวลาที่ปล่อย
+    }
+
+    /// <summary>ถือล็อกแถวไว้ในอีกธุรกรรม แล้วเปลี่ยนสถานะ (ยังไม่ commit) — งานเบื้องหลังที่อ่านค่าก่อน commit ต้องไม่เขียนทับเมื่อ commit แล้ว</summary>
+    private static async Task<(Accounting.Data.AccountingDbContext Ctx, Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction Tx)> HoldAsync(FormattableString lockSql, FormattableString changeSql)
+    {
+        var ctx = DbTestDatabase.TryCreateContext()!;
+        var tx = await ctx.Database.BeginTransactionAsync();
+        await ctx.Database.ExecuteSqlInterpolatedAsync(lockSql);
+        await ctx.Database.ExecuteSqlInterpolatedAsync(changeSql);
+        return (ctx, tx);
+    }
+
+    [Fact]
+    public async Task MED2_ปิดแถวรอนาน_แข่งกับพนักงานบันทึก_ไม่เขียนทับ_ไม่ส่งการ์ด_MED3_แถวที่ปล่อยนับอายุใหม่()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน — ข้าม"); return; }
+        var root = Root();
+        var storage = Storage(root);
+        var s = await SeedAsync(db);
+        var old = await SlipAsync(db, storage, s, root);
+        var released = await SlipAsync(db, storage, s, root);
+        var plain = await SlipAsync(db, storage, s, root);
+        var longAgo = DateTime.UtcNow.AddDays(-(TaxSlipOpenAge.ExpireAfterDays + 5));
+        await db.TaxSlipEvidences.Where(x => x.Id == old.Id || x.Id == released.Id || x.Id == plain.Id)
+            .ExecuteUpdateAsync(u => u.SetProperty(x => x.CreatedAt, longAgo));
+        await db.TaxSlipEvidences.Where(x => x.Id == released.Id).ExecuteUpdateAsync(u => u.SetProperty(x => x.ReleasedAt, (DateTime?)DateTime.UtcNow));
+        // อีกธุรกรรม (พนักงานกดบันทึก) ถือแถว old และตั้ง Remitted แต่ยังไม่ commit
+        var (holder, tx) = await HoldAsync($"SELECT 1 FROM \"TaxSlipEvidences\" WHERE \"Id\" = {old.Id} FOR UPDATE",
+            $"UPDATE \"TaxSlipEvidences\" SET \"Status\" = 'Remitted' WHERE \"Id\" = {old.Id}");
+        using var job = DbTestDatabase.TryCreateContext()!;
+        var run = Intake(job, storage).AgeOpenRowsAsync(s.Provider, DateTime.UtcNow);
+        await Task.Delay(1500);
+        await tx.CommitAsync();
+        await holder.DisposeAsync();
+        await run;
+        using var c = DbTestDatabase.TryCreateContext()!;
+        var o = await c.TaxSlipEvidences.AsNoTracking().SingleAsync(x => x.Id == old.Id);
+        Assert.Equal((TaxSlipIntakeService.Statuses.Remitted, (string?)null), (o.Status, o.LastCardText));   // เดิม: ทับเป็น Expired + การ์ด "ยังไม่ได้บันทึก"
+        Assert.Equal(TaxSlipIntakeService.Statuses.ToStaff, (await c.TaxSlipEvidences.AsNoTracking().SingleAsync(x => x.Id == released.Id)).Status);   // MED-3
+        var p = await c.TaxSlipEvidences.AsNoTracking().SingleAsync(x => x.Id == plain.Id);   // ทิศตรงข้าม: แถวที่ไม่มีใครแตะยังถูกปิดตามกำหนด
+        Assert.Equal(TaxSlipIntakeService.Statuses.Expired, p.Status);
+        Assert.NotNull(p.LastCardText);
+    }
+
+    [Fact]
+    public async Task MED2_ใบขอชำระหมดอายุ_แข่งกับสลิปชำระ_ไม่ทับชำระแล้ว_LOW2_ใบที่มีสลิปเปิดอ้างไม่หมดอายุ()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน — ข้าม"); return; }
+        var root = Root();
+        var storage = Storage(root);
+        var s = await SeedAsync(db);
+        TaxPaymentRequest Req(int m) => new() { CompanyId = s.Client, ProviderCompanyId = s.Provider, RemittanceType = "WhtPnd53", PeriodYear = 2025, PeriodMonth = m,
+            Amount = 100m, ControlCodeHash = "h" + Guid.NewGuid().ToString("N"), ControlCodeLast4 = "1234", SentVia = "none", SentAt = DateTime.UtcNow,
+            ControlCodeExpiresAt = DateTime.UtcNow.AddDays(-10), Status = TaxPaymentRequestLifecycle.Open };
+        var racing = Req(1); var held = Req(2); var plain = Req(3);
+        db.TaxPaymentRequests.AddRange(racing, held, plain);
+        await db.SaveChangesAsync();
+        var slip = await SlipAsync(db, storage, s, root);
+        await db.TaxSlipEvidences.Where(x => x.Id == slip.Id).ExecuteUpdateAsync(u => u.SetProperty(x => x.TaxPaymentRequestId, (Guid?)held.Id));
+        var (holder, tx) = await HoldAsync($"SELECT 1 FROM \"TaxPaymentRequests\" WHERE \"Id\" = {racing.Id} FOR UPDATE",
+            $"UPDATE \"TaxPaymentRequests\" SET \"Status\" = 'Paid' WHERE \"Id\" = {racing.Id}");
+        using var job = DbTestDatabase.TryCreateContext()!;
+        var svc = new TaxPaymentRequestService(job, Remit(job), Consent(job), new TaxSlipChannelService(job, F4Proxy<ISecretProtector>.Create((_, _) => null),
+            F4Proxy<ILineNotifyService>.Create((_, _) => null), F4Proxy<ICustomerLineLinkService>.Create((_, _) => null), NullLogger<TaxSlipChannelService>.Instance),
+            NullLogger<TaxPaymentRequestService>.Instance);
+        var run = svc.ExpireDueForAsync(s.Provider, DateTime.UtcNow);
+        await Task.Delay(1500);
+        await tx.CommitAsync();
+        await holder.DisposeAsync();
+        Assert.Equal(1, await run);
+        using var c = DbTestDatabase.TryCreateContext()!;
+        string St(Guid id) => c.TaxPaymentRequests.AsNoTracking().Single(r => r.Id == id).Status;
+        Assert.Equal(TaxPaymentRequestLifecycle.Paid, St(racing.Id));      // เดิม: ทับเป็น Expired + การ์ด "หมดอายุ" ทั้งที่ชำระแล้ว
+        Assert.Equal(TaxPaymentRequestLifecycle.Open, St(held.Id));        // LOW-2
+        Assert.Equal(TaxPaymentRequestLifecycle.Expired, St(plain.Id));    // ทิศตรงข้าม
+    }
+
+    [Fact]
+    public async Task MED1_สลิปสปส_บันทึกเองเป็นภพ36ไม่ได้_ผูกกับรายการคนละหน่วยงานไม่ได้()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน — ข้าม"); return; }
+        var root = Root();
+        var storage = Storage(root);
+        var s = await SeedAsync(db);
+        var slip = await SlipAsync(db, storage, s, root);
+        await db.TaxSlipEvidences.Where(x => x.Id == slip.Id).ExecuteUpdateAsync(u => u.SetProperty(x => x.Agency, GovPaymentSlip.Agency.SocialSecurityOffice.ToString()));
+        using var d1 = DbTestDatabase.TryCreateContext()!;
+        var ex = await Assert.ThrowsAsync<BusinessRuleException>(() => Intake(d1, storage).StaffManualRemitAsync(s.Provider, s.Owner, slip.Id,
+            new TaxSlipIntakeService.ManualInput(s.Client, "VatPp36", P1.Year, P1.Month, Vat, 0m, 0m, s.BankAccountId, null, null)));
+        Assert.Contains("ประกันสังคม", ex.Message);
+        using var dm = DbTestDatabase.TryCreateContext()!;
+        var manual = await Remit(dm).RemitAsync(s.Client, new Accounting.Models.DTOs.RemitRequest("VatPp36", P1.Year, P1.Month, P1.AddMonths(1).AddDays(3), BankAccountId: s.BankAccountId), "tester");
+        using var d2 = DbTestDatabase.TryCreateContext()!;
+        await Assert.ThrowsAsync<BusinessRuleException>(() => Intake(d2, storage).StaffLinkAsync(s.Provider, s.Owner, slip.Id, s.Client, manual.Id));
+        using var c = DbTestDatabase.TryCreateContext()!;
+        Assert.Equal(TaxSlipIntakeService.Statuses.ToStaff, (await c.TaxSlipEvidences.AsNoTracking().SingleAsync(x => x.Id == slip.Id)).Status);
+        Assert.Null((await c.StatutoryRemittances.AsNoTracking().SingleAsync(r => r.Id == manual.Id)).SlipEvidenceId);
     }
 
     [Fact]

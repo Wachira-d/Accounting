@@ -143,6 +143,14 @@ public class TaxComplianceChecker : ITaxComplianceChecker
     /// ⇒ ผลต่างที่ถูกต้องคือ 0.00 (เดิม 0.50 — 0.49 บาทที่ผ่านได้คือสัญญาณว่ามีทางเขียนยอดหัวที่ไม่ผ่านตัวตั้ง)</summary>
     internal const decimal HeaderTolerance = 0m;
 
+    /// <summary>รอบ 275 แพ็ก B (ฝ่ายค้าน MED-3): Error ที่ <b>ทางยื่นฝั่งเซิร์ฟเวอร์บล็อก</b> (<c>TaxService.EnsureReportFileableAsync</c>) — เฉพาะกติกาที่ผลตรวจ T2 M1 ระบุ
+    /// (ยอดหัว ≠ Σ บรรทัด ของ ภ.ง.ด./ภ.พ.36 · บรรทัดยื่นไม่มีเลขผู้เสียภาษี = สรรพากรปฏิเสธไฟล์) · Error อื่น (ปี/เดือนผิด ซึ่งสร้างไม่ได้อยู่แล้ว · ยอด ภ.พ.30 ติดลบ
+    /// ในเดือนที่ใบลดหนี้มากกว่ายอดขาย · NetVat ของ ภ.พ.30 ที่มีเครดิตยกมา) คงเป็นข้อความบนหน้าตรวจก่อนยื่น ไม่บล็อกที่เซิร์ฟเวอร์</summary>
+    public static readonly IReadOnlySet<string> ServerBlockingCodes = new HashSet<string>(StringComparer.Ordinal)
+    {
+        "RD-WHT-002", "RD-WHT-005", "RD-PND1-002", "RD-PP36-001",
+    };
+
     private static void CheckPnd3_53(TaxReport r, List<TaxComplianceFinding> f, bool foreignPayees = false)
     {
         // PND.3 = individual recipients; PND.53 = juristic recipients.
@@ -205,7 +213,7 @@ public class TaxComplianceChecker : ITaxComplianceChecker
                 $"ยอด ภ.พ.36 ในรายการย่อย (ฐาน {sumBase:N2} · VAT {sumVat:N2}) ไม่เท่ากับยอดหัว (ฐาน {r.TotalIncome:N2} · VAT {r.OutputVat:N2} · นำส่ง {r.NetVat:N2}).",
                 "กด \"บันทึก\" ที่รายงาน (ระบบคำนวณยอดหัวจากบรรทัดใหม่) หรือกด \"สร้างใหม่\"."));
         if (r.OutputVat < 0)
-            f.Add(new("RD-PP36-002", "Error", "VAT ที่ต้องนำส่ง (ภ.พ.36) ติดลบไม่ได้.", "ตรวจใบลดหนี้ของบริการต่างประเทศในงวด แล้วกด \"สร้างใหม่\"."));
+            f.Add(new("RD-PP36-002", "Warning", "VAT ที่ต้องนำส่ง (ภ.พ.36) ติดลบ — ตรวจใบลดหนี้ของงวด.", "ตรวจใบลดหนี้ของบริการต่างประเทศในงวด แล้วกด \"สร้างใหม่\"."));
     }
 
     private static void CheckPnd1(TaxReport r, List<TaxComplianceFinding> f)
