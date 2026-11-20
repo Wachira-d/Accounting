@@ -399,7 +399,7 @@ public class TaxSlipIntakeService
                 .Select(r => new TaxSlipMatch.RemittedKey(r.CompanyId, r.RemittanceType, r.PeriodYear, r.PeriodMonth, r.Amount + r.LateFee + r.Penalty + r.OtherFine)).ToListAsync(ct);
         var remittedRows = remittedFull.Select(r => (r.CompanyId, r.Type, r.Year, r.Month)).ToList();
         // ภ.พ.36 นำส่งได้หลายครั้งต่องวด (คำตัดสินข้อ 133) — ไม่นับเป็น "นำส่งแล้ว"
-        var remitted = remittedRows.Where(r => r.Item2 != "VatPp36").ToHashSet();
+        var remitted = remittedRows.Where(r => !TaxSlipDeskRule.MultiPerPeriod(r.Item2)).ToHashSet();
         var ccRemitted = row.ControlCodeHash != null && mineIds.Count > 0 && await _db.TaxSlipEvidences.AsNoTracking()
             .AnyAsync(s => s.CompanyId == providerId && s.Id != row.Id && s.Status == Statuses.Remitted && s.ControlCodeHash == row.ControlCodeHash
                 && s.ClientCompanyId != null && mineIds.Contains(s.ClientCompanyId.Value), ct);
@@ -408,7 +408,7 @@ public class TaxSlipIntakeService
         if (reading.Amount == null || reading.Date == null)
             d = new TaxSlipMatch.Decision(Outcome.None, mineIds.Count == 1 ? mineIds[0] : null, null, Array.Empty<TaxSlipMatch.Candidate>(), false, TaxSlipMatch.Codes.None,
                 "อ่านยอด/วันที่บนสลิปไม่ได้แน่นอน — ให้พนักงานตรวจ");
-        else d = TaxSlipMatch.Decide(slip, companies, requests, pending, remitted, ccRemitted, remittedFull.Where(r => r.Type != "VatPp36").ToList());
+        else d = TaxSlipMatch.Decide(slip, companies, requests, pending, remitted, ccRemitted, remittedFull.Where(r => !TaxSlipDeskRule.MultiPerPeriod(r.Type)).ToList());
         // รอบ 275 แพ็ก D (L4): ลูกค้าเลือกรายการในกลุ่มแล้ว (แถวเหลือผู้สมัครที่เลือกตัวเดียว) แต่ไปติดรอความยินยอม ⇒ ประมวลใหม่ได้ Many อีก — ใช้ตัวที่ลูกค้าเลือก
         // (ยังอยู่ในชุดผู้สมัครที่ตัดสินใหม่ · เดินด่านที่เหลือครบ) แทนการโยนเข้าคิวพนักงานแล้วตัวเลือกหาย
         var prior = ParseCandidates(row.CandidatesJson);
@@ -770,7 +770,7 @@ public class TaxSlipIntakeService
         {
             switch (TaxSlipOpenAge.Decide(row.Status, row.CreatedAt, row.StaffRemindedAt, nowUtc))
             {
-                case TaxSlipOpenAge.Action.Expire:
+                case TaxSlipOpenAge.AgeAction.Expire:
                     row.Status = Statuses.Expired; row.RuleCode = TaxSlipOpenAge.ExpiredRuleCode;
                     row.Reason = "รอพนักงานตรวจเกิน " + TaxSlipOpenAge.ExpireAfterDays + " วัน — ปิดโดยไม่บันทึก"; row.ResolvedAt = nowUtc; row.UpdatedAt = nowUtc;
                     row.FileSha256 = "expired:" + row.Id.ToString("N"); row.BankTxnHash = null;   // ส่งไฟล์เดิมใหม่ได้ (แถวใหม่)
@@ -782,7 +782,7 @@ public class TaxSlipIntakeService
                     await FinishAsync(row, Card.OpenExpired, new(ControlLast4: row.ControlCodeLast4, RecordedAt: row.CreatedAt), null, null, staff: false, ct);
                     n++;
                     break;
-                case TaxSlipOpenAge.Action.Remind:
+                case TaxSlipOpenAge.AgeAction.Remind:
                     row.StaffRemindedAt = nowUtc;
                     remind.Add(row);
                     break;

@@ -130,14 +130,14 @@ public static class TaxSlipOpenAge
     public const int ExpireAfterDays = 90;
     public const string ExpiredRuleCode = "TAX-SLIP-OPEN-EXPIRED";
 
-    public enum Action { None, Remind, Expire }
+    public enum AgeAction { None, Remind, Expire }
 
     /// <param name="status">สถานะแถว — ครอบเฉพาะ ToStaff (ตัวอื่นมีนาฬิกาของตัวเอง: รอความยินยอม 30 วัน · รอเลือก 24 ชม. · Received ค้างประมวลใหม่)</param>
-    public static Action Decide(string status, DateTime createdAtUtc, DateTime? remindedAtUtc, DateTime nowUtc)
+    public static AgeAction Decide(string status, DateTime createdAtUtc, DateTime? remindedAtUtc, DateTime nowUtc)
     {
-        if (status != "ToStaff") return Action.None;
-        if (createdAtUtc.AddDays(ExpireAfterDays) < nowUtc) return Action.Expire;
-        if (createdAtUtc.AddDays(RemindAfterDays) > nowUtc) return Action.None;
-        return remindedAtUtc is DateTime r && r.AddHours(RemindEveryHours) > nowUtc ? Action.None : Action.Remind;
+        if (status != "ToStaff") return AgeAction.None;
+        if (createdAtUtc.AddDays(ExpireAfterDays) < nowUtc) return AgeAction.Expire;
+        if (createdAtUtc.AddDays(RemindAfterDays) > nowUtc) return AgeAction.None;
+        return remindedAtUtc is DateTime r && r.AddHours(RemindEveryHours) > nowUtc ? AgeAction.None : AgeAction.Remind;
     }
 }

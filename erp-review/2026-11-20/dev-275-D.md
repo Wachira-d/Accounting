@@ -1,6 +1,6 @@
 # รอบ 275 แพ็ก D — โต๊ะสลิปภาษี (ผลตรวจ T1 · คำตัดสินแทนเจ้าของ 4.3)
 
-> branch `claude/booking-service-features-sdemob` · ผลตรวจต้นทาง `audit-T1-line-slip-payment.md` · คำตัดสิน 275-D-1…4 ใน `erp-review/2026-09-29/DECISIONS.md` ·
+> branch `claude/booking-service-features-sdemob` · commit หลัก `2c247bd4` · ผลตรวจต้นทาง `audit-T1-line-slip-payment.md` · คำตัดสิน 275-D-1…4 ใน `erp-review/2026-09-29/DECISIONS.md` ·
 > สถานะปัจจุบันอยู่ใน `DOCUMENT_FLOW.md` §TAX272 "รอบ 275 แพ็ก D" · เทสต์ T275D-01…08 ใน `TEST_PLAN.md`
 
 ## ตัวตัดสิน (Helpers/ ไฟล์เดียว `TaxSlipDeskRule.cs`)

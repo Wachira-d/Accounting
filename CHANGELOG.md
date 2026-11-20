@@ -7335,4 +7335,4 @@ H2 (ApplyAsync/LinkAsync ล็อกแล้ว Reload · ทางล้ม�
 M2 (ผู้สมัครที่ล้มแน่นอนเลือกไม่ได้ · พนักงานกดล้ม = 409 ไม่ส่งการ์ด) · M3 (ไฟล์เดิมจากกลุ่มอื่น ⇒ ประมวลแถวเดิมใหม่) · M4 (เตือน/ปิดแถวรอนาน · ลบไฟล์ครบ 90 วันทำงานจริง · อ่านใหม่เมื่อ OCR กลับมา) ·
 M5/M6 (เส้น 260 ไม่จับสลิปรัฐกับใบแจ้งหนี้ · สลิปโอนทั่วไปในกลุ่มตอบตามจริง + กระดิ่ง) · M7 (วงจรใบขอชำระ Paid/Expired/ยกเลิกแจ้งกลุ่ม/ทีละใบต่องวด) · M8 (ไม่พบเงินออกตรวจซ้ำได้) ·
 L2 L3 L4 L5 L6 L8 L9 · เลื่อน L1 L7 (dev-275-D.md) · ตัวตัดสิน `Helpers/TaxSlipDeskRule.cs` (TaxSlipDeskRule · TaxSlipChannelRedirect · TaxPaymentRequestLifecycle · TaxSlipOpenAge) · กติกา `_R275D_` ·
-คอลัมน์ใหม่ `TaxSlipEvidences.StaffRemindedAt` (Round272Migration) · commit (เติมในคอมมิตตามหลัง)_
+คอลัมน์ใหม่ `TaxSlipEvidences.StaffRemindedAt` (Round272Migration) · commit 2c247bd4_
