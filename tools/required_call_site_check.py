@@ -21454,7 +21454,7 @@ REVIEWER_CASES += [
 
 
 # ═══ รอบ 275 แพ็ก E (erp-review/2026-11-20/audit-T4-pii-payroll-files.md · H-2 · H-3 · M-3 · M-6 · L-7 · L-8 · คำตัดสิน 4.2 · 275-E-1…6) ═══
-_R275E_WHY = "รอบ 275 แพ็ก E (T4 เก็บกวาดหลังรอบ 274 · commit 09a52c66): "
+_R275E_WHY = "รอบ 275 แพ็ก E (T4 เก็บกวาดหลังรอบ 274 · commit 09a52c66 · ชุดแก้ฝ่ายค้าน ca4fef5d): "
 RULES += [
     dict(file="Helpers/EmployeeTaxIdentity.cs", method="ForFiling",
          must=["TaxIdProblem.Missing => waiverAcknowledgedAt != null ? FilingKind.WaivedNoId : FilingKind.NeedsAcknowledgement",
