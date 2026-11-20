@@ -10860,7 +10860,7 @@ public partial class DocumentService : IDocumentService
                 foreach (var vl in vatLines)
                 {
                     vl.IsExcluded = true;
-                    vl.Description = "⚠️ [เอกสารถูกยกเลิก] " + (vl.Description ?? "");
+                    vl.Description = Accounting.Helpers.WhtReportLineRule.VoidedDocumentPrefix + (vl.Description ?? "");   // คำนำหน้าของระบบ (รอบ 275: ล็อกคำอธิบาย · ติ๊กกลับต้องมีเหตุผล)
                     vl.UpdatedAt = DateTime.UtcNow;
                     touchedReports.Add(vl.TaxReportId);
                 }

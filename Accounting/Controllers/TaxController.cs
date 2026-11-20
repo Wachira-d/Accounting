@@ -125,7 +125,9 @@ public class TaxController : ControllerBase
     public async Task<ActionResult<ApiResponse<TaxReportResponse>>> UpdateTaxReport(Guid companyId, Guid reportId, [FromBody] UpdateTaxReportRequest request)
     {
         if (await RequireTaxAsync(companyId, "แก้รายงานภาษี", PermissionKeys.TaxFile) is { } deny) return deny;
-        var result = await _taxService.UpdateTaxReportAsync(companyId, reportId, request);
+        var result = await _taxService.UpdateTaxReportAsync(companyId, reportId, request,
+            actorId: Helpers.JwtHelper.GetUserIdFromClaims(User),
+            actorEmail: User.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value);
         return Ok(new ApiResponse<TaxReportResponse>(true, result, "แก้ไขรายงานภาษีสำเร็จ"));
     }
 
@@ -241,7 +243,10 @@ public class TaxController : ControllerBase
         if (await RequireTaxAsync(companyId, "ดูรายงานภาษี", PermissionKeys.TaxFile) is { } deny) return deny;
         var result = await _taxService.GetStaleDraftReportsAsync(companyId, months);
         return Ok(new ApiResponse<List<StaleDraftReportRow>>(true, result,
-            result.Count == 0 ? "ร่างทุกงวดตรงกับข้อมูลปัจจุบัน" : $"พบร่างล้าสมัย {result.Count} งวด"));
+            // รอบ 275 แพ็ก B (T2 H2 (4)): บอกสิ่งที่ "ไม่ได้" เทียบด้วย (หลักการ #7 — สาเหตุที่ระบุต้องเป็นสิ่งที่ตรวจ)
+            result.Count == 0
+                ? "ร่างที่ยังไม่ยื่นของ ภ.พ.30 · ภ.ง.ด.2/3/53/54 · ภ.พ.36 ตรงกับเอกสาร/ทะเบียน 50 ทวิ ปัจจุบัน (ไม่ได้เทียบบรรทัด JE ล้วน/เลื่อนเคลม/เครดิตยกมา)"
+                : $"พบร่างล้าสมัย {result.Count} งวด"));
     }
 
     /// <summary>สร้างร่างที่ยังไม่มีของ N เดือนล่าสุด (สูงสุด 12) — รอบ 269 ชุดสอง H1: ไม่ลบ/ไม่สร้างทับร่างเดิมแล้ว</summary>
