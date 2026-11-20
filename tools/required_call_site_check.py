@@ -21726,6 +21726,10 @@ RULES += [
          why=_R275D_WHY + "M8 ผลไม่พบเงินออกตรวจซ้ำได้ ไม่ประทับถาวร · ผลเดิมไม่กระดิ่งซ้ำ"),
 ]
 RULES += [   # รอบ 275 แพ็ก D ชุดแก้ฝ่ายค้าน (MED-1…3 · LOW-1…4)
+    dict(file=_R275D_INTAKE, method="IntakeAsync", must=["TaxIdHash = TaxSlipRefHash.TaxId(agency.TaxId)"],
+         why=_R275D_WHY + "ผู้ประสานงาน: เก็บค่าเทียบเลขผู้เสียภาษีเต็ม (HMAC) — เลขปิดบังเปิดแค่ 7 หลักแรก"),
+    dict(file="Helpers/TaxSlipDeskRule.cs", method="TaxIdVerdict", must=["slipTaxIdHash != null && companyTaxIdHash != null", "return TaxIdCheck.Undecided;"],
+         why=_R275D_WHY + "ผู้ประสานงาน: เทียบด้วยค่าเทียบเลขเต็มก่อน · แถวเก่าที่ตัดสินไม่ได้ = Undecided (พนักงานยืนยันจากรูป ไม่ปล่อยผ่าน)"),
     dict(file=_R275D_INTAKE, method="MoveToStaffIfOpenAsync", must=["Statuses.Open.Contains(s.Status)", "ExecuteUpdateAsync("],
          why=_R275D_WHY + "ฝ่ายค้าน LOW-4 ทางล้มย้ายเข้าคิวแบบมีเงื่อนไข (ไม่ทับแถวที่บันทึก/ปิดระหว่างนี้)"),
     dict(file=_R275D_INTAKE, method="ProcessAsync", must=["MoveToStaffIfOpenAsync("],
@@ -21743,14 +21747,15 @@ RULES += [   # รอบ 275 แพ็ก D ชุดแก้ฝ่ายค้
          why=_R275D_WHY + "ฝ่ายค้าน MED-2 (คลาสเดียวกัน) ยกเลิกไม่ทับชำระแล้ว"),
     dict(file=_R275D_REMIT, method="ReleaseOnVoidAsync", must=["slip.ReleasedAt = nowUtc", "r.ReopenedAt = nowUtc"],
          why=_R275D_WHY + "ฝ่ายค้าน MED-3/LOW-3 ปล่อยแล้วนับอายุใหม่ · ใบกลับเปิดต้องแจ้งกลุ่ม"),
-    dict(file=_R275D_REMIT, method="LinkAsync", must=["TaxSlipDeskRule.SlipTaxIdOther(", "slip.Agency, rec.RemittanceType"],
+    dict(file=_R275D_REMIT, method="LinkAsync", must=["TaxSlipDeskRule.TaxIdVerdict(slip.TaxIdMasked, slip.TaxIdHash,", "TaxSlipRefHash.TaxId(coTaxId)", "slip.Agency, rec.RemittanceType, a.StaffConfirmedTaxId"],
          why=_R275D_WHY + "ฝ่ายค้าน MED-1 ผูก: เลขผู้เสียภาษี + หน่วยงานกับแบบ"),
-    dict(file=_R275D_INTAKE, method="StaffManualRemitAsync", must=["TaxSlipDeskRule.SlipTaxIdOther(row.TaxIdMasked, co.TaxId), row.Agency"],
+    dict(file=_R275D_INTAKE, method="StaffManualRemitAsync", must=["TaxSlipDeskRule.TaxIdVerdict(row.TaxIdMasked, row.TaxIdHash, co.TaxId, TaxSlipRefHash.TaxId(co.TaxId))", "taxId, row.Agency, m.ConfirmTaxId", "if (taxId == TaxSlipDeskRule.TaxIdCheck.Undecided)"],
          why=_R275D_WHY + "ฝ่ายค้าน MED-1 บันทึกเอง: หน่วยงานบนสลิปกับแบบ (สลิป สปส. ห้ามลงเป็น ภ.ง.ด.)"),
 ]
 REVIEWER_CASES += [
     ("R275D-6", "AgeOpenRowsAsync", "if (done == 0) break;", "", True),
     ("R275D-7", "LinkAsync", "slip.Agency, rec.RemittanceType", "null, null", True),
+    ("R275D-8", "TaxIdVerdict", "return TaxIdCheck.Undecided;", "return TaxIdCheck.NoTaxId;", True),   # แถวเก่าตัดสินไม่ได้ต้องไม่ปล่อยผ่าน
     ("R275D-1", "LockedSlipAsync", "await _db.Entry(slip).ReloadAsync(ct);", "", True),                       # กลับไปเชื่อ tracker (H2)
     ("R275D-2", "ApplyAndReplyAsync", "if (!Statuses.Open.Contains(fresh.Status))", "if (false)", True),         # ทางล้มเขียนทับ Remitted
     ("R275D-3", "StaffRejectAsync", "var n = await _db.TaxSlipEvidences", "await _storage.DeleteAsync(\"x\", ct); var n = await _db.TaxSlipEvidences", True),   # ลบไฟล์ทันที (M4)

@@ -9911,6 +9911,8 @@ _Last verified against codebase: 2026-11-16 (รอบ 271 ชุดแก้ฝ
   งานเบื้องหลัง (ปิดแถวรอนาน · ใบขอชำระหมดอายุ · ยกเลิกใบ · ทางล้มของเส้นอัตโนมัติ) เขียนแบบ `UPDATE … WHERE Status = expected` ทีละแถว การ์ดเฉพาะแถวที่เปลี่ยน ·
   การ์ดสรุปใบเดียวต่อกลุ่ม/บริษัทต่อรอบ + เพดาน 20 · สลิปที่ปล่อยหลัง void นับอายุจาก `ReleasedAt` · ใบขอชำระปิดเฉพาะเมื่อยอด/Control Code ตรง (`PaidBy`) · void ⇒ ใบกลับเปิด + การ์ด `PaymentRequestReopened` ·
   ใบที่มีสลิปเปิดอ้างไม่หมดอายุ
+- **เลขผู้เสียภาษีเต็ม (ผู้ประสานงาน)** — แถวสลิปเก็บค่าเทียบ `TaxIdHash` (`TaxSlipRefHash.TaxId` · HMAC กุญแจเมล็ดถาวรของแพ็ก A MED-4) เพราะเลขปิดบังเปิดแค่ 7 หลักแรก ·
+  `TaxSlipDeskRule.TaxIdVerdict` → Match/Mismatch/Undecided/NoTaxId · แถวเก่าไม่มีค่าเทียบและ 7 หลักแรกตรง ⇒ Undecided = พนักงานต้องติ๊ก "ตรวจเลขบนรูปแล้ว" (audit `TaxSlipTaxIdConfirmedByStaff`) ห้ามปล่อยผ่านเงียบ
 
 _Last verified against codebase: 2026-11-20 (รอบ 275 แพ็ก D — §TAX272 โต๊ะสลิปครบวงจร: บันทึกเอง/ผูกรายการ/ไม่บันทึกตามจริง · สถานะใต้ล็อก · ยกเลิกแล้วปล่อยสลิป · retention จริง · วงจรใบขอชำระ — build + Db test ในเครื่องนี้ — commit 2c247bd4)_
 
@@ -9949,7 +9951,7 @@ _Last verified against codebase: 2026-11-20 (รอบ 275 แพ็ก C — §
 
 _Last verified against codebase: 2026-11-20 (รอบ 275 แพ็ก A ผลตรวจฝ่ายค้าน MED-1…4 + LOW — heartbeat/ยืนยันลายนิ้วมือที่ระบุ · ประตูเขียนค่าเข้ารหัส · หมุนรอทุกเครื่อง · เมล็ด HMAC ถาวร ·
 เทสต์ `EncryptionWriteGuardRound275ATests` + Db `KeysSecretsRound275ADbTests` — commit 17305b6a)_
-`SecretUse` ด่านเดียวของผู้อ่านความลับ · DTO พนักงานไม่ส่ง ciphertext · หน้า "สุขภาพข้อมูลเข้ารหัส" · เทสต์ `KeysSecretsRound275ATests` + Db `KeysSecretsRound275ADbTests` · กติกา `_R275A_` — commit 2e7199e0 + bc9b6d73)_
+
 _Last verified against codebase: 2026-11-20 (รอบ 276 — ผู้ใช้เห็นเฉพาะเอกสารที่ตัวเองสร้าง/สร้าง-แก้ได้เฉพาะร่าง: ตัวกรองแถว EF ของ Documents ·
 `DocumentRestrictionFilter` รายการอนุญาต + 404 · ด่าน Approve/Void ชั้น service · ส่งขออนุมัติพื้นฐาน/ถอน/ตีกลับ + แจ้งผ่านเครื่องแจ้งเตือนกลาง ·
 คำตัดสิน 276-1…8 — commit 69740aef + 4456de7a)_

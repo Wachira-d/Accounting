@@ -226,6 +226,8 @@ public static class Round272Migration
         """ALTER TABLE "TaxSlipEvidences" ADD COLUMN IF NOT EXISTS "ReleasedAt" timestamp without time zone NULL;""",
         """ALTER TABLE "TaxPaymentRequests" ADD COLUMN IF NOT EXISTS "ReopenedAt" timestamp without time zone NULL;""",
         """ALTER TABLE "TaxPaymentRequests" ADD COLUMN IF NOT EXISTS "ReopenNoticeAt" timestamp without time zone NULL;""",
+        // รอบ 275 แพ็ก D (ผู้ประสานงาน): ค่าเทียบเลขผู้เสียภาษีเต็ม — แถวเก่า null ⇒ พนักงานยืนยันจากรูป (ไม่ backfill: เลขเต็มไม่เคยถูกเก็บ)
+        """ALTER TABLE "TaxSlipEvidences" ADD COLUMN IF NOT EXISTS "TaxIdHash" varchar(64) NULL;""",
         // รอบ 275 แพ็ก D (M4 · ข้อมูลที่ persist ผิดอยู่แล้ว): แถว "ไม่บันทึก" ก่อนรอบนี้ถูกลบไฟล์ทันทีตอนปฏิเสธ — ไม่มีอะไรให้ซ่อม (ไฟล์หายแล้ว · แถวประทับ FilePurgedAt ตรงความจริง)
     };
 }

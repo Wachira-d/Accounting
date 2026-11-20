@@ -46,6 +46,7 @@
 | LOW-1 การ์ดรอบแรกหลัง deploy | การ์ดสรุปใบเดียวต่อกลุ่ม/ผู้ส่ง (สลิป) และต่อบริษัท (ใบขอชำระ) ต่อรอบ · เพดาน 20 ต่อกลุ่ม/บริษัทต่อรอบ |
 | LOW-2 หมดอายุทั้งที่มีสลิปเปิดอ้าง | ข้ามใบที่มีแถวสลิปสถานะรอตัดสินอ้าง `TaxPaymentRequestId` |
 | LOW-3 ปิดใบด้วยการนำส่งบางส่วน · void แล้วไม่แจ้ง | `TaxPaymentRequestLifecycle.PaidBy` (ยอดรวมเท่าใบ + Control Code ถ้ารู้) · void ⇒ `ReopenedAt` ⇒ `TaxSlipJob` ส่งการ์ด `PaymentRequestReopened` ครั้งเดียว (`ReopenNoticeAt`) |
+| (ผู้ประสานงาน) เลขผู้เสียภาษีเทียบได้แค่ 7 หลักแรก | `TaxSlipEvidences.TaxIdHash` (HMAC `TaxSlipRefHash.TaxId` — กุญแจเมล็ดถาวรของแพ็ก A MED-4 ซึ่งตั้งผ่าน `HmacSeedBootstrap.Configure` → `TaxSlipRefHash.ConfigureKey` แล้ว จึงไม่ต้องย้ายตาม) · `TaxIdVerdict` · แถวเก่า ⇒ พนักงานยืนยันจากรูป (audit) · ไม่ backfill (เลขเต็มไม่เคยถูกเก็บ) · ลบบรรทัดซ้ำจาก resolve conflict 3 บรรทัด (CHANGELOG ×2 · DOCUMENT_FLOW ×1) |
 | LOW-4 ทางล้มของเส้นอัตโนมัติ | `MoveToStaffIfOpenAsync` (conditional) ใช้ที่ ApplyAndReplyAsync · ProcessAsync catch · postback catch |
 
 ## ตรวจแล้วไม่ใช่บั๊ก / ปรับจากผลตรวจ
