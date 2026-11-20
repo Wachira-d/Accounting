@@ -5242,7 +5242,7 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
   ใบที่ออกแล้วไม่แก้ · e-Tax XML/สอง renderer อ่านบรรทัด/ยอดของใบตัวเดียวกัน (ใบกำกับรายงวด = แถวยอดปกติ "ยอดรวมก่อน VAT / VAT")
 - **อื่น**: ตัวโหลดรายการตัดยอดไม่นับการรับที่ถูกยกเลิก (`Payment.IsDeleted` — ตาราง Payments ไม่มี query filter · เดิมพิมพ์เป็น "รับชำระก่อนหน้า") · การ์ด LINE ของใบเสร็จรับชำระใช้ป้าย/ยอด
   "ยอดรับชำระ" จากตัวโหลดเดียวกับกระดาษ (LOW-1) · ข้อความ `WhyCannotIssue` ของการรับหลายใบชี้ปุ่มออกใบเสร็จรายใบ (LOW-3)
-- เทสต์ `SettlementTaxInvoiceRoleTests` · `Db/SettlementTaxInvoiceRoleDbTests` · Last verified — รอบ 275 แพ็ก C (sha เติมในคอมมิตตามหลัง)
+- เทสต์ `SettlementTaxInvoiceRoleTests` · `Db/SettlementTaxInvoiceRoleDbTests` · Last verified `commit 96bb5262`
 
 ### 3.4c ผูกใบเสร็จ/เงินที่รับไว้แล้วกับใบแจ้งหนี้ — เจ้าเดียวกัน (รอบ 266 แพ็ก A · `erp-review/2026-11-12/team-266-manual-doc-link.md` · DECISIONS 266-1-x)
 
@@ -9906,4 +9906,4 @@ _Last verified against codebase: 2026-11-20 (รอบ 275 แพ็ก A — �
 `SecretUse` ด่านเดียวของผู้อ่านความลับ · DTO พนักงานไม่ส่ง ciphertext · หน้า "สุขภาพข้อมูลเข้ารหัส" · เทสต์ `KeysSecretsRound275ATests` + Db `KeysSecretsRound275ADbTests` · กติกา `_R275A_` — commit (เติมในคอมมิตตามหลัง))_
 _Last verified against codebase: 2026-11-20 (รอบ 275 แพ็ก C — §3.4b-275: ใบเสร็จ = ใบกำกับภาษี ณ วันรับเงินจากตัวตัดสินเดียว `SettlementTaxInvoiceRole`
 (ยุบสูตรงวดเดียว 4 สำเนา · ค่าธรรมเนียม/บรรทัดปรับ/ภาษีหัก/ใบลดหนี้) · งานบริการรับเป็นงวด = ใบกำกับรายงวด VAT ตามส่วน + ย้าย 21913 ตามส่วนผูกการรับ · คิว "รับเงินแล้วยังไม่มีใบกำกับ" ·
-วันที่ปฏิทินไทยที่ต้นทางการรับชำระ · ข้อความใบเสร็จผ่าน DocumentLabels · คำตัดสิน 275-C-1…9) — sha เติมในคอมมิตตามหลัง_
+วันที่ปฏิทินไทยที่ต้นทางการรับชำระ · ข้อความใบเสร็จผ่าน DocumentLabels · คำตัดสิน 275-C-1…9) — commit 96bb5262_
