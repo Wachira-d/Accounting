@@ -9940,7 +9940,7 @@ _Last verified against codebase: 2026-11-20 (รอบ 275 แพ็ก C — §
 
 _Last verified against codebase: 2026-11-20 (รอบ 275 แพ็ก A ผลตรวจฝ่ายค้าน MED-1…4 + LOW — heartbeat/ยืนยันลายนิ้วมือที่ระบุ · ประตูเขียนค่าเข้ารหัส · หมุนรอทุกเครื่อง · เมล็ด HMAC ถาวร ·
 เทสต์ `EncryptionWriteGuardRound275ATests` + Db `KeysSecretsRound275ADbTests` — commit 17305b6a)_
-`SecretUse` ด่านเดียวของผู้อ่านความลับ · DTO พนักงานไม่ส่ง ciphertext · หน้า "สุขภาพข้อมูลเข้ารหัส" · เทสต์ `KeysSecretsRound275ATests` + Db `KeysSecretsRound275ADbTests` · กติกา `_R275A_` — commit (เติมในคอมมิตตามหลัง))_
+`SecretUse` ด่านเดียวของผู้อ่านความลับ · DTO พนักงานไม่ส่ง ciphertext · หน้า "สุขภาพข้อมูลเข้ารหัส" · เทสต์ `KeysSecretsRound275ATests` + Db `KeysSecretsRound275ADbTests` · กติกา `_R275A_` — commit 2e7199e0)_
 _Last verified against codebase: 2026-11-20 (รอบ 276 — ผู้ใช้เห็นเฉพาะเอกสารที่ตัวเองสร้าง/สร้าง-แก้ได้เฉพาะร่าง: ตัวกรองแถว EF ของ Documents ·
 `DocumentRestrictionFilter` รายการอนุญาต + 404 · ด่าน Approve/Void ชั้น service · ส่งขออนุมัติพื้นฐาน/ถอน/ตีกลับ + แจ้งผ่านเครื่องแจ้งเตือนกลาง ·
 คำตัดสิน 276-1…8 — commit 69740aef + 4456de7a)_
