@@ -7399,6 +7399,14 @@ _รอบ 277 (2026-11-20 · `erp-review/2026-11-20/dev-277-menu-invite.md` · 
 แจ้ง `team.invitation_accepted` · ที่นั่งไม่นับคำเชิญหมดอายุ · อีเมลคำเชิญ HtmlEncode + บอก "ไม่ต้องสร้างบริษัท" · เทสต์ `MenuInviteRound277Tests` + Db `TeamInvitationDbTests` +
 sim `menu_landing_sim.js` · กติกา `_R277_` — commit a1ae70d2 + d93800f2_
 
+_รอบ 275 แพ็ก C (ต่อ — กติกาที่ไม่เคยถูกรัน): กติกา `_R275C_` ใน `tools/required_call_site_check.py` ต่อท้ายไฟล์หลัง `if __name__ == "__main__"` จึงไม่ถูกประเมิน
+(ย้าย guard แล้ว `234d5b3e`) · รันจริงล้ม 5 จุด: (1) `VoidPaymentAsync` — ไม่ใช่บั๊ก: ส่ง `voidedPaymentId` ผ่าน `ReversePaymentInternalAsync` อยู่แล้ว (กติกาชี้ผิดชั้น ⇒ ล็อกทั้งสองชั้น) ·
+แต่ไล่ทุกทางเข้าของ `UndoOutputVatOnPaymentVoidAsync` แล้วพบ **ย้ายการรับชำระ (`MoveSettlementAsync`) ไม่ส่ง** ⇒ ย้ายงวดหนึ่งออกจากใบงานบริการที่ยังเหลือการรับอื่น
+VAT ของงวดนั้นค้าง 21911 ของใบเดิม (ภ.พ.30 เกิน) — แก้ + Db test · (2) `QueueAsync` เป็น `=>` ส่งต่อ ⇒ ชี้ `QueueCoreAsync` · (3) ตัวตรวจไม่รู้จักเมธอด `=>`
+(`TaxService.LoadInvoiceIdsOwnedByVatReceiptAsync` มีด่าน 275-C-10 อยู่จริง) ⇒ `method_body` รองรับ expression body · (4) เคส R275C-1/5 แทนข้อความตัวแรกของไฟล์ที่อยู่ในเมธอดอื่น
+⇒ ใช้ข้อความเฉพาะเมธอด + เคส R275C-6/7 · (5) checker ใหม่ `tools/main_guard_tail_check.py` ฟ้องโค้ดระดับโมดูลหลัง guard ทุกไฟล์ใน `tools/` (81 ไฟล์ · พบ 0 จุดอื่น) —
+commit ea8b0253_
+
 _รอบ 276 ข้อความตอบกลับ (2026-11-20): ตัวช่วยกลาง `Helpers/RestrictedResponseRedactor` ใช้ทุกทางเขียนที่ยกตัวกรองแถว + ใบซ้ำ — เหตุจากด่านข้ามเอกสาร/อ้างเลขของคนอื่น ⇒ "มีเอกสารอื่นในบริษัทที่…" · DTO แทนเลข/ล้าง id ของคนอื่น · คำตัดสิน 276-17 — commit 401add83_
 
 
@@ -7412,6 +7420,9 @@ _รอบ 277 ชุดแก้ฝ่ายค้าน (2026-11-20 · คำ�
 หน้าสำนักงานบัญชี · `api/me/permissions` · SignalR · `TenantGuard` · ผู้อนุมัติ/ผู้ลงนาม · รายชื่อบริษัทของผู้ใช้ (รอสิทธิ์ = id/ชื่อเท่านั้น) · เส้นสำรอง middleware fail closed ·
 MED-1 ทะเบียนเมนูครบทุกตัว (คีย์ any-of · ทิศเอกสาร · สิทธิ์เมนูอย่างเดียว + เทสต์ inventory) · MED-2 หน้าหลักโหมดง่าย "simple-home" ไม่ผูก Reports.Dashboard ·
 ที่พัก = LodgingManage หรือ LodgingSettings · MED-3 ตอบรับด้วย token = ยืนยันอีเมล · LOW หน้ารับคำเชิญไม่บอกการมีบัญชี — commit 6566b49b_
+
+_รอบ 277 ฝ่ายค้าน (แจ้งเตือน · คำตัดสิน 277-13): สมาชิกรอสิทธิ์ไม่ได้รับแจ้งเตือนของบริษัททุกช่อง — `NotificationEngine` (เส้นบทบาท + ผู้รับระบุตัว) เรียก
+`CompanyMembership.MayReceiveCompanyNotificationAsync` · กระดิ่ง (`NotificationService.VisibleAsync`) กรองแถวของบริษัทที่รอสิทธิ์ตอนอ่าน (รวมแถวเก่า) · Db test + กติกา _R277_ — commit 812bc11d_
 
 ## รอบ 278 (2026-11-20 · ช่องลายเซ็นผู้จัดทำ ↔ ผู้มีอำนาจลงนาม เป็นคนเดียวกัน)
 

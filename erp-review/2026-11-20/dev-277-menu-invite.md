@@ -62,5 +62,6 @@
 | MED-2 ถดถอยของหน้าหลักโหมดง่าย + ที่พัก | ✅ | "simple-home" ไม่ผูก Reports.Dashboard (277-9) · ที่พัก any-of LodgingManage/LodgingSettings |
 | MED-3 ยืนยันอีเมลตอนตอบรับ | ✅ | ตอบรับด้วย token = ยืนยันอีเมล ทุกทาง (277-8) · อีเมลต้องตรง |
 | LOW preview บอกการมีบัญชี | ✅ | ตัด `AccountExists` · หน้าแสดงทั้งสองทาง |
+| แจ้งเตือนถึงสมาชิกรอสิทธิ์ (ผู้ประสานงานสั่งปิดในรอบนี้) | ✅ 812bc11d | `NotificationEngine` เส้นบทบาท + ผู้รับระบุตัว เรียก `CompanyMembership.MayReceiveCompanyNotificationAsync` (กระดิ่ง/อีเมล/LINE ส่วนตัว) · กระดิ่งกรองตอนอ่านด้วย `PendingCompanyIdsAsync` (รวมแถวเก่า) · 277-13 |
 
-ยังเหลือ (backlog): ด่านของ `reports/month-snapshot` (277-9) · NotificationEngine ส่งถึงบทบาท Viewer ทั่วไปอาจรวมสมาชิกรอสิทธิ์ (ไม่มีคีย์เหตุการณ์ใดผูก Viewer ตรง ๆ ในค่าตั้งต้น — ไม่ได้ไล่ทุกตารางของบริษัท)
+ยังเหลือ (backlog): ด่านของ `reports/month-snapshot` (277-9)

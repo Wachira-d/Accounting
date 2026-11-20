@@ -66,6 +66,9 @@ public class NotificationService : INotificationService
     private async Task<IQueryable<Notification>> VisibleAsync(Guid userId)
     {
         var q = _db.Set<Notification>().Where(n => n.UserId == userId);
+        // รอบ 277 (ฝ่ายค้าน): บริษัทที่ผู้ใช้ยังรอสิทธิ์ — ไม่แสดงแจ้งเตือนของบริษัทนั้น (รวมแถวเก่าที่ค้าง/ส่งมาจากทางอื่นที่ไม่ผ่าน NotificationEngine)
+        var pending = await Accounting.Helpers.CompanyMembership.PendingCompanyIdsAsync(_db, userId);
+        if (pending.Count > 0) q = q.Where(n => n.CompanyId == null || !pending.Contains(n.CompanyId.Value));
         var ownOnly = await Accounting.Helpers.DocumentRestrictionGuard.OwnOnlyCompanyIdsAsync(_db, userId);
         if (ownOnly.Count == 0) return q;
         var uid = userId.ToString();

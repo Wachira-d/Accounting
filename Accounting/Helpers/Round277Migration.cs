@@ -5,7 +5,7 @@ namespace Accounting.Helpers;
 /// (1) <c>CompanyUsers.AccessPending</c> ค่าตั้งต้น false ⇒ สมาชิกเดิมพฤติกรรมเดิม ·
 /// (2) คำเชิญ: token ดิบในฐาน (ค่าที่ persist ไว้ก่อนแก้ — ฐานรั่ว = เอาไปตอบรับคำเชิญที่ค้างได้) ⇒ ย้ายเป็น SHA-256 hex
 /// (สูตรเดียวกับ <see cref="CompanyInvitationPolicy.HashToken"/>: UTF-8 → sha256 → hex ตัวเล็ก) แล้วล้างค่าดิบเป็น NULL ·
-/// (commit a1ae70d2 + d93800f2 · ฝ่ายค้าน 6566b49b) ลิงก์ในอีเมลที่ส่งไปแล้วยังใช้ได้ (เทียบ hash ของ token ในลิงก์) · คำเชิญเดิม <c>RoleChosen</c> = true (ผู้เชิญเลือกบทบาทไว้เสมอ)
+/// (commit a1ae70d2 + d93800f2 · ฝ่ายค้าน 6566b49b + 812bc11d) ลิงก์ในอีเมลที่ส่งไปแล้วยังใช้ได้ (เทียบ hash ของ token ในลิงก์) · คำเชิญเดิม <c>RoleChosen</c> = true (ผู้เชิญเลือกบทบาทไว้เสมอ)
 /// </summary>
 public static class Round277Migration
 {

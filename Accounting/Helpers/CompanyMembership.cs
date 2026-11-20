@@ -57,6 +57,23 @@ public static class CompanyMembership
     public static IQueryable<CompanyUser> ActiveRow(AccountingDbContext db, Guid companyId, Guid userId)
         => Active(db.CompanyUsers.Where(cu => cu.CompanyId == companyId && cu.UserId == userId));
 
+    /// <summary>รอบ 277 (ฝ่ายค้าน — ช่องรั่วผ่านการแจ้งเตือน): ผู้ใช้คนนี้รับแจ้งเตือนของบริษัทนี้ได้ไหม — มีแถวสมาชิกแต่ไม่ผ่าน <see cref="Active"/>
+    /// (รอสิทธิ์) ⇒ ไม่ได้ · ไม่มีแถวสมาชิก ⇒ ไม่ตัดสินที่นี่ (พฤติกรรมเดิมของผู้เรียก) · ผู้เรียก: <c>NotificationEngine</c> (เส้นบทบาท + ผู้รับระบุตัว)</summary>
+    public static async Task<bool> MayReceiveCompanyNotificationAsync(AccountingDbContext db, Guid companyId, Guid userId, CancellationToken ct = default)
+    {
+        var rows = db.CompanyUsers.Where(cu => cu.CompanyId == companyId && cu.UserId == userId);
+        if (!await rows.AnyAsync(ct)) return true;
+        return await Active(rows).AnyAsync(ct);
+    }
+
+    /// <summary>รอบ 277: บริษัทที่ผู้ใช้เป็นสมาชิกแต่ยังรอสิทธิ์ — กระดิ่งตอนอ่าน (<c>NotificationService</c>) กรองแถวของบริษัทเหล่านี้ออก (รวมแถวเก่าที่ค้าง)</summary>
+    public static async Task<List<Guid>> PendingCompanyIdsAsync(AccountingDbContext db, Guid userId, CancellationToken ct = default)
+    {
+        var mine = db.CompanyUsers.Where(cu => cu.UserId == userId);
+        var active = Active(mine).Select(cu => cu.CompanyId);
+        return await mine.Select(cu => cu.CompanyId).Where(id => !active.Contains(id)).Distinct().ToListAsync(ct);
+    }
+
     /// <summary>ข้อความเมื่อผู้ใช้มีแต่บริษัทที่รอสิทธิ์ (บอท LINE)</summary>
     public const string OnlyPendingMessage =
         "⏳ คุณเข้าร่วมบริษัทแล้ว แต่เจ้าของยังไม่ได้กำหนดสิทธิ์ให้ — ใช้งานผ่าน LINE ได้เมื่อเจ้าของตั้งบทบาทที่หน้า \u201cจัดการทีม\u201d แล้ว";
