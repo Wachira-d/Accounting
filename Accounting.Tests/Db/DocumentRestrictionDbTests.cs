@@ -365,8 +365,8 @@ public class DocumentRestrictionDbTests
     {
         using var db = DbTestDatabase.TryCreateContext();
         if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
-        foreach (var sql in Round276Migration.Statements()) await db.Database.ExecuteSqlRawAsync(sql);
-        foreach (var sql in Round276Migration.Statements()) await db.Database.ExecuteSqlRawAsync(sql);   // idempotent
+        await DbTestDatabase.ApplyDdlAsync(db, Round276Migration.Statements());
+        await DbTestDatabase.ApplyDdlAsync(db, Round276Migration.Statements());   // idempotent
         var s = await SeedAsync(db);
         var company = new CompanyService(db, null!, logger: NullLogger<CompanyService>.Instance);
         await company.UpdateDocumentRestrictionAsync(s.CompanyId, s.Owner, s.Other, ownDocumentsOnly: true, draftDocumentsOnly: false);
@@ -607,8 +607,8 @@ public class DocumentRestrictionDbTests
         }
         // แถวเก่า (ไม่มี CreatedByUserId) ⇒ migration เติมจาก id/อีเมลที่จับคู่ได้แน่นอน (ทำซ้ำได้)
         await db.Database.ExecuteSqlInterpolatedAsync($@"UPDATE ""Documents"" SET ""CreatedByUserId"" = NULL WHERE ""CompanyId"" = {s.CompanyId}");
-        foreach (var sql in Round276Migration.Statements()) await db.Database.ExecuteSqlRawAsync(sql);
-        foreach (var sql in Round276Migration.Statements()) await db.Database.ExecuteSqlRawAsync(sql);
+        await DbTestDatabase.ApplyDdlAsync(db, Round276Migration.Statements());
+        await DbTestDatabase.ApplyDdlAsync(db, Round276Migration.Statements());
         using (var check = DbTestDatabase.TryCreateContext()!)
         {
             var map = await check.Documents.IgnoreQueryFilters().Where(d => d.CompanyId == s.CompanyId).ToDictionaryAsync(d => d.Id, d => d.CreatedByUserId);

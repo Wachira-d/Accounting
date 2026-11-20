@@ -263,8 +263,8 @@ public class NotifyResendDbTests
         db.CustomerNotifyLogs.AddRange(quota, off, failed);
         await db.SaveChangesAsync();
 
-        foreach (var sql in CustomerNotifyResendMigration.Statements()) await db.Database.ExecuteSqlRawAsync(sql);
-        foreach (var sql in CustomerNotifyResendMigration.Statements()) await db.Database.ExecuteSqlRawAsync(sql);   // รันซ้ำได้
+        await DbTestDatabase.ApplyDdlAsync(db, CustomerNotifyResendMigration.Statements());
+        await DbTestDatabase.ApplyDdlAsync(db, CustomerNotifyResendMigration.Statements());   // รันซ้ำได้
 
         string? Reason(Guid id) => db.CustomerNotifyLogs.AsNoTracking().Where(l => l.Id == id).Select(l => l.SuppressReason).Single();
         Assert.Equal(NotifySuppressReason.QuotaFull, Reason(quota.Id));

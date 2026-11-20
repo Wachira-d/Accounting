@@ -273,8 +273,8 @@ public class TaxSlipRound272DbTests
     {
         using var db = DbTestDatabase.TryCreateContext();
         if (db == null) { _out.WriteLine("ไม่มีฐาน — ข้าม"); return; }
-        foreach (var sql in Round272Migration.Statements()) await db.Database.ExecuteSqlRawAsync(sql);
-        foreach (var sql in Round272Migration.Statements()) await db.Database.ExecuteSqlRawAsync(sql);   // ทำซ้ำได้
+        await DbTestDatabase.ApplyDdlAsync(db, Round272Migration.Statements());
+        await DbTestDatabase.ApplyDdlAsync(db, Round272Migration.Statements());   // ทำซ้ำได้
         var s = await SeedAsync(db);
         var row = await GrantAsync(db, s);
         await Assert.ThrowsAnyAsync<Exception>(() => db.Database.ExecuteSqlInterpolatedAsync(

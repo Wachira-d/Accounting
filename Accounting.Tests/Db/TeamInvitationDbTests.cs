@@ -315,8 +315,8 @@ public class TeamInvitationDbTests
         db.CompanyInvitations.Add(inv);
         await db.SaveChangesAsync();
 
-        foreach (var sql in Round277Migration.Statements()) await db.Database.ExecuteSqlRawAsync(sql);
-        foreach (var sql in Round277Migration.Statements()) await db.Database.ExecuteSqlRawAsync(sql);   // idempotent
+        await DbTestDatabase.ApplyDdlAsync(db, Round277Migration.Statements());
+        await DbTestDatabase.ApplyDdlAsync(db, Round277Migration.Statements());   // idempotent
 
         var row = await db.CompanyInvitations.AsNoTracking().SingleAsync(i => i.Id == inv.Id);
         Assert.Null(row.Token);

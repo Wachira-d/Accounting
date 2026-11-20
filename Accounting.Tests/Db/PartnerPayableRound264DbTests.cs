@@ -41,7 +41,7 @@ public class PartnerPayableRound264DbTests
 
     private static async Task<Seed> SeedAsync(AccountingDbContext db)
     {
-        foreach (var sql in PartnerConsentMigration.Statements()) await db.Database.ExecuteSqlRawAsync(sql);
+        await DbTestDatabase.ApplyDdlAsync(db, PartnerConsentMigration.Statements());
         var seller = new Company { Name = "ผู้ขาย P3 " + Guid.NewGuid().ToString("N")[..6], TaxId = RandTax(), BranchCode = "00000", PartnerDiscoverable = true };
         var buyer = new Company { Name = "ผู้ซื้อ P3 " + Guid.NewGuid().ToString("N")[..6], TaxId = RandTax(), BranchCode = "00000" };
         db.Companies.AddRange(seller, buyer);

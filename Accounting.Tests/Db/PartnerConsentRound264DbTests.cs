@@ -51,7 +51,7 @@ public class PartnerConsentRound264DbTests
 
     private static async Task<Seed> SeedAsync(AccountingDbContext db)
     {
-        foreach (var sql in PartnerConsentMigration.Statements()) await db.Database.ExecuteSqlRawAsync(sql);   // idempotent + trigger append-only
+        await DbTestDatabase.ApplyDdlAsync(db, PartnerConsentMigration.Statements());   // idempotent + trigger append-only
         var a = new Company { Name = "ผู้ขาย 264 " + Guid.NewGuid().ToString("N")[..6], TaxId = RandTax(), BranchCode = "00000" };
         var b = new Company { Name = "ผู้ซื้อ 264 " + Guid.NewGuid().ToString("N")[..6], TaxId = RandTax(), BranchCode = "00000" };
         db.Companies.AddRange(a, b);

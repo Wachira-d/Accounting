@@ -90,7 +90,7 @@ public class ContactNotifyEndpointRound245DbTests
 
     private static async Task RunMigrationAgainAsync(AccountingDbContext db)
     {
-        foreach (var sql in ContactNotifyEndpointMigration.Statements()) await db.Database.ExecuteSqlRawAsync(sql);
+        await DbTestDatabase.ApplyDdlAsync(db, ContactNotifyEndpointMigration.Statements());
         // marker เป็นของทั้งฐาน (job เดียวกันทุกเทสต์) ⇒ ลบเฉพาะ marker ของรอบนี้แล้วรันใหม่ (เส้นเดียวกับบูต)
         await db.Database.ExecuteSqlRawAsync("""DELETE FROM "OneShotDataFixes" WHERE "Key" = {0}""", ContactNotifyEndpointMigration.MarkerKey);
         await ContactNotifyEndpointMigration.MigrateLegacyLineUserIdsAsync(db, Secrets);
@@ -307,7 +307,7 @@ public class ContactNotifyEndpointRound245DbTests
         if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
         var (cid1, c1) = await SeedAsync(db, lineUserId: "U245b1aaaaaaaaaaaaaaaaaaaaaaaaaaa1");
         var (cid2, c2) = await SeedAsync(db, lineUserId: "U245b1bbbbbbbbbbbbbbbbbbbbbbbbbbb2");
-        foreach (var sql in ContactNotifyEndpointMigration.Statements()) await db.Database.ExecuteSqlRawAsync(sql);
+        await DbTestDatabase.ApplyDdlAsync(db, ContactNotifyEndpointMigration.Statements());
         await db.Database.ExecuteSqlRawAsync("""DELETE FROM "OneShotDataFixes" WHERE "Key" = {0}""", ContactNotifyEndpointMigration.MarkerKey);
         var calls = 0;
         var failing = F4Proxy<ISecretProtector>.Create((m, a) =>
@@ -339,7 +339,7 @@ public class ContactNotifyEndpointRound245DbTests
         if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
         var (cid, contactId) = await SeedAsync(db, lineUserId: "enc1:looks-like-ciphertext");
         var (cidOk, okContact) = await SeedAsync(db, lineUserId: "U245n1ooooooooooooooooooooooooooo1");
-        foreach (var sql in ContactNotifyEndpointMigration.Statements()) await db.Database.ExecuteSqlRawAsync(sql);
+        await DbTestDatabase.ApplyDdlAsync(db, ContactNotifyEndpointMigration.Statements());
         await db.Database.ExecuteSqlRawAsync("""DELETE FROM "OneShotDataFixes" WHERE "Key" = {0}""", ContactNotifyEndpointMigration.MarkerKey);
 
         var r = await ContactNotifyEndpointMigration.MigrateLegacyLineUserIdsAsync(db, Secrets);

@@ -70,6 +70,21 @@ END $$;";
         }
     }
 
+    /// <summary>รัน DDL ของ migration ในเทสต์แบบ serialize ข้ามเทสต์ที่รันขนานกัน (pg_advisory_lock ตัวเดียว) —
+    /// เดิมแต่ละเทสต์ loop <c>ExecuteSqlRawAsync</c> เอง ⇒ <c>CREATE OR REPLACE FUNCTION</c>/trigger ชนกันใน catalog
+    /// ⇒ PostgreSQL 'XX000: tuple concurrently updated' (CI 44737188546 · PartnerPayableRound264DbTests)</summary>
+    public static async Task ApplyDdlAsync(AccountingDbContext db, IEnumerable<string> statements)
+    {
+        await db.Database.OpenConnectionAsync();
+        try
+        {
+            await db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_lock(727001)");
+            try { foreach (var sql in statements) await db.Database.ExecuteSqlRawAsync(sql); }
+            finally { await db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_unlock(727001)"); }
+        }
+        finally { await db.Database.CloseConnectionAsync(); }
+    }
+
     /// <summary>context ใหม่ (หนึ่งตัวต่อ "คำขอ") บนฐานที่มี schema ครบจากโมเดล (EnsureCreated ครั้งแรกของ process) ·
     /// null = เครื่องนี้ไม่มีฐาน</summary>
     public static AccountingDbContext? TryCreateContext()

@@ -315,7 +315,7 @@ public class LicenseLapseRound238DbTests
         if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
         var now = DateTime.UtcNow;
         // บูตแรก (หรือบูตก่อนหน้าในฐานนี้) ⇒ มี marker
-        foreach (var sql in LicenseLapseMigration.Statements()) await db.Database.ExecuteSqlRawAsync(sql);
+        await DbTestDatabase.ApplyDdlAsync(db, LicenseLapseMigration.Statements());
         // แถวที่ "จะเข้าเงื่อนไข" ถ้าสแกน — ต้องไม่ถูกแตะเพราะซ่อมไปแล้วครั้งเดียว
         var a = await SeedAsync(db, SubscriptionStatus.Expired, now.AddDays(-2), companyStatus: SubscriptionStatus.Expired);
         db.SubscriptionHistories.Add(new SubscriptionHistory
@@ -324,7 +324,7 @@ public class LicenseLapseRound238DbTests
             FromStatus = SubscriptionStatus.Active, ToStatus = SubscriptionStatus.Expired, PerformedBy = "system:reminder-job", CreatedAt = now.AddDays(-2),
         });
         await db.SaveChangesAsync();
-        foreach (var sql in LicenseLapseMigration.Statements()) await db.Database.ExecuteSqlRawAsync(sql);
+        await DbTestDatabase.ApplyDdlAsync(db, LicenseLapseMigration.Statements());
         db.ChangeTracker.Clear();
         Assert.Equal(SubscriptionStatus.Expired, (await db.Subscriptions.AsNoTracking().SingleAsync(x => x.Id == a.SubId)).Status);
         Assert.Equal(SubscriptionStatus.Expired, (await db.AccountSubscriptions.AsNoTracking().SingleAsync(x => x.Id == a.LicenseId)).Status);

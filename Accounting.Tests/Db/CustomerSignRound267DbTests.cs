@@ -549,8 +549,8 @@ public class CustomerSignRound267DbTests
     {
         using var db = DbTestDatabase.TryCreateContext();
         if (db == null) { _out.WriteLine(Skip); return; }
-        foreach (var sql in CustomerSignMigration.Statements()) await db.Database.ExecuteSqlRawAsync(sql);   // รันซ้ำได้ + trigger append-only
-        foreach (var sql in CustomerSignMigration.Statements()) await db.Database.ExecuteSqlRawAsync(sql);
+        await DbTestDatabase.ApplyDdlAsync(db, CustomerSignMigration.Statements());   // รันซ้ำได้ + trigger append-only
+        await DbTestDatabase.ApplyDdlAsync(db, CustomerSignMigration.Statements());
         var s = await SeedAsync(db, "immutable " + Guid.NewGuid().ToString("N")[..6]);
         var qt = await AddDocAsync(db, s, DocumentType.Quotation, "QT", due: DateTime.UtcNow.Date.AddDays(5));
         var token = await OpenAsync(db, s, qt);

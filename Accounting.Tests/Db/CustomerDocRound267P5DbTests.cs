@@ -237,7 +237,7 @@ public class CustomerDocRound267P5DbTests
         await db.SaveChangesAsync();
         Assert.Equal(1, await db.PdpaProcessingActivities.CountAsync(r => r.CompanyId == s.CompanyId && r.Purpose == CustomerSignText.RopaPurpose));
         // append-only: แก้ชนิดช่องทาง/วันส่ง = ฐานปฏิเสธ (trigger) — ฐานเทสต์สร้างด้วย EnsureCreated (ไม่มี trigger) ⇒ รันมิเกรชันของตารางนี้ก่อน (แบบ CSR267Db · รันซ้ำได้)
-        foreach (var sql in CustomerSignMigration.Statements()) await db.Database.ExecuteSqlRawAsync(sql);
+        await DbTestDatabase.ApplyDdlAsync(db, CustomerSignMigration.Statements());
         var ex = await Assert.ThrowsAnyAsync<Exception>(() => db.CustomerDocumentActions.Where(a => a.Id == ev.Id)
             .ExecuteUpdateAsync(u => u.SetProperty(a => a.Channel, CustomerSignRule.ChannelLink)));
         Assert.Contains("append-only", ex.ToString());
