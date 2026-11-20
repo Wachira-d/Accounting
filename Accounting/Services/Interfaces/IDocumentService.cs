@@ -419,4 +419,8 @@ public interface IDocumentService
     /// ของแถวที่มี JE รับเงินแต่ไม่มีเอกสารคู่ (ดูรายละเอียดที่ implementation).
     /// idempotent: มีใบอยู่แล้วคืนใบเดิมพร้อม <c>AlreadyExisted=true</c></summary>
     Task<IssuedReceiptResult> IssueReceiptForPaymentAsync(Guid companyId, Guid paymentId, string createdBy, Guid? forDocumentId = null);
+    /// <summary>รอบ 275 แพ็ก C — คิว "รับเงินแล้วยังไม่มีใบกำกับภาษี" (ใบแจ้งหนี้ที่มี VAT ที่การรับเงินยังไม่มีใบเสร็จถือบทบาทใบกำกับ)</summary>
+    Task<IReadOnlyList<ReceivedWithoutTaxInvoiceRow>> ReceivedWithoutTaxInvoiceAsync(Guid companyId, CancellationToken ct = default);
+    /// <summary>รอบ 275 แพ็ก C — ออกใบกำกับภาษี ณ วันรับเงินให้การรับนี้ (ยกเลิกใบรับเปล่าของการรับนี้ในธุรกรรมเดียว) · ตัวตัดสินเดียว SettlementTaxInvoiceRole</summary>
+    Task<IssuedReceiptResult> IssueTaxInvoiceForPaymentAsync(Guid companyId, Guid paymentId, Guid documentId, string createdBy);
 }

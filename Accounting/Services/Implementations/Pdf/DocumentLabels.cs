@@ -281,6 +281,32 @@ public sealed class DocumentLabels
     /// <summary>แถวยอดตัดชำระก่อนหักภาษี ณ ที่จ่าย (เฉพาะใบเสร็จรับชำระที่มีภาษีถูกหัก) — แทน "ยอดรวมก่อน VAT"</summary>
     public string TotalSettledGross => this["total_settled_gross"];
 
+    /// <summary>ชื่อชนิดใบต้นทางในข้อความของใบเสร็จรับชำระ (ใบกำกับภาษี/ใบเพิ่มหนี้/ใบแจ้งหนี้)</summary>
+    public string SettlementSourceLabel(Accounting.Models.Enums.DocumentType t) => t switch
+    {
+        Accounting.Models.Enums.DocumentType.TaxInvoice => this["settlement_src_tax_invoice"],
+        Accounting.Models.Enums.DocumentType.DebitNote => this["settlement_src_debit_note"],
+        _ => this["settlement_src_invoice"],
+    };
+
+    /// <summary>บรรทัดรายการของใบเสร็จรับชำระ (รอบ 275 MED-5 — เดิม literal ไทยใน DocumentService) · <paramref name="installment"/> = ใบกำกับรายงวดของงานบริการ</summary>
+    public string SettlementReceiptLine(Accounting.Models.Enums.DocumentType sourceType, string sourceNumber, bool installment)
+        => string.Format(this[installment ? "settlement_installment_line" : "settlement_receipt_line"], SettlementSourceLabel(sourceType), sourceNumber);
+
+    /// <summary>หมายเหตุของใบเสร็จรับชำระ (พิมพ์บนกระดาษ) — วันที่รับ + วิธีรับ + บทบาทใบกำกับ ณ วันรับเงิน</summary>
+    public string SettlementReceiptNote(Accounting.Models.Enums.DocumentType sourceType, string sourceNumber, DateTime receivedOn, string method,
+        Accounting.Helpers.SettlementTaxInvoiceRole.Mode role)
+        => string.Format(this["settlement_receipt_note"], SettlementSourceLabel(sourceType), sourceNumber, Date(receivedOn), method)
+           + role switch
+           {
+               Accounting.Helpers.SettlementTaxInvoiceRole.Mode.FullCopy => this["settlement_receipt_note_tax_invoice"],
+               Accounting.Helpers.SettlementTaxInvoiceRole.Mode.Installment => this["settlement_receipt_note_installment"],
+               _ => "",
+           };
+
+    /// <summary>หน่วยของบรรทัดเดียวบนใบเสร็จรับชำระ</summary>
+    public string SettlementUnitItem => this["settlement_unit_item"];
+
     /// <summary>บรรทัดใต้ยอดของใบเสร็จรับชำระ (ยังไม่ escape): อ้างอิงต่อใบต้นทาง + รับบางส่วน + หมายเหตุว่ารวม VAT แล้ว — ตัวเดียวของทั้งสอง renderer และหน้ารายละเอียด</summary>
     public IReadOnlyList<string> SettlementTotalsLines(Accounting.Helpers.SettlementReceiptTotals.View v)
     {
@@ -292,12 +318,7 @@ public sealed class DocumentLabels
             lines.Add(string.Format(this["settlement_via_billing_note"], bn.Number, Date(bn.Date)));
         foreach (var s in v.References)
         {
-            var srcLabel = s.Type switch
-            {
-                Accounting.Models.Enums.DocumentType.TaxInvoice => this["settlement_src_tax_invoice"],
-                Accounting.Models.Enums.DocumentType.DebitNote => this["settlement_src_debit_note"],
-                _ => this["settlement_src_invoice"],
-            };
+            var srcLabel = SettlementSourceLabel(s.Type);
             // L1: ภาษีหักทั้งใบไม่พิมพ์ที่นี่ (งวดผ่อนจะบวกไม่ลง) — พิมพ์ของการรับครั้งนี้ข้างล่าง
             lines.Add(string.Format(this["settlement_ref_line"], srcLabel, s.Number, Date(s.Date),
                 M(s.SubTotal), M(s.VatAmount), M(Accounting.Helpers.SettlementReceiptTotals.GrossOf(s))));
@@ -414,6 +435,13 @@ public sealed class DocumentLabels
         ["settlement_src_debit_note"] = "ใบเพิ่มหนี้",
         ["settlement_partial_note"] = "รับชำระบางส่วนของยอด {0} ตามเอกสารอ้างอิง",
         ["settlement_vat_included_note"] = "ยอดรับชำระรวมภาษีมูลค่าเพิ่มที่เรียกเก็บตามเอกสารอ้างอิงแล้ว — ใบเสร็จนี้ไม่เรียกเก็บภาษีมูลค่าเพิ่มซ้ำ",
+        // รอบ 275 แพ็ก C (T3 MED-5): ข้อความที่ใบเสร็จรับชำระ persist ตอนสร้าง — เลือกตามภาษาของใบตอนออก (ใบที่ออกแล้วไม่แก้ย้อนหลัง)
+        ["settlement_receipt_line"] = "รับชำระเงินตาม{0}เลขที่ {1}",
+        ["settlement_installment_line"] = "รับชำระค่าบริการ (บางส่วน) ตาม{0}เลขที่ {1}",
+        ["settlement_receipt_note"] = "รับชำระเงินตาม{0}เลขที่ {1} (วันที่รับ {2}, {3})",
+        ["settlement_receipt_note_tax_invoice"] = " — ทำหน้าที่ใบกำกับภาษี ณ วันรับเงิน (มาตรา 78/1)",
+        ["settlement_receipt_note_installment"] = " — ทำหน้าที่ใบกำกับภาษี ณ วันรับเงินของงวดนี้ (มาตรา 78/1) · ภาษีมูลค่าเพิ่มตามส่วนของเงินที่รับ",
+        ["settlement_unit_item"] = "รายการ",
         ["total_deposit_applied"] = "หักเงินมัดจำ",
         ["total_deposit_tax_invoiced"] = "หักมูลค่ามัดจำ (ก่อน VAT) ตามใบกำกับภาษี",
         ["total_rounding"] = "ผลต่างจากการปัดเศษ",
@@ -594,6 +622,12 @@ public sealed class DocumentLabels
         ["settlement_src_debit_note"] = "Debit Note",
         ["settlement_partial_note"] = "Partial payment of the {0} due per the reference document",
         ["settlement_vat_included_note"] = "The amount received includes the VAT charged on the reference document — no VAT is charged again on this receipt",
+        ["settlement_receipt_line"] = "Payment received for {0} No. {1}",
+        ["settlement_installment_line"] = "Partial payment for services per {0} No. {1}",
+        ["settlement_receipt_note"] = "Payment received for {0} No. {1} (received {2}, {3})",
+        ["settlement_receipt_note_tax_invoice"] = " — serves as the tax invoice at the time of payment (Section 78/1)",
+        ["settlement_receipt_note_installment"] = " — serves as the tax invoice for this instalment at the time of payment (Section 78/1) · VAT in proportion to the amount received",
+        ["settlement_unit_item"] = "item",
         ["total_deposit_applied"] = "Less deposit",
         ["total_deposit_tax_invoiced"] = "Less deposit already tax-invoiced (excl. VAT)",
         ["total_rounding"] = "Rounding adjustment",

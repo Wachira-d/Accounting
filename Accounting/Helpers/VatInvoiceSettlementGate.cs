@@ -26,4 +26,23 @@ public static class VatInvoiceSettlementGate
             + $"{balanceDue.ToString("#,##0.00", CultureInfo.InvariantCulture)}) ไม่ได้ เพราะภาษีขายถึงกำหนดเต็มจำนวนตั้งแต่เงินงวดแรก (มาตรา 78/1) แต่ใบเสร็จบางส่วนถือภาษีเต็มของใบไม่ได้ · "
             + "แปลงใบแจ้งหนี้เป็นใบกำกับภาษีก่อน แล้วรับชำระ/จัดสรรที่ใบกำกับ หรือปิดเต็มยอดค้างในครั้งเดียว";
     }
+
+    /// <summary>รอบ 275 แพ็ก C (คำตัดสิน 275-C-1 · 4.1) — ด่านของ<b>บันทึกรับชำระใบเดียวด้วยมือ</b>: ใบแจ้งหนี้<b>งานบริการ</b> (ภาษีขายพัก 21913 จนรับเงิน) รับเป็นงวดได้แล้ว
+    /// เพราะใบเสร็จทุกงวดเป็นใบกำกับ ณ วันรับเงิน VAT ตามส่วน (<see cref="SettlementTaxInvoiceRole"/>) · ขายสินค้า/ไม่รู้ว่าพัก ⇒ ด่านเดิม <see cref="PartialRefusal"/> ·
+    /// ทางเข้าอื่น (จัดสรรหลายใบ · เงินรอจัดสรร · ย้ายการรับชำระ) ยังใช้ด่านเดิม (ไม่ออกใบกำกับรายงวดจากการจัดสรร — รับงวดที่หน้ารับชำระของใบ)</summary>
+    public static string? PartialRefusalForSingleDocument(DocumentType type, decimal vatAmount, decimal settledNow, decimal balanceDue, string documentNumber,
+        bool vatParkedUntilPayment)
+        => type == DocumentType.Invoice && vatParkedUntilPayment ? null : PartialRefusal(type, vatAmount, settledNow, balanceDue, documentNumber);
+
+    /// <summary>ด่านหลังตัดสิน (เส้นมือ · ใบเดียว): รับบางส่วนของใบแจ้งหนี้ที่มี VAT แล้วตัวตัดสินไม่ออกใบกำกับ ณ วันรับเงิน (ใบลดหนี้ก่อนรับ ·
+    /// การตัดยอดที่ไล่ไม่ได้) ⇒ ปฏิเสธพร้อมเหตุ + ทางไปต่อ (ไม่ปล่อยการขายที่รับเงินแล้วไม่มีใบกำกับเพิ่มจากเส้นที่คนบันทึกเอง) · null = ผ่าน</summary>
+    public static string? InstallmentWithoutTaxInvoiceRefusal(DocumentType type, decimal vatAmount, decimal balanceDueAfter,
+        SettlementTaxInvoiceRole.Decision decision, string documentNumber)
+    {
+        if (type != DocumentType.Invoice || vatAmount <= 0.005m || balanceDueAfter <= 0.005m || decision.CarriesRole) return null;
+        if (decision.Reason is SettlementTaxInvoiceRole.Why.FullVatAlreadyIssued or SettlementTaxInvoiceRole.Why.SupersededByTaxInvoice) return null;
+        return $"ใบแจ้งหนี้ {documentNumber} มีภาษีมูลค่าเพิ่ม — รับชำระบางส่วนครั้งนี้ระบบออกใบกำกับภาษี ณ วันรับเงินให้ไม่ได้ · "
+            + (SettlementTaxInvoiceRole.ReasonText(decision.Reason) ?? "")
+            + " · ทางไปต่อ: แปลงใบแจ้งหนี้เป็นใบกำกับภาษีก่อน แล้วรับชำระที่ใบกำกับ หรือปิดเต็มยอดค้างในครั้งเดียว";
+    }
 }

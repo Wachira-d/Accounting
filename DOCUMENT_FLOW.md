@@ -5210,6 +5210,40 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
   - ไม่มี throw ใหม่ · ไม่เปลี่ยนค่าที่ persist (ยอด/VAT/งวด) · กติกาเพิ่ม `_R273_*` +6 · ฝ่ายค้าน R273-4…7
 - Last verified `commit f929120b` · ชุดแก้ฝ่ายค้าน `commit 1efe61da`
 
+### 3.4b-275 ใบเสร็จ = ใบกำกับภาษี ณ วันรับเงิน (ม.78/1) — ตัวตัดสินเดียว + งวดงานบริการ (รอบ 275 แพ็ก C · สถานะปัจจุบัน)
+
+- **ตัวตัดสินเดียว** `Helpers/SettlementTaxInvoiceRole.Decide` (pure) ← ตัวโหลด `Services/Implementations/SettlementTaxInvoiceLoader` (รายการตัดยอดจาก
+  `SettlementReceiptTotalsLoader.LedgerEventsAsync` ตัวเดียวกับแถวยอดใบเสร็จ · ตัวไล่ยอด `SettlementReceiptTotals.Walk` ตัวเดียว) — แทนสูตร "งวดเดียว" 4 สำเนา
+  (`CreatePaymentAsync` `PaidAmount − เงิน − ภาษีหัก` · `IssueReceiptForPaymentAsync` นับจำนวนการชำระ · ย้ายการรับชำระ `PaidAmount ≤ 0.05` · งานหลังรับชำระ) · รูปแบบเดิมเหลือ 0 จุด
+  (`tools/required_call_site_check.py` `_R275C_FORMULA` forbid) · ผู้เรียกที่เหลือของ `SettlementReceiptPolicy.CarriesTaxInvoiceRole` = แผนหลังยกเลิกทาง e-Tax เท่านั้น
+- **ผล** (`Mode`): `FullCopy` = รับครบงวดเดียว (ไม่มีการตัดยอดใดก่อน — การรับ · ใบลดหนี้ · ช่องทางอื่น — และปิดยอด · "ยอดที่ครั้งนี้ตัด" = เงิน + ค่าธรรมเนียม + บรรทัดปรับ)
+  ⇒ คัดลอกบรรทัด/ยอดใบแจ้งหนี้ (เส้นเดิม) · `Installment` = **งวดของงานบริการ** (ภาษีขายพัก 21913 — ตัวจำแนกเดียวกับตอนลงบัญชี) ⇒ ใบกำกับรายงวด บรรทัดเดียว
+  "รับชำระค่าบริการ (บางส่วน) ตามใบแจ้งหนี้เลขที่ …" VAT = ยอดที่ตัดหนี้รวมภาษีหักงวดนี้ × VAT/(มูลค่า+VAT) ของใบ (7/107) · งวดที่ปิดยอดถือ VAT ที่เหลือ (ผลรวม = VAT ทั้งใบทุกสตางค์) ·
+  `None` = ใบรับเปล่า (ใบกำกับต้นทาง · ใบกำกับของการขายนี้ถือ VAT ครบแล้ว · ขายสินค้ารับเป็นงวด = คงเดิม) · **ไม่เดา** (`NeedsHumanDecision`): ใบลดหนี้ก่อนรับ (MED-2) ·
+  การตัดยอดที่ไล่ไม่ได้ (หักมัดจำ) ⇒ ไม่ออกใบกำกับเอง ขึ้นคิวให้ผู้ทำบัญชี
+- **ทุกทางเข้า**: บันทึกรับชำระ (มือ · gateway/LINE/public pay · integration · นำเข้า) `CreatePaymentAsync` · ออกใบย้อนหลัง/รายใบของการรับหลายใบ `IssueReceiptForPaymentCoreAsync` ·
+  ย้ายการรับชำระ `BuildSettlementMoveFactsAsync` (ผลอยู่ใน `SettlementMoveSnapshot.TargetTaxInvoicePlan`) · ออกใบแทน (`Reissue` — ใบแทนถือยอดเดิม `CarryIssued`) ·
+  ปุ่มคิว · ตัวประมาณงานหลังรับชำระ `MayCarryVat` — ทุกเส้นสร้างใบผ่าน `CreateSettlementReceiptAsync(taxInvoicePlan:)` ตัวเดียว
+- **การรับที่ต้องมีใบกำกับออกใบเสมอ** (ปลดติ๊ก "ออกใบเสร็จ" ไม่มีผลเมื่อ `CarriesRole`) · เส้นมือ: ใบแจ้งหนี้งานบริการรับบางส่วนได้แล้ว
+  (`VatInvoiceSettlementGate.PartialRefusalForSingleDocument`) · ขายสินค้า/ไม่รู้ว่าพัก ⇒ ด่านเดิม · รับบางส่วนแล้วตัวตัดสินไม่ออกใบกำกับ ⇒ ปฏิเสธ
+  (`InstallmentWithoutTaxInvoiceRefusal` · `RD-78/1-PARTIAL-VAT-INVOICE` — หน้ารับชำระเสนอ "แปลงเป็นใบกำกับภาษีก่อน" จากรหัสกฎ ไม่มีสำเนาเงื่อนไขใน JS) ·
+  ทางเข้าจัดสรรหลายใบ/เงินรอจัดสรร/ย้าย คงด่านเดิม
+- **GL + ภ.พ.30 (MED-3)**: งวดงานบริการย้าย 21913 → 21911 **เฉพาะ VAT ของงวดนั้น** (`TryReclassifyUndueOutputVatAsync(vatDueNow, forPaymentId)` · JE ติดป้าย
+  `JournalEntry.Note = R275C-INSTALLMENT-PAY:{paymentId}`) · `OutputVatDueAt` ประทับงวดแรกเท่านั้น · ใบเสร็จรายงวดเป็นเจ้าของภาษีของงวดตัวเอง (`OutputVatOwnership` Receipt branch ·
+  ใบแจ้งหนี้ `OwnedByVatReceipt` ⇒ ไม่นับซ้ำ) ณ `TaxPointDate` = วันรับเงินของงวด · ยกเลิกการรับงวดหนึ่ง (ยังเหลืองวดอื่น) ⇒ กลับเฉพาะ JE ที่ผูก
+  (`UndoInstallmentReclassOnPaymentVoidAsync` — ด่านงวด/ใบกำกับที่ถึงกรมสรรพากรเดียวกับการถอยทั้งก้อน) · รับครบ/ไม่ออกใบกำกับ ⇒ ย้ายทั้งก้อนตามเดิม
+- **วันที่ (MED-4 — ยืนยันจากโค้ด)**: `CreatePaymentAsync`/`CreateMultiDocPaymentAsync` normalize `PaymentDate` ด้วย `ThaiDate.CalendarDateUtc` ที่ต้นทาง (gateway ส่ง instant UTC ⇒
+  เงินเข้า 00:00–06:59 น. วันที่ 1 เดิมลงวันสุดท้ายของเดือนก่อน) · การรับที่บันทึกไปแล้วไม่ถูกแก้ (ไม่แก้ย้อนหลัง)
+- **คิว "รับเงินแล้วยังไม่มีใบกำกับภาษี"** (คำตัดสิน 4.1: ใบเก่าไม่แก้ย้อนหลัง) — `SettlementTaxInvoiceLoader.QueueAsync` (อ่านอย่างเดียว · tenant) ⇒ `GET api/companies/{cid}/document/received-without-tax-invoice` ·
+  Autopilot `ReceivedWithoutTaxInvoice` · ปุ่ม `POST …/document/payments/{paymentId}/tax-invoice/{documentId}` (สิทธิ์สร้าง+อนุมัติ+ยกเลิกใบเสร็จ) ⇒ ตัวตัดสินเดียว → ยกเลิกใบรับเปล่าของการรับนี้
+  (ถึงกรมสรรพากรแล้ว ⇒ 409) → ออกใบกำกับแทน (`ReplacesDocumentId` · audit chain) ในธุรกรรมเดียว · ใบเก่าที่ภาษีย้ายทั้งก้อนแล้ว ⇒ `TaxPointDate` = `OutputVatDueAt` (ภ.พ.30 ที่ยื่นแล้วไม่เปลี่ยน) ·
+  ขายสินค้าไม่เข้าคิว · แถวที่ต้องให้คนตัดสินพาไปที่ใบแจ้งหนี้พร้อมเหตุ
+- **ข้อความบนใบเสร็จ (MED-5)**: บรรทัด/หมายเหตุ/หน่วยที่ persist ผ่าน `DocumentLabels` (`SettlementReceiptLine` · `SettlementReceiptNote` · `SettlementUnitItem`) ตามภาษาของใบตอนออก —
+  ใบที่ออกแล้วไม่แก้ · e-Tax XML/สอง renderer อ่านบรรทัด/ยอดของใบตัวเดียวกัน (ใบกำกับรายงวด = แถวยอดปกติ "ยอดรวมก่อน VAT / VAT")
+- **อื่น**: ตัวโหลดรายการตัดยอดไม่นับการรับที่ถูกยกเลิก (`Payment.IsDeleted` — ตาราง Payments ไม่มี query filter · เดิมพิมพ์เป็น "รับชำระก่อนหน้า") · การ์ด LINE ของใบเสร็จรับชำระใช้ป้าย/ยอด
+  "ยอดรับชำระ" จากตัวโหลดเดียวกับกระดาษ (LOW-1) · ข้อความ `WhyCannotIssue` ของการรับหลายใบชี้ปุ่มออกใบเสร็จรายใบ (LOW-3)
+- เทสต์ `SettlementTaxInvoiceRoleTests` · `Db/SettlementTaxInvoiceRoleDbTests` · Last verified — รอบ 275 แพ็ก C (sha เติมในคอมมิตตามหลัง)
+
 ### 3.4c ผูกใบเสร็จ/เงินที่รับไว้แล้วกับใบแจ้งหนี้ — เจ้าเดียวกัน (รอบ 266 แพ็ก A · `erp-review/2026-11-12/team-266-manual-doc-link.md` · DECISIONS 266-1-x)
 
 > สถานะปัจจุบัน — "ผูก" **ไม่ใช่การเขียน FK** แต่เป็นคำสั่งกำหนดเส้นทาง (266-1-1): ตัวตัดสินเดียว `Helpers/ReceiptLinkPolicy` จัดชนิดฝั่งใบเสร็จ/เงิน (R0–R7) แล้วส่งต่อไปเส้นเดิม ·
@@ -9813,3 +9847,7 @@ _Last verified against codebase: 2026-11-20 (รอบ 274-10 — เลขท�
 (เลขบัตร/ผู้เสียภาษีรับเฉพาะ 13 หลัก mod-11 · อื่น ๆ ต้องไม่ใช่ ciphertext) · `PiiReprotectPass` เขียนชั้นเดียว + audit `PiiNestedUnwrapped` · รายงานไม่บอกกรอกใหม่สำหรับแถวที่แกะได้ ·
 ทุกทางเข้าพนักงาน (แก้ไข/สร้าง/HRIS sync/นำเข้า) ปฏิเสธ ciphertext ด้วย `EmployeeRecordEdit.CipherInputProblem` · ciphertext ของแถวนั้นเองส่งกลับมา = คงค่าเดิม ·
 คำตัดสิน 274-10 — commit 7c75b438)_
+
+_Last verified against codebase: 2026-11-20 (รอบ 275 แพ็ก C — §3.4b-275: ใบเสร็จ = ใบกำกับภาษี ณ วันรับเงินจากตัวตัดสินเดียว `SettlementTaxInvoiceRole`
+(ยุบสูตรงวดเดียว 4 สำเนา · ค่าธรรมเนียม/บรรทัดปรับ/ภาษีหัก/ใบลดหนี้) · งานบริการรับเป็นงวด = ใบกำกับรายงวด VAT ตามส่วน + ย้าย 21913 ตามส่วนผูกการรับ · คิว "รับเงินแล้วยังไม่มีใบกำกับ" ·
+วันที่ปฏิทินไทยที่ต้นทางการรับชำระ · ข้อความใบเสร็จผ่าน DocumentLabels · คำตัดสิน 275-C-1…9) — sha เติมในคอมมิตตามหลัง_

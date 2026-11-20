@@ -359,8 +359,6 @@ public class PostPaymentAutomationService : IPostPaymentAutomationService
                 .Select(r => new AllocationReceipt(r.Id, r.Status == DocumentStatus.Draft || r.Status == DocumentStatus.WaitingApproval,
                     r.IsTaxInvoiceByLaw == true || r.VatAmount > 0m))
                 .ToListAsync(ct);
-        var paymentCount = await _db.Payments.AsNoTracking()
-            .CountAsync(p => (p.MovedToDocumentId ?? p.DocumentId) == doc.Id && p.CompanyId == cid && !p.IsDeleted, ct);   // ฝ่ายค้าน LOW-3 (PaymentEffectiveDocument)
         var fullyPaid = run.FullyPaid;   // ฝ่ายค้าน N: ค่า ณ ตอนเข้าคิว
 
         var servesAsReceipt = false;
@@ -371,8 +369,8 @@ public class PostPaymentAutomationService : IPostPaymentAutomationService
             servesAsReceipt = ReceiptIssuePolicy.CoversPayment(resp?.ServedAsReceipt == true, doc.DocumentDate, payment.PaymentDate);
         }
         // ประมาณแบบระวัง (ไม่รู้ว่ามีใบเสร็จถือ VAT ที่ยังมีผลไหม ⇒ ถือว่าอาจถือ VAT) — ขาดข้อมูลผู้ซื้อ = ไม่ออกเอง แล้วบอกคน
-        var mayCarryVat = SettlementReceiptPolicy.CarriesTaxInvoiceRole(doc.DocumentType, doc.VatAmount,
-            fullyPaid && paymentCount == 1, liveVatReceiptExists: false);
+        // รอบ 275 แพ็ก C: งวดงานบริการก็เป็นใบกำกับ ณ วันรับเงิน (คำตัดสิน 275-C-1) ⇒ ตัวประมาณของตัวตัดสินเดียว (เดิมสำเนาสูตรงวดเดียวที่สี่ "ครบ + จำนวนการชำระ == 1")
+        var mayCarryVat = SettlementTaxInvoiceRole.MayCarryVat(doc.DocumentType, doc.VatAmount);
         // รอบ 250 WP-08: ผู้รับเรื่อง "ใบเสร็จ" จากตัวหาผู้รับเดียว (ปลายทางของผู้ติดต่อ · ไม่ตั้ง = Contact.Email เดิม)
         var receiptSet = await _recipients.ResolveAsync(cid, doc.ContactId, NotifyTopic.Receipt, ct);
         var receiptDelivery = ContactRecipientRule.ForEmail(receiptSet);

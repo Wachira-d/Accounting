@@ -524,8 +524,11 @@ public class ContactLineQueueService : IContactLineQueueService
         var payUrl = item.Trigger != ContactLineChannel.SignedCopyTrigger && outstanding
             && DocumentLineSendRule.PayLinkAllowed(isGroup ? NotifyEndpointKind.LineGroup : NotifyEndpointKind.LineUser, showAmounts)
             ? await PayUrlAsync(item, doc, ct) : null;
+        // รอบ 275 แพ็ก C (T3 LOW-1): ใบเสร็จรับชำระ ⇒ ป้าย/ยอด "ยอดรับชำระ" จากตัวโหลดเดียวกับกระดาษ/หน้าลูกค้า (ไม่ใช่ "ยอดรวม")
+        var settled = !outstanding && SettlementReceiptTotals.IsReceiptType(doc.DocumentType)
+            ? await SettlementReceiptTotalsLoader.DtoForAsync(_db, item.CompanyId, doc.Id, heading.IsEnglish) : null;
         return LineDocumentCard.Build(new LineDocumentCard.Input(companyName, viaNextAcc, heading.Language, heading.Title, doc.DocumentNumber,
-            showAmounts ? (outstanding ? doc.BalanceDue : doc.TotalAmount) : null, doc.Currency, outstanding ? doc.DueDate : null,
+            showAmounts ? (outstanding ? doc.BalanceDue : settled?.AmountReceived ?? doc.TotalAmount) : null, doc.Currency, outstanding ? doc.DueDate : null,
             contactName, payUrl, isGroup, outstanding,
             // ฝ่ายค้าน M1: กลุ่ม "ซ่อนยอด" ไม่ได้ปุ่มดู PDF (ตัวตัดสินเดียว LineDocumentViewLink.EndpointAllows — showAmounts = !isGroup || ep.ShowAmounts)
             ViewUrl: pageUrl == null && LineDocumentViewLink.EndpointAllows(isGroup ? NotifyEndpointKind.LineGroup : NotifyEndpointKind.LineUser, showAmounts, null, null)
@@ -533,7 +536,8 @@ public class ContactLineQueueService : IContactLineQueueService
             PaymentReceived: item.Trigger == ContactLineChannel.ReceiptTrigger,
             // ฝ่ายค้าน 267-P3 MED-1: ป้ายจากตัวตัดสินเดียวกับอีเมล — คำนวณตอนส่ง (ช่วงตอบรับ/คำตอบของลูกค้า ณ ตอนนี้) · ตอบไม่ได้ ⇒ "ดูเอกสาร"
             PageUrl: pageUrl, PageButton: pageUrl == null ? null : CustomerShareRule.PageButtonLabel(heading.Language, doc, DateTime.UtcNow, separatePayButton: payUrl != null),
-            SignedCopy: item.Trigger == ContactLineChannel.SignedCopyTrigger));
+            SignedCopy: item.Trigger == ContactLineChannel.SignedCopyTrigger,
+            SettledAmountLabel: settled?.AmountLabel));
     }
 
     /// <summary>รอบ 258-3 (F-H1 · A-L8): ลิงก์ดู/ดาวน์โหลด PDF ของแถวนี้ — token คำนวณซ้ำได้ (ลองใหม่ = URL เดิม) · ไม่มีความลับ/URL ของระบบ ⇒ ไม่มีปุ่ม (ไม่ใช่ลิงก์เสีย)

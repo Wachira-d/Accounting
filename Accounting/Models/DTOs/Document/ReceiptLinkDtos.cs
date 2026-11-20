@@ -56,7 +56,10 @@ public record ReceiptLinkUndoRequest(string Route, Guid? ReceiptDocumentId = nul
 /// <summary>รอบ 266 แพ็ก B — ข้อเท็จจริงของการรับชำระที่จะย้าย (อ่านอย่างเดียว · <c>DocumentService.LoadSettlementMoveFactsAsync</c>)</summary>
 /// <param name="Source">ข้อเท็จจริงฝั่ง "ใบเสร็จ/เงิน" ของตัวตัดสิน — ใบเสร็จที่ยังมีผลของการรับชำระ หรือการรับชำระเอง (ไม่มีใบเสร็จแยก)</param>
 /// <param name="LiveReceiptId">ใบเสร็จที่ยังมีผลซึ่งอ้างใบเดิม (จะถูกยกเลิก + ออกใบแทน) · null = ไม่มี</param>
-public record SettlementMoveSnapshot(Guid PaymentId, ReceiptLinkSourceFacts Source, ReceiptLinkMoveFacts Move, Guid? LiveReceiptId);
+/// <param name="TargetTaxInvoicePlan">รอบ 275 แพ็ก C — ผลของตัวตัดสินเดียว <c>SettlementTaxInvoiceRole</c> ของใบปลายทางหลังย้าย (ตัดสินใต้ล็อกพร้อมข้อเท็จจริงอื่น) ·
+/// ใบแทน/ใบใหม่ถือ VAT ตามผลนี้ (รับครบงวดเดียว = คัดลอกใบแจ้งหนี้ · งวดงานบริการ = VAT ตามส่วน)</param>
+public record SettlementMoveSnapshot(Guid PaymentId, ReceiptLinkSourceFacts Source, ReceiptLinkMoveFacts Move, Guid? LiveReceiptId,
+    global::Accounting.Helpers.SettlementTaxInvoiceRole.Decision? TargetTaxInvoicePlan = null);
 
 /// <summary>คำสั่งย้ายการรับชำระ — <paramref name="ExpectedFromDocumentId"/> = ใบที่พรีวิวเห็นว่าเงินตัดอยู่ (เปลี่ยนไปแล้ว = 409 · กดซ้ำ/สองคน)</summary>
 /// <param name="ExpectedRoute">ฝ่ายค้าน B-2: เส้นที่พรีวิวเห็น (มี/ไม่มีใบเสร็จต้องยกเลิกและออกแทน) — ใต้ล็อกต่างไป = 409 พรีวิวใหม่ · null = ไม่ตรวจ (ผู้เรียกภายใน)</param>
