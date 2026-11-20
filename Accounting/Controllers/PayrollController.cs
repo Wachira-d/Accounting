@@ -774,13 +774,18 @@ public class PayrollController : ControllerBase
     // ── รอบ 275 แพ็ก E (T4 H-3 · คำตัดสิน 4.2): รับทราบรายคน — พนักงานไม่มีเลขประจำตัว 13 หลัก ──
     public sealed record TaxIdWaiverRequest(string? Reason);
 
-    /// <summary>พนักงานที่ไม่มีเลข 13 หลัก (ยังไม่รับทราบ/รับทราบแล้ว) · พาสปอร์ตปิดบังเสมอ · ด่านเงินเดือนเดียวกับ ภ.ง.ด.1</summary>
+    /// <summary>ผู้มีเงินได้ที่ไม่มีเลข 13 หลัก (พนักงาน + ผู้รับใบมือ ภ.ง.ด.1) · พาสปอร์ตปิดบังเสมอ · ด่านเงินเดือนเดียวกับ ภ.ง.ด.1 · จด PiiAccessLog (ฝ่ายค้าน LOW (ค))</summary>
     [HttpGet("tax-id-waivers")]
     public async Task<ActionResult<ApiResponse<object>>> GetTaxIdWaivers(Guid companyId,
         [FromServices] Accounting.Data.AccountingDbContext db, CancellationToken ct)
     {
         var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
-        return Ok(new ApiResponse<object>(true, await EmployeeTaxIdWaiver.ListAsync(db, companyId, ct)));
+        var rows = await EmployeeTaxIdWaiver.ListAsync(db, companyId, ct);
+        await _pdpa.LogPiiAccessAsync(companyId, JwtHelper.GetUserIdFromClaims(User), ActorEmail() ?? "",
+            subjectType: "Company", subjectId: companyId, fieldName: $"TaxIdWaiver/PassportNumber ({rows.Count} ราย · ปิดบัง)", operation: "Read",
+            purpose: "รายการผู้ไม่มีเลขประจำตัว 13 หลัก (หน้าสุขภาพข้อมูลเข้ารหัส)",
+            ipAddress: HttpContext.Connection.RemoteIpAddress?.ToString(), userAgent: Request.Headers.UserAgent.ToString(), ct: ct);
+        return Ok(new ApiResponse<object>(true, rows));
     }
 
     /// <summary>รับทราบ (เหตุบังคับ · audit) — คนที่มีเลขผิด/ถอดรหัสไม่ได้ถูกปฏิเสธพร้อมเหตุ (ต้องแก้เลข)</summary>
@@ -789,25 +794,43 @@ public class PayrollController : ControllerBase
         [FromServices] Accounting.Data.AccountingDbContext db, CancellationToken ct)
     {
         // ผู้ทำบัญชี/ผู้มีสิทธิ์ยื่นภาษีหรืออนุมัติเงินเดือน (การรับทราบมีผลต่อ 50 ทวิ และไฟล์ยื่น)
-        var block = await RequirePayrollWriteAsync(companyId, "รับทราบพนักงานไม่มีเลข 13 หลัก",
-            Models.Constants.PermissionKeys.TaxFile, Models.Constants.PermissionKeys.PayrollApprove); if (block != null) return block;
+        var block = await RequirePayrollWriteAsync(companyId, "รับทราบพนักงานไม่มีเลข 13 หลัก", Models.Constants.PermissionKeys.TaxFile, Models.Constants.PermissionKeys.PayrollApprove); if (block != null) return block;
         await EmployeeTaxIdWaiver.AcknowledgeAsync(db, companyId, employeeId, req?.Reason, JwtHelper.GetUserIdFromClaims(User), ct);
         return Ok(new ApiResponse<object>(true, null, "รับทราบแล้ว — 50 ทวิ ของคนนี้ออกได้ (กด “สร้างเอกสารใหม่” ที่รอบเงินเดือนที่จ่ายไปแล้วเพื่อออกใบที่ขาด)"));
     }
 
-    /// <summary>ถอนการรับทราบ (audit) — ใบที่ออกแล้วไม่ถูกแตะ</summary>
-    [HttpDelete("employees/{employeeId:guid}/tax-id-waiver")]
-    public async Task<ActionResult<ApiResponse<object>>> RevokeTaxIdWaiver(Guid companyId, Guid employeeId, [FromQuery] string? reason,
+    /// <summary>ถอนการรับทราบ (เหตุบังคับ · audit — ฝ่ายค้าน LOW (จ)) — ใบที่ออกแล้วไม่ถูกแตะ</summary>
+    [HttpPost("employees/{employeeId:guid}/tax-id-waiver/revoke")]
+    public async Task<ActionResult<ApiResponse<object>>> RevokeTaxIdWaiver(Guid companyId, Guid employeeId, [FromBody] TaxIdWaiverRequest req,
         [FromServices] Accounting.Data.AccountingDbContext db, CancellationToken ct)
     {
-        var block = await RequirePayrollWriteAsync(companyId, "ถอนการรับทราบพนักงานไม่มีเลข 13 หลัก",
-            Models.Constants.PermissionKeys.TaxFile, Models.Constants.PermissionKeys.PayrollApprove); if (block != null) return block;
-        await EmployeeTaxIdWaiver.RevokeAsync(db, companyId, employeeId, reason, JwtHelper.GetUserIdFromClaims(User), ct);
+        var block = await RequirePayrollWriteAsync(companyId, "ถอนการรับทราบพนักงานไม่มีเลข 13 หลัก", Models.Constants.PermissionKeys.TaxFile, Models.Constants.PermissionKeys.PayrollApprove); if (block != null) return block;
+        await EmployeeTaxIdWaiver.RevokeAsync(db, companyId, employeeId, req?.Reason, JwtHelper.GetUserIdFromClaims(User), ct);
         return Ok(new ApiResponse<object>(true, null, "ถอนการรับทราบแล้ว — งวดถัดไป 50 ทวิ ของคนนี้จะไม่ออกจนกว่าจะกรอกเลขหรือรับทราบใหม่"));
     }
 
-    // ── รอบ 275 แพ็ก E (T4 H-2): ผู้ติดต่อเลขผิดที่เส้นเงินเดือนสร้างไว้ — รายงาน + ซ่อมเฉพาะแถวที่เลือก ──
-    public sealed record JunkPayeeRepairRequest(List<Guid>? ContactIds, bool ConfirmFiledAmendment);
+    /// <summary>ฝ่ายค้าน MED-2: รับทราบผู้รับใบ 50 ทวิ ภ.ง.ด.1 ที่ไม่ใช่พนักงาน (กติกาเดียวกัน)</summary>
+    [HttpPost("contacts/{contactId:guid}/tax-id-waiver")]
+    public async Task<ActionResult<ApiResponse<object>>> AcknowledgeContactTaxIdWaiver(Guid companyId, Guid contactId, [FromBody] TaxIdWaiverRequest req,
+        [FromServices] Accounting.Data.AccountingDbContext db, CancellationToken ct)
+    {
+        var block = await RequirePayrollWriteAsync(companyId, "รับทราบผู้รับเงินได้ไม่มีเลข 13 หลัก", Models.Constants.PermissionKeys.TaxFile, Models.Constants.PermissionKeys.PayrollApprove); if (block != null) return block;
+        await EmployeeTaxIdWaiver.AcknowledgeContactAsync(db, companyId, contactId, req?.Reason, JwtHelper.GetUserIdFromClaims(User), ct);
+        return Ok(new ApiResponse<object>(true, null, "รับทราบแล้ว — ไฟล์ ภ.ง.ด.1 ลงเลข 0 ให้ผู้รับรายนี้ (ยังไม่ยืนยันกับสเปกกรมสรรพากร — ตรวจกับนักบัญชี)"));
+    }
+
+    [HttpPost("contacts/{contactId:guid}/tax-id-waiver/revoke")]
+    public async Task<ActionResult<ApiResponse<object>>> RevokeContactTaxIdWaiver(Guid companyId, Guid contactId, [FromBody] TaxIdWaiverRequest req,
+        [FromServices] Accounting.Data.AccountingDbContext db, CancellationToken ct)
+    {
+        var block = await RequirePayrollWriteAsync(companyId, "ถอนการรับทราบผู้รับเงินได้ไม่มีเลข 13 หลัก", Models.Constants.PermissionKeys.TaxFile, Models.Constants.PermissionKeys.PayrollApprove); if (block != null) return block;
+        await EmployeeTaxIdWaiver.RevokeContactAsync(db, companyId, contactId, req?.Reason, JwtHelper.GetUserIdFromClaims(User), ct);
+        return Ok(new ApiResponse<object>(true, null, "ถอนการรับทราบแล้ว"));
+    }
+
+    // ── รอบ 275 แพ็ก E (T4 H-2 · ฝ่ายค้าน MED-3): ผู้ติดต่อเลขผิดที่เส้นเงินเดือนสร้างไว้ — รายงาน + ซ่อมเฉพาะแถวที่เลือก ──
+    /// <param name="ConfirmedPeriods">งวด (yyyy-MM) ที่ผู้ใช้ยืนยันว่าจะยื่น ภ.ง.ด.1 เพิ่มเติม — ยืนยันทีละงวด</param>
+    public sealed record JunkPayeeRepairRequest(List<Guid>? ContactIds, List<string>? ConfirmedPeriods);
 
     [HttpGet("junk-payee-contacts")]
     public async Task<ActionResult<ApiResponse<object>>> GetJunkPayeeContacts(Guid companyId,
@@ -819,21 +842,51 @@ public class PayrollController : ControllerBase
         return Ok(new ApiResponse<object>(true, rows.Select(r => new
         {
             r.ContactId, r.Name, r.Masked, r.Problem, r.EmployeeCode, r.EmployeeName, Plan = r.Plan.ToString(), r.Action,
-            r.CertCount, r.FiledPeriods, r.Repairable,
+            r.CertCount, r.FiledPeriods, r.FiledCertificates, r.Repairable,
         })));
     }
 
     [HttpPost("junk-payee-contacts/repair")]
     public async Task<ActionResult<ApiResponse<object>>> RepairJunkPayeeContacts(Guid companyId, [FromBody] JunkPayeeRepairRequest req,
-        [FromServices] Accounting.Data.AccountingDbContext db, CancellationToken ct)
+        [FromServices] Accounting.Data.AccountingDbContext db, [FromServices] INotificationEngine notify, CancellationToken ct)
     {
-        var block = await RequirePayrollWriteAsync(companyId, "ซ่อมผู้ติดต่อเลขผิดจากเงินเดือน",
-            Models.Constants.PermissionKeys.TaxFile, Models.Constants.PermissionKeys.PayrollApprove); if (block != null) return block;
+        var block = await RequirePayrollWriteAsync(companyId, "ซ่อมผู้ติดต่อเลขผิดจากเงินเดือน", Models.Constants.PermissionKeys.TaxFile, Models.Constants.PermissionKeys.PayrollApprove); if (block != null) return block;
         var ids = req?.ContactIds ?? new List<Guid>();
         if (ids.Count == 0) return BadRequest(new ApiResponse<object>(false, null, "เลือกแถวที่จะซ่อมอย่างน้อยหนึ่งแถว"));
-        var outcomes = await PayrollJunkPayee.RepairAsync(db, companyId, ids, req!.ConfirmFiledAmendment, JwtHelper.GetUserIdFromClaims(User), ct);
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        var outcomes = await PayrollJunkPayee.RepairAsync(db, companyId, ids, req!.ConfirmedPeriods, userId, ct);
         var done = outcomes.Count(o => o.Repaired);
+        // MED-3: งวดที่ได้ใบแทน ⇒ กระดิ่ง (รายการค้างอยู่ที่หน้าสุขภาพข้อมูลเข้ารหัสจนกว่าจะบันทึกว่ายื่นเพิ่มเติม)
+        var periods = outcomes.Where(o => o.Repaired).SelectMany(o => o.AmendmentPeriods ?? Array.Empty<string>()).Distinct().OrderBy(x => x).ToList();
+        if (periods.Count > 0)
+            await notify.DispatchAsync(companyId, Models.Constants.NotificationEvents.PayrollPaid, new NotificationContext
+            {
+                Title = "⚠️ ต้องยื่น ภ.ง.ด.1 เพิ่มเติม — งวด " + string.Join(", ", periods),
+                Message = "ระบบออกใบแทน 50 ทวิ (แก้เลขผู้ถูกหักภาษี) ของงวดที่ยื่นแล้ว · ดาวน์โหลดไฟล์ ภ.ง.ด.1 ใหม่แล้วยื่นเพิ่มเติม จากนั้นบันทึกที่ "
+                    + EncryptionHealthText.PageName + " (รายการค้างจะอยู่จนกว่าจะบันทึก)",
+                ActionUrl = "/pages/encryption-health.html", EntityType = "Pnd1AmendmentRequired", ActorUserId = userId,
+            });
         return Ok(new ApiResponse<object>(done > 0, outcomes, $"ซ่อมแล้ว {done} จาก {outcomes.Count} แถว"));
+    }
+
+    // ── ฝ่ายค้าน MED-3: รายการค้าง "ต้องยื่น ภ.ง.ด.1 เพิ่มเติม" ──
+    public sealed record Pnd1AmendmentResolveRequest(string? Reference);
+
+    [HttpGet("pnd1-amendments")]
+    public async Task<ActionResult<ApiResponse<object>>> GetPnd1Amendments(Guid companyId,
+        [FromServices] Accounting.Data.AccountingDbContext db, CancellationToken ct)
+    {
+        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        return Ok(new ApiResponse<object>(true, await Pnd1AmendmentQueue.ListAsync(db, companyId, ct)));
+    }
+
+    [HttpPost("pnd1-amendments/{id:guid}/resolve")]
+    public async Task<ActionResult<ApiResponse<object>>> ResolvePnd1Amendment(Guid companyId, Guid id, [FromBody] Pnd1AmendmentResolveRequest req,
+        [FromServices] Accounting.Data.AccountingDbContext db, CancellationToken ct)
+    {
+        var block = await RequirePayrollWriteAsync(companyId, "บันทึกการยื่น ภ.ง.ด.1 เพิ่มเติม", Models.Constants.PermissionKeys.TaxFile, Models.Constants.PermissionKeys.PayrollApprove); if (block != null) return block;
+        await Pnd1AmendmentQueue.ResolveAsync(db, companyId, id, req?.Reference, JwtHelper.GetUserIdFromClaims(User), ct);
+        return Ok(new ApiResponse<object>(true, null, "บันทึกว่ายื่น ภ.ง.ด.1 เพิ่มเติมแล้ว"));
     }
 
     // `pnd3/{year}/{month}` ถูกลบรอบ 170 — เป็นสูตรที่ 3 ของยอด ภ.ง.ด.3 (นับจาก Documents ไม่กรองฝั่งซื้อ ·

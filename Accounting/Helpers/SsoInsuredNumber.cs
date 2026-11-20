@@ -26,6 +26,7 @@ public static class SsoInsuredNumber
     public const string UnusableRuleCode = "SSO-CITIZENID-UNUSABLE";
 
     /// <remarks>รอบ 275 แพ็ก E (T4 F3 · คำตัดสิน 4.2 "ไฟล์ สปส. ตามสเปก สปส."): เลขบัตร<b>ไม่ถูกต้อง</b>กันเฉพาะคนที่<b>ไม่มีเลขประกันสังคมที่ใช้ได้</b>
+    /// (13 หลัก + mod-11 — <see cref="HasUsableSsn"/> · ฝ่ายค้าน MED-1)
     /// (เดิมตรวจเลขบัตรทุกคน ⇒ ต่างชาติที่มีเลข ปกส. ถูกต้องแต่ช่องเลขบัตรมีพาสปอร์ตเก่า ทำให้ไฟล์ทั้งบริษัทถูกปฏิเสธ) — คนนั้นช่องเลขบัตรในไฟล์ว่าง
     /// (<see cref="CitizenIdForFile"/>) ช่องเลข ปกส. ใช้เลข ปกส. · ถอดรหัสไม่ได้ยังกันทั้งไฟล์เหมือนเดิม (ข้อมูลหาย ต้องให้คนเห็น)</remarks>
     public static void ThrowIfUnusable(string formName, IEnumerable<(string Code, string? Name, string? CitizenId, string? SocialSecurityNumber)> people)
@@ -49,9 +50,12 @@ public static class SsoInsuredNumber
             // รอบ 275 แพ็ก E: เลขที่ไม่ถูกต้อง (ผ่านด่านได้เพราะคนนั้นมีเลข ปกส.) ⇒ ว่าง — ไม่ลงเลขผิดในช่องเลขบัตร
             : EmployeeTaxIdentity.InspectValue(citizenId).Problem == TaxIdProblem.Invalid ? "" : citizenId ?? "";
 
-    /// <summary>เลขประกันสังคมที่ใช้ได้ (มีค่า + ไม่ใช่ ciphertext ที่ถอดไม่ออก) — ตัวเดียวกับ <see cref="Resolve"/></summary>
-    private static bool HasUsableSsn(string? ssn)
-        => !string.IsNullOrWhiteSpace(ssn) && !EncryptedColumnConverter.IsUnreadable(ssn);
+    /// <summary>ฝ่ายค้าน MED-1 (คำตัดสิน 275-E-3 ฉบับแก้): เลขประกันสังคม "ใช้ได้" ที่จะปล่อยผ่านเลขบัตรที่ผิด = <b>13 หลักที่ผ่าน mod-11</b> (เลข ปกส. ของทั้งคนไทยและ
+    /// ต่างชาติเป็น 13 หลัก) · ถอดรหัสไม่ได้/ผิดรูป/checksum ไม่ผ่าน ⇒ ใช้ไม่ได้ · เท่ากับเลขบัตรที่ checksum ผิด ⇒ ผิดตามไปด้วยโดยอัตโนมัติ (ไม่ผ่าน mod-11)</summary>
+    internal static bool HasUsableSsn(string? ssn)
+    {
+        return !string.IsNullOrWhiteSpace(ssn) && !EncryptedColumnConverter.IsUnreadable(ssn) && ThaiTaxId.IsValid(ThaiTaxId.Normalize(ssn));
+    }
 
     /// <summary>เลขประกันสังคมที่<b>รายงานบนจอ</b>แสดง — รอบ 200 ทีม RF (R200-X6): ตัวตัดสินเดียวกับไฟล์ สปส.1-10 (<see cref="Resolve"/>)
     /// แล้วค่อยปิดบังด้วย <c>PiiMask.CitizenId</c> เมื่อไม่มีสิทธิ์ Pii.View · เดิมจออ่าน <c>Employee.SocialSecurityNumber</c> ตรง ๆ (ว่างเกือบทุกคน)

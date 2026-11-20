@@ -4082,7 +4082,8 @@ public class PayrollService : IPayrollService
                         Name = Accounting.Helpers.PayrollPnd1Certs.PayeeName(emp),   // รอบ 275 แพ็ก E (T4 L-7): ไม่มีชื่อไทย ⇒ ชื่ออังกฤษ (คู่สมมาตรกับไฟล์ ภ.ง.ด.1)
                         TaxId = payeeTaxId,
                         ContactType = ContactType.Individual,
-                        IsSupplier = true
+                        IsSupplier = true,
+                        CreatedBy = Accounting.Helpers.PayrollJunkPayee.CreatedByPayrollPnd1,   // ฝ่ายค้าน LOW (ก): กุญแจ "สร้างโดยเส้นเงินเดือน"
                     };
                     _db.Set<Contact>().Add(contact);
                     await _db.SaveChangesAsync();
@@ -4108,6 +4109,9 @@ public class PayrollService : IPayrollService
                     IssuedDate = DateTime.UtcNow,
                     SourcePayrollRunId = run.Id
                 };
+                // รอบ 275 แพ็ก E (ฝ่ายค้าน LOW (ข)(ฉ)): ผู้ไม่มีเลขที่รับทราบแล้ว — สำเนาผู้ถูกหัก ณ วันออกเก็บธงรับทราบ + พาสปอร์ต (ข้อความประกอบบนใบไม่อ่านค่าสดภายหลัง)
+                if (payeeIdentity.Kind == Accounting.Helpers.EmployeeTaxIdentity.FilingKind.WaivedNoId)
+                    cert.PayeeSnapshotJson = Accounting.Helpers.WhtPayeeSnapshot.Serialize(contact, emp.PassportNumber, employeeWaived: true);
                 _db.Set<WithholdingTaxCert>().Add(cert);
                 await _db.SaveChangesAsync();
 
@@ -4220,7 +4224,7 @@ public class PayrollService : IPayrollService
             ContactType = ContactType.Individual,
             IsSupplier = true,
             CountryCode = "TH",   // ผู้มีเงินได้ 40(1) ของนายจ้างในไทย — ภ.ง.ด.1 ประเภท (1)
-            CreatedBy = "system:payroll-no-taxid",
+            CreatedBy = Accounting.Helpers.PayrollJunkPayee.CreatedByPayrollNoTaxId,
         };
         _db.Set<Contact>().Add(created);
         await _db.SaveChangesAsync();

@@ -1140,6 +1140,11 @@ public class Contact : TenantEntity
     /// จึงได้รับยกเว้น hard-block §86/4 (เลข 13 หลัก/สาขา) ตอนอนุมัติ.</summary>
     public bool IsWalkInCustomer { get; set; }
     public bool IsActive { get; set; } = true;
+    /// <summary>รอบ 275 แพ็ก E ฝ่ายค้าน MED-2 (คำตัดสิน 4.2): ผู้ทำบัญชีรับทราบรายคนว่าผู้รับเงินได้ใน ภ.ง.ด.1 รายนี้ไม่มีเลขประจำตัว 13 หลัก (เช่น ต่างชาติ) ·
+    /// มีผลเฉพาะเมื่อไม่มีเลขเลย · ได้เลขที่ถูกต้องภายหลัง ⇒ ระบบล้างค่านี้เอง (SaveChanges) · ทางเขียนเดียว <c>Helpers/EmployeeTaxIdWaiver</c> (audit)</summary>
+    public DateTime? TaxIdWaiverAcknowledgedAt { get; set; }
+    public Guid? TaxIdWaiverAcknowledgedBy { get; set; }
+    public string? TaxIdWaiverReason { get; set; }
 
     // ───── Per-contact GL account overrides ─────
     // Default at the system level is the first level-4+ account starting

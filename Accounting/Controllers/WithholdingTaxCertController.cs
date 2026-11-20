@@ -50,9 +50,17 @@ public class WithholdingTaxCertController : ControllerBase
     }
 
     [HttpGet("{certId:guid}")]
-    public async Task<ActionResult<ApiResponse<WithholdingTaxCertResponse>>> GetById(Guid companyId, Guid certId)
+    public async Task<ActionResult<ApiResponse<WithholdingTaxCertResponse>>> GetById(Guid companyId, Guid certId,
+        [FromServices] IPermissionService permissions, [FromServices] Accounting.Services.Implementations.Pdpa.IPdpaService pdpa)
     {
         var result = await _whtService.GetByIdAsync(companyId, certId);
+        // รอบ 275 แพ็ก E ฝ่ายค้าน LOW (ข): พาสปอร์ตในข้อความประกอบปิดบังเป็นค่าตั้งต้น — เลขเต็มเฉพาะผู้มี pii:view (จด PiiAccessLog ในตัวตัดสิน)
+        if (result.PayeeReferenceNote != null
+            && await PiiViewGate.CanViewAsync(permissions, pdpa, User, HttpContext, companyId, null, "Read", "พิมพ์ 50 ทวิ ของผู้ไม่มีเลข 13 หลัก (เลขหนังสือเดินทาง)"))
+        {
+            var cert = await _db.WithholdingTaxCerts.AsNoTracking().FirstAsync(w => w.Id == certId && w.CompanyId == companyId);
+            result = result with { PayeeReferenceNote = WhtCertPayeeNote.Of(cert, includePii: true) };
+        }
         return Ok(new ApiResponse<WithholdingTaxCertResponse>(true, result));
     }
 
