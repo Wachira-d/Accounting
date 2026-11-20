@@ -665,6 +665,7 @@ public partial class PdpaService : IPdpaService
         u.SignatureImageBase64 = null;
         u.SignatureName = null;
         u.SignatureTitle = null;
+        u.SignerAliases = null;   // รอบ 278: ชื่อเรียกของบุคคล = ข้อมูลส่วนบุคคล
         var reqs = await _db.PlatformErasureRequests.IgnoreQueryFilters().Where(r => r.UserId == u.Id).ToListAsync(ct);
         foreach (var r in reqs)
         {

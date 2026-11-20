@@ -519,6 +519,9 @@ public class AuthService : IAuthService, ILineSignerLoginVerifier
             user.SignatureName = string.IsNullOrWhiteSpace(request.SignatureName) ? null : request.SignatureName.Trim();
         if (request.SignatureTitle != null)
             user.SignatureTitle = string.IsNullOrWhiteSpace(request.SignatureTitle) ? null : request.SignatureTitle.Trim();
+        // รอบ 278: ชื่ออื่นสำหรับผูกช่องลายเซ็น — ฝั่งเขียนตัวเดียว (ตัดซ้ำ · เกินเพดานโยนข้อความไทย ไม่ตัดทิ้งเงียบ)
+        if (request.SignerAliases != null)
+            user.SignerAliases = Accounting.Helpers.SignatureSlotIdentity.SanitizeForStore(request.SignerAliases);
 
         await _db.SaveChangesAsync();
         return MapProfile(user);
@@ -531,7 +534,7 @@ public class AuthService : IAuthService, ILineSignerLoginVerifier
 
     private static UserProfileResponse MapProfile(Models.Entities.User u) => new(
         u.Id, u.Email, u.FullName, u.Phone,
-        u.SignatureImageBase64, u.SignatureName, u.SignatureTitle);
+        u.SignatureImageBase64, u.SignatureName, u.SignatureTitle, u.SignerAliases);
 
     /// <summary>เข้าสู่ระบบ/สมัครด้วย Google · Facebook · LINE
     ///

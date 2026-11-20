@@ -1097,7 +1097,7 @@ public partial class PdfGenerationService : IPdfGenerationService
     /// Each user slot carries the saved signature image + name + title; an
     /// empty slot (no image) still records the name so the printed label reads
     /// "<role>: <name>" above a blank line instead of mystery text.</summary>
-    private async Task<List<DocumentSigner>> ResolveSignersAsync(Document doc)
+    internal async Task<List<DocumentSigner>> ResolveSignersAsync(Document doc)
     {
         Guid? creatorId = Guid.TryParse(doc.CreatedBy, out var cId) ? cId : null;
 
@@ -1153,7 +1153,7 @@ public partial class PdfGenerationService : IPdfGenerationService
                 bytes = TryDecodeBase64Image(raw);
             }
             return new DocumentSigner(dataUri, bytes,
-                !string.IsNullOrWhiteSpace(u.SignatureName) ? u.SignatureName : u.FullName,
+                Accounting.Helpers.SignatureSlotIdentity.ProfileDisplayName(u.SignatureName, u.FullName),
                 u.SignatureTitle);
         }
 
@@ -1164,6 +1164,9 @@ public partial class PdfGenerationService : IPdfGenerationService
         // "ผู้ลงนามที่มีสิทธิ์/ขั้นที่พิมพ์ลายเซ็น" (ApplySignerPolicyAsync ← DocumentStampPolicy) ตัดสินท้ายเมธอด
         var slotUsers = new Guid?[] { creatorId, approverId };
         var customerSlots = new bool[2];
+        // รอบ 278: ตัวตนช่อง 0 มาจาก payload ของระบบภายนอก (ผู้จ่ายเงิน PV / ผู้จัดทำ) — ชื่อที่ส่งมา (กุญแจ alias ของ SignatureSlotIdentity)
+        var slot0FromPayload = false;
+        string? slot0PayloadName = null;
 
         // DELIVERY e-SIGN OVERRIDE (slot 1 = "ผู้รับของ") — ลูกค้าเซ็นรับสินค้า
         // ออนไลน์ผ่านลิงก์ POD → ประทับลายเซ็น + ชื่อ + เวลาลงช่องผู้รับของ
@@ -1210,6 +1213,8 @@ public partial class PdfGenerationService : IPdfGenerationService
                     ? pay.PayerSignatureName : signers[0].Name;
                 signers[0] = new DocumentSigner(dataUri, TryDecodeBase64Image(raw), name, signers[0].Title);
                 slotUsers[0] = null;   // ลายเซ็นที่ผู้เรียก API ส่งมา — ไม่ใช่ผู้ใช้ในระบบ
+                slot0FromPayload = true;
+                slot0PayloadName = string.IsNullOrWhiteSpace(pay.PayerSignatureName) ? null : pay.PayerSignatureName;
             }
         }
 
@@ -1244,6 +1249,8 @@ public partial class PdfGenerationService : IPdfGenerationService
             var nameOverridden = !string.IsNullOrWhiteSpace(doc.PreparerName)
                 && !string.Equals(doc.PreparerName!.Trim(), cur.Name?.Trim(), StringComparison.OrdinalIgnoreCase);
             signers[0] = new DocumentSigner(dataUri, bytes, name, nameOverridden ? null : cur.Title);
+            slot0FromPayload = true;
+            if (!string.IsNullOrWhiteSpace(doc.PreparerName)) slot0PayloadName = doc.PreparerName!.Trim();
         }
 
         // slot 2 — external/customer signature captured via the approval flow.
@@ -1372,6 +1379,11 @@ public partial class PdfGenerationService : IPdfGenerationService
             }
         }
 
+        // รอบ 278 (คำตัดสิน 278-1..278-4): ช่อง 0 (ผู้จัดทำ/ผู้เสนอราคา) กับช่อง 1 (ผู้มีอำนาจลงนาม) เป็นคนเดียวกัน ⇒ ใช้ลายเซ็นที่มีเติมช่องที่ว่าง
+        // + ชื่อตามโปรไฟล์ทั้งสองช่อง · ตัดสินด้วยกุญแจเท่านั้น (Helpers/SignatureSlotIdentity — ห้ามเทียบความคล้ายชื่อ) · ก่อนกฎผู้ลงนาม: ช่อง 0 กลายเป็นของ
+        // ผู้ใช้คนเดียวกัน ⇒ กฎสิทธิ์/ผู้ออกจากบริษัทตัดสินทั้งสองช่องด้วยตัวตนเดียว · ทั้ง HTML + QuestPDF + พรีวิว + หน้าลูกค้า (PDF) รับ signers จากที่นี่
+        await MergeSameSignerSlotsAsync(doc, signers, slotUsers, customerSlots, slot0FromPayload, slot0PayloadName);
+
         // กฎลายเซ็น (ขั้นที่พิมพ์ · ผู้ลงนามที่มีสิทธิ์) — ตัวตัดสินเดียว DocumentStampPolicy · ทั้ง HTML + QuestPDF รับ signers จากที่นี่
         var stampSettings = await _db.Set<CompanySettings>().AsNoTracking()
             .Where(c => c.CompanyId == doc.CompanyId && !c.IsDeleted)
@@ -1393,6 +1405,41 @@ public partial class PdfGenerationService : IPdfGenerationService
         }
 
         return signers;
+    }
+
+    /// <summary>รอบ 278: รวมช่อง 0/1 เมื่อ <see cref="Accounting.Helpers.SignatureSlotIdentity.Link"/> ตัดสินว่าเป็นผู้ใช้คนเดียวกัน (กุญแจ: PreparerUserId ·
+    /// ผู้ใช้เดียวกัน · ชื่ออื่นที่ผู้ใช้ประกาศในโปรไฟล์) · คนละคน/ไม่มีกุญแจ ⇒ ไม่แตะ · ช่องลูกค้าไม่แตะ · รูปที่คัดลอกเป็นของคนเดียวกันเท่านั้น</summary>
+    internal async Task MergeSameSignerSlotsAsync(Document doc, List<DocumentSigner> signers, Guid?[] slotUsers, bool[] customerSlots,
+        bool slot0FromPayload, string? slot0PayloadName)
+    {
+        if (signers.Count < 2 || slotUsers.Length < 2 || slotUsers[1] is not { } s1User) return;
+        var u1 = await _db.Users.AsNoTracking().Where(u => u.Id == s1User)
+            .Select(u => new { u.SignerAliases, u.SignatureName, u.FullName, u.SignatureTitle })
+            .FirstOrDefaultAsync();
+        if (u1 == null) return;
+        var link = Accounting.Helpers.SignatureSlotIdentity.Link(
+            new Accounting.Helpers.SignatureSlotIdentity.Slot0(slot0FromPayload ? null : slotUsers[0], doc.PreparerUserId,
+                slot0FromPayload ? slot0PayloadName : null, IsCustomer: customerSlots.Length > 0 && customerSlots[0]),
+            new Accounting.Helpers.SignatureSlotIdentity.Slot1(s1User, u1.SignerAliases, IsCustomer: customerSlots.Length > 1 && customerSlots[1]));
+        if (link.Kind == Accounting.Helpers.SignatureSlotIdentity.LinkKind.None) return;
+        var s0 = signers[0]; var s1 = signers[1];
+        static bool HasImage(DocumentSigner s) => s.SignatureImageBytes is { Length: > 0 } || !string.IsNullOrWhiteSpace(s.SignatureImageDataUri);
+        var plan = Accounting.Helpers.SignatureSlotIdentity.Merge(
+            new(s0.Name, s0.Title, HasImage(s0)), new(s1.Name, s1.Title, HasImage(s1)),
+            Accounting.Helpers.SignatureSlotIdentity.ProfileDisplayName(u1.SignatureName, u1.FullName), u1.SignatureTitle);
+        signers[0] = s0 with
+        {
+            Name = plan.Name0, Title = plan.Title0,
+            SignatureImageDataUri = plan.CopyImage1To0 ? s1.SignatureImageDataUri : s0.SignatureImageDataUri,
+            SignatureImageBytes = plan.CopyImage1To0 ? s1.SignatureImageBytes : s0.SignatureImageBytes,
+        };
+        signers[1] = s1 with
+        {
+            Name = plan.Name1, Title = plan.Title1,
+            SignatureImageDataUri = plan.CopyImage0To1 ? s0.SignatureImageDataUri : s1.SignatureImageDataUri,
+            SignatureImageBytes = plan.CopyImage0To1 ? s0.SignatureImageBytes : s1.SignatureImageBytes,
+        };
+        slotUsers[0] = s1User;   // สองช่องเป็นของผู้ใช้คนเดียวกัน ⇒ กฎผู้ลงนาม (DocumentStampPolicy/DepartedSignerRule) ตัดสินด้วยตัวตนนี้
     }
 
     /// <summary>Decode a (possibly data-URI-prefixed) base64 PNG/JPG to raw

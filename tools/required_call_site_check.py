@@ -4927,7 +4927,7 @@ RULES += [
     dict(file=ROLE_PERM, method="GetMyPermissionsAsync", must=["PermissionDeniedMenuIdsAsync("],
          why="A-GW10: เมนูรับชำระออนไลน์ซ่อนเมื่อไม่มีสิทธิ์ (เดิมเห็นแล้วกด 403)"),
     dict(file=ROLE_PERM, method="PermissionDeniedMenuIdsAsync",
-         must=["MenuPermissionMap.DeniedMenuIdsAsync(", "_permissions.HasPermissionAsync("],
+         must=["MenuPermissionMap.DeniedMenuIdsAsync(", "_permissions.HasPermissionAsync(", "DocumentPermissionHelper.VisibleDirectionsAsync("],
          why="A-GW10 + รอบ 277 (_R277_): ตารางเมนู→สิทธิ์ตัวเดียว (MenuPermissionMap รวมหน้ารับชำระ) · ตรวจด้วยด่านเดียวกับ endpoint"),
     # ── ฝ่ายค้านรอบ 201 ทีม GW (GWO-1..7) ──
     dict(file=GW_CTL, method="Receive",
@@ -5953,7 +5953,20 @@ def method_body(masked: str, name: str):
         j += 1
     k = masked.find("{", j)
     arrow = masked.find("=>", j)
-    if k < 0 or (0 <= arrow < k):
+    if 0 <= arrow and (k < 0 or arrow < k) and not masked[j + 1:arrow].strip(" \t\r\n").startswith(("where", ":")):
+        # รอบ 275 แพ็ก C (ต่อ): เมธอด expression-bodied (`=> ...;`) — เดิมคืน None ⇒ "ไม่พบเมธอด" ทั้งที่เมธอดอยู่ (TaxService.LoadInvoiceIdsOwnedByVatReceiptAsync)
+        # ตัว = ตั้งแต่ `=>` ถึง `;` ที่ระดับวงเล็บ/ปีกกาศูนย์ (masked ⇒ `;` ในสตริง/คอมเมนต์ไม่นับ)
+        depth = 0
+        for e in range(arrow + 2, len(masked)):
+            ch = masked[e]
+            if ch in "({[":
+                depth += 1
+            elif ch in ")}]":
+                depth -= 1
+            elif ch == ";" and depth == 0:
+                return (arrow, e + 1)
+        return None
+    if k < 0:
         return None
     depth = 0
     for e in range(k, len(masked)):
@@ -22014,7 +22027,7 @@ _R277_CO = "Services/Implementations/CompanyService.cs"
 _R277_AUTH = "Services/Implementations/AuthService.cs"
 RULES += [
     dict(file="Middleware/TenantAccessMiddleware.cs", method="InvokeAsync",
-         must=["cu.AccessPending", "row.AccessPending", "PendingMemberAccess.IsAllowed(context.Request.Method, path)", "PendingMemberAccess.DeniedMessage"],
+         must=["cu.AccessPending", "row.AccessPending", "fallback.AccessPending", "PendingMemberAccess.IsAllowed(context.Request.Method, path)", "PendingMemberAccess.DeniedMessage"],
          why=_R277_WHY + "สมาชิกที่ตอบรับคำเชิญแบบไม่กำหนดบทบาท = ทุก API ของบริษัท 403 (ผ่านเฉพาะรายการของ PendingMemberAccess)"),
     dict(file=ROLE_PERM, method="GetMyPermissionsAsync",
          must=["cu.AccessPending", "AccessPending: true", "PendingMemberAccess.Notice("],
@@ -22066,13 +22079,60 @@ RULES += [
          must=["CompanyInvitationPolicy.HashToken(rawToken)", "AddChainedAuditLog("], forbid=["inv.Token)"],
          why=_R277_WHY + "แอดมินส่งซ้ำ = token ใหม่ (ฐานไม่มี token ดิบ) · audit"),
 ]
+RULES += [
+    # ฝ่ายค้านรอบ 277 HIGH-1/HIGH-2: ทางเข้าที่ไม่ผ่าน TenantAccessMiddleware ใช้ตัวกรองสมาชิกเดียว (ตัดสมาชิกรอสิทธิ์)
+    dict(file="Helpers/CompanyMembership.cs", method="ActiveMemberIdsAsync", must=["!cu.AccessPending"],
+         why=_R277_WHY + "ฝ่ายค้าน HIGH: สมาชิกรอสิทธิ์ไม่ใช่ผู้อนุมัติ/ผู้ลงนามที่ทำหน้าที่ได้"),
+    dict(file="Helpers/CompanyMembership.cs", method="Active", must=["!cu.AccessPending"],
+         why=_R277_WHY + "ฝ่ายค้าน HIGH: ตัวกรองสมาชิกที่ใช้งานได้ตัวเดียว"),
+    dict(file="Services/Implementations/LineBotService.cs", method="HandleMessageAsync", must=["CompanyMembership.ActiveOf(_db, user.Id)"],
+         forbid=[".Where(cu => cu.UserId == user.Id)"],
+         why=_R277_WHY + "ฝ่ายค้าน HIGH-1: บอท LINE (ดูยอด/ถาม/บันทึก) เลือกเฉพาะบริษัทที่ใช้งานได้"),
+    dict(file="Services/Implementations/LineBotService.cs", method="HandleImageAsync", must=["CompanyMembership.ActiveOf(_db, user.Id)"],
+         forbid=[".Where(cu => cu.UserId == user.Id)"],
+         why=_R277_WHY + "ฝ่ายค้าน HIGH-1: ส่งรูปบิลผ่าน LINE เลือกเฉพาะบริษัทที่ใช้งานได้"),
+    dict(file="Controllers/AccountantWorkspaceController.cs", method="GetWorkspace", must=["CompanyMembership.ActiveOf(_db, userId)"],
+         forbid=[".Where(cu => cu.UserId == userId)"],
+         why=_R277_WHY + "ฝ่ายค้าน HIGH-2: หน้าสำนักงานบัญชีไม่แสดงบริษัทที่ผู้ใช้รอสิทธิ์ (เลขภาษี/ยอด)"),
+    dict(file="Controllers/MeController.cs", method="GetMyPermissions", must=["CompanyMembership.ActiveRow(_db, companyId, userId)"],
+         why=_R277_WHY + "ฝ่ายค้าน: companyId ทาง query ไม่ผ่าน TenantAccessMiddleware"),
+    dict(file="Hubs/NotificationHub.cs", method="JoinCompanyGroup", must=["CompanyMembership.ActiveRow(_db, companyGuid, userGuid)"],
+         why=_R277_WHY + "ฝ่ายค้าน: SignalR ไม่ผ่าน middleware"),
+    dict(file="Services/Implementations/Security/TenantGuard.cs", method="CheckAsync", must=["CompanyMembership.ActiveRow("],
+         why=_R277_WHY + "ฝ่ายค้าน: ด่าน tenant ตัวเดียวกันตัดสมาชิกรอสิทธิ์"),
+    dict(file=_R277_CO, method="GetUserCompaniesAsync", must=["CompanyMembership.ActiveOf(_db, userId)", "AccessPending = true"], must_lit=['TaxId = ""'],
+         why=_R277_WHY + "ฝ่ายค้าน HIGH-2: รายชื่อบริษัทของสมาชิกรอสิทธิ์มีแค่ id/ชื่อ"),
+    dict(file=_R277_INV, method="AcceptAsync", must=["CompanyInvitationPolicy.ConfirmsEmail(verdict)", "trackedUser.EmailVerified = true"],
+         why=_R277_WHY + "ฝ่ายค้าน MED-3: ตอบรับด้วย token = ยืนยันอีเมล (คำตัดสิน 277-8)"),
+]
+RULES += [
+    # ฝ่ายค้านรอบ 277: ช่องรั่วผ่านการแจ้งเตือน — สมาชิกรอสิทธิ์ไม่ได้รับทุกช่อง · กระดิ่งเก่ากรองตอนอ่าน
+    dict(file="Services/Implementations/NotificationEngine.cs", method="DispatchWithOutcomeAsync",
+         must=["CompanyMembership.MayReceiveCompanyNotificationAsync(_db, companyId, pu)"],
+         before=[("CompanyMembership.MayReceiveCompanyNotificationAsync(", "DispatchSystemAsync(")],
+         why=_R277_WHY + "เส้นบทบาท: ตัดผู้รับที่ยังรอสิทธิ์ก่อนส่งทุกช่อง (กระดิ่ง/อีเมล/LINE ส่วนตัว)"),
+    dict(file="Services/Implementations/NotificationEngine.cs", method="DispatchDirectAsync",
+         must=["CompanyMembership.MayReceiveCompanyNotificationAsync(_db, companyId, recipientUserId)"],
+         before=[("CompanyMembership.MayReceiveCompanyNotificationAsync(", "DispatchSystemAsync(")],
+         why=_R277_WHY + "ผู้รับระบุตัว: ตัดผู้รับที่ยังรอสิทธิ์"),
+    dict(file="Services/Implementations/NotificationService.cs", method="VisibleAsync",
+         must=["CompanyMembership.PendingCompanyIdsAsync(_db, userId)", "!pending.Contains(n.CompanyId.Value)"],
+         why=_R277_WHY + "กระดิ่ง: แถวของบริษัทที่ยังรอสิทธิ์ (รวมแถวเก่า) ไม่แสดง"),
+    dict(file="Helpers/CompanyMembership.cs", method="MayReceiveCompanyNotificationAsync", must=["Active(rows)"],
+         why=_R277_WHY + "ใช้ตัวกรองเดียว Active"),
+    dict(file="Helpers/CompanyMembership.cs", method="PendingCompanyIdsAsync", must=["Active(mine)"],
+         why=_R277_WHY + "ใช้ตัวกรองเดียว Active"),
+]
 REVIEWER_CASES += [
     ("R277-1", "InvokeAsync", "if (row.AccessPending && !PendingMemberAccess.IsAllowed(context.Request.Method, path))",
-     "if (row.AccessPending && false)", True),
+     "if (false && !PendingMemberAccess.IsAllowed(context.Request.Method, path))", True),
     ("R277-2", "AcceptAsync", "var (role, pending) = CompanyInvitationPolicy.MembershipFor(inv.RoleChosen && customRoleOk, inv.Role);",
      "var (role, pending) = (inv.Role, false);", True),
     ("R277-3", "FindAsync", "i.TokenHash == hash", "i.Token == rawToken", True),
     ("R277-4", "AddUserAsync", "await EnsureSeatAsync(companyId, adding);", "_ = adding;", True),
+    ("R277-5", "GetWorkspace", "Accounting.Helpers.CompanyMembership.ActiveOf(_db, userId).AsNoTracking()", "_db.CompanyUsers.AsNoTracking().Where(cu => cu.UserId == userId)", True),
+    ("R277-6", "Active", "rows.Where(cu => !cu.AccessPending)", "rows", True),
+    ("R277-7", "DispatchDirectAsync", "if (!await Accounting.Helpers.CompanyMembership.MayReceiveCompanyNotificationAsync(_db, companyId, recipientUserId)) return;", "", True),
 ]
 
 
@@ -22121,8 +22181,16 @@ RULES += [
                "DocumentVoidPreconditions.OutputVatUndoOnPaymentVoid(", "OutputVatPeriodLockReasonAsync(", "reversalDate: je.EntryDate.Date"],
          before=[("DocumentVoidPreconditions.OutputVatUndoOnPaymentVoid(", "ReverseJournalEntryAsync(")],
          why=_R275C_WHY + "MED-3 ตัวกลับของงวด: ใบกำกับรายงวดที่ถึงกรมสรรพากรแล้วยังถือความรับผิด · ด่านงวดเดียวกับการถอยทั้งก้อน · ลงวันที่ของ JE เอง · tenant"),
-    dict(file=DOC, method="VoidPaymentAsync", must=["voidedPaymentId: payment.Id"],
-         why=_R275C_WHY + "MED-3 เส้นยกเลิกการรับใบเดียวส่งการรับที่ยกเลิก (ตัวกลับของงวดหา JE ที่ผูกได้)"),
+    # รอบ 275 แพ็ก C (ต่อ): VoidPaymentAsync ไม่ได้เรียกตัวถอยภาษีเอง — ส่งต่อ ReversePaymentInternalAsync (ตัวเดียวกับ cascade ยกเลิกเอกสาร) ⇒ ล็อกทั้งสองชั้น
+    dict(file=DOC, method="VoidPaymentAsync", must=["ReversePaymentInternalAsync(companyId, locked, doc,"],
+         why=_R275C_WHY + "MED-3 เส้นยกเลิกการรับใบเดียวเดินตัวกลับเดียว (ReversePaymentInternalAsync) ที่ส่งการรับที่ยกเลิกถึงตัวกลับของงวด"),
+    dict(file=DOC, method="ReversePaymentInternalAsync", must=["UndoOutputVatOnPaymentVoidAsync(", "voidedPaymentId: payment.Id"],
+         call_args=[("UndoOutputVatOnPaymentVoidAsync(", "voidedPaymentId")],
+         why=_R275C_WHY + "MED-3 เส้นยกเลิกการรับใบเดียว/cascade ส่งการรับที่ยกเลิก (ตัวกลับของงวดหา JE ที่ผูกได้ — ไม่ส่ง ⇒ VAT ของงวดที่ยกเลิกค้าง 21911)"),
+    dict(file="Services/Implementations/DocumentService.ReceiptLink.cs", method="MoveSettlementAsync",
+         must=["UndoOutputVatOnPaymentVoidAsync(", "voidedPaymentId: payment.Id"],
+         call_args=[("UndoOutputVatOnPaymentVoidAsync(", "voidedPaymentId")],
+         why=_R275C_WHY + "MED-3 ย้ายการรับงวดหนึ่งออกจากใบที่ยังเหลือการรับอื่น ⇒ ถอย VAT ที่ย้ายตามส่วนของงวดนั้นจากใบเดิม (เดิมค้าง 21911)"),
     dict(file=DOC, method="CreateSettlementReceiptAsync",
          must=["taxInvoicePlan", "labels.SettlementReceiptNote(", "labels.SettlementReceiptLine(", "SettlementTaxInvoiceRole.InstallmentAuditNote("],
          forbid_lit=['"รับชำระเงินตาม', '"รายการ"', '"ใบกำกับภาษี" : invoice.DocumentType'],
@@ -22135,7 +22203,7 @@ RULES += [
          must=["SettlementReceiptTotalsLoader.LedgerEventsAsync(", "d.CompanyId == companyId", "r.CompanyId == companyId", "VatParkedUntilPaymentAsync("],
          forbid=["SaveChangesAsync("],
          why=_R275C_WHY + "ข้อเท็จจริงจากตัวโหลดรายการตัดยอดเดียวกับแถวยอดใบเสร็จ · tenant · อ่านอย่างเดียว"),
-    dict(file="Services/Implementations/SettlementTaxInvoiceLoader.cs", method="QueueAsync",
+    dict(file="Services/Implementations/SettlementTaxInvoiceLoader.cs", method="QueueCoreAsync",   # QueueAsync สองตัวเป็น => ส่งต่อตัวนี้
          must=["d.CompanyId == companyId", "p.CompanyId == companyId", "DecideAsync(", "HasTrackedGoodsAsync("],
          forbid=["SaveChangesAsync("],
          why=_R275C_WHY + "คิวรับเงินแล้วยังไม่มีใบกำกับ: ตัวตัดสินเดียว · ขายสินค้าไม่เข้า (4.1) · tenant · อ่านอย่างเดียว"),
@@ -22163,12 +22231,47 @@ RULES += [
          why=_R275C_WHY + "ฝ่ายค้าน HIGH-1 ใบลดหนี้ที่ลดภาษีที่พัก — ผลอยู่ในใบกำกับงวดปิดแล้ว ไม่นับซ้ำ"),
 ]
 REVIEWER_CASES += [
-    ("R275C-1", "CreatePaymentAsync", "taxInvoicePlan: tiDecision", "carryVatFromSource: false", True),
+    # old ต้องอยู่ในเมธอดเป้าหมาย (replace ตัวแรกของทั้งไฟล์) — เดิม "taxInvoicePlan: tiDecision" ตัวแรกอยู่ใน IssueReceiptForPaymentCoreAsync ⇒ ไม่เคยแตะ CreatePaymentAsync
+    ("R275C-1", "CreatePaymentAsync", "taxInvoicePlan: tiDecision, installmentTaxPointDate: payment.PaymentDate",
+     "carryVatFromSource: false, installmentTaxPointDate: payment.PaymentDate", True),
     ("R275C-2", "IssueReceiptForPaymentCoreAsync", "SettlementTaxInvoiceLoader.DecideAsync(", "SettlementReceiptPolicy.CarriesTaxInvoiceRole(", True),
     ("R275C-3", "TryReclassifyUndueOutputVatAsync", "inv.OutputVatDueAt ??= when", "inv.OutputVatDueAt = when", True),
     ("R275C-4", "CreateSettlementReceiptAsync", "labels.SettlementReceiptLine(invoice.DocumentType, invoice.DocumentNumber, installment: false)",
      "$\"รับชำระเงินตามใบแจ้งหนี้เลขที่ {invoice.DocumentNumber}\"", True),
-    ("R275C-5", "UndoInstallmentReclassOnPaymentVoidAsync", "DocumentVoidPreconditions.ReceiptHoldsTaxPointFor(", "false && Equals(", True),
+    # เดิม ReceiptHoldsTaxPointFor ตัวแรกของไฟล์อยู่ใน UndoOutputVatOnPaymentVoidAsync ⇒ ไม่เคยแตะเมธอดเป้าหมาย
+    ("R275C-5", "UndoInstallmentReclassOnPaymentVoidAsync", "if (receiptDoc != null && DocumentVoidPreconditions.ReceiptHoldsTaxPointFor(",
+     "if (receiptDoc != null && false && Equals(", True),
+    ("R275C-6", "ReversePaymentInternalAsync", "voidedPaymentId: payment.Id);", "voidedPaymentId: null);", True),
+    ("R275C-7", "MoveSettlementAsync", "\"ย้ายการรับชำระ\", payment.PaymentNumber, voidedPaymentId: payment.Id)", "\"ย้ายการรับชำระ\", payment.PaymentNumber)", True),
+]
+
+
+# รอบ 278 — ช่องลายเซ็นฝั่งบริษัทสองช่องที่เป็นคนเดียวกัน (QT-20261119-0001: ช่อง 0 "K.นัท"+ลายเซ็นจาก payload · ช่อง 1 ผู้ออกคีย์ไม่มีลายเซ็น) ·
+# ตัวตัดสินเดียว Helpers/SignatureSlotIdentity (กุญแจเท่านั้น ห้ามเทียบความคล้ายชื่อ) · จุดรวมจุดเดียวใน ResolveSignersAsync ก่อนกฎผู้ลงนาม
+_R278_WHY = "รอบ 278 (ช่องลายเซ็นคนเดียวกัน — คำตัดสิน 278-1..278-4 · commit 5304acd3): "
+RULES += [
+    dict(file="Services/Implementations/PdfGenerationService.cs", method="ResolveSignersAsync",
+         must=["await MergeSameSignerSlotsAsync(doc, signers, slotUsers, customerSlots, slot0FromPayload, slot0PayloadName);",
+               "slot0FromPayload = true;", "SignatureSlotIdentity.ProfileDisplayName(u.SignatureName, u.FullName)"],
+         before=[("await MergeSameSignerSlotsAsync(", "await ApplySignerPolicyAsync(")],
+         why=_R278_WHY + "รวมก่อนกฎผู้ลงนาม (ช่อง 0 ที่ผูกแล้วถูกตัดสินด้วยตัวตนเดียวกับช่อง 1) · HTML/QuestPDF/พรีวิว/หน้าลูกค้า รับ signers จากเมธอดนี้ตัวเดียว"),
+    dict(file="Services/Implementations/PdfGenerationService.cs", method="MergeSameSignerSlotsAsync",
+         must=["SignatureSlotIdentity.Link(", "SignatureSlotIdentity.LinkKind.None) return;", "SignatureSlotIdentity.Merge(",
+               "slotUsers[0] = s1User;"],
+         before=[("SignatureSlotIdentity.LinkKind.None) return;", "SignatureSlotIdentity.Merge(")],
+         why=_R278_WHY + "ไม่มีกุญแจ ⇒ ไม่แตะ (ห้ามใส่ลายเซ็นของคนหนึ่งลงช่องของอีกคน) · ชื่อ/รูปจากแผนของตัวตัดสินเท่านั้น"),
+    dict(file="Helpers/SignatureSlotIdentity.cs", method="Link",
+         must=["bound == u ? (LinkKind.PreparerUserId, u) : (LinkKind.None, null)", "s0.UserId == null && n != null"],
+         why=_R278_WHY + "PreparerUserId ของคนอื่นห้ามตกไปเทียบชื่อเล่น · ชื่อเล่นใช้เฉพาะช่อง 0 ที่มาจาก payload"),
+    dict(file="Services/Implementations/DocumentService.cs", method="CreateDocumentAsync",
+         must=["await ResolvePreparerUserIdAsync(companyId, request.PreparerUserId, request.PreparerEmail)", "PreparerUserId = preparerUserId,"],
+         why=_R278_WHY + "กุญแจจาก API ต้องเป็นสมาชิกบริษัท (ไม่พบ = 400 ไม่ผูกเงียบ)"),
+    dict(file="Services/Implementations/DocumentService.cs", method="UpdateDocumentAsync",
+         must=["await ResolvePreparerUserIdAsync(companyId, request.PreparerUserId, request.PreparerEmail)"],
+         why=_R278_WHY + "แก้ไขผ่าน PUT เดินด่านเดียวกับสร้าง"),
+    dict(file="Services/Implementations/AuthService.cs", method="UpdateProfileAsync",
+         must=["SignatureSlotIdentity.SanitizeForStore(request.SignerAliases)"],
+         why=_R278_WHY + "ฝั่งเขียนชื่อเล่นตัวเดียว (ตัดซ้ำ · เกินเพดานบอกเหตุ)"),
 ]
 
 

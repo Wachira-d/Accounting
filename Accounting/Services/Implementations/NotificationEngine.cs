@@ -122,6 +122,8 @@ public class NotificationEngine : INotificationEngine
                 foreach (var r in recipients)
                 {
                     if (r.UserId.HasValue && context.ActorUserId == r.UserId) continue;
+                    // รอบ 277 (ฝ่ายค้าน): สมาชิกที่ยังรอสิทธิ์ (AccessPending) ไม่ได้รับแจ้งเตือนของบริษัททุกช่อง — ตัวกรองเดียว CompanyMembership
+                    if (r.UserId is Guid pu && !await Accounting.Helpers.CompanyMembership.MayReceiveCompanyNotificationAsync(_db, companyId, pu)) continue;
                     // รอบ 276 (ฝ่ายค้าน MED-3): ผู้ "เห็นเฉพาะเอกสารที่ตัวเองสร้าง" ได้เฉพาะเรื่องของใบตัวเอง
                     if (r.UserId is Guid ru && !await DocumentRestrictionGuard.MayReceiveAsync(_db, companyId, ru, context.EntityType, context.EntityId)) continue;
                     var key = r.UserId?.ToString()
@@ -353,6 +355,8 @@ public class NotificationEngine : INotificationEngine
             .FirstOrDefaultAsync();
         if (user == null) return;
         if (context.ActorUserId == recipientUserId) return;   // ไม่ notify ตัวเอง
+        // รอบ 277 (ฝ่ายค้าน): ผู้รับระบุตัวที่ยังรอสิทธิ์ ไม่ได้รับเรื่องของบริษัท (ตัวกรองเดียวกับเส้นบทบาท)
+        if (!await Accounting.Helpers.CompanyMembership.MayReceiveCompanyNotificationAsync(_db, companyId, recipientUserId)) return;
         // รอบ 276 (ฝ่ายค้าน MED-3): ผู้รับระบุตัวที่ "เห็นเฉพาะของตัวเอง" ได้เฉพาะเรื่องของใบตัวเอง (ตัวตัดสินเดียวกับเส้นบทบาท)
         if (!await DocumentRestrictionGuard.MayReceiveAsync(_db, companyId, recipientUserId, context.EntityType, context.EntityId)) return;
 

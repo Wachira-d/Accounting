@@ -241,12 +241,15 @@ public class LineBotService : ILineBotService
         // - Multi-company: use the saved active company; if none saved, prompt
         //   to pick one with "เลือกบริษัท {N}".
         // - "เลือกบริษัท" itself is intercepted here so it can update state.
-        var companies = await _db.CompanyUsers
-            .Where(cu => cu.UserId == user.Id)
+        // รอบ 277 (ฝ่ายค้าน HIGH-1): เฉพาะบริษัทที่ใช้งานได้ — สมาชิกรอสิทธิ์ (AccessPending) สั่งงานผ่าน LINE ไม่ได้ (ตัวกรองเดียว CompanyMembership)
+        var companies = await Accounting.Helpers.CompanyMembership.ActiveOf(_db, user.Id)
             .Include(cu => cu.Company)
             .Select(cu => new { cu.CompanyId, Name = cu.Company.Name })
             .ToListAsync();
-        if (companies.Count == 0) return "❌ ไม่พบบริษัทที่ผูกกับบัญชีนี้";
+        if (companies.Count == 0)
+            return await _db.CompanyUsers.AnyAsync(cu => cu.UserId == user.Id && cu.AccessPending)
+                ? Accounting.Helpers.CompanyMembership.OnlyPendingMessage
+                : "❌ ไม่พบบริษัทที่ผูกกับบัญชีนี้";
 
         var state = await GetOrCreateStateAsync(lineUserId, user.Id);
         state.LastInteractionAt = DateTime.UtcNow;
@@ -465,12 +468,15 @@ public class LineBotService : ILineBotService
         var gate = Accounting.Helpers.UserLoginPolicy.Evaluate(user.Status, false);
         if (!gate.Can) return "⛔ " + gate.Reason;
 
-        var companies = await _db.CompanyUsers
-            .Where(cu => cu.UserId == user.Id)
+        // รอบ 277 (ฝ่ายค้าน HIGH-1): เฉพาะบริษัทที่ใช้งานได้ — สมาชิกรอสิทธิ์ (AccessPending) สั่งงานผ่าน LINE ไม่ได้ (ตัวกรองเดียว CompanyMembership)
+        var companies = await Accounting.Helpers.CompanyMembership.ActiveOf(_db, user.Id)
             .Include(cu => cu.Company)
             .Select(cu => new { cu.CompanyId, Name = cu.Company.Name })
             .ToListAsync();
-        if (companies.Count == 0) return "❌ ไม่พบบริษัทที่ผูกกับบัญชีนี้";
+        if (companies.Count == 0)
+            return await _db.CompanyUsers.AnyAsync(cu => cu.UserId == user.Id && cu.AccessPending)
+                ? Accounting.Helpers.CompanyMembership.OnlyPendingMessage
+                : "❌ ไม่พบบริษัทที่ผูกกับบัญชีนี้";
 
         var state = await GetOrCreateStateAsync(lineUserId, user.Id);
         state.LastInteractionAt = DateTime.UtcNow;
@@ -829,8 +835,9 @@ public class LineBotService : ILineBotService
         if (doc == null) return "❌ ไม่พบเอกสาร — อาจถูกลบไปแล้ว";
 
         // tenant guard: ต้องเป็นสมาชิกบริษัทเจ้าของเอกสาร
-        var membership = await _db.CompanyUsers.AsNoTracking()
-            .FirstOrDefaultAsync(cu => cu.CompanyId == doc.CompanyId && cu.UserId == user.Id);
+        // รอบ 277: สมาชิกรอสิทธิ์ไม่ใช่สมาชิกที่ใช้งานได้ (ตัวกรองเดียว CompanyMembership)
+        var membership = await Accounting.Helpers.CompanyMembership.ActiveRow(_db, doc.CompanyId, user.Id).AsNoTracking()
+            .FirstOrDefaultAsync();
         if (membership == null) return "❌ คุณไม่มีสิทธิ์ในบริษัทของเอกสารนี้";
         // รอบ 276 (ฝ่ายค้าน HIGH-1): ผู้ถูกจำกัดเอกสารกดอนุมัติในแชตไม่ได้ (policy เดียวกับเว็บ) — ตอบเหตุ
         var postbackScope = await DocumentRestrictionGuard.ForUserAsync(_db, doc.CompanyId, user.Id);

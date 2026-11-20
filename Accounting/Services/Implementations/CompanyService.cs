@@ -248,10 +248,14 @@ public class CompanyService : ICompanyService
         // can never break the company-list endpoint.
         var companyUsers = await _db.CompanyUsers
             .Where(cu => cu.UserId == userId)
-            .Select(cu => new { cu.CompanyId, cu.Role })
+            .Select(cu => new { cu.CompanyId, cu.Role, cu.AccessPending })
             .ToListAsync();
+        // รอบ 277 (ฝ่ายค้าน HIGH-2): บริษัทที่ผู้ใช้ยังรอสิทธิ์ — คืนแค่ id/ชื่อ (เลือกบริษัทแล้วเห็นหน้าต้อนรับ) ไม่ส่งเลขภาษี/ที่อยู่/แพ็กเกจ ·
+        // ตัวกรองสมาชิกที่ใช้งานได้ตัวเดียว CompanyMembership.Active ตัดแถวรอสิทธิ์ออกจากชุดข้อมูลเต็ม
+        var pendingIds = companyUsers.Where(cu => cu.AccessPending).Select(cu => cu.CompanyId).ToHashSet();
+        var activeIds = (await Accounting.Helpers.CompanyMembership.ActiveOf(_db, userId).Select(cu => cu.CompanyId).ToListAsync()).ToHashSet();
 
-        var companyIds = companyUsers.Select(cu => cu.CompanyId).ToList();
+        var companyIds = companyUsers.Select(cu => cu.CompanyId).Where(activeIds.Contains).ToList();
         var roleMap = companyUsers.ToDictionary(cu => cu.CompanyId, cu => cu.Role.ToString());
 
         var companies = await _db.Companies
@@ -264,11 +268,22 @@ public class CompanyService : ICompanyService
             .ToListAsync();
         var planNames = await LoadPlanNamesAsync();
 
-        return companies.Select(c => {
+        var result = companies.Select(c => {
             var resp = MapToResponse(c, planNames);
             roleMap.TryGetValue(c.Id, out var role);
             return resp with { MyRole = role };
         }).ToList();
+        if (pendingIds.Count > 0)
+        {
+            var pendingNames = await _db.Companies.AsNoTracking().Where(c => pendingIds.Contains(c.Id))
+                .Select(c => new { c.Id, c.Name }).ToListAsync();
+            result.AddRange(pendingNames.Select(c => MapToResponse(new Company { Id = c.Id, Name = c.Name, TaxId = "" }) with
+            {
+                MyRole = roleMap.GetValueOrDefault(c.Id),
+                AccessPending = true,
+            }));
+        }
+        return result;
     }
 
     public async Task<CompanyResponse> UpdateAsync(Guid companyId, Guid userId, UpdateCompanyRequest request)

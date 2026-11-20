@@ -810,6 +810,11 @@ public class Document : TenantEntity
     /// URI or raw base64. Rendered in the preparer slot when present.</summary>
     public string? PreparerSignatureBase64 { get; set; }
 
+    /// <summary>รอบ 278: ผู้ใช้ในระบบที่ผู้เรียก API ระบุว่าเป็น "ผู้จัดทำ" ตัวจริงของใบนี้ (<c>preparerUserId</c>/<c>preparerEmail</c> ใน payload ·
+    /// ตรวจว่าเป็นสมาชิกบริษัทตอนรับ) — กุญแจให้ <c>Helpers/SignatureSlotIdentity</c> ตัดสินว่าช่องผู้จัดทำกับช่องผู้มีอำนาจลงนามเป็นคนเดียวกัน ·
+    /// null = ไม่ระบุ (ใช้กุญแจอื่น: ผู้ใช้เดียวกัน / ชื่ออื่นที่ผู้ใช้ประกาศในโปรไฟล์)</summary>
+    public Guid? PreparerUserId { get; set; }
+
     // ===== Tax Point (จุดความรับผิดในการเสีย VAT) §78 / §78/1 / §78/2 =====
     /// <summary>วันส่งมอบสินค้า (input ของ tax point §78 ขายสินค้า). Null =
     /// ยังไม่ส่งมอบ/ไม่ระบุ.</summary>

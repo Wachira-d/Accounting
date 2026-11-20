@@ -2477,6 +2477,26 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   `GetDocumentSignaturesAsync` (ไม่ส่งภาพลายเซ็นที่ไม่นับ) ⑤ `CrossTenantWorkflowService.ApproveIncomingAsync` บทบาท Customer **บันทึก hash** (ทางเข้าที่สาม) ·
   ใบที่อนุมัติก่อนรอบนี้ด้วยลายเซ็นที่ไม่ตรงเนื้อหา ย้อนตรวจไม่ได้ (ไม่มี hash) — คงพิมพ์ตามเดิม
 
+### 2.8a ช่องลายเซ็นฝั่งบริษัท — ผู้จัดทำ ↔ ผู้มีอำนาจลงนาม เป็นคนเดียวกัน (รอบ 278 · คำตัดสิน 278-1…278-4 · สถานะปัจจุบัน)
+- **ที่มา**: QT-20261119-0001 (ระบบภายนอกสร้างผ่าน API key ที่ `POST /api/companies/{id}/documents`) ช่อง 0 "ผู้เสนอราคา" = `PreparerName` "K.นัท" +
+  `PreparerSignatureBase64` จาก payload · ช่อง 1 "ผู้มีอำนาจลงนาม" = ผู้ออก API key (`ApiKeyMiddleware` ตั้ง NameIdentifier = `ApiKey.CreatedByUserId` ⇒
+  CreatedBy/UpdatedBy) ซึ่งไม่ได้อัปโหลดลายเซ็นในโปรไฟล์ ⇒ ช่องว่าง ทั้งที่เป็นคนเดียวกัน
+- **แหล่งของแต่ละช่อง** (`PdfGenerationService.ResolveSignersAsync` ตัวเดียว ⇒ HTML · QuestPDF · พรีวิว `generate-html` ใน documents.html · หน้าลูกค้า (PDF)):
+  ช่อง 0 = ผู้ใช้ CreatedBy → ทับด้วยผู้จ่ายเงิน PV (`Payment.PayerSignature*`) / ผู้จัดทำจาก payload (`PreparerName`/`PreparerSignatureBase64` — สร้าง · PUT ·
+  integration invoice/expense/PV) · ช่อง 1 (เฉพาะใบอนุมัติแล้ว) = ผู้อนุมัติใน `DocumentApprovals` → UpdatedBy → (ใบ settlement) CreatedBy → ผู้มีอำนาจลงนามที่บริษัทตั้ง
+  (`UseCustomAuthorizedSignatory` · ไม่ใช่ผู้ใช้) → ลายเซ็นเจ้าของเมื่อไม่มีชื่อเลย · API v1 (`DocumentsV1Controller`) CreatedBy = `api:v1` ไม่รับผู้จัดทำ ⇒ ช่อง 0 ว่าง ·
+  LINE/OCR/convert/clone/recurring: CreatedBy = ผู้กด/ผู้ตั้งรายการ · `PreparerName`/`PreparerUserId` **ไม่สืบทอด** ลงใบลูก (ผู้จัดทำของใบลูกคือผู้แปลง — เดิมเป็นแบบนี้อยู่แล้ว)
+- **ตัวตัดสิน "คนเดียวกัน"**: `Helpers/SignatureSlotIdentity.Link` — **กุญแจเท่านั้น ห้ามเทียบความคล้ายชื่อ**: ① `Document.PreparerUserId` (API ส่ง
+  `preparerUserId`/`preparerEmail` · ตรวจว่าเป็นสมาชิกบริษัทตอนสร้าง/PUT ไม่พบ ⇒ 400 · ระบุเป็นคนอื่น ⇒ ไม่รวมแม้ชื่อเล่นตรง) ② ช่อง 0 เป็นผู้ใช้เดียวกับช่อง 1 ·
+  ③ ชื่อที่ payload ส่งมาตรงทั้งคำ (ตัดช่องว่าง/ตัวพิมพ์) กับ "ชื่ออื่นที่ระบบภายนอกใช้เรียกฉัน" ที่ผู้ใช้ช่อง 1 **ประกาศเองในหน้าลายเซ็นของฉัน** (`User.SignerAliases` ·
+  ≤ 10 ชื่อ × 100 ตัว · ฝั่งเขียน `SanitizeForStore` ตัวเดียว · PDPA ลบบัญชีล้าง) · ช่องลูกค้า/ผู้มีอำนาจลงนามที่บริษัทตั้ง ไม่มีกุญแจ ⇒ ไม่รวม
+- **เมื่อเป็นคนเดียวกัน** (`SignatureSlotIdentity.Merge` · `MergeSameSignerSlotsAsync` ก่อนกฎผู้ลงนาม): ช่องที่ไม่มีรูปรับรูปของอีกช่อง · **ชื่อทั้งสองช่อง = ชื่อตามโปรไฟล์**
+  (`ProfileDisplayName`: ชื่อใต้ลายเซ็น → ชื่อ-สกุลบัญชี — ไม่เลือกจากความยาวสตริง) · ตำแหน่งคงของช่องตัวเอง (ว่าง ⇒ ตำแหน่งในโปรไฟล์) · ช่อง 0 ถือเป็นของผู้ใช้นั้น
+  ⇒ `DocumentStampPolicy`/`DepartedSignerRule` ตัดสินทั้งสองช่องด้วยตัวตนเดียว · **คงสองช่อง ไม่ยุบเป็นช่องเดียว** (ป้ายตามชนิดเอกสาร — ผู้รับเงิน/ผู้จ่ายเงิน/ผู้จัดทำ
+  กับผู้มีอำนาจลงนามเป็นบทบาทคนละหน้าที่ · ช่อง 2 ของลูกค้าอิงตำแหน่ง) · ใบร่าง/รออนุมัติไม่มีผู้ใช้ช่อง 1 ⇒ ไม่รวม (ห้ามมีหลักฐานลงนามก่อนอนุมัติ)
+- **ข้อมูลเก่า**: เป็นการแสดงผล ⇒ ใบที่ออกแล้วใช้ตัวรวมทันทีเมื่อผู้ใช้ตั้งชื่อเล่น — ไม่มี migration ข้อมูล (คอลัมน์ใหม่ `Documents.PreparerUserId` · `Users.SignerAliases`)
+- เทสต์: `SignatureSlotIdentityR278Tests` (pure) · Db `SignatureSlotsR278DbTests` · กติกา `_R278_WHY`
+
 ### 2.8b Delivery e-sign — ลูกค้าเซ็นรับสินค้าออนไลน์ (Proof of Delivery)
 > **รอบ 267 P1 (สถานะปัจจุบัน):** เหมือน §2.8 — `POST /document/{id}/delivery-sign-link` คืนลิงก์หน้าเอกสารของใบ (§2.12n) · ช่วงเซ็นรับ 14 วันจากวันส่ง ·
 > หน้า `delivery-sign.html` รับ token ของหน้าเอกสาร และลิงก์รุ่นก่อน (คอลัมน์ `DeliverySignToken` เก็บ hash) จนหมดอายุ
@@ -5252,6 +5272,9 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
   `JournalEntry.Note = R275C-INSTALLMENT-PAY:{paymentId}`) · `OutputVatDueAt` ประทับงวดแรกเท่านั้น · ใบเสร็จรายงวดเป็นเจ้าของภาษีของงวดตัวเอง (`OutputVatOwnership` Receipt branch ·
   ใบแจ้งหนี้ `OwnedByVatReceipt` ⇒ ไม่นับซ้ำ) ณ `TaxPointDate` = วันรับเงินของงวด · ยกเลิกการรับงวดหนึ่ง (ยังเหลืองวดอื่น) ⇒ กลับเฉพาะ JE ที่ผูก
   (`UndoInstallmentReclassOnPaymentVoidAsync` — ด่านงวด/ใบกำกับที่ถึงกรมสรรพากรเดียวกับการถอยทั้งก้อน) · รับครบ/ไม่ออกใบกำกับ ⇒ ย้ายทั้งก้อนตามเดิม
+  · ทางเข้าที่ส่งการรับถึงตัวกลับของงวด (`voidedPaymentId`): ยกเลิกการรับใบเดียว/cascade (`VoidPaymentAsync` → `ReversePaymentInternalAsync`) · ยกเลิกการรับหลายใบ ·
+    **ย้ายการรับชำระ** (`MoveSettlementAsync` — เดิมไม่ส่ง ⇒ ย้ายงวดหนึ่งออกจากใบที่ยังเหลือการรับอื่นแล้ว VAT ของงวดนั้นค้าง 21911 ของใบเดิม) ·
+    ยกเลิกการจัดสรรเงินรอจัดสรรไม่ต้องส่ง (ย้ายทั้งก้อน ไม่มี JE ผูกการรับ)
 - **วันที่ (MED-4 — ยืนยันจากโค้ด)**: `CreatePaymentAsync`/`CreateMultiDocPaymentAsync` normalize `PaymentDate` ด้วย `ThaiDate.CalendarDateUtc` ที่ต้นทาง (gateway ส่ง instant UTC ⇒
   เงินเข้า 00:00–06:59 น. วันที่ 1 เดิมลงวันสุดท้ายของเดือนก่อน) · การรับที่บันทึกไปแล้วไม่ถูกแก้ (ไม่แก้ย้อนหลัง)
 - **คิว "รับเงินแล้วยังไม่มีใบกำกับภาษี"** (คำตัดสิน 4.1: ใบเก่าไม่แก้ย้อนหลัง) — `SettlementTaxInvoiceLoader.QueueAsync` (อ่านอย่างเดียว · tenant) ⇒ `GET api/companies/{cid}/document/received-without-tax-invoice` ·
@@ -9993,10 +10016,17 @@ _Last verified against codebase: 2026-11-20 (รอบ 276 ชุดแก้ฝ
 _Last verified against codebase: 2026-11-20 (รอบ 277 — §6.277 เมนูตามสิทธิ์จากเซิร์ฟเวอร์ (`MenuPermissionMap` · `landingUrl` · หน้าต้อนรับ) + คำเชิญเข้าบริษัท
 (ทุกอีเมลได้คำเชิญ · แถวรอตอบรับ/ส่งซ้ำ/ยกเลิก · token hash · ตอบรับตัวเดียว · ไม่สร้างบริษัท · ยังไม่มีสิทธิ์จนเจ้าของตั้ง) — commit a1ae70d2 + d93800f2)_
 
+_Last verified against codebase: 2026-11-20 (รอบ 275 แพ็ก C ต่อ — กติกา `_R275C_` ที่อยู่หลัง `__main__` รันจริงแล้ว: `VoidPaymentAsync` ส่งการรับที่ยกเลิกผ่าน
+`ReversePaymentInternalAsync` อยู่แล้ว (ไม่ใช่บั๊ก — กติกาชี้ผิดชั้น) · **ย้ายการรับชำระไม่ส่ง `voidedPaymentId` (บั๊กจริง แก้แล้ว)** · ตัวตรวจรองรับเมธอด `=>` ·
+checker ใหม่ `main_guard_tail_check.py` — commit ea8b0253)_
+
 
 _Last verified against codebase: 2026-11-20 (รอบ 275 แพ็ก E — รับทราบรายคนผู้ไม่มีเลข 13 หลัก (ตัวตัดสินเดียว ForFiling: 50 ทวิ · ไฟล์ ภ.ง.ด.1/1ก · ด่านนำส่ง) ·
 พาสปอร์ตประกอบบน 50 ทวิ · ไฟล์ สปส. ตามเลข ปกส. · เครื่องมือรายงาน+ซ่อมผู้ติดต่อเลขขยะจากเงินเดือน + ด่าน ภ.ง.ด.3/53 · รายงานสุขภาพกรองแบบ/ประเทศ ·
 แถวนำเข้าถอดไม่ได้ข้อความไทย · คำตัดสิน 275-E-1…6 — commit 09a52c66)_
+
+_Last verified against codebase: 2026-11-20 (รอบ 278 — ช่องลายเซ็นผู้จัดทำ ↔ ผู้มีอำนาจลงนามคนเดียวกัน: `Helpers/SignatureSlotIdentity` ตัดสินด้วยกุญแจ
+(PreparerUserId · ผู้ใช้เดียวกัน · ชื่อเล่นที่ผู้ใช้ประกาศ) · รวมใน `ResolveSignersAsync` ก่อนกฎผู้ลงนาม · §2.8a — commit 5304acd3)_
 
 _Last verified against codebase: 2026-11-20 (รอบ 275 แพ็ก E ชุดแก้ฝ่ายค้าน MED-1…3 + LOW (ก)–(ช) — เลข ปกส. 13 หลัก mod-11 · ForFiling แถวใบมือ (ไม่มีทางลัด CountryCode) + รับทราบที่ผู้ติดต่อ ·
 ใบแทน 50 ทวิ ในงวดที่ยื่นแล้ว + รายการค้างยื่น ภ.ง.ด.1 เพิ่มเติม · กุญแจสร้างโดยเงินเดือน · ล้างการรับทราบเมื่อได้เลข · พาสปอร์ตจากสำเนา ณ วันออก (ปิดบัง/pii:view) ·

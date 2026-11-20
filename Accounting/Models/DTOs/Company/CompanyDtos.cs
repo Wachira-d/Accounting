@@ -133,7 +133,10 @@ public record CompanyResponse(
     DateTime? WhtRoyaltyPnd2From = null,
     // ฝ่ายค้านรอบ 204 M2/L6: ประวัติช่วง ภ.ง.ด.2 (สรุปที่เซิร์ฟเวอร์คำนวณ — WhtRoyaltyPolicy.Summary) + วันที่ผู้ใช้ตัดสินแบบเอง (null = ยังเป็นค่าตั้งต้น ⇒ ยังเตือน)
     string? WhtRoyaltyPolicySummary = null,
-    DateTime? WhtRoyaltyFormDecidedAt = null);
+    DateTime? WhtRoyaltyFormDecidedAt = null,
+    /// <summary>รอบ 277 (ฝ่ายค้าน HIGH-2): ผู้ใช้ที่ขอรายการเป็นสมาชิกรอสิทธิ์ของบริษัทนี้ ⇒ แถวนี้มีแค่ id/ชื่อ (ไม่มีเลขภาษี/ที่อยู่/แพ็กเกจ) —
+    /// ให้เลือก/สลับบริษัทแล้วเห็นหน้าต้อนรับได้เท่านั้น</summary>
+    bool AccessPending = false);
 
 public record SubscriptionSummary(
     SubscriptionPlan Plan,

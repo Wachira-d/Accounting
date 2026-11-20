@@ -1448,6 +1448,8 @@ public partial class DocumentService : IDocumentService
 
             // รอบ 267 P4 (267-1-44): ค่าตั้งหลังรับชำระต่อใบ — ตัวตัดสินเดียวกับตอนแก้ไข/ปุ่มบนหน้าเอกสาร (รหัสไม่รู้จัก/ชนิดที่ตั้งไม่ได้ = ปฏิเสธก่อนสร้าง)
             var postPayLayer = PostPayDocumentLayerOrThrow(request.DocumentType, null, null, request.PostPayReceiptMode, request.PostPayPartialMode);
+            // รอบ 278: ผูกผู้จัดทำกับผู้ใช้ด้วยกุญแจ (Id/อีเมลของสมาชิกบริษัท) — ไม่พบ ⇒ ปฏิเสธก่อนสร้าง (ไม่ผูกเงียบ ๆ ไม่เดาจากชื่อ)
+            var preparerUserId = await ResolvePreparerUserIdAsync(companyId, request.PreparerUserId, request.PreparerEmail);
 
             var doc = new Document
             {
@@ -1554,6 +1556,7 @@ public partial class DocumentService : IDocumentService
                 // แทน CreatedBy user (เหมือน integration PV/invoice)
                 PreparerName = string.IsNullOrWhiteSpace(request.PreparerName) ? null : request.PreparerName.Trim(),
                 PreparerSignatureBase64 = string.IsNullOrWhiteSpace(request.PreparerSignatureBase64) ? null : request.PreparerSignatureBase64.Trim(),
+                PreparerUserId = preparerUserId,
                 // รอบ 259 (B-L2/L3): รายการประจำ + กุญแจงวด ใน INSERT เดียวกับใบ (unique ต่อบริษัท) — ระบบล้มก่อนประทับรอบ ⇒ รอบถัดไปเจอใบนี้ ไม่ออกซ้ำ
                 RecurringTransactionId = recurringRun?.RecurringTransactionId,
                 RecurringRunKey = recurringRun?.RunKey,
@@ -2937,6 +2940,37 @@ public partial class DocumentService : IDocumentService
             doc.Lines.Where(l => _db.Entry(l).State != EntityState.Deleted).OrderBy(l => l.LineOrder)
                 .Select(l => (l.Quantity, l.UnitPrice, l.Amount, l.VatAmount)));
 
+    /// <summary>รอบ 278: กุญแจผูก "ผู้จัดทำ" กับผู้ใช้ในระบบ (Helpers/SignatureSlotIdentity) — รับ Id หรืออีเมลของ<b>สมาชิกบริษัทนี้</b> ·
+    /// ไม่ระบุ ⇒ null · ไม่พบ/ไม่ใช่สมาชิก/ส่งทั้งคู่แต่คนละคน ⇒ <see cref="Accounting.Helpers.BusinessRuleException"/> (ผู้เรียกแก้ payload ได้ทันที)</summary>
+    internal async Task<Guid?> ResolvePreparerUserIdAsync(Guid companyId, Guid? userId, string? email)
+    {
+        var id = userId is { } g && g != Guid.Empty ? g : (Guid?)null;
+        var mail = string.IsNullOrWhiteSpace(email) ? null : email.Trim().ToLowerInvariant();
+        if (id == null && mail == null) return null;
+        Guid? byMail = null;
+        if (mail != null)
+        {
+            byMail = await (from cu in _db.Set<CompanyUser>().AsNoTracking()
+                            join u in _db.Users.AsNoTracking() on cu.UserId equals u.Id
+                            where cu.CompanyId == companyId && u.Email.ToLower() == mail
+                            select (Guid?)u.Id).FirstOrDefaultAsync();
+            if (byMail == null)
+                throw new Accounting.Helpers.BusinessRuleException(
+                    $"preparerEmail: ไม่พบผู้ใช้อีเมล {email!.Trim()} ในบริษัทนี้ — เชิญเข้าบริษัทก่อน หรือส่งเฉพาะ preparerName", Accounting.Helpers.SignatureSlotIdentity.RuleCode);
+        }
+        if (id != null)
+        {
+            var member = await _db.Set<CompanyUser>().AsNoTracking().AnyAsync(cu => cu.CompanyId == companyId && cu.UserId == id.Value);
+            if (!member)
+                throw new Accounting.Helpers.BusinessRuleException(
+                    "preparerUserId: ไม่พบผู้ใช้นี้ในบริษัทนี้", Accounting.Helpers.SignatureSlotIdentity.RuleCode);
+            if (byMail != null && byMail != id)
+                throw new Accounting.Helpers.BusinessRuleException(
+                    "preparerUserId กับ preparerEmail เป็นคนละคน — ส่งอย่างใดอย่างหนึ่ง", Accounting.Helpers.SignatureSlotIdentity.RuleCode);
+        }
+        return id ?? byMail;
+    }
+
     public async Task<DocumentResponse> UpdateDocumentAsync(Guid companyId, Guid documentId, UpdateDocumentRequest request, string? actor = null)
     {
         var doc = await _db.Documents
@@ -3383,6 +3417,12 @@ public partial class DocumentService : IDocumentService
             doc.PreparerName = string.IsNullOrWhiteSpace(request.PreparerName) ? null : request.PreparerName.Trim();
         if (request.PreparerSignatureBase64 != null)
             doc.PreparerSignatureBase64 = string.IsNullOrWhiteSpace(request.PreparerSignatureBase64) ? null : request.PreparerSignatureBase64.Trim();
+        // รอบ 278: ผูก/ปลดผู้จัดทำกับผู้ใช้ — null ทั้งคู่ = ไม่แตะ · Guid.Empty / "" = ปลด · ค่า = ตรวจสมาชิกแล้วผูก
+        if (request.PreparerUserId != null || request.PreparerEmail != null)
+        {
+            var unbind = (request.PreparerUserId ?? Guid.Empty) == Guid.Empty && string.IsNullOrWhiteSpace(request.PreparerEmail);
+            doc.PreparerUserId = unbind ? null : await ResolvePreparerUserIdAsync(companyId, request.PreparerUserId, request.PreparerEmail);
+        }
 
         // Project re-assignment (only allowed while Draft, which is enforced above)
         if (request.ProjectId.HasValue)
@@ -22148,6 +22188,7 @@ public partial class DocumentService : IDocumentService
         InputVatClaimPeriod: ResolveInputVatClaimPeriod(d),
         PreparerName: d.PreparerName,
         PreparerSignatureBase64: d.PreparerSignatureBase64,
+        PreparerUserId: d.PreparerUserId,
         DepositAppliedRef: d.DepositAppliedRef,
         DepositAppliedDrivesJournal: d.DepositAppliedDrivesJournal,
         // หมายเหตุภายใน (ไม่พิมพ์ลงกระดาษ) — ที่เก็บ "คำเตือนที่กดรับทราบแล้ว"

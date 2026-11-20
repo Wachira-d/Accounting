@@ -27,8 +27,8 @@ public class AccountantWorkspaceController : ControllerBase
     {
         var userId = JwtHelper.GetUserIdFromClaims(User);
 
-        var companyIds = await _db.CompanyUsers.AsNoTracking()
-            .Where(cu => cu.UserId == userId)
+        // รอบ 277 (ฝ่ายค้าน HIGH-2): เฉพาะบริษัทที่ใช้งานได้ — สมาชิกรอสิทธิ์ไม่เห็นเลขภาษี/ยอดของบริษัท (ตัวกรองเดียว CompanyMembership)
+        var companyIds = await Accounting.Helpers.CompanyMembership.ActiveOf(_db, userId).AsNoTracking()
             .Select(cu => cu.CompanyId)
             .Distinct()
             .ToListAsync();

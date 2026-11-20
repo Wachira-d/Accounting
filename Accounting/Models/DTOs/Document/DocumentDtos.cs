@@ -153,6 +153,10 @@ public record CreateDocumentRequest(
     // เหมือน integration PV/invoice. null = fallback CreatedBy user เหมือนเดิม.
     string? PreparerName = null,
     string? PreparerSignatureBase64 = null,
+    // รอบ 278: ผูกผู้จัดทำกับผู้ใช้ในระบบด้วยกุญแจ (Id หรืออีเมลของสมาชิกบริษัท — ตรวจตอนรับ ไม่พบ = 400) ⇒ ช่องผู้จัดทำกับช่องผู้มีอำนาจลงนาม
+    // ที่เป็นผู้ใช้คนเดียวกันใช้ลายเซ็น/ชื่อร่วมกัน (Helpers/SignatureSlotIdentity) · ส่งทั้งคู่ต้องเป็นคนเดียวกัน · null = ไม่ผูก
+    Guid? PreparerUserId = null,
+    string? PreparerEmail = null,
     // รอบ 193 (เจ้าของข้อ 1/4): ยอดชำระจริงที่ต่างจากยอดเอกสาร (ใบกำกับ 536 · จ่าย 438) — null = จ่ายเต็มตามยอด
     // ใบสำคัญจ่าย: ส่วนต่างต้องอธิบายด้วย adjusting lines (Helpers/PaymentSettlementAdjustment) ก่อนอนุมัติ
     decimal? ActualPaidAmount = null,
@@ -366,6 +370,9 @@ public record UpdateDocumentRequest(
     // CreatedBy; ช่อง "ผู้มีอำนาจลงนาม" (slot 1 = กรรมการ) คงเดิม. null = ไม่แตะ.
     string? PreparerName = null,
     string? PreparerSignatureBase64 = null,
+    // รอบ 278: ผูกผู้จัดทำกับผู้ใช้ (ดู CreateDocumentRequest) · null ทั้งคู่ = ไม่แตะ · Guid.Empty หรือ "" = ปลดการผูก
+    Guid? PreparerUserId = null,
+    string? PreparerEmail = null,
     // ===== Quotation revision =====
     // แก้ใบเสนอราคาที่ "ลูกค้ากดยอมรับออนไลน์แล้ว" = ข้อเสนอเปลี่ยน การยอมรับ
     // เดิมใช้ไม่ได้ — ต้องส่ง true ยืนยันว่ารับทราบ (หลักฐานการยอมรับเดิมถูก
@@ -938,6 +945,8 @@ public record DocumentResponse(
     /// <summary>ชื่อผู้จัดทำเอกสาร + ลายเซ็น (พิมพ์ลงกระดาษ)</summary>
     string? PreparerName = null,
     string? PreparerSignatureBase64 = null,
+    /// <summary>รอบ 278: ผู้ใช้ที่ผูกเป็นผู้จัดทำ (กุญแจของ SignatureSlotIdentity) — echo กลับให้ผู้เรียก API เห็นว่าผูกแล้ว</summary>
+    Guid? PreparerUserId = null,
     /// <summary>เลขที่ใบมัดจำที่นำมาหัก + ธง "ให้ JE เดินตามการหักมัดจำ"</summary>
     string? DepositAppliedRef = null,
     bool DepositAppliedDrivesJournal = false,

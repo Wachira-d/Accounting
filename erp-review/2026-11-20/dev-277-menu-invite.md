@@ -50,3 +50,18 @@
 - sim `tools/menu_landing_sim.js` + `payment_menu_gate_sim.js` ผ่าน (negative test ในตัว)
 - กติกา `_R277_` (+17 · เคส R277-1…4) · `required_call_site_check` ผ่าน
 - commit: a1ae70d2 (WIP) + d93800f2 (ครบ)
+
+## 7. ชุดแก้ฝ่ายค้าน (คำตัดสิน 277-8…12)
+
+| ข้อ | สถานะ | ทางแก้ |
+| --- | --- | --- |
+| HIGH-1 บอท LINE เลือกบริษัทโดยไม่กรองสมาชิกรอสิทธิ์ | ✅ 6566b49b | `CompanyMembership.ActiveOf` ใน `HandleMessageAsync` + `HandleImageAsync` + ด่านสมาชิกของปุ่มอนุมัติใน LINE (`ActiveRow`) · มีแต่บริษัทที่รอสิทธิ์ ⇒ ตอบ "รอเจ้าของตั้งสิทธิ์" |
+| HIGH-2 หน้าสำนักงานบัญชีแสดงเลขภาษี/ยอด | ✅ | `AccountantWorkspaceController` ใช้ `ActiveOf` · รายชื่อบริษัท (`GetUserCompaniesAsync`) ของบริษัทที่รอสิทธิ์ = id/ชื่อ + `AccessPending=true` (ไม่มีเลขภาษี/ที่อยู่/แพ็กเกจ) |
+| HIGH เส้นอื่น | ✅ | `MeController.GetMyPermissions` (companyId ทาง query) · `NotificationHub.JoinCompanyGroup` · `TenantGuard.CheckAsync` · ผู้อนุมัติ/ผู้ลงนาม (`ActiveMemberIdsAsync` ตัด AccessPending) · เส้นสำรองของ `TenantAccessMiddleware` อ่าน AccessPending ด้วย (fail closed) — จุดที่เลือกบริษัทจาก CompanyUsers ด้วย UserId อย่างเดียวที่เหลือ: แอดมินแพลตฟอร์ม (`AdminController` — ตั้งใจ) |
+| MED-1 ทะเบียนเมนูครอบไม่ครบ | ✅ | `MenuPermissionMap` สามกลุ่ม ครบ 131 เมนู + เทสต์ inventory · เพิ่ม `settlement-channels` (Settlement.View) · `settings` (CompanySettings.Edit — GET ของหน้าตรวจคีย์นี้) · ทิศเอกสาร `purchases`/`customer-credits` · ไล่แล้วว่า GET หลักของ payroll/fixed-assets/pos/สินค้า/คลัง/bank/tax/remittances/leaves **ไม่ตรวจคีย์** ⇒ สิทธิ์เมนูอย่างเดียว (ไม่ผูกเพื่อไม่ให้ผู้ใช้เดิมเสียเมนูที่ใช้ได้จริง · 277-10) · accounting-export/data-integrity ไม่มีเมนูของตัวเอง |
+| MED-2 ถดถอยของหน้าหลักโหมดง่าย + ที่พัก | ✅ | "simple-home" ไม่ผูก Reports.Dashboard (277-9) · ที่พัก any-of LodgingManage/LodgingSettings |
+| MED-3 ยืนยันอีเมลตอนตอบรับ | ✅ | ตอบรับด้วย token = ยืนยันอีเมล ทุกทาง (277-8) · อีเมลต้องตรง |
+| LOW preview บอกการมีบัญชี | ✅ | ตัด `AccountExists` · หน้าแสดงทั้งสองทาง |
+| แจ้งเตือนถึงสมาชิกรอสิทธิ์ (ผู้ประสานงานสั่งปิดในรอบนี้) | ✅ 812bc11d | `NotificationEngine` เส้นบทบาท + ผู้รับระบุตัว เรียก `CompanyMembership.MayReceiveCompanyNotificationAsync` (กระดิ่ง/อีเมล/LINE ส่วนตัว) · กระดิ่งกรองตอนอ่านด้วย `PendingCompanyIdsAsync` (รวมแถวเก่า) · 277-13 |
+
+ยังเหลือ (backlog): ด่านของ `reports/month-snapshot` (277-9)

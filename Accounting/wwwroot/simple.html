@@ -211,10 +211,11 @@
         // ไม่มีตัวเลือกบริษัท. Layout.init คืน false เมื่อยังไม่ล็อกอิน
         // (มันพาไปหน้า login ให้เอง) และเมื่อยังไม่เลือกบริษัท loadCompanies()
         // จะเรียก load() ซ้ำให้อีกครั้ง — จึงเรียกซ้ำได้ไม่มีผลข้างเคียง
-        if (!Layout.init('dashboard')) return;
+        // รอบ 277 ฝ่ายค้าน MED-2: หน้านี้คือ "simple-home" — สิทธิ์เมนูเดียวกับแดชบอร์ดของบทบาท แต่ไม่ผูก Reports.Dashboard (ข้อมูลของหน้า = month-snapshot
+        // ที่ไม่ตรวจคีย์นั้น) ⇒ พนักงานโหมดง่ายใช้หน้าหลักได้เหมือนเดิม · ยังไม่ได้รับสิทธิ์/บทบาทไม่มีเมนูนี้ ⇒ ไปหน้าแรกที่เข้าได้
+        if (!Layout.init('simple-home')) return;
         Layout.setTitle('หน้าหลัก');
-        // รอบ 277: หน้าหลักโหมดง่าย = แดชบอร์ด — ไม่มีสิทธิ์ (เซิร์ฟเวอร์ตัดสิน) ⇒ ไปหน้าแรกที่เข้าได้ก่อนโหลดตัวเลข
-        if (Layout.getCompanyId && Layout.getCompanyId() && !(await Layout.ensurePageAccess('dashboard'))) return;
+        if (Layout.getCompanyId && Layout.getCompanyId() && !(await Layout.ensurePageAccess('simple-home'))) return;
 
         // Greet + load company name
         const co = Layout.currentCompany || JSON.parse(localStorage.getItem('currentCompany') || '{}');
