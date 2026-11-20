@@ -21584,7 +21584,8 @@ RULES += [
          must=["EncryptedColumnConverter.HasInternalMarker("],
          why=_R274_10_WHY + "LOW-1: ด่านเข้าปฏิเสธเครื่องหมายภายใน"),
     dict(file="Services/Background/PiiReprotectJob.cs", method="RunOnceAsync",
-         must=["PiiReprotectPass.KeySetFingerprint(", "PiiReprotectPass.CanSkipScan(", "j.Message.StartsWith(tag)", "var summary = tag +"],
+         must=["PiiReprotectPass.KeySetFingerprint(", "PiiReprotectPass.CanSkipScan(", "j.Message.StartsWith(tag)"],
+         must_lit=['var summary = tag + $" '],   # ข้อความสรุปต้องเป็น interpolated string (เคยหลุด $ ⇒ JobRunLog ได้ "{r.Scanned}" ดิบ)
          before=[("PiiReprotectPass.CanSkipScan(", "PiiReprotectPass.RunAsync(")],
          why=_R274_10_WHY + "LOW-3: ชุดคีย์เดิมที่สแกนครบแล้ว (≤ 7 วัน) ข้ามการถอดทุกแถว · ป้ายรอบสแกนครบอยู่ต้นข้อความ (ข้อความถูกตัด 1,000 ตัว)"),
     dict(file=PAYROLL, method="SyncEmployeesAsync",
