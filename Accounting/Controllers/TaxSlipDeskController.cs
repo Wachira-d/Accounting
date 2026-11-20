@@ -107,6 +107,55 @@ public class TaxSlipDeskController : ControllerBase
         catch (BusinessRuleException ex) { return Fail(ex); }
     }
 
+    /// <summary>รอบ 275 แพ็ก D (H1): ตัวเลือกของ "บันทึกเอง" / "ผูกกับรายการนำส่งที่มีอยู่" (server คำนวณ · หน้าแสดง)</summary>
+    [HttpGet("slips/{slipId:guid}/manual-options")]
+    [Accounting.Filters.RequirePermission(PermissionKeys.TaxFile)]
+    public async Task<ActionResult<ApiResponse<object>>> ManualOptions(Guid companyId, Guid slipId, CancellationToken ct)
+    {
+        if (await NotProviderAsync(companyId, ct) is { } np) return np;
+        try { return Ok(new ApiResponse<object>(true, await _intake.ManualOptionsAsync(companyId, slipId, ct))); }
+        catch (KeyNotFoundException ex) { return NotFound(new ApiResponse<object>(false, null, ex.Message)); }
+        catch (BusinessRuleException ex) { return Fail(ex); }
+    }
+
+    /// <summary>รอบ 275 แพ็ก D (H1 · คำตัดสิน 4.3): พนักงานบันทึกนำส่งเองจากสลิปที่ระบบจับคู่ไม่ได้ — ยอดต้องเท่าสลิปทุกสตางค์ · audit · ไม่มีผู้อนุมัติคนที่สอง</summary>
+    [HttpPost("slips/{slipId:guid}/manual-remit")]
+    [Accounting.Filters.RequirePermission(PermissionKeys.TaxFile)]
+    [Accounting.Filters.RejectApiKey("บันทึกนำส่งเองจากสลิปภาษีของลูกค้า")]
+    public async Task<ActionResult<ApiResponse<object>>> ManualRemit(Guid companyId, Guid slipId, [FromBody] TaxSlipIntakeService.ManualInput req, CancellationToken ct)
+    {
+        if (await NotProviderAsync(companyId, ct) is { } np) return np;
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        if (userId == Guid.Empty) return Unauthorized();
+        try
+        {
+            await _intake.StaffManualRemitAsync(companyId, userId, slipId, req, ct);
+            return Ok(new ApiResponse<object>(true, null, "บันทึกนำส่งในบัญชีลูกค้าแล้ว (พนักงานเลือกแบบ/งวด/ยอดเอง) · แจ้งผลในกลุ่ม/อีเมลแล้ว"));
+        }
+        catch (KeyNotFoundException ex) { return NotFound(new ApiResponse<object>(false, null, ex.Message)); }
+        catch (BusinessRuleException ex) { return Fail(ex); }
+    }
+
+    public sealed record LinkInput(Guid ClientCompanyId, Guid RemittanceId);
+
+    /// <summary>รอบ 275 แพ็ก D (H1): ปิดสลิปด้วยรายการนำส่งที่บันทึกไว้แล้ว — แนบสลิปเป็นหลักฐาน · การ์ด "บันทึกแล้ว" ตามจริง</summary>
+    [HttpPost("slips/{slipId:guid}/link")]
+    [Accounting.Filters.RequirePermission(PermissionKeys.TaxFile)]
+    [Accounting.Filters.RejectApiKey("ผูกสลิปภาษีกับรายการนำส่งของลูกค้า")]
+    public async Task<ActionResult<ApiResponse<object>>> Link(Guid companyId, Guid slipId, [FromBody] LinkInput req, CancellationToken ct)
+    {
+        if (await NotProviderAsync(companyId, ct) is { } np) return np;
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        if (userId == Guid.Empty) return Unauthorized();
+        try
+        {
+            await _intake.StaffLinkAsync(companyId, userId, slipId, req.ClientCompanyId, req.RemittanceId, ct);
+            return Ok(new ApiResponse<object>(true, null, "ผูกสลิปกับรายการนำส่งแล้ว · แจ้งผลในกลุ่ม/อีเมลแล้ว"));
+        }
+        catch (KeyNotFoundException ex) { return NotFound(new ApiResponse<object>(false, null, ex.Message)); }
+        catch (BusinessRuleException ex) { return Fail(ex); }
+    }
+
     public sealed record RejectInput(string? Reason);
 
     [HttpPost("slips/{slipId:guid}/reject")]

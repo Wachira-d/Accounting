@@ -162,7 +162,7 @@ public static class EmployeeIdentityHealth
 
     private static string ActionFor(Issue issue, RekeyJobStatus? job) => issue switch
     {
-        Issue.Undecryptable => $"ตั้ง {EncryptionKeyResolver.PreviousKeyEnv} เป็นคีย์ที่ใช้ตอนบันทึกแล้วรีสตาร์ต — ถ้าไม่มีคีย์เดิมแล้ว ให้กรอกค่าใหม่ที่ทะเบียน",
+        Issue.Undecryptable => "แจ้งผู้ดูแลระบบให้ตั้งคีย์เดิมที่ใช้ตอนบันทึก (ข้อมูลกลับมาเองหลังรีสตาร์ต) — ถ้าไม่มีคีย์เดิมแล้ว ให้กรอกค่าใหม่ที่ทะเบียน",   // รอบ 275 แพ็ก A (M-1)
         Issue.NestedCipher => "กรอกค่าใหม่ที่ทะเบียน",
         Issue.PendingRekey => RekeyAction(job),
         _ => "แก้เลขที่ทะเบียนพนักงานให้เป็นเลข 13 หลักที่ถูกต้อง",

@@ -59,22 +59,28 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
 
     /// <summary>Get e-Tax config for a company: per-company settings override global config</summary>
     private async Task<(string? CertPath, string? CertPassword, string? ApiKey, string? ApiSecret,
-        bool TestMode, bool AutoSign, bool AutoSubmit, string ServiceProvider)> GetEtaxConfig(Guid companyId)
+        bool TestMode, bool AutoSign, bool AutoSubmit, string ServiceProvider, string? CertPasswordProblem, string? ApiSecretProblem)> GetEtaxConfig(Guid companyId)
     {
         var companySettings = await _db.CompanySettings.FirstOrDefaultAsync(s => s.CompanyId == companyId);
 
         // Per-company settings override global config
         if (companySettings?.EtaxEnabled == true)
         {
+            // รอบ 275 แพ็ก A (T4 M-5 · S3): ตั้งไว้แต่ถอดไม่ได้ ⇒ ไม่ส่งค่าว่างเข้าไปเซ็น/ยืนยันตัวตน (เดิมล้มปลายทางด้วยเหตุ "รหัสผิด") ·
+            // เหตุจริงไปกับค่าตั้ง แล้ว SignAsync/SubmitToRevenueAsync ล้มดังบนแถว e-Tax ก่อนเรียกใช้
+            var certPw = SecretUse.Open(_secrets, "รหัสผ่านใบรับรอง e-Tax", companySettings.EtaxCertificatePassword);
+            var rdSecret = SecretUse.Open(_secrets, "API Secret ของกรมสรรพากร", companySettings.EtaxRdApiSecret);
             return (
                 companySettings.EtaxCertificatePath,
-                _secrets.Unprotect(companySettings.EtaxCertificatePassword),
+                certPw.Value,
                 companySettings.EtaxRdApiKey,
-                _secrets.Unprotect(companySettings.EtaxRdApiSecret),
+                rdSecret.Value,
                 companySettings.EtaxTestMode,
                 companySettings.EtaxAutoSign,
                 companySettings.EtaxAutoSubmit,
-                companySettings.EtaxServiceProvider ?? _config["Etax:ServiceProvider"] ?? "RD"
+                companySettings.EtaxServiceProvider ?? _config["Etax:ServiceProvider"] ?? "RD",
+                certPw.Problem,
+                rdSecret.Problem
             );
         }
 
@@ -87,7 +93,8 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
             _config.GetValue<bool>("Etax:RdTestMode"),
             _config.GetValue<bool>("Etax:AutoSign"),
             _config.GetValue<bool>("Etax:AutoSubmit"),
-            _config["Etax:ServiceProvider"] ?? "RD"
+            _config["Etax:ServiceProvider"] ?? "RD",
+            null, null
         );
     }
 
@@ -427,6 +434,9 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
 
             if (!string.IsNullOrEmpty(certPath) && System.IO.File.Exists(certPath))
             {
+                // รอบ 275 แพ็ก A (S3): รหัสใบรับรองตั้งไว้แต่ถอดไม่ได้ ⇒ ไม่ลองเซ็นด้วยรหัสว่าง — catch ข้างล่างประทับ Error + เหตุจริงบนแถว
+                if (etaxConfig.CertPasswordProblem is string certPwProblem)
+                    throw new BusinessRuleException(certPwProblem, SecretUse.RuleCode, 422);
                 // Production: Use real X.509 certificate
                 (signedXml, certSerialNumber) = SignXmlWithCertificate(etax.XmlContent, certPath, certPassword);
                 usedRealCert = true;
@@ -654,6 +664,9 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
         var attemptAt = DateTime.UtcNow;
         try
         {
+            // รอบ 275 แพ็ก A (S3): API Secret ตั้งไว้แต่ถอดไม่ได้ ⇒ ไม่ยิงด้วยค่าว่าง — catch ข้างล่างประทับเหตุจริงบนแถว + กระดิ่ง + คิวลองใหม่
+            if (etaxConfig.ApiSecretProblem is string rdSecretProblem)
+                throw new BusinessRuleException(rdSecretProblem, SecretUse.RuleCode, 422);
             submissionResult = await CallRdApi(baseUrl, apiKey, apiSecret!, etax);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)

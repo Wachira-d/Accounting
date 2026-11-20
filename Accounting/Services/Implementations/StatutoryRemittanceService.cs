@@ -1625,6 +1625,9 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
                 }
             }
 
+            // รอบ 275 แพ็ก D (M7): งวดนี้นำส่งแล้ว ⇒ ใบขอชำระที่ยังเปิดของงวดนั้นปิดเป็นชำระแล้ว (ทุกเส้น: มือ · สลิป) — ตัวตั้งเดียวกับการผูกสลิป
+            await TaxPaymentRequestService.CloseOnRemitAsync(_db, companyId, type, req.PeriodYear, req.PeriodMonth, rec.Id, null);
+
             await _db.SaveChangesAsync();
             if (tx != null) await tx.CommitAsync();
 
@@ -2234,6 +2237,8 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
                 sd.UpdatedBy = performedBy;
                 sd.UpdatedAt = DateTime.UtcNow;
             }
+            // รอบ 275 แพ็ก D (M1): สลิปภาษีที่สร้าง/ผูกรายการนี้กลับเข้าคิวพนักงาน + ใบขอชำระที่ปิดด้วยรายการนี้กลับเปิด (เดิมค้าง "บันทึกแล้ว"/"ชำระแล้ว")
+            var released = await TaxSlipRemitService.ReleaseOnVoidAsync(_db, rec, why, DateTime.UtcNow);
             rec.IsDeleted = true;
             rec.UpdatedBy = performedBy;
             rec.UpdatedAt = DateTime.UtcNow;
@@ -2262,6 +2267,8 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
                     UnsettledPayrollRuns = runs.Select(r => r.PayrollNumber),
                     ReleasedPp36Documents = links.Count,
                     ReleasedStampDutyRecords = stampRecords.Select(x => x.Reference),
+                    ReleasedTaxSlips = released.Slips,
+                    ReopenedPaymentRequests = released.Requests,
                 }),
                 Timestamp = DateTime.UtcNow,
             });
@@ -2273,7 +2280,9 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
                    : alreadyReversed ? "รายการบัญชีของการนำส่งถูกกลับไว้ก่อนแล้ว (ไม่กลับซ้ำ)" : $"กลับรายการบัญชี {reversal?.EntryNumber}")
                 + (runs.Count > 0 ? $" · ปลดสถานะนำส่งประกันสังคม {runs.Count} รอบ" : "")
                 + (links.Count > 0 ? $" · ใบ ภ.พ.36 {links.Count} ใบกลับเป็นค้างนำส่ง" : "")
-                + (stampRecords.Count > 0 ? $" · อากรแสตมป์ {stampRecords.Count} รายการกลับเป็นค้างชำระ" : "");
+                + (stampRecords.Count > 0 ? $" · อากรแสตมป์ {stampRecords.Count} รายการกลับเป็นค้างชำระ" : "")
+                + (released.Slips > 0 ? " · สลิปภาษีที่ผูกรายการนี้กลับเข้าคิวพนักงานของสำนักงานบัญชี" : "")
+                + (released.Requests > 0 ? $" · ใบขอชำระ {released.Requests} ใบกลับเป็นรอชำระ" : "");
         }
         catch
         {

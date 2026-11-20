@@ -155,7 +155,14 @@ public record EmployeeResponse(
     string? EmployeeCodeLockReason = null,
     /// <summary>รอบ 201 PR2 (A-PR1) — เลขประกันสังคมที่<b>กรอกไว้</b> (ไม่ใช่เลขบัตรที่ใช้แทน) · ปิดบังตาม PDPA ม.26
     /// เว้นแต่ผู้เรียกมีสิทธิ์ pii:view · null = ไม่ได้กรอก (ไฟล์ สปส.1-10 ใช้เลขบัตร)</summary>
-    string? SocialSecurityNumber = null);
+    string? SocialSecurityNumber = null,
+    /// <summary>รอบ 275 แพ็ก A (T4 M-2): ปัญหาเลขประจำตัว (ชื่อ enum <c>TaxIdProblem</c>: Undecryptable/Invalid/Missing) — null = ใช้ได้ ·
+    /// จอติดป้ายจากช่องนี้ (server computes) · ช่องเลขที่ถอดไม่ได้ส่งเป็นป้าย <c>EncryptedColumnConverter.UnreadableExportText</c> ไม่ใช่ ciphertext</summary>
+    string? IdentityProblem = null,
+    /// <summary>รอบ 275 แพ็ก A (T4 M-2): "Undecryptable" เมื่อเลขบัญชีถอดรหัสไม่ได้ · null = ใช้ได้/ไม่ได้กรอก</summary>
+    string? BankAccountProblem = null,
+    /// <summary>รอบ 275 แพ็ก A: ข้อความไทยของปัญหา (เหตุ + ทางไปต่อ) — จอแสดงตรง ๆ</summary>
+    string? PiiProblemText = null);
 
 /// <summary>Bulk-sync envelope for employees from an external HRIS. Each
 /// row is upserted on (CompanyId, ExternalSystem, ExternalId). Rows

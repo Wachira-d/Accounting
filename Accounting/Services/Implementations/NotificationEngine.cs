@@ -412,7 +412,8 @@ public class NotificationEngine : INotificationEngine
             {
                 EnableSsl = s.EmailSmtpUseSsl,
                 Credentials = !string.IsNullOrEmpty(s.EmailSmtpUsername)
-                    ? new NetworkCredential(s.EmailSmtpUsername, _secrets.Unprotect(s.EmailSmtpPassword) ?? "")
+                    // รอบ 275 แพ็ก A (T4 M-5): รหัสผ่านตั้งไว้แต่ถอดไม่ได้ ⇒ throw พร้อมเหตุ (LogError ข้างล่าง) ไม่ยืนยันตัวตนด้วยรหัสว่าง
+                    ? new NetworkCredential(s.EmailSmtpUsername, SecretUse.Optional(_secrets, "รหัสผ่าน SMTP ของบริษัท", s.EmailSmtpPassword) ?? "")
                     : null,
             };
             await client.SendMailAsync(msg);

@@ -107,8 +107,12 @@ public static class TaxSlipMatch
     /// <param name="companies">ชุดบริษัทลูกค้าที่ช่องทางนี้ผูก (กลุ่ม LINE/อีเมลของผู้ติดต่อ NextAccTenant) — <b>ห้ามส่งทั้งฐาน</b></param>
     /// <param name="remitted">(บริษัท · แบบ · ปี · เดือน) ที่มีแถวนำส่งแล้ว</param>
     /// <param name="controlCodeRemitted">Control Code นี้ถูกบันทึกจากสลิปอื่นแล้ว (กันซ้ำชั้น 4 §7)</param>
+    /// <summary>รายการนำส่งที่บันทึกแล้ว (ยังไม่ยกเลิก) พร้อมยอดรวมที่จ่าย — รอบ 275 แพ็ก D (L3): เหตุ "นำส่งแล้ว" แทน "ไม่พบรายการ" เมื่อยอดตรง</summary>
+    public sealed record RemittedKey(Guid CompanyId, string Type, int Year, int Month, decimal Total);
+
+    /// <param name="remittedTotals">รอบ 275 แพ็ก D (L3) — null = ไม่ส่ง (พฤติกรรมเดิม)</param>
     public static Decision Decide(Slip slip, IReadOnlyList<CompanyKey> companies, IReadOnlyList<RequestKey> requests, IReadOnlyList<PendingKey> pending,
-        IReadOnlySet<(Guid, string, int, int)> remitted, bool controlCodeRemitted)
+        IReadOnlySet<(Guid, string, int, int)> remitted, bool controlCodeRemitted, IReadOnlyList<RemittedKey>? remittedTotals = null)
     {
         if (slip.Agency.Kind != GovPaymentSlip.Kind.Identified || slip.Agency.Row == null)
             return D(Outcome.UnknownAgency, Codes.UnknownAgency, slip.Agency.Reason);
@@ -153,6 +157,10 @@ public static class TaxSlipMatch
         Candidate C(PendingKey p) => new(p.CompanyId, p.Type, p.Year, p.Month, p.Amount, 0m, 0m, null);
         if (exact.Count == 0)
         {
+            // รอบ 275 แพ็ก D (L3): งวดที่บันทึกนำส่งไว้แล้วด้วยยอดเท่าสลิป (บันทึกมือก่อนลูกค้าส่งสลิป) ⇒ บอกตามจริง + ให้พนักงานผูกสลิปกับรายการนั้น
+            var done = remittedTotals?.FirstOrDefault(r => mine.Contains(r.CompanyId) && GovPaymentSlip.Covers(row, r.Type) && Same(r.Total, slip.Amount));
+            if (done != null)
+                return D(Outcome.AlreadyRemitted, Codes.Remitted, "งวดที่ยอดเท่าสลิปนี้มีบันทึกนำส่งแล้ว — ให้พนักงานผูกสลิปกับรายการนำส่งนั้น (ไม่บันทึกซ้ำ)", done.CompanyId);
             if (open.Any(p => slip.Amount > p.Amount && slip.SlipDate.Date > p.DueDate.Date))
                 return D(Outcome.LateWithoutRequest, Codes.Late, "ชำระหลังกำหนดและไม่มีใบขอชำระ — ระบบไม่แยกเงินเพิ่ม/เบี้ยปรับเอง ให้พนักงานตรวจ");
             return D(Outcome.None, Codes.None, $"ยังไม่พบรายการภาษีที่รอชำระที่ยอดตรง (ยอดบนสลิป {slip.Amount:N2})", mine.Count == 1 ? mine.First() : null);

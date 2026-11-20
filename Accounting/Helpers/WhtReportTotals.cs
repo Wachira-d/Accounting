@@ -55,11 +55,17 @@ public static class WhtReportTotals
     }
 
     /// <summary>ยอดของแถว [สรุป] ผู้ถูกหักรายหนึ่ง = Σ แถวที่นับเข้ายอดของเลขผู้เสียภาษีนั้น (ตัวตั้งเดียวทั้งตอนสร้างและตอนติ๊ก/แก้บรรทัด)</summary>
-    private static (decimal Income, decimal Tax) PayeeSummaryOf(IEnumerable<TaxReportLine> lines, string? taxPayerId)
+    private static (decimal Income, decimal Tax) PayeeSummaryOf(IEnumerable<TaxReportLine> lines, TaxReportLine summary)
     {
-        var key = (taxPayerId ?? "").Trim();
-        return Of(lines.Where(l => !IsSummary(l) && (l.TaxPayerId ?? "").Trim() == key));
+        var key = (summary.TaxPayerId ?? "").Trim();
+        // รอบ 275 แพ็ก B (T2 L2): คีย์ = เลขผู้เสียภาษี + สาขา (เดิมเลขอย่างเดียว ⇒ ต่างสาขารวมกัน) · แถวสรุปรุ่นเก่าไม่มีสาขา ⇒ เทียบเลขอย่างเดียวเหมือนเดิม
+        var branch = summary.TaxPayerBranchCode == null ? null : SummaryBranchKey(summary.TaxPayerBranchCode);
+        return Of(lines.Where(l => !IsSummary(l) && (l.TaxPayerId ?? "").Trim() == key
+            && (branch == null || SummaryBranchKey(l.TaxPayerBranchCode) == branch)));
     }
+
+    /// <summary>คีย์สาขาของแถว [สรุป] (ว่าง/00000 = สำนักงานใหญ่) — ตัวเดียวของตอนสร้างแถวสรุปและตอนคำนวณยอด</summary>
+    public static string SummaryBranchKey(string? branch) => TaxReportDraftFreshness.NormalizeBranch(branch);
 
     /// <summary>เขียนยอดหัว <c>TotalIncome</c>/<c>TotalTaxWithheld</c> จากบรรทัด + คำนวณแถว [สรุป] ต่อผู้ถูกหักใหม่
     /// (รอบ 273 ฝ่ายค้านข้อ 3: ติ๊กออก/แก้ยอดบรรทัดแล้วแถวสรุปค้างค่าเดิม) — ทางที่ยอดหัวของรายงานที่คิดจากบรรทัดถูกตั้ง
@@ -68,7 +74,7 @@ public static class WhtReportTotals
     {
         foreach (var s in report.Lines.Where(IsSummary).ToList())
         {
-            var (si, st) = PayeeSummaryOf(report.Lines, s.TaxPayerId);
+            var (si, st) = PayeeSummaryOf(report.Lines, s);
             s.IncomeAmount = si;
             s.TaxAmount = st;
         }
