@@ -978,10 +978,6 @@ public class AccountingDbContext : DbContext
         // ===== Document =====
         modelBuilder.Entity<Document>(e =>
         {
-            // รอบ 276: ตัวกรองแถว "เห็นเฉพาะเอกสารที่ตัวเองสร้าง" — มีผลเฉพาะคำขอที่ DocumentRestrictionFilter ตั้งขอบเขต (ค่าอื่น null ⇒ ไม่กรอง)
-            e.HasQueryFilter(d => DocumentOwnerScopeUserId == null
-                || d.CreatedBy == DocumentOwnerScopeUserId
-                || (DocumentOwnerScopeEmail != null && d.CreatedBy == DocumentOwnerScopeEmail));
             e.HasIndex(d => new { d.CompanyId, d.DocumentNumber }).IsUnique();
             e.Property(d => d.DocumentNumber).HasMaxLength(50);
             e.Property(d => d.SubTotal).HasPrecision(18, 2);
@@ -1009,7 +1005,12 @@ public class AccountingDbContext : DbContext
             // (รหัสที่พิมพ์จริงถูก snapshot ไว้ใน IssuerBranchCode แล้ว ใบเก่ายังพิมพ์ถูก)
             e.HasOne(d => d.Branch).WithMany().HasForeignKey(d => d.BranchId).OnDelete(DeleteBehavior.SetNull);
             e.Property(d => d.IssuerBranchCode).HasMaxLength(5);
-            e.HasQueryFilter(d => !d.IsDeleted);
+            // EF มีตัวกรองได้ตัวเดียวต่อ entity (ตัวหลังทับตัวก่อน) ⇒ รวมไว้ที่นี่ที่เดียว:
+            // ใบที่ลบแล้ว + รอบ 276 "เห็นเฉพาะเอกสารที่ตัวเองสร้าง" (มีผลเฉพาะคำขอที่ DocumentRestrictionFilter ตั้งขอบเขต · ค่าอื่น null ⇒ ไม่กรอง)
+            e.HasQueryFilter(d => !d.IsDeleted
+                && (DocumentOwnerScopeUserId == null
+                    || d.CreatedBy == DocumentOwnerScopeUserId
+                    || (DocumentOwnerScopeEmail != null && d.CreatedBy == DocumentOwnerScopeEmail)));
         });
 
         // ===== DocumentLine =====

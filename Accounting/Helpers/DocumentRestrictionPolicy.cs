@@ -67,7 +67,7 @@ public static class DocumentRestrictionPolicy
     private static bool HttpMethodIs(string m, string x) => string.Equals(m, x, StringComparison.OrdinalIgnoreCase);
 
     /// <summary>route template → รูปเทียบ (ตัวเล็ก · ตัด "/" และ "api/" นำหน้า)</summary>
-    public static string NormalizeTemplate(string? template)
+    internal static string NormalizeTemplate(string? template)
     {
         var t = (template ?? "").Trim().TrimStart('~').TrimStart('/').ToLowerInvariant();
         return t.StartsWith("api/") ? t[4..] : t;
@@ -132,6 +132,8 @@ public static class DocumentRestrictionPolicy
         new("DELETE", C + "attachments/{attachmentid:guid}", true, true, RouteCheck.AttachmentOfDocument | RouteCheck.DraftStatus),
         new("GET", C + "attachments/{attachmentid:guid}/download", true, false, RouteCheck.AttachmentOfDocument),
         new("GET", C + "comments/entity/{entitytype}/{entityid:guid}", true, false, RouteCheck.DocumentEntityOnly),
+        new("GET", C + "accountant/timeline/{entitytype}/{entityid}", true, false, RouteCheck.DocumentEntityOnly),   // ปุ่ม "📜 ประวัติ" ของใบ
+        new("GET", C + "document-auto-send/documents/{documentid:guid}", true, false),
         // ── ข้อมูลหลักที่ฟอร์มเอกสารต้องใช้ (ไม่ใช่เอกสารของคนอื่น) ──
         new("GET", D + "contacts", true, false),
         new("GET", D + "contacts/{contactid:guid}", true, false),
@@ -152,6 +154,10 @@ public static class DocumentRestrictionPolicy
         new("GET", C + "document-brands", true, false),
         new("GET", C + "document-brands/policy", true, false),
         new("GET", C + "quota/summary", true, false),
+        new("GET", C + "metering/quota", true, false),
+        new("GET", C + "wht-certs/filter-options", true, false),
+        new("GET", D + "send-types", true, false),
+        new("GET", C + "ocr/engines", true, false),
         new("GET", C + "smart/check-period-status", true, false),
         new("GET", C + "smart/validate-tax-id", true, false),
         new("GET", C + "ai/gl-account/suggest", true, false),
@@ -195,11 +201,4 @@ public static class DocumentRestrictionPolicy
     {
         "documents", "expense-docs", "contacts", "notifications", "my-signature", "help", "getting-started",
     };
-
-    /// <summary>"ของตัวเอง" — <c>CreatedBy</c> = id ผู้ใช้ (ทางเว็บ/แปลง/คัดลอก) หรืออีเมลผู้ใช้ (ทาง LINE บางเส้น) · ตัวเดียวกับตัวกรองแถว EF
-    /// (<c>AccountingDbContext</c>) — เทสต์ล็อกว่าสองที่ตรงกัน</summary>
-    public static bool IsOwn(string? createdBy, Guid userId, string? email) =>
-        !string.IsNullOrEmpty(createdBy)
-        && (string.Equals(createdBy, userId.ToString(), StringComparison.Ordinal)
-            || (!string.IsNullOrEmpty(email) && string.Equals(createdBy, email, StringComparison.Ordinal)));
 }

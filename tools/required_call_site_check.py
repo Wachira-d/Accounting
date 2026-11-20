@@ -21782,6 +21782,52 @@ RULES += [
 ]
 
 
+# ── รอบ 276: ผู้ใช้ "เห็นเฉพาะเอกสารที่ตัวเองสร้าง" / "สร้าง-แก้ได้เฉพาะร่าง" + ส่งขออนุมัติพื้นฐาน ──
+_R276_WHY = "รอบ 276 (เห็นเฉพาะเอกสารของตัวเอง/เฉพาะร่าง): "
+_R276_FILTER = "Filters/DocumentRestrictionFilter.cs"
+_R276_SVC = "Services/Implementations/DocumentApprovalRequestService.cs"
+RULES += [
+    dict(file=_R276_FILTER, method="OnActionExecutionAsync",
+         must=["DocumentRestrictionGuard.ForUserAsync(", "DocumentRestrictionGuard.ApplyScope(", "DocumentRestrictionPolicy.Decide(",
+               "DocumentRestrictionPolicy.IsEditableDraftStatus(", "Deny(404"],
+         before=[("DocumentRestrictionGuard.ApplyScope(", "DocumentRestrictionPolicy.Decide("), ("DocumentRestrictionPolicy.Decide(", "Deny(404")],
+         forbid=["DocumentOwnerScopeUserId ="],
+         why=_R276_WHY + "ด่านทุกคำขอ: ตั้งขอบเขตตัวกรองแถวก่อน แล้วรายการอนุญาต · id ของคนอื่น = 404 · เขียนได้เฉพาะใบ Draft/Rejected (ตั้งขอบเขตผ่าน ApplyScope ตัวเดียว)"),
+    dict(file="Helpers/DocumentRestrictionGuard.cs", method="EnsureMayFinalizeAsync",
+         must=["db.DocumentDraftOnlyRequest", "ForActorAsync(", "DocumentRestrictionPolicy.DraftOnlyRuleCode"],
+         why=_R276_WHY + "ด่านชั้น service: ธงของคำขอ (อนุมัติอัตโนมัติที่ประทับป้ายระบบ) หรือผู้กระทำ (id/อีเมล — LINE) ที่ถูกจำกัด ⇒ 403"),
+    dict(file=DOC, method="ApproveDocumentAsync#2",
+         must=["DocumentRestrictionGuard.EnsureMayFinalizeAsync(_db, companyId, approvedBy,", "DocumentApprovalRequestService.EnsureNotSelfApprovalAsync(",
+               "DocumentApprovalRequestService.OnDocumentApprovedAsync("],
+         before=[("DocumentRestrictionGuard.EnsureMayFinalizeAsync(", "doc.Status != DocumentStatus.Draft"),
+                 ("AllocateCreditHoldsAfterApproveAsync(", "DocumentApprovalRequestService.OnDocumentApprovedAsync(")],
+         why=_R276_WHY + "ทุกทางอนุมัติ (เว็บ · หลายใบ · มือถือ · LINE · workflow · อนุมัติอัตโนมัติ) ผู้เฉพาะร่างอนุมัติไม่ได้ + ผู้ขออนุมัติเองไม่ได้ · ปิดคำขอ/แจ้งผู้ขอหลังบันทึกครบ"),
+    dict(file=DOC, method="VoidDocumentAsync",
+         must=["DocumentRestrictionGuard.EnsureMayFinalizeAsync(_db, companyId, null,"],
+         before=[("DocumentRestrictionGuard.EnsureMayFinalizeAsync(", "BeginTransactionAsync(")],
+         why=_R276_WHY + "คำขอของผู้เฉพาะร่างยกเลิกเอกสารไม่ได้ (ก่อนเปิดธุรกรรม)"),
+    dict(file=_R276_SVC, method="RequestAsync",
+         must=["_approval.HasMatchingRuleAsync(", "_approval.SubmitForApprovalAsync(", "DocumentApproverDirectory.ResolveAsync(", "Audit(companyId, userId,",
+               "NotificationEvents.DocumentApprovalRequested", "ActorUserId = userId"],
+         before=[("_approval.HasMatchingRuleAsync(", "DocumentApprovalRequests.Add("), ("_db.SaveChangesAsync()", "NotificationEvents.DocumentApprovalRequested")],
+         forbid=["ContactName", "TaxId", "LineNotify", "PushAsync("],
+         why=_R276_WHY + "กฎที่ตรง ⇒ workflow เดิม · ไม่มี ⇒ แจ้งผู้อนุมัติเอกสารผ่านเครื่องแจ้งเตือนกลาง (ห้ามยิง LINE ตรง · ข้อความไม่มีชื่อลูกค้า/เลขภาษี — ไปถึงกลุ่มได้)"),
+    dict(file=_R276_SVC, method="ReturnAsync",
+         must=["DocumentApproverDirectory.MayApproveAsync(", "SelfApprovalCode", "DocumentStatus.Rejected", "Audit(companyId, userId,",
+               "NotificationEvents.DocumentApprovalReturned", "RecipientUserId = pending.RequestedByUserId"],
+         why=_R276_WHY + "ตีกลับ: ผู้มีสิทธิ์อนุมัติเท่านั้น · ผู้ขอตีกลับเองไม่ได้ · เหตุผลถึงผู้ขอ · audit"),
+    dict(file=_R276_SVC, method="Audit", must=["_db.AddChainedAuditLog("],
+         why=_R276_WHY + "audit ทุกขั้นของคำขออนุมัติเขียนผ่าน chain เท่านั้น"),
+    dict(file=_R276_SVC, method="WithdrawAsync", must=["pending.RequestedByUserId != userId", "DocumentStatus.Draft", "Audit(companyId, userId,"],
+         why=_R276_WHY + "ถอนได้เฉพาะผู้ขอ · ใบกลับเป็นร่าง · audit"),
+    dict(file="Helpers/DocumentApproverDirectory.cs", method="MayApproveAsync",
+         must=["DocumentRestrictionGuard.ForUserAsync(", "DocumentPermissionHelper.CanApproveAsync("],
+         why=_R276_WHY + "ผู้อนุมัติเอกสาร = ด่านเดียวกับปุ่มอนุมัติ และไม่รวมผู้เฉพาะร่าง (ไม่ประกอบสิทธิ์เอง)"),
+    dict(file="Services/Implementations/NotificationEngine.cs", method="ResolveRoleAsync",
+         must=["DocumentApproverDirectory.ResolveAsync("],
+         why=_R276_WHY + "บทบาทผู้รับ DocumentApprover ใช้ตัวตัดสินเดียวกับคิว/ปุ่ม"),
+]
+
 if __name__ == "__main__":
     sys.exit(main())
 

@@ -36,7 +36,7 @@ public static class DocumentRestrictionGuard
     }
 
     /// <summary>ผู้กระทำที่ service ได้รับเป็นข้อความ (id ผู้ใช้ หรืออีเมลสมาชิก — ทาง LINE ส่งอีเมล) → ค่าที่มีผล · ป้ายระบบ (<c>system:*</c> ฯลฯ) = ไม่จำกัด</summary>
-    public static async Task<DocumentRestrictionPolicy.Restriction> ForActorAsync(AccountingDbContext db, Guid companyId, string? actor, CancellationToken ct = default)
+    private static async Task<DocumentRestrictionPolicy.Restriction> ForActorAsync(AccountingDbContext db, Guid companyId, string? actor, CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(actor)) return DocumentRestrictionPolicy.Restriction.None;
         if (Guid.TryParse(actor, out var uid)) return (await ForUserAsync(db, companyId, uid, ct)).Restriction;

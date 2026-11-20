@@ -4880,6 +4880,23 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
     e-Tax by Email ตอนอนุมัติ = ตั้ง "ตารางส่งอีเมล" ทริกเกอร์อนุมัติ (คิวเดินทาง e-Tax ให้เอง — §3.3a) · ค่าตั้ง `EtaxByEmailAutoSendOnApprove`/`EtaxByEmailEmbedXml`
     ถูกลบในรอบ 244 (คำตัดสิน 244-4 · คอลัมน์ในฐานคงอยู่ ไม่มีผู้อ่าน)
 
+### 3.2-276 ผู้ใช้ "เห็นเฉพาะเอกสารที่ตัวเองสร้าง" / "สร้าง-แก้ได้เฉพาะร่าง" + ส่งขออนุมัติพื้นฐาน (รอบ 276 · คำตัดสิน 276-1…8 · `erp-review/2026-11-20/dev-276-own-docs-approval.md`)
+- **ค่าตั้ง** `CompanyUser.OwnDocumentsOnly/DraftDocumentsOnly` (หน้า "ทีม" · เจ้าของตั้ง · ตั้งบนเจ้าของ/ตัวเองไม่ได้ · audit) + `CompanyRole.*` ชื่อเดียวกัน (หน้า "บทบาท") ·
+  ค่าที่มีผล = ผู้ใช้ ∪ บทบาท (`Helpers/DocumentRestrictionPolicy.Effective`) · เจ้าของ/SystemAdmin ไม่ถูกจำกัด · **เห็นเฉพาะของตัวเอง ⇒ เฉพาะร่างเสมอ** (276-2) · ค่าตั้งต้น false = พฤติกรรมเดิม
+- **ด่านทุกคำขอ** `Filters/DocumentRestrictionFilter` (global หลัง TenantGuard): ตั้งขอบเขตบน DbContext ⇒ ตัวกรองแถว EF ของ `Documents`
+  (`CreatedBy` = id ผู้ใช้ หรืออีเมลผู้ใช้) · เห็นเฉพาะของตัวเอง = เรียกได้เฉพาะรายการ `DocumentRestrictionPolicy.Routes` (list/get/export/PDF/แปลง/คัดลอก/ไฟล์แนบของเอกสาร/
+  ข้อมูลหลักของฟอร์ม) — อื่น ๆ (รายงาน · แดชบอร์ด · GL · ธนาคาร · ค้นหาทั่วระบบ · แชต AI · มือถือ · OCR) 403 · id เอกสารของคนอื่นใน route/entity/ไฟล์แนบ = **404** ·
+  เฉพาะร่าง = ทางเขียนต้องอยู่ในรายการเขียน · แก้/ลบ/แนบไฟล์ได้เฉพาะใบ Draft/Rejected
+- **ด่านชั้น service** `DocumentRestrictionGuard.EnsureMayFinalizeAsync` ใน `ApproveDocumentAsync` (ทุกทางอนุมัติ — ผู้กระทำ id/อีเมล หรือคำขอนี้ถูกจำกัด) + `VoidDocumentAsync` ⇒ 403 `R276-DRAFT-ONLY`
+- **ส่งขออนุมัติ** `POST document/{id}/approval-request` (ใบ Draft/Rejected · สิทธิ์สร้างชนิดนั้น): กฎอนุมัติที่ตรง ⇒ `ApprovalService.SubmitForApprovalAsync` (เส้นเดิม) ·
+  ไม่มีกฎ + ผู้ขออนุมัติเองได้ ⇒ 409 "กดอนุมัติได้เลย" (พฤติกรรมเดิม) · ไม่มีกฎ + อนุมัติเองไม่ได้ ⇒ **เส้นพื้นฐาน**: ใบ → `WaitingApproval` · แถว `DocumentApprovalRequests` (Pending) ·
+  แจ้ง `document.approval_requested` ถึงบทบาท `DocumentApprover` (`Helpers/DocumentApproverDirectory` = ด่านเดียวกับปุ่มอนุมัติ ไม่รวมผู้เฉพาะร่าง) ผ่าน `NotificationEngine`
+  (กระดิ่ง + อีเมล + LINE ส่วนตัว + กลุ่ม LINE ของบริษัทเมื่อผูก — ค่าตั้งต้น `NotificationAudiencePolicy.DefaultMatrix` · บริษัทปรับที่หน้าแจ้งเตือน) · ข้อความไม่มีชื่อลูกค้า/เลขภาษี
+- ผู้อนุมัติ: ปุ่ม "อนุมัติ" (endpoint เดิม — เลขออกตอนนี้) / "ตีกลับ" `…/approval-request/return` (เหตุผลบังคับ ⇒ ใบ `Rejected` + แจ้งผู้ขอ `document.approval_returned`) ·
+  ผู้ขอห้ามอนุมัติ/ตีกลับใบที่ตัวเองขอ (`EnsureNotSelfApprovalAsync`) · อนุมัติแล้ว ⇒ `OnDocumentApprovedAsync` ปิดคำขอ + แจ้งผู้ขอ `document.approval_granted` ·
+  ผู้ขอ**แก้ระหว่างรอไม่ได้** (กติกาเดิม) — `…/withdraw` ⇒ Draft (276-5) · คิว `GET document-approval-queue` (หน้า approval) · สถานะ/ปุ่มบนใบ `GET document/{id}/approval-request`
+- เลื่อน: OCR · POST ความเห็น · แชต AI/ค้นหาทั่วระบบ สำหรับผู้เห็นเฉพาะของตัวเอง (dev-276 §5)
+
 ### 3.3 Send (Approved → Sent)
 - **Endpoint**: `POST /documents/{id}/send-email`
 - **Controller**: `DocumentController.cs:43` → `IDocumentEmailService`
@@ -9870,3 +9887,6 @@ _Last verified against codebase: 2026-11-20 (รอบ 274-11 ผลตรวจ
 HRIS sync สถานะ "เตือน" — คำตัดสิน 274-11 — commit 55b251d9)_
 _Last verified against codebase: 2026-11-20 (รอบ 275 แพ็ก A — คีย์และความลับ: ห่วงโซ่คีย์ถอดเดียว (PII = ความลับ) · คีย์เดิมหลายตัว · ลายนิ้วมือคีย์กันหลายเครื่อง ·
 `SecretUse` ด่านเดียวของผู้อ่านความลับ · DTO พนักงานไม่ส่ง ciphertext · หน้า "สุขภาพข้อมูลเข้ารหัส" · เทสต์ `KeysSecretsRound275ATests` + Db `KeysSecretsRound275ADbTests` · กติกา `_R275A_` — commit (เติมในคอมมิตตามหลัง))_
+_Last verified against codebase: 2026-11-20 (รอบ 276 — ผู้ใช้เห็นเฉพาะเอกสารที่ตัวเองสร้าง/สร้าง-แก้ได้เฉพาะร่าง: ตัวกรองแถว EF ของ Documents ·
+`DocumentRestrictionFilter` รายการอนุญาต + 404 · ด่าน Approve/Void ชั้น service · ส่งขออนุมัติพื้นฐาน/ถอน/ตีกลับ + แจ้งผ่านเครื่องแจ้งเตือนกลาง ·
+คำตัดสิน 276-1…8 — commit (เติมในคอมมิตตามหลัง))_

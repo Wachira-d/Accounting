@@ -7355,3 +7355,10 @@ _รอบ 275 แพ็ก A (2026-11-20 · คีย์และความ�
 `Helpers/SecretUse` ที่ webhook ขาออก/CMS ขาเข้า/e-Tax/อีเมล/login ภายนอก/Omise/ธนาคาร/LINE OA/ลงนาม callback (ห้ามใช้ค่าว่างเงียบ · ห้ามส่งไม่เซ็น · ห้ามตรวจด้วยกุญแจว่าง) ·
 DTO พนักงานส่งป้าย ⛔ แทน ciphertext + ฟอร์มบอกชัด (ฝ่ายค้าน 274-10 MED-2) · หน้า `/pages/encryption-health.html` + มุมผู้ดูแล · runbook `docs/runbooks/encryption-key-rotation.md` ·
 คำตัดสิน 275-A-1…7 · pure + Db `KeysSecretsRound275A*` · กติกา `_R275A_` — commit (เติมในคอมมิตตามหลัง)_
+
+_รอบ 276 (2026-11-20 · ความต้องการเจ้าของ "เห็นเฉพาะเอกสารที่ตัวเองสร้าง + เฉพาะร่าง + กดแจ้งให้บัญชีอนุมัติ · แจ้ง LINE กลุ่ม/ส่วนตัว/อีเมล/ในระบบ"):
+ค่าตั้งต่อผู้ใช้/บทบาท (`CompanyUser`/`CompanyRole.OwnDocumentsOnly/DraftDocumentsOnly` · Round276Migration) · ตัวตัดสิน `Helpers/DocumentRestrictionPolicy` ·
+ด่าน `Filters/DocumentRestrictionFilter` + ตัวกรองแถว EF ของ Documents · ด่าน Approve/Void ชั้น service (`DocumentRestrictionGuard`) ·
+ส่งขออนุมัติพื้นฐาน `DocumentApprovalRequests` + `DocumentApprovalRequestService` (กฎที่ตรง ⇒ workflow เดิม) · คีย์แจ้งเตือน `document.approval_requested/returned/granted` +
+บทบาทผู้รับ `DocumentApprover` · UI ทีม/บทบาท/เอกสาร/คิวอนุมัติ/เมนู · คำตัดสิน 276-1…8 · เทสต์ `DocumentRestrictionPolicyTests` + Db `DocumentRestrictionDbTests` ·
+กติกา `_R276_` — commit (เติมในคอมมิตตามหลัง)_

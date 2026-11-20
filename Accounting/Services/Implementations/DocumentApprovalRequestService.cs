@@ -299,7 +299,8 @@ public class DocumentApprovalRequestService : IDocumentApprovalRequestService
             });
     }
 
-    private void Audit(Guid companyId, Guid userId, AuditAction action, Guid docId, object before, object after) =>
+    private void Audit(Guid companyId, Guid userId, AuditAction action, Guid docId, object before, object after)
+    {
         _db.AddChainedAuditLog(new AuditLog
         {
             CompanyId = companyId, UserId = userId, Action = action,
@@ -308,4 +309,5 @@ public class DocumentApprovalRequestService : IDocumentApprovalRequestService
             NewValues = System.Text.Json.JsonSerializer.Serialize(after),
             Timestamp = DateTime.UtcNow,
         });
+    }
 }

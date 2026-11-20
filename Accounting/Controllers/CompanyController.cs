@@ -124,6 +124,7 @@ public class CompanyController : ControllerBase
 
     /// <summary>รอบ 276 — เจ้าของตั้ง "เห็นเฉพาะเอกสารที่ตัวเองสร้าง" / "สร้าง/แก้ได้เฉพาะร่าง" ให้สมาชิก (ด่าน/กติกาอยู่ที่ service)</summary>
     [HttpPut("{companyId:guid}/users/{targetUserId:guid}/document-restriction")]
+    [Accounting.Filters.RequireOwner("ตั้งค่าจำกัดเอกสารของสมาชิก")]
     public async Task<ActionResult<ApiResponse<string>>> UpdateDocumentRestriction(Guid companyId, Guid targetUserId,
         [FromBody] UpdateDocumentRestrictionRequest request)
     {
