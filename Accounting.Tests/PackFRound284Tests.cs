@@ -300,4 +300,31 @@ public class PackFRound284Tests
         Assert.Contains("ResolveDocumentHeadingAsync(db, companyId, srcId)", Src("Accounting", "Services", "Implementations", "SettlementReceiptTotalsLoader.cs"));
         Assert.Contains("labels.SourceHeadingLabel(srcHeadingSource)", Src("Accounting", "Services", "Implementations", "DocumentService.cs"));
     }
+
+    // ───────────── T2 L2 แถว [สรุป] ตามการติ๊ก ─────────────
+
+    private static Accounting.Models.Entities.TaxReportLine WLine(int order, string id, string? branch, decimal tax, bool excluded = false)
+        => new() { LineOrder = order, TaxPayerId = id, TaxPayerName = "ผู้รับ " + id, TaxPayerBranchCode = branch, IncomeAmount = tax * 33.33m, TaxAmount = tax, IncomeTypeCode = "40(8)", IsExcluded = excluded };
+
+    [Fact]
+    public void R284_L2_แถวสรุปเพิ่มเมื่อครบสองบรรทัด_ลบเมื่อติ๊กเหลือหนึ่ง_แยกสาขา()
+    {
+        var r = new Accounting.Models.Entities.TaxReport { TaxType = TaxType.WithholdingTax53 };
+        r.Lines.Add(WLine(1, "0105556000002", "00000", 30m));
+        r.Lines.Add(WLine(2, "0105556000002", "00000", 60m, excluded: true));
+        r.Lines.Add(WLine(3, "0105556000002", "00001", 15m));
+        var (add0, rem0) = WhtReportTotals.SyncSummaryRows(r);
+        Assert.Empty(add0); Assert.Empty(rem0);                                  // ทิศตรงข้าม: ไม่มีรายที่ครบสองบรรทัด ⇒ ไม่แตะ
+        r.Lines.Single(l => l.LineOrder == 2).IsExcluded = false;                 // ติ๊กกลับ ⇒ 1 → 2
+        var (add1, _) = WhtReportTotals.SyncSummaryRows(r);
+        var sum = Assert.Single(add1);
+        Assert.Equal(("0105556000002", "00000"), (sum.TaxPayerId, sum.TaxPayerBranchCode));   // สาขา 00001 ไม่ถูกรวม
+        r.Lines.Add(sum); WhtReportTotals.Apply(r);
+        Assert.Equal(90m, sum.TaxAmount);
+        Assert.Equal(105m, r.TotalTaxWithheld);                                    // ยอดหัวไม่นับแถวสรุป
+        r.Lines.Single(l => l.LineOrder == 1).IsExcluded = true;                  // ติ๊กออก ⇒ 2 → 1
+        var (add2, rem2) = WhtReportTotals.SyncSummaryRows(r);
+        Assert.Empty(add2);
+        Assert.Same(sum, Assert.Single(rem2));
+    }
 }

@@ -22572,6 +22572,12 @@ RULES += [
          must=["SourcesHaveDepositApplied = parent.DepositAppliedAmount > 0.005m", "PdfGenerationService.ResolveDocumentHeadingAsync(db, companyId, srcId)", "SourcesOutstandingNow = parent.BalanceDue"],
          why=_R284_WHY + "Q3 (284-9): ตัวไล่ยอดรู้จักการหักมัดจำ (ยอดคงค้างก่อนรับคงที่) · LOW-2 หัวใบต้นทาง"),
 ]
+RULES += [
+    dict(file="Services/Implementations/TaxService.cs", method="GenerateWhtReport",
+         must=["WhtReportTotals.SyncSummaryRows(report).Add", "WhtReportTotals.Apply(report)"],
+         before=[("WhtReportTotals.SyncSummaryRows(report)", "WhtReportTotals.Apply(report)")],
+         why=_R284_WHY + "T2 L2: แถว [สรุป] จากตัวเดียวกับตอนติ๊ก (ไม่มีสำเนาการจัดกลุ่ม)"),
+]
 REVIEWER_CASES += [
     ("R284-1", "DetectEmployeeAsync", "EmployeeIdDuplicateScan.Scan(ids, idCard).MatchId", "ids.FirstOrDefault(e => Accounting.Helpers.EncryptedIdMatch.Same(e.CitizenId, idCard)).Id as Guid?", True),
     ("R284-2", "MatchByDetectorAsync", "await _duplicates.UnreadableEmployeeIdCountAsync(companyId, ct)", "0", True),
