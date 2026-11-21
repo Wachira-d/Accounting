@@ -34,4 +34,4 @@
 2. ตั้งค่าแจ้งเตือนคีย์ใหม่ (ถ้าต้องการ) ที่หน้าแจ้งเตือน: "ระบบอนุมัติใบซื้อร่างจากคู่ค้าเองแล้ว" · "ใบซื้อร่างยังไม่ถูกอนุมัติเอง"
 
 ## ตรวจในเครื่อง
-- build ผ่าน · เทสต์ที่เกี่ยว (pure + Db บน `accounting_test_r288`) ผ่าน · `bash tools/check_all.sh --all --no-dotnet` — ดูผลในข้อความคอมมิตเติม sha
+- build ผ่าน (.NET 8 SDK ติดตั้งในเครื่องนี้) · เทสต์ที่เกี่ยว 912 ตัว (Partner/Slip/Notification/DocumentRestriction/CrossTenant · pure + Db บน `accounting_test_r288`) ผ่าน · `bash tools/check_all.sh --all --no-dotnet` EXIT 0 · commit สุดท้ายของโค้ด 8535cd5e · ไม่ได้รอ CI (คำสั่งรอบนี้)
