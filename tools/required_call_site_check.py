@@ -21419,8 +21419,8 @@ RULES += [
          before=[("TaxFilingLockPolicy.DeclaredOrFiled(report.Status)", "TaxComplianceChecker(_db).CheckAsync(")],
          forbid=["SaveChangesAsync(", "catch"],
          why=_R275B_WHY + "M1 H2(3) ด่านเดียว: Error ของตัวตรวจ ⇒ บล็อก · ร่างไม่ตรงทะเบียน ⇒ 409 สร้างใหม่ · ไม่กลืน error"),
-    dict(file=_R275B_TAX, method="GenerateWhtReport", must=["WhtCertId = cert.Id", "WhtReportTotals.SummaryBranchKey(", "TaxPayerBranchCode = group.Key.Branch"],
-         before=[("ExtractTaxpayerFromJournalEntry(je)", "WhtReportTotals.SummaryBranchKey(")],
+    dict(file=_R275B_TAX, method="GenerateWhtReport", must=["WhtCertId = cert.Id", "WhtReportTotals.SyncSummaryRows(report)"],
+         before=[("ExtractTaxpayerFromJournalEntry(je)", "WhtReportTotals.SyncSummaryRows(report)")],   # รอบ 284: การจัดกลุ่ม (เลข + สาขา SummaryBranchKey) ย้ายเข้าตัวตัดสินเดียว
          why=_R275B_WHY + "H2 บรรทัดอ้างใบ 50 ทวิ · L2 แถวสรุปสร้างหลังบรรทัด JE ล้วน + คีย์สาขา"),
     dict(file=_R275B_TAX, method="LineResponseOf",
          must=["WhtReportLineRule.DescriptionLocked(", "WhtReportLineRule.AmountsLocked(", "WhtReportLineRule.IncludeNeedsReason(", "WhtCertId: l.WhtCertId"],
@@ -22241,7 +22241,7 @@ REVIEWER_CASES += [
      "carryVatFromSource: false, installmentTaxPointDate: payment.PaymentDate", True),
     ("R275C-2", "IssueReceiptForPaymentCoreAsync", "SettlementTaxInvoiceLoader.DecideAsync(", "SettlementReceiptPolicy.CarriesTaxInvoiceRole(", True),
     ("R275C-3", "TryReclassifyUndueOutputVatAsync", "inv.OutputVatDueAt ??= when", "inv.OutputVatDueAt = when", True),
-    ("R275C-4", "CreateSettlementReceiptAsync", "labels.SettlementReceiptLine(invoice.DocumentType, invoice.DocumentNumber, installment: false)",
+    ("R275C-4", "CreateSettlementReceiptAsync", "labels.SettlementReceiptLine(srcLabel, invoice.DocumentNumber, installment: false)",
      "$\"รับชำระเงินตามใบแจ้งหนี้เลขที่ {invoice.DocumentNumber}\"", True),
     # เดิม ReceiptHoldsTaxPointFor ตัวแรกของไฟล์อยู่ใน UndoOutputVatOnPaymentVoidAsync ⇒ ไม่เคยแตะเมธอดเป้าหมาย
     ("R275C-5", "UndoInstallmentReclassOnPaymentVoidAsync", "if (receiptDoc != null && DocumentVoidPreconditions.ReceiptHoldsTaxPointFor(",
@@ -22623,10 +22623,36 @@ RULES += [
          must=["DenyDocAsync(", "d.CompanyId == companyId && d.Id == documentId", "DocumentLabels.For(src.DocumentLanguage)", "labels.SettlementReceiptLine(", "labels.SettlementUnitItem"],
          why=_R284_WHY + "T3 MED-5: ค่าตั้งต้นบรรทัดใบเสร็จจาก DocumentLabels ตามภาษาของใบต้นทาง (ตัวเดียวกับใบเสร็จที่ระบบออก) · tenant + สิทธิ์ก่อนอ่าน"),
 ]
+RULES += [
+    dict(file="Controllers/AccountingController.cs", method="GetMonthSnapshot",
+         must=["FinancialReportAccess.AllowsAsync(db, permissions, companyId,", "FinancialReportAccess.MonthSnapshot", "FinancialReportAccess.SnapshotHiddenNotice"],
+         before=[("FinancialReportAccess.AllowsAsync(", "_accountingService.GetSnapshotTotalsAsync(")],
+         why=_R284_WHY + "Q1 (284-7): ยอดเดือนผ่านด่านรายงานการเงินก่อนคำนวณ · ไม่ผ่าน = ซ่อนยอดพร้อมป้าย (หน้าหลักโหมดง่ายยังใช้ได้)"),
+    dict(file="Controllers/TaxFilingExportController.cs", method="Preview",
+         must=["FinancialReportAccess.AllowsAsync(_db, _permissions, companyId,"],
+         why=_R284_WHY + "Q1 (284-7): พรีวิวแบบภาษีที่ไม่ใช่เงินเดือน = ด่านเดียวกับไฟล์ของแบบนั้น"),
+    dict(file="Services/Implementations/RolePermissionService.cs", method="PermissionDeniedMenuIdsAsync",
+         must=["MenuPermissionMap.DeniedMenuIdsAsync(", "hasCustomRole)"],
+         why=_R284_WHY + "Q1 (284-7): เมนูรายงานการเงินตัดด้วยกติกาเดียวกับด่าน API (ไม่ผูกบทบาท = เดิม)"),
+    dict(file="Services/Implementations/DocumentService.cs", method="CreateSettlementReceiptAsync",
+         must=["SettlementReceiptTotals.ReceiptPaperAmount(payment.Amount, payment.FeeAmount)", "labels.SourceHeadingLabel(srcHeadingSource)"],
+         why=_R284_WHY + "Q2 (284-8): ใบเสร็จแสดงยอดที่ลูกค้าชำระเต็ม (ค่าธรรมเนียมไม่ลดยอด) · LOW-2 ชื่อใบต้นทางตามหัวที่พิมพ์จริง"),
+    dict(file="Services/Implementations/SettlementReceiptTotalsLoader.cs", method="ResolveAsync",
+         must=["SourcesHaveDepositApplied = parent.DepositAppliedAmount > 0.005m", "PdfGenerationService.ResolveDocumentHeadingAsync(db, companyId, srcId)", "SourcesOutstandingNow = parent.BalanceDue"],
+         why=_R284_WHY + "Q3 (284-9): ตัวไล่ยอดรู้จักการหักมัดจำ (ยอดคงค้างก่อนรับคงที่) · LOW-2 หัวใบต้นทาง"),
+]
+RULES += [
+    dict(file="Services/Implementations/TaxService.cs", method="GenerateWhtReport",
+         must=["WhtReportTotals.SyncSummaryRows(report).Add", "WhtReportTotals.Apply(report)"],
+         before=[("WhtReportTotals.SyncSummaryRows(report)", "WhtReportTotals.Apply(report)")],
+         why=_R284_WHY + "T2 L2: แถว [สรุป] จากตัวเดียวกับตอนติ๊ก (ไม่มีสำเนาการจัดกลุ่ม)"),
+]
 REVIEWER_CASES += [
     ("R284-1", "DetectEmployeeAsync", "EmployeeIdDuplicateScan.Scan(ids, idCard).MatchId", "ids.FirstOrDefault(e => Accounting.Helpers.EncryptedIdMatch.Same(e.CitizenId, idCard)).Id as Guid?", True),
     ("R284-2", "MatchByDetectorAsync", "await _duplicates.UnreadableEmployeeIdCountAsync(companyId, ct)", "0", True),
     ("R284-3", "ExportBankTransfer", "PayrollExportSheets.BankTransferSummaryOf(rows)", "default!", True),
+    ("R284-4", "GetMonthSnapshot", "FinancialReportAccess.MonthSnapshot))", "System.Array.Empty<string>()))", True),
+    ("R284-5", "CreateSettlementReceiptAsync", "SettlementReceiptTotals.ReceiptPaperAmount(payment.Amount, payment.FeeAmount)", "payment.Amount", True),
 ]
 
 # ── รอบ 285: ยืนยันเลขผู้เสียภาษีของบริษัท (คำตัดสิน 285-1…285-6 · ตัวตัดสินเดียว Helpers/CompanyTaxIdVerification) ──

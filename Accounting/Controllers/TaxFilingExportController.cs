@@ -1,3 +1,5 @@
+using Accounting.Models.Constants;
+using Accounting.Filters;
 using Accounting.Helpers;
 using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.Tax;
@@ -92,6 +94,8 @@ public class TaxFilingExportController : ControllerBase
     /// by guessing the GUID. Returns null on success, 403 ActionResult on
     /// failure. Cached per-request via _membershipChecked.</summary>
     private Guid? _membershipCheckedFor;
+    private static readonly string[] TaxFilingKeys = { PermissionKeys.TaxExport, PermissionKeys.TaxFile };
+
     private async Task<ActionResult?> EnsureMemberAsync(Guid companyId)
     {
         if (_membershipCheckedFor == companyId) return null;
@@ -133,6 +137,7 @@ public class TaxFilingExportController : ControllerBase
     }
 
     /// <summary>Export ภ.ง.ด.3 (Service WHT individuals) for e-Filing</summary>
+    [RequireReportAccess(PermissionKeys.TaxExport, PermissionKeys.TaxFile)]   // รอบ 284 (284-7): ไฟล์ยื่นภาษี/งบ DBD = ตัวเลขรวมของบริษัท · ไฟล์ของเงินเดือนคงด่าน Payroll.View
     [HttpGet("pnd3")]
     public async Task<IActionResult> ExportPnd3(Guid companyId, [FromQuery] int year, [FromQuery] int month)
     {
@@ -142,6 +147,7 @@ public class TaxFilingExportController : ControllerBase
     }
 
     /// <summary>Export ภ.ง.ด.53 (Service WHT companies) for e-Filing</summary>
+    [RequireReportAccess(PermissionKeys.TaxExport, PermissionKeys.TaxFile)]   // รอบ 284 (284-7): ไฟล์ยื่นภาษี/งบ DBD = ตัวเลขรวมของบริษัท · ไฟล์ของเงินเดือนคงด่าน Payroll.View
     [HttpGet("pnd53")]
     public async Task<IActionResult> ExportPnd53(Guid companyId, [FromQuery] int year, [FromQuery] int month)
     {
@@ -171,6 +177,7 @@ public class TaxFilingExportController : ControllerBase
     }
 
     /// <summary>Export ภ.พ.30 (VAT filing report)</summary>
+    [RequireReportAccess(PermissionKeys.TaxExport, PermissionKeys.TaxFile)]   // รอบ 284 (284-7): ไฟล์ยื่นภาษี/งบ DBD = ตัวเลขรวมของบริษัท · ไฟล์ของเงินเดือนคงด่าน Payroll.View
     [HttpGet("pp30")]
     public async Task<IActionResult> ExportPp30(Guid companyId, [FromQuery] int year, [FromQuery] int month)
     {
@@ -181,6 +188,7 @@ public class TaxFilingExportController : ControllerBase
 
     /// <summary>Export ภ.ง.ด.2 (Monthly dividend WHT). บริษัทจ่ายเงินปันผล
     /// 10% หัก ณ ที่จ่าย — นำส่งภายในวันที่ 7 ของเดือนถัดไป.</summary>
+    [RequireReportAccess(PermissionKeys.TaxExport, PermissionKeys.TaxFile)]   // รอบ 284 (284-7): ไฟล์ยื่นภาษี/งบ DBD = ตัวเลขรวมของบริษัท · ไฟล์ของเงินเดือนคงด่าน Payroll.View
     [HttpGet("pnd2")]
     public async Task<IActionResult> ExportPnd2(Guid companyId, [FromQuery] int year, [FromQuery] int month)
     {
@@ -191,6 +199,7 @@ public class TaxFilingExportController : ControllerBase
 
     /// <summary>Export ภ.พ.36 (Foreign service VAT self-assessment per
     /// §83/6). ซื้อบริการต่างประเทศ → self-assess 7% VAT.</summary>
+    [RequireReportAccess(PermissionKeys.TaxExport, PermissionKeys.TaxFile)]   // รอบ 284 (284-7): ไฟล์ยื่นภาษี/งบ DBD = ตัวเลขรวมของบริษัท · ไฟล์ของเงินเดือนคงด่าน Payroll.View
     [HttpGet("pp36")]
     public async Task<IActionResult> ExportPp36(Guid companyId, [FromQuery] int year, [FromQuery] int month)
     {
@@ -201,6 +210,7 @@ public class TaxFilingExportController : ControllerBase
 
     /// <summary>Export ภ.ง.ด.54 (WHT จ่ายต่างประเทศ — ค่าสิทธิ์/ดอกเบี้ย/
     /// บริการ ที่หัก ณ ที่จ่ายตาม DTA).</summary>
+    [RequireReportAccess(PermissionKeys.TaxExport, PermissionKeys.TaxFile)]   // รอบ 284 (284-7): ไฟล์ยื่นภาษี/งบ DBD = ตัวเลขรวมของบริษัท · ไฟล์ของเงินเดือนคงด่าน Payroll.View
     [HttpGet("pnd54")]
     public async Task<IActionResult> ExportPnd54(Guid companyId, [FromQuery] int year, [FromQuery] int month)
     {
@@ -212,6 +222,7 @@ public class TaxFilingExportController : ControllerBase
     /// <summary>Export ภ.ง.ด.51 (Half-year CIT §67 ทวิ). คำนวณกำไรครึ่งปี + ประมาณการ
     /// ทั้งปี + ภาษีครึ่งปี = annual/2. ยื่นภายใน 2 เดือนนับจากวันสุดท้ายของ
     /// 6 เดือนแรก. รอบ < 12 เดือน (ปีแรก) ยกเว้น.</summary>
+    [RequireReportAccess(PermissionKeys.TaxExport, PermissionKeys.TaxFile)]   // รอบ 284 (284-7): ไฟล์ยื่นภาษี/งบ DBD = ตัวเลขรวมของบริษัท · ไฟล์ของเงินเดือนคงด่าน Payroll.View
     [HttpGet("pnd51")]
     public async Task<IActionResult> ExportPnd51(Guid companyId, [FromQuery] int year)
     {
@@ -223,6 +234,7 @@ public class TaxFilingExportController : ControllerBase
     /// <summary>Export DBD XBRL instance document — งบการเงินรายปีตามมาตรฐาน
     /// TFRS-NPAEs taxonomy. ต้องตั้ง BookkeeperName + BookkeeperCpdNumber ใน
     /// CompanySettings ก่อน (พ.ร.บ.การบัญชี ม.19) — ไม่งั้น throw.</summary>
+    [RequireReportAccess(PermissionKeys.TaxExport, PermissionKeys.TaxFile)]   // รอบ 284 (284-7): ไฟล์ยื่นภาษี/งบ DBD = ตัวเลขรวมของบริษัท · ไฟล์ของเงินเดือนคงด่าน Payroll.View
     [HttpGet("dbd-xbrl")]
     public async Task<IActionResult> ExportDbdXbrl(Guid companyId, [FromQuery] int year, CancellationToken ct)
     {
@@ -232,6 +244,7 @@ public class TaxFilingExportController : ControllerBase
     }
 
     /// <summary>Preview XBRL totals (ไม่ดาวน์โหลด file) — สำหรับ UI โชว์ก่อนยืนยัน</summary>
+    [RequireReportAccess(PermissionKeys.TaxExport, PermissionKeys.TaxFile)]   // รอบ 284 (284-7): ไฟล์ยื่นภาษี/งบ DBD = ตัวเลขรวมของบริษัท · ไฟล์ของเงินเดือนคงด่าน Payroll.View
     [HttpGet("dbd-xbrl/preview")]
     public async Task<ActionResult<ApiResponse<object>>> PreviewDbdXbrl(
         Guid companyId, [FromQuery] int year, CancellationToken ct)
@@ -311,6 +324,9 @@ public class TaxFilingExportController : ControllerBase
         {
             var block = await CheckPayrollAsync(companyId); if (block != null) return (ActionResult<ApiResponse<TaxFilingExportResult>>)block;
         }
+        // รอบ 284 (284-7): พรีวิวแบบภาษีอื่น = ด่านเดียวกับไฟล์ของแบบนั้น (TaxExport/TaxFile · ไม่ผูกบทบาท = เดิม)
+        else if (!await FinancialReportAccess.AllowsAsync(_db, _permissions, companyId, JwtHelper.GetUserIdFromClaims(User), TaxFilingKeys))
+            return StatusCode(403, new ApiResponse<TaxFilingExportResult>(false, null, FinancialReportAccess.DeniedMessage(TaxFilingKeys)));
 
         // ภ.ง.ด.1/1ก: ข้อความดูตัวอย่าง (PreviewText) ปิดบังเลขผู้มีเงินได้เมื่อไม่มี Pii.View — หน้าเว็บไม่ดึงไฟล์ยื่นจริงมาแสดงอีก (P1-3) ·
         // previewOnly: ด่านของไฟล์นำเข้า (เลขผู้หัก/สาขา) ไม่กั้นพรีวิว — แสดงเป็นคำเตือนในสรุปแทน (W1c P2-4)

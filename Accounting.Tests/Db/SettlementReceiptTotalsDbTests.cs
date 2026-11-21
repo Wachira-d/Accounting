@@ -178,13 +178,14 @@ public class SettlementReceiptTotalsDbTests
         var after = await read.Documents.AsNoTracking().Where(d => d.Id == tiv.Id).Select(d => new { d.Status, d.BalanceDue }).SingleAsync();
         Assert.Equal((DocumentStatus.Paid, 0m), (after.Status, after.BalanceDue));
         var html = await HtmlAsync(s.CompanyId, rec.Id);
-        Assert.Contains("<span>ยอดรับชำระ</span><span>748,970.00</span>", html);
+        // รอบ 284 (คำตัดสิน 284-8 · T3 LOW-5): ใบเสร็จแสดงยอดที่ลูกค้าชำระเต็ม 749,000 (ค่าธรรมเนียมเป็นค่าใช้จ่ายผู้ขาย — ไม่ลดยอดบนใบ) · เดิม 748,970
+        Assert.Contains("<span>ยอดรับชำระ</span><span>749,000.00</span>", html);
         Assert.Contains(System.Net.WebUtility.HtmlEncode("ตัดชำระครั้งนี้ 749,000.00: รับเงิน 748,970.00 · ค่าธรรมเนียมที่ถูกหัก 30.00"), html);
         Assert.DoesNotContain("รับชำระบางส่วน", html);
         // L3: หน้าเอกสารของลูกค้า — ตัวโหลด/ข้อความเดียวกับกระดาษ
         var dto = await SettlementReceiptTotalsLoader.DtoForAsync(read, s.CompanyId, rec.Id, english: false);
         Assert.NotNull(dto);
-        Assert.Equal(("ยอดรับชำระ", 748_970m), (dto!.AmountLabel, dto.AmountReceived));
+        Assert.Equal(("ยอดรับชำระ", 749_000m), (dto!.AmountLabel, dto.AmountReceived));
         Assert.Equal((await Docs(read).GetDocumentAsync(s.CompanyId, rec.Id)).SettlementTotals!.Lines, dto.Lines);
         // tenant: บริษัทอื่นอ่านไม่ได้
         Assert.Null(await SettlementReceiptTotalsLoader.DtoForAsync(read, Guid.NewGuid(), rec.Id, english: false));

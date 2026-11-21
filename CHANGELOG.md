@@ -7524,6 +7524,7 @@ LOW-1 "ส่งได้บางส่วน" · LOW-2 การ์ด `#HeyNe
 - 284-4 (T3 MED-5 ส่วนที่ค้าง): `GET document/{id}/receipt-line-default` — ฟอร์มใบเสร็จไม่มีสำเนาข้อความไทย
 - 284-6: ข้อความ "URL ของระบบ" ชี้หน้า `/admin/system-email.html` ช่อง App Base URL (`SystemBaseUrl.AdminPagePath/AdminPageHint`) + ป้าย app.nextacc.com ไม่ใช่โดเมนเรา
 - 284-5: ด่าน `reports/month-snapshot` — ไม่ทำแยก (รายงานทั้ง AccountingController ไม่มีคีย์สิทธิ์) ⇒ คำถามเจ้าของ · เทสต์ `PackFRound284Tests` + Db `PackFRound284DbTests` · commit 6e5036e6
+- 284-7…284-11 (ชุดสอง · ผู้ประสานงานตัดสินตามที่เจ้าของมอบอำนาจ): ด่านรายงานการเงิน `FinancialReportAccess` (ไม่ผูกบทบาท = เดิม) + `Round284Migration` · ใบเสร็จแสดงยอดชำระเต็มรวมค่าธรรมเนียม · หักมัดจำในตัวไล่ยอด · ชื่อใบต้นทางตามหัวจริง · แถว [สรุป] ตามการติ๊ก · commit f90fef74
 
 _รอบ 285 (2026-11-21): ยืนยันเลขผู้เสียภาษีของบริษัท + ตอบ 275-E-7 (คำตัดสิน 285-1…285-7 · `erp-review/2026-11-21/dev-285-taxid-verify-pnd1.md`)_
 - 285-1/2: บริษัทยื่น ภ.พ.20/หนังสือรับรอง (`settings.html` · `POST …/tax-id-verification`) · ชื่อเทียบทะเบียนตรงตัว (ไม่ fuzzy · ขัด = ยื่นไม่ได้) · ผู้ดูแลแพลตฟอร์มอนุมัติ/ปฏิเสธ/ถอนที่ `/admin/taxid-verifications.html` · audit ทุกครั้ง

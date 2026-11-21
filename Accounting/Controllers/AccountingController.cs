@@ -221,6 +221,7 @@ public class AccountingController : ControllerBase
 
     // ===== General Ledger =====
 
+    [RequireReportAccess(PermissionKeys.AccountingView, PermissionKeys.ReportsFinancial)]
     [HttpGet("reports/general-ledger")]
     public async Task<ActionResult<ApiResponse<GeneralLedgerResponse>>> GetGeneralLedger(
         Guid companyId, [FromQuery] DateTime fromDate, [FromQuery] DateTime toDate, [FromQuery] Guid? accountId = null,
@@ -232,6 +233,7 @@ public class AccountingController : ControllerBase
         return Ok(new ApiResponse<GeneralLedgerResponse>(true, result));
     }
 
+    [RequireReportAccess(PermissionKeys.AccountingView, PermissionKeys.ReportsFinancial)]
     [HttpGet("reports/gl-debug")]
     public async Task<ActionResult<ApiResponse<object>>> GetGlDebug(
         Guid companyId, [FromQuery] DateTime? fromDate = null, [FromQuery] DateTime? toDate = null)
@@ -267,6 +269,7 @@ public class AccountingController : ControllerBase
 
     // ===== Reports =====
 
+    [RequireReportAccess(PermissionKeys.ReportsFinancial)]
     [HttpGet("reports/trial-balance")]
     public async Task<ActionResult<ApiResponse<TrialBalanceResponse>>> GetTrialBalance(
         Guid companyId, [FromQuery] DateTime? asOfDate = null,
@@ -276,6 +279,7 @@ public class AccountingController : ControllerBase
         return Ok(new ApiResponse<TrialBalanceResponse>(true, result));
     }
 
+    [RequireReportAccess(PermissionKeys.ReportsFinancial)]
     [HttpGet("reports/balance-sheet")]
     public async Task<ActionResult<ApiResponse<BalanceSheetResponse>>> GetBalanceSheet(
         Guid companyId, [FromQuery] DateTime? asOfDate = null,
@@ -285,6 +289,7 @@ public class AccountingController : ControllerBase
         return Ok(new ApiResponse<BalanceSheetResponse>(true, result));
     }
 
+    [RequireReportAccess(PermissionKeys.ReportsFinancial)]
     [HttpGet("reports/profit-loss")]
     public async Task<ActionResult<ApiResponse<ProfitAndLossResponse>>> GetProfitAndLoss(
         Guid companyId, [FromQuery] DateTime fromDate, [FromQuery] DateTime toDate,
@@ -296,6 +301,7 @@ public class AccountingController : ControllerBase
 
     /// <summary>งบกำไรขาดทุนเปรียบเทียบ (ทีม M) — <c>granularity</c> = month · quarter · year (ไตรมาส/ปีตามรอบบัญชีของบริษัท) ·
     /// <c>comparePriorYear</c> = เพิ่มช่วงเดียวกันปีก่อน · ทุกคอลัมน์มาจากตัวคำนวณเดียวกับ <c>reports/profit-loss</c></summary>
+    [RequireReportAccess(PermissionKeys.ReportsFinancial)]
     [HttpGet("reports/profit-loss/compare")]
     public async Task<ActionResult<ApiResponse<PnlComparisonResponse>>> GetProfitAndLossComparison(
         Guid companyId, [FromQuery] DateTime? fromDate = null, [FromQuery] DateTime? toDate = null, [FromQuery] string? granularity = "month",
@@ -309,6 +315,7 @@ public class AccountingController : ControllerBase
     }
 
     /// <summary>drill-down ช่องตัวเลขของงบกำไรขาดทุน → รายการ JE ของผังในช่วง + ลิงก์เอกสารต้นทาง (สิทธิ์ปิดบังเดียวกับบัญชีแยกประเภท)</summary>
+    [RequireReportAccess(PermissionKeys.ReportsFinancial)]
     [HttpGet("reports/profit-loss/drilldown")]
     public async Task<ActionResult<ApiResponse<PnlDrilldownResponse>>> GetProfitAndLossDrilldown(
         Guid companyId, [FromQuery] Guid accountId, [FromQuery] DateTime fromDate, [FromQuery] DateTime toDate,
@@ -326,12 +333,18 @@ public class AccountingController : ControllerBase
     /// (Lines × Account joins). Server-aggregates with a single GROUP BY.</summary>
     [HttpGet("reports/month-snapshot")]
     public async Task<ActionResult<ApiResponse<object>>> GetMonthSnapshot(
-        Guid companyId, [FromQuery] DateTime fromDate, [FromQuery] DateTime toDate)
+        Guid companyId, [FromQuery] DateTime fromDate, [FromQuery] DateTime toDate,
+        [FromServices] Accounting.Data.AccountingDbContext db, [FromServices] IPermissionService permissions)
     {
+        // รอบ 284 (คำตัดสิน 284-7 · Q1 ค): ยอดเดือน = ตัวเลขการเงินรวม ⇒ ด่านเดียวกับงบ (Reports.Financial หรือ Reports.Dashboard · ไม่ผูกบทบาท = เดิม) ·
+        // ไม่ผ่าน ⇒ 200 ไม่มีตัวเลข + ป้ายเหตุ (หน้าหลักโหมดง่ายของพนักงานยังใช้ได้ — ไม่ 403 ทั้งหน้า)
+        if (!await FinancialReportAccess.AllowsAsync(db, permissions, companyId, JwtHelper.GetUserIdFromClaims(User), FinancialReportAccess.MonthSnapshot))
+            return Ok(new ApiResponse<object>(true, new { hidden = true, notice = FinancialReportAccess.SnapshotHiddenNotice }));
         var (rev, exp) = await _accountingService.GetSnapshotTotalsAsync(companyId, fromDate, toDate);
         return Ok(new ApiResponse<object>(true, new { totalRevenue = rev, totalExpenses = exp, net = rev - exp }));
     }
 
+    [RequireReportAccess(PermissionKeys.ReportsFinancial)]
     [HttpGet("reports/cash-flow")]
     public async Task<ActionResult<ApiResponse<CashFlowStatementResponse>>> GetCashFlowStatement(
         Guid companyId, [FromQuery] DateTime fromDate, [FromQuery] DateTime toDate,

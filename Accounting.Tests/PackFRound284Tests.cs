@@ -141,7 +141,7 @@ public class PackFRound284Tests
         Assert.DoesNotContain("unitEl.value = 'รายการ'", html);
         Assert.Contains("/receipt-line-default`", html);
         var ctl = Src("Accounting", "Controllers", "DocumentController.cs");
-        Assert.Contains("labels.SettlementReceiptLine(src.DocumentType, src.DocumentNumber, installment: false)", ctl);
+        Assert.Contains("labels.SettlementReceiptLine(srcLabel, src.DocumentNumber, installment: false)", ctl);
         Assert.Contains("d.CompanyId == companyId && d.Id == documentId", ctl);
         // เซิร์ฟเวอร์: ใบอังกฤษได้ข้อความอังกฤษ · ใบไทยได้ไทย (ตัวเดียวกับใบเสร็จที่ระบบออกเอง)
         Assert.DoesNotMatch("[฀-๿]", DocumentLabels.For("en").SettlementReceiptLine(DocumentType.Invoice, "INV-1", false) + DocumentLabels.For("en").SettlementUnitItem);
@@ -173,5 +173,158 @@ public class PackFRound284Tests
         Assert.DoesNotContain("ผู้ดูแลระบบ → ตั้งค่าเว็บไซต์", PaymentLiveGate.SystemBaseUrlMissing);
         Assert.Contains("App Base URL", PaymentLiveGate.SystemBaseUrlMissing);
         Assert.Contains("system-email.html", Src("Accounting", "wwwroot", "admin", "site-settings.html"));
+    }
+
+    // ───────────── Q1 (284-7) ด่านรายงานการเงิน ─────────────
+
+    [Fact]
+    public void R284_Q1_ตัวตัดสิน_ไม่ผูกบทบาทผ่านตามเดิม_บทบาทกำหนดเองต้องมีคีย์_ไม่ใช่สมาชิกไม่ผ่าน()
+    {
+        Assert.True(FinancialReportAccess.Allows(keyGranted: false, member: true, hasCustomRole: false));   // (ก) เมนู "*" = เดิม
+        Assert.False(FinancialReportAccess.Allows(keyGranted: false, member: true, hasCustomRole: true));   // บทบาทไม่ติ๊กคีย์ ⇒ ปิด
+        Assert.True(FinancialReportAccess.Allows(keyGranted: true, member: true, hasCustomRole: true));
+        Assert.False(FinancialReportAccess.Allows(keyGranted: false, member: false, hasCustomRole: false)); // fail closed
+        // (ข) นักบัญชีในตัวได้คีย์ทุกตัวของด่าน
+        foreach (var k in new[] { Accounting.Models.Constants.PermissionKeys.ReportsFinancial, Accounting.Models.Constants.PermissionKeys.AccountingView,
+                     Accounting.Models.Constants.PermissionKeys.ReportsOperational, Accounting.Models.Constants.PermissionKeys.TaxExport })
+            Assert.True(BuiltInRolePermissions.Grants(UserRole.Accountant, k));
+    }
+
+    [Fact]
+    public async Task R284_Q1_เมนูรายงาน_ไม่ผูกบทบาทไม่ถูกตัด_บทบาทไม่มีคีย์ถูกตัด()
+    {
+        var none = await MenuPermissionMap.DeniedMenuIdsAsync(_ => Task.FromResult(false), hasCustomRole: false) ?? new List<string>();
+        foreach (var m in MenuPermissionMap.LegacyKeys.Keys) Assert.DoesNotContain(m, none);
+        Assert.Contains("dashboard", none);                                  // ด่านเข้มเดิมไม่ผ่อน
+        var role = await MenuPermissionMap.DeniedMenuIdsAsync(_ => Task.FromResult(false), hasCustomRole: true) ?? new List<string>();
+        foreach (var m in MenuPermissionMap.LegacyKeys.Keys) Assert.Contains(m, role);
+        var granted = await MenuPermissionMap.DeniedMenuIdsAsync(k => Task.FromResult(k == Accounting.Models.Constants.PermissionKeys.ReportsFinancial), hasCustomRole: true) ?? new List<string>();
+        Assert.DoesNotContain("reports", granted);
+        Assert.DoesNotContain("general-ledger", granted);                   // any-of (AccountingView หรือ ReportsFinancial)
+        Assert.Contains("aging", granted);
+    }
+
+    [Fact]
+    public void R284_Q1_ทุกรายงานการเงินติดด่าน_คีย์ตรงทะเบียนเมนู()
+    {
+        IReadOnlyList<string>? KeysOf(Type t, string method)
+        {
+            var m = t.GetMethods().Single(x => x.Name == method);
+            var a = m.GetCustomAttributes(typeof(Accounting.Filters.RequireReportAccessAttribute), true).Cast<Accounting.Filters.RequireReportAccessAttribute>().SingleOrDefault()
+                ?? t.GetCustomAttributes(typeof(Accounting.Filters.RequireReportAccessAttribute), true).Cast<Accounting.Filters.RequireReportAccessAttribute>().SingleOrDefault();
+            return a == null ? null : (string[])typeof(Accounting.Filters.RequireReportAccessAttribute)
+                .GetField("_keys", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!.GetValue(a)!;
+        }
+        var acc = typeof(Accounting.Controllers.AccountingController);
+        foreach (var m in new[] { "GetTrialBalance", "GetBalanceSheet", "GetProfitAndLoss", "GetProfitAndLossComparison", "GetProfitAndLossDrilldown", "GetCashFlowStatement" })
+            Assert.Equal(MenuPermissionMap.LegacyKeys["reports"], KeysOf(acc, m));
+        Assert.Equal(MenuPermissionMap.LegacyKeys["general-ledger"], KeysOf(acc, "GetGeneralLedger"));
+        Assert.Equal(MenuPermissionMap.LegacyKeys["aging"], KeysOf(typeof(Accounting.Controllers.AgingReportController), "GetReceivableAging"));
+        Assert.Equal(MenuPermissionMap.LegacyKeys["cash-forecast"], KeysOf(typeof(Accounting.Controllers.CashForecastController), "GetDetailed"));
+        // month-snapshot: ไม่ 403 ทั้งหน้า — ซ่อนยอดพร้อมป้าย (หน้าหลักโหมดง่ายของพนักงานใช้ได้)
+        var src = Src("Accounting", "Controllers", "AccountingController.cs");
+        Assert.Contains("FinancialReportAccess.AllowsAsync(db, permissions, companyId, JwtHelper.GetUserIdFromClaims(User), FinancialReportAccess.MonthSnapshot)", src);
+        Assert.Contains("hidden = true, notice = FinancialReportAccess.SnapshotHiddenNotice", src);
+        Assert.Contains("pl.hidden", Src("Accounting", "wwwroot", "simple.html"));
+        // ไฟล์เงินเดือนของ tax-filing-export คงด่าน Payroll.View (ไม่ใส่ด่านภาษี — ฝ่าย HR ไม่เสีย สปส.)
+        Assert.Null(KeysOf(typeof(Accounting.Controllers.TaxFilingExportController), "ExportSps103"));
+    }
+
+    [Fact]
+    public void R284_Q1_migrationครั้งเดียว_บทบาทที่ติ๊กเมนูได้คีย์ของหน้า()
+    {
+        var sql = string.Join("\n", Round284Migration.Statements());
+        Assert.Contains(Round284Migration.MarkerKey, sql);
+        Assert.Contains("ON CONFLICT (\"CompanyRoleId\", \"MenuItemId\") DO NOTHING", sql);   // ไม่ทับค่าที่เจ้าของตั้ง (CanAccess=false คงเดิม)
+        foreach (var (menu, key) in Round284Migration.MenuGrants)
+        {
+            Assert.Contains($"('{menu}', '{key}')", sql);
+            if (MenuPermissionMap.LegacyKeys.TryGetValue(menu, out var keys)) Assert.Contains(key, keys);   // คีย์ที่ให้เปิดหน้านั้นได้จริง
+        }
+    }
+
+    // ───────────── Q2 (284-8) ค่าธรรมเนียมฝั่งผู้รับ ─────────────
+
+    [Fact]
+    public void R284_Q2_ใบเสร็จแสดงยอดที่ลูกค้าชำระเต็ม_ไม่หักค่าธรรมเนียม()
+    {
+        Assert.Equal(749_000m, SettlementReceiptTotals.ReceiptPaperAmount(748_970m, 30m));
+        Assert.Equal(1_000m, SettlementReceiptTotals.ReceiptPaperAmount(1_000m, 0m));   // ทิศตรงข้าม: ไม่มีค่าธรรมเนียม = เดิม
+        Assert.Equal(1_000m, SettlementReceiptTotals.ReceiptPaperAmount(1_000m, -5m));  // ค่าติดลบไม่ลดยอด
+        Assert.Contains("ReceiptPaperAmount(payment.Amount, payment.FeeAmount)", Src("Accounting", "Services", "Implementations", "DocumentService.cs"));
+    }
+
+    // ───────────── Q3 (284-9) หักมัดจำ ─────────────
+
+    private static readonly DateTime D0 = new(2026, 10, 1, 0, 0, 0, DateTimeKind.Utc);
+
+    [Fact]
+    public void R284_Q3_หักมัดจำ_ยอดคงค้างก่อนรับคงที่_ก่อนและหลังมีงวดถัดไป()
+    {
+        var me = new SettlementReceiptTotals.ThisSettlement(D0.AddDays(5), D0.AddDays(5), 200m, 0m, 0m, 0m);
+        // ตอนออกใบเสร็จ: มัดจำ 300 หักแล้ว (ไม่มีแถว) · ยอดค้างหลังรับ 500
+        var atIssue = SettlementReceiptTotals.Walk(1000m, Array.Empty<SettlementReceiptTotals.LedgerEvent>(), me, 500m);
+        // ภายหลัง: รับงวดถัดไป 500 ⇒ ยอดค้าง 0 (เดิม "คงค้างก่อนรับ" กระโดดเป็น 1,000)
+        var later = SettlementReceiptTotals.Walk(1000m, new[] { new SettlementReceiptTotals.LedgerEvent(SettlementReceiptTotals.EventKind.Payment, D0.AddDays(9), D0.AddDays(9), 500m) }, me, 0m);
+        Assert.Equal((700m, 500m, 300m), (atIssue.BalanceBefore, atIssue.BalanceAfterRaw, atIssue.PriorOther));
+        Assert.Equal((700m, 500m, 300m), (later.BalanceBefore, later.BalanceAfterRaw, later.PriorOther));
+        Assert.Equal(0m, later.PriorSettled);                                // ไม่ใช่ "รับชำระก่อนหน้า" และไม่ใช่ส่วนลด
+    }
+
+    [Fact]
+    public void R284_Q3_ทิศตรงข้าม_ไม่มีมัดจำ_ไล่ตามเดิม_บรรทัดมัดจำเฉพาะใบที่หักจริง()
+    {
+        var me = new SettlementReceiptTotals.ThisSettlement(D0.AddDays(5), D0.AddDays(5), 200m, 0m, 0m, 0m);
+        var w = SettlementReceiptTotals.Walk(1000m, new[] { new SettlementReceiptTotals.LedgerEvent(SettlementReceiptTotals.EventKind.Payment, D0.AddDays(9), D0.AddDays(9), 500m) }, me, 300m);
+        Assert.Equal((1000m, 800m, 0m), (w.BalanceBefore, w.BalanceAfterRaw, w.PriorOther));
+        var src = new SettlementReceiptTotals.Source(DocumentType.Invoice, "INV-1", D0, 934.58m, 65.42m, 0m, 1000m);
+        SettlementReceiptTotals.Facts F(bool dep) => new(DocumentType.Receipt, false, false, 0m, 0m, 200m, new[] { src }, me,
+            Array.Empty<SettlementReceiptTotals.LedgerEvent>(), 500m, null, dep);
+        Assert.Equal(300m, SettlementReceiptTotals.Decide(F(true))!.PriorOther);
+        Assert.Equal(0m, SettlementReceiptTotals.Decide(F(false))!.PriorOther);    // ไม่ติดป้ายมัดจำให้ใบที่ไม่ได้หัก
+        Assert.Contains(DocumentLabels.For("th").SettlementTotalsLines(SettlementReceiptTotals.Decide(F(true))!), l => l.Contains("ตัดยอดด้วยเงินมัดจำที่รับแล้ว 300.00"));
+        Assert.DoesNotMatch("[฀-๿]", string.Join(" ", DocumentLabels.For("en").SettlementTotalsLines(SettlementReceiptTotals.Decide(F(true))!)));
+    }
+
+    // ───────────── T3 LOW-2 ชื่อใบต้นทาง ─────────────
+
+    [Fact]
+    public void R284_LOW2_ชื่อใบต้นทาง_ใช้หัวที่พิมพ์จริงเมื่อภาษาตรง_ทิศตรงข้ามชื่อชนิดเดิม()
+    {
+        var th = DocumentLabels.For("th");
+        var s = new SettlementReceiptTotals.Source(DocumentType.TaxInvoice, "TIV-1", D0, 100m, 7m, 0m, 107m, "ใบแจ้งหนี้/ใบกำกับภาษี", "th");
+        Assert.Equal("ใบแจ้งหนี้/ใบกำกับภาษี", th.SourceHeadingLabel(s));
+        Assert.Equal(th.SettlementSourceLabel(DocumentType.TaxInvoice), th.SourceHeadingLabel(s with { Heading = null }));
+        Assert.Equal(DocumentLabels.For("en").SettlementSourceLabel(DocumentType.TaxInvoice), DocumentLabels.For("en").SourceHeadingLabel(s));   // คนละภาษา ⇒ เดิม
+        Assert.Equal("รับชำระเงินตามใบแจ้งหนี้/ใบกำกับภาษีเลขที่ TIV-1", th.SettlementReceiptLine(th.SourceHeadingLabel(s), "TIV-1", false));
+        Assert.Contains("ResolveDocumentHeadingAsync(db, companyId, srcId)", Src("Accounting", "Services", "Implementations", "SettlementReceiptTotalsLoader.cs"));
+        Assert.Contains("labels.SourceHeadingLabel(srcHeadingSource)", Src("Accounting", "Services", "Implementations", "DocumentService.cs"));
+    }
+
+    // ───────────── T2 L2 แถว [สรุป] ตามการติ๊ก ─────────────
+
+    private static Accounting.Models.Entities.TaxReportLine WLine(int order, string id, string? branch, decimal tax, bool excluded = false)
+        => new() { LineOrder = order, TaxPayerId = id, TaxPayerName = "ผู้รับ " + id, TaxPayerBranchCode = branch, IncomeAmount = tax * 33.33m, TaxAmount = tax, IncomeTypeCode = "40(8)", IsExcluded = excluded };
+
+    [Fact]
+    public void R284_L2_แถวสรุปเพิ่มเมื่อครบสองบรรทัด_ลบเมื่อติ๊กเหลือหนึ่ง_แยกสาขา()
+    {
+        var r = new Accounting.Models.Entities.TaxReport { TaxType = TaxType.WithholdingTax53 };
+        r.Lines.Add(WLine(1, "0105556000002", "00000", 30m));
+        r.Lines.Add(WLine(2, "0105556000002", "00000", 60m, excluded: true));
+        r.Lines.Add(WLine(3, "0105556000002", "00001", 15m));
+        var (add0, rem0) = WhtReportTotals.SyncSummaryRows(r);
+        Assert.Empty(add0); Assert.Empty(rem0);                                  // ทิศตรงข้าม: ไม่มีรายที่ครบสองบรรทัด ⇒ ไม่แตะ
+        r.Lines.Single(l => l.LineOrder == 2).IsExcluded = false;                 // ติ๊กกลับ ⇒ 1 → 2
+        var (add1, _) = WhtReportTotals.SyncSummaryRows(r);
+        var sum = Assert.Single(add1);
+        Assert.Equal(("0105556000002", "00000"), (sum.TaxPayerId, sum.TaxPayerBranchCode));   // สาขา 00001 ไม่ถูกรวม
+        r.Lines.Add(sum); WhtReportTotals.Apply(r);
+        Assert.Equal(90m, sum.TaxAmount);
+        Assert.Equal(105m, r.TotalTaxWithheld);                                    // ยอดหัวไม่นับแถวสรุป
+        r.Lines.Single(l => l.LineOrder == 1).IsExcluded = true;                  // ติ๊กออก ⇒ 2 → 1
+        var (add2, rem2) = WhtReportTotals.SyncSummaryRows(r);
+        Assert.Empty(add2);
+        Assert.Same(sum, Assert.Single(rem2));
     }
 }

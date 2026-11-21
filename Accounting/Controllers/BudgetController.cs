@@ -1,3 +1,5 @@
+using Accounting.Filters;
+using Accounting.Models.Constants;
 using Accounting.Helpers;
 using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.Budget;
@@ -59,6 +61,7 @@ public class BudgetController : ControllerBase
         return NoContent();
     }
 
+    [RequireReportAccess(PermissionKeys.ReportsFinancial)]   // รอบ 284: ยอดจริงจาก GL
     [HttpGet("{budgetId:guid}/vs-actual")]
     public async Task<ActionResult<ApiResponse<BudgetVsActualResponse>>> GetBudgetVsActual(Guid companyId, Guid budgetId)
     {
@@ -69,6 +72,7 @@ public class BudgetController : ControllerBase
     /// <summary>Scenario modeling — best/base/worst case projection.
     /// upliftPercent (default 15%) → best case. downsidePercent (default 20%)
     /// → worst case. ใช้สำหรับ CFO planning + investor pitch</summary>
+    [RequireReportAccess(PermissionKeys.ReportsFinancial)]
     [HttpGet("{budgetId:guid}/scenarios")]
     public async Task<ActionResult<ApiResponse<BudgetScenarioResponse>>> GetScenarios(
         Guid companyId, Guid budgetId,

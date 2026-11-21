@@ -24,7 +24,7 @@ public class RolePermissionService : IRolePermissionService
 
     /// <summary>เมนูที่ผู้ใช้ไม่มีสิทธิ์ตามตาราง <see cref="Accounting.Helpers.MenuPermissionMap.Keys"/> (รอบ 277 · เดิมรอบ 201 GW เฉพาะหน้ารับชำระ) —
     /// ด่านเดียวกับ endpoint ของหน้านั้น (<see cref="IPermissionService.HasPermissionAsync"/>) · ไม่มีตัวตรวจสิทธิ์ = ไม่ตัด (ด่านจริงอยู่ที่ API)</summary>
-    private async Task<List<string>?> PermissionDeniedMenuIdsAsync(Guid companyId, Guid userId)
+    private async Task<List<string>?> PermissionDeniedMenuIdsAsync(Guid companyId, Guid userId, bool hasCustomRole)
     {
         if (_permissions == null) return null;
         return await Accounting.Helpers.MenuPermissionMap.DeniedMenuIdsAsync(key => _permissions.HasPermissionAsync(companyId, userId, key),
@@ -32,7 +32,7 @@ public class RolePermissionService : IRolePermissionService
             {
                 var v = await Accounting.Helpers.DocumentPermissionHelper.VisibleDirectionsAsync(_permissions, companyId, userId);
                 return (v.Revenue, v.Purchase);
-            });
+            }, hasCustomRole);   // รอบ 284: เมนูรายงานการเงิน (LegacyKeys) ไม่ตัดสำหรับผู้ไม่ผูกบทบาท — ตัวตัดสินเดียวกับด่าน API
     }
 
     public async Task<List<CompanyRoleResponse>> GetRolesAsync(Guid companyId, Guid userId)
@@ -312,7 +312,7 @@ public class RolePermissionService : IRolePermissionService
                 new List<string> { "*" },
                 ownerHiddenMenuIds,
                 isPlatformAdmin,
-                await PermissionDeniedMenuIdsAsync(companyId, userId),
+                await PermissionDeniedMenuIdsAsync(companyId, userId, hasCustomRole: false),
                 await MyDocumentRestrictionAsync(companyId, userId));
         }
 
@@ -331,7 +331,7 @@ public class RolePermissionService : IRolePermissionService
             .FirstOrDefaultAsync() ?? cu.Role.ToString();
 
         return new MyPermissionsResponse(roleName, false, perms, ownerHiddenMenuIds, isPlatformAdmin,
-            await PermissionDeniedMenuIdsAsync(companyId, userId), await MyDocumentRestrictionAsync(companyId, userId));
+            await PermissionDeniedMenuIdsAsync(companyId, userId, hasCustomRole: true), await MyDocumentRestrictionAsync(companyId, userId));
     }
 
     /// <summary>รอบ 276 — ค่าจำกัดเอกสารที่มีผลของผู้ใช้ที่ล็อกอิน (ตัวอ่านเดียวกับด่าน <c>DocumentRestrictionFilter</c>) · null = ไม่ถูกจำกัด</summary>
@@ -400,6 +400,9 @@ public class RolePermissionService : IRolePermissionService
                     CanAccess = true
                 });
             }
+            // รอบ 284 (284-7): เมนูรายงานที่ติ๊ก ⇒ คีย์ของหน้า (ตารางเดียวกับ migration — หน้าที่บทบาทเห็นต้องเปิดได้จริง)
+            foreach (var key in Accounting.Helpers.Round284Migration.MenuGrants.Where(g => d.Menus.Contains(g.MenuId)).Select(g => g.Key).Distinct())
+                role.Permissions.Add(new CompanyRolePermission { CompanyRoleId = role.Id, MenuItemId = key, CanAccess = true });
 
             _db.CompanyRoles.Add(role);
         }

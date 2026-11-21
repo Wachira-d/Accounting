@@ -1,3 +1,5 @@
+using Accounting.Models.Constants;
+using Accounting.Filters;
 using Accounting.Data;
 using Accounting.Models.DTOs;
 using Accounting.Models.Enums;
@@ -19,6 +21,8 @@ namespace Accounting.Controllers;
 [ApiController]
 [Route("api/companies/{companyId:guid}/cash-forecast")]
 [Authorize]
+// รอบ 284 (คำตัดสิน 284-7): ตัวเลขการเงินรวมของบริษัท — ด่าน FinancialReportAccess (ไม่ผูกบทบาท = เดิม)
+[RequireReportAccess(PermissionKeys.ReportsFinancial, PermissionKeys.ReportsExecutive)]
 public class CashForecastController : ControllerBase
 {
     private readonly AccountingDbContext _db;

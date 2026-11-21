@@ -1,3 +1,5 @@
+using Accounting.Filters;
+using Accounting.Models.Constants;
 using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.ReportBuilder;
 using Accounting.Services.Interfaces;
@@ -38,10 +40,12 @@ public class ReportBuilderController : ControllerBase
     public async Task<ActionResult<ApiResponse<CustomReportResponse>>> Duplicate(Guid companyId, Guid reportId, [FromQuery] string newName)
         => Ok(new ApiResponse<CustomReportResponse>(true, await _service.DuplicateAsync(companyId, reportId, newName)));
 
+    [RequireReportAccess(PermissionKeys.ReportsFinancial, PermissionKeys.ReportsOperational)]   // รอบ 284: ผลรายงานจากข้อมูลบัญชีทั้งบริษัท
     [HttpPost("{reportId:guid}/execute")]
     public async Task<ActionResult<ApiResponse<ReportExecutionResponse>>> Execute(Guid companyId, Guid reportId, [FromBody] Dictionary<string, string>? parameters = null)
         => Ok(new ApiResponse<ReportExecutionResponse>(true, await _service.ExecuteAsync(companyId, reportId, parameters)));
 
+    [RequireReportAccess(PermissionKeys.ReportsFinancial, PermissionKeys.ReportsOperational)]
     [HttpPost("{reportId:guid}/export/{format}")]
     public async Task<ActionResult> Export(Guid companyId, Guid reportId, string format, [FromBody] Dictionary<string, string>? parameters = null)
     {

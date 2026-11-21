@@ -248,6 +248,13 @@
           // P&L = revenue (เงินเข้า) − expense (เงินออก). Easiest server-side source.
           const res = await API.get(`/api/companies/${companyId}/accounting/reports/month-snapshot?fromDate=${from}&toDate=${to}`);
           const pl = res.data || res;
+          // รอบ 284 (คำตัดสิน 284-7): บทบาทไม่มีสิทธิ์ดูตัวเลขการเงิน ⇒ เซิร์ฟเวอร์ไม่ส่งยอด ส่งป้ายเหตุมาแทน (หน้าหลักยังใช้ได้)
+          if (pl && pl.hidden) {
+            const box = document.querySelector('.sm-kpi');
+            if (box) { box.innerHTML = ''; const n = document.createElement('div'); n.className = 'card'; n.style.gridColumn = '1 / -1';
+              n.style.fontSize = '13px'; n.style.color = '#92400e'; n.style.background = '#fffbeb'; n.textContent = '🔒 ' + (pl.notice || ''); box.appendChild(n); }
+            return;
+          }
           const inAmt = Number(pl?.totalRevenue || 0);
           const outAmt = Number(pl?.totalExpenses || 0);
           this._renderAmount('kpiIn', inAmt);
