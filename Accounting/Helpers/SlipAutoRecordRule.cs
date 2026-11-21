@@ -52,6 +52,7 @@ public static class SlipAutoRecordRule
         bool PeriodLocked = false, bool BankLineConfirmed = false);
 
     /// <summary>282-8: ป้ายตรง ๆ (หน้าตั้งค่า/หน้ายืนยัน/เหตุบนรายการ) — QR ไม่มียอด/บัญชี/ผู้รับ · CRC เป็นสูตรสาธารณะ ⇒ แต่งรูปได้</summary>
+    /// (ชุดแก้ฝ่ายค้าน commit 181fe606)
     public const string QrCaveat = "QR ตรวจได้แค่ว่าเป็นรูปแบบสลิป ไม่ได้ยืนยันว่าเงินเข้า";
 
     /// <summary>ด่านของสลิปผ่านครบไหม (ยังไม่นับรายการเดินบัญชี) — ผู้เรียกใช้ตัดสินว่าจะลองจับคู่รายการเดินบัญชีหรือไม่</summary>
