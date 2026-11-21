@@ -7561,4 +7561,4 @@ _รอบ 285 (2026-11-21): ยืนยันเลขผู้เสียภ
   `WiredSince` 2026-11-21 ⇒ แถวล่วงหน้ายืนยันใหม่ · ผู้ใช้ "เฉพาะร่าง" ให้/ใช้ความยินยอมที่อนุมัติแทนไม่ได้ (`DocumentRestrictionGuard.UserIsDraftOnlyAsync`)
 - หน้า "งานอัตโนมัติกับคู่ค้า": ป้ายสถานะ + ทำอะไร/ทำเมื่อไร/หยุดเมื่อไรจากเซิร์ฟเวอร์ (`StatusLabel` · `ExplainOf`) · "ไม่ทำงาน" ⇒ "ยังไม่ได้ยินยอม" · ไม่มีเลขรอบ/คำตัดสิน/ชื่อ enum บนจอ
 - แจ้งเตือนคีย์ใหม่ `partner.purchase_auto_approved` · `partner.purchase_auto_approve_held` · `Round288Migration` · เทสต์ `PartnerAutomationRound288Tests` + Db `PartnerAutomationRound288DbTests` ·
-  กติกา `_R288_*` · คำตัดสิน 288-1…288-8 · commit f103e4a3
+  กติกา `_R288_*` · คำตัดสิน 288-1…288-8 · commit f11726e8 · f103e4a3 · b281ce5b · d454cde4

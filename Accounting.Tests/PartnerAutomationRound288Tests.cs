@@ -173,8 +173,8 @@ public class PartnerAutomationRound288Tests
             { Id = Pid, CompanyAId = A, CompanyBId = B, Status = TradingPartnershipStatus.Suspended }, B, null, true);
         Assert.Contains("ระงับอยู่", suspended.Reason);
         Assert.DoesNotContain("Suspended", suspended.Reason);
-        foreach (var st in Enum.GetValues<TradingPartnershipStatus>())
-            Assert.DoesNotContain(st.ToString(), PartnerConsent.PartnershipStatusLabel(st));
-        Assert.Equal("ระงับอยู่", PartnerConsent.PartnershipStatusLabel(TradingPartnershipStatus.Suspended));
+        foreach (var st in new[] { TradingPartnershipStatus.Pending, TradingPartnershipStatus.Suspended, TradingPartnershipStatus.Rejected })
+            Assert.DoesNotContain(st.ToString(), PartnerConsent.Allows(Scope.AutoApprovePurchase, null,
+                new TradingPartnership { Id = Pid, CompanyAId = A, CompanyBId = B, Status = st }, B, null, true).Reason);
     }
 }

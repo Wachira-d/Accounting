@@ -3406,10 +3406,10 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
   282-10 ต้องเลขท้าย ≥ 4 + ชื่อผู้โอนตรงชื่อบริษัท — การแจ้งไม่เก็บชื่อผู้โอน ⇒ ยังเป็นค่าเลือกไว้ให้ + แจ้งยืนยัน (ไม่บันทึกเองจากสลิปอย่างเดียว)
 - **ข้อความหน้า "งานอัตโนมัติกับคู่ค้า" (288-7)** — เซิร์ฟเวอร์ส่ง `statusLabel` (`PartnerConsent.StatusLabel`: "ใช้อยู่" · "ยังไม่ได้ยินยอม" (เดิม "ไม่ทำงาน") · "ต้องยืนยันใหม่" · "หยุดอยู่ — …") +
   `what/when/stops` (`PartnerConsent.ExplainOf`) · หน้าแสดงอย่างเดียว · ไม่มีเลขรอบ/คำตัดสิน/ชื่อแพ็ก/ชื่อ enum บนจอ (`EffectNote` · `ConsentDefaultNotAutoNote` · เหตุ `Allows`
-  ใช้ `PartnershipStatusLabel` · "hash" → "ตรวจกับต้นฉบับไม่ตรง" · เหตุ `PartnerAutoRecordPolicy` "การแจ้งรุ่นเก่า") · AutoRecordPayment: บันทึกเองเมื่อรู้บัญชีจากรายการเดินบัญชีหรือผู้ซื้อเลือกตอนจ่าย ·
+  ใช้สถานะการเชื่อมเป็นภาษาไทย · "hash" → "ตรวจกับต้นฉบับไม่ตรง" · เหตุ `PartnerAutoRecordPolicy` "การแจ้งรุ่นเก่า") · AutoRecordPayment: บันทึกเองเมื่อรู้บัญชีจากรายการเดินบัญชีหรือผู้ซื้อเลือกตอนจ่าย ·
   บัญชีตั้งต้น = ค่าเลือกไว้ให้
 - migration `Round288Migration` (คอลัมน์ใหม่ล้วน — ไม่มีของเสียที่ persist) · เทสต์ pure `PartnerAutomationRound288Tests` · Db `PartnerAutomationRound288DbTests` (4) · กติกา `_R288_*` ·
-  Last verified commit f103e4a3
+  Last verified commit b281ce5b (โค้ด f11726e8 · f103e4a3 · d454cde4)
 
 ### 2.12g-264-P2 รอบ 264 แพ็ก P2 "อ่านบัญชีจากสลิป — QR ตรวจสลิป + ผู้โอน/ผู้รับ" (`erp-review/2026-11-12/team-264-a2b-design.md` §3.2/§4 · คำตัดสิน 264-4-1…8)
 

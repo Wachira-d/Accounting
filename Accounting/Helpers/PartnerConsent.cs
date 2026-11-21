@@ -414,7 +414,7 @@ public static class PartnerConsent
     }
 
     /// <summary>สถานะการเชื่อมเป็นภาษาผู้ใช้ (ไม่ส่งชื่อ enum ขึ้นจอ)</summary>
-    public static string PartnershipStatusLabel(TradingPartnershipStatus s) => s switch
+    private static string PartnershipStatusLabel(TradingPartnershipStatus s) => s switch
     {
         TradingPartnershipStatus.Pending => "รอตอบรับ",
         TradingPartnershipStatus.Accepted => "เชื่อมอยู่",
