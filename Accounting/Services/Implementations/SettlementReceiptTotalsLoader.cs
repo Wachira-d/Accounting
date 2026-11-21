@@ -34,7 +34,7 @@ internal static class SettlementReceiptTotalsLoader
             .Select(d => new
             {
                 Src = new SettlementReceiptTotals.Source(d.DocumentType, d.DocumentNumber, d.DocumentDate,
-                    d.SubTotal, d.VatAmount, d.WithholdingTaxAmount, d.TotalAmount),
+                    d.SubTotal, d.VatAmount, d.WithholdingTaxAmount, d.TotalAmount, null, null),
                 d.BalanceDue,
                 d.DepositAppliedAmount,
             })
@@ -55,7 +55,7 @@ internal static class SettlementReceiptTotalsLoader
             var rows = await db.Documents.AsNoTracking().IgnoreQueryFilters()
                 .Where(d => kids.Contains(d.Id) && d.CompanyId == companyId)
                 .Select(d => new { d.Id, Src = new SettlementReceiptTotals.Source(d.DocumentType, d.DocumentNumber, d.DocumentDate,
-                    d.SubTotal, d.VatAmount, d.WithholdingTaxAmount, d.TotalAmount) })
+                    d.SubTotal, d.VatAmount, d.WithholdingTaxAmount, d.TotalAmount, null, null) })
                 .ToListAsync();
             var ordered = kids.Select(id => rows.FirstOrDefault(r => r.Id == id)?.Src).Where(s => s != null).Select(s => s!).ToList();
             doc.SettlementTotals = SettlementReceiptTotals.Decide(Facts(ordered) with
