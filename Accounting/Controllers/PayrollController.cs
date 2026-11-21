@@ -1263,8 +1263,15 @@ public class PayrollController : ControllerBase
             purpose: $"ส่งออกไฟล์รายการโอนเงินเดือน รอบ {sheet.PayrollNumber}",
             ipAddress: HttpContext.Connection.RemoteIpAddress?.ToString(),
             userAgent: Request.Headers.UserAgent.ToString());
-        return ExportFile(ModuleExport.File(fmt, $"payroll-bank-transfer-{sheet.PayrollNumber}", "รายการโอน",
-            PayrollExportSheets.BankTransfer, PayrollExportSheets.BankTransferRows(sheet)));
+        // รอบ 284 (T4 L-6): Excel = แผ่นรายการ (ไม่มีแถวรวม · ใช้อัปโหลด) + แผ่น "สรุป" พร้อมโอน X/Y ราย + ยอด · CSV แผ่นเดียวตามเดิม
+        var rows = PayrollExportSheets.BankTransferRows(sheet);
+        var baseName = $"payroll-bank-transfer-{sheet.PayrollNumber}";
+        if (fmt == TabularFormat.Csv)
+            return ExportFile(ModuleExport.File(fmt, baseName, "รายการโอน", PayrollExportSheets.BankTransfer, rows));
+        return ExportFile(TabularExport.Render(fmt, baseName, null, null,
+            TabularExport.Sheet("รายการโอน", PayrollExportSheets.BankTransfer, rows),
+            TabularExport.Sheet("สรุป", PayrollExportSheets.BankTransferSummaryColumns,
+                PayrollExportSheets.BankTransferSummaryRows(PayrollExportSheets.BankTransferSummaryOf(rows), sheet.PayrollNumber))));
     }
 
     /// <summary>คำขอลาทุกคนของปีที่เลือก (แท็บลาหยุด) — ด่านเดียวกับ <see cref="GetLeaves"/> แบบไม่ระบุพนักงาน (ต้องมีสิทธิ์ HR)</summary>

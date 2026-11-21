@@ -461,7 +461,7 @@ public class SignRequestService : ISignRequestService
         var origin = await SystemBaseUrl.ResolveAsync(_db, _config, ct);
         if (origin == null)
         {
-            const string why = "ยังไม่ได้ตั้ง URL ของระบบ (ผู้ดูแลระบบ → ตั้งค่าเว็บไซต์) — ไม่ส่งอีเมลลิงก์เซ็นอัตโนมัติ/อีเมลเตือนรอบนี้";
+            const string why = "ยังไม่ได้ตั้ง URL ของระบบ (" + Accounting.Helpers.SystemBaseUrl.AdminPageHint + ") — ไม่ส่งอีเมลลิงก์เซ็นอัตโนมัติ/อีเมลเตือนรอบนี้";
             _logger.LogError("งานส่งลิงก์ให้ลูกค้าเซ็นอัตโนมัติ: {Why}", why);
             return new SignAutomationRunResult(0, 0, 0, 0, why);
         }

@@ -192,14 +192,20 @@ public class ImportConflictController : ControllerBase
             _db.ImportConflicts.AddRange(conflicts);
             await _db.SaveChangesAsync(ct);
         }
+        // รอบ 284 (T4 L-1): พนักงานเดิมที่เลขบัตรถอดรหัสไม่ได้ ⇒ "ไม่พบของซ้ำ" ไม่ใช่ความจริงสำหรับคนเหล่านั้น — บอกในคำตอบ (ไม่เงียบ)
+        var unreadableWarning = req.EntityType == "Employee"
+            ? Accounting.Helpers.EmployeeIdDuplicateScan.Warning(await _detector.UnreadableEmployeeIdCountAsync(companyId, ct))
+            : null;
+        var baseMessage = conflicts.Count > 0
+            ? $"พบของซ้ำ {conflicts.Count} แถว — กรุณาเลือกว่าจะใช้ของเดิมหรือใหม่"
+            : unreadableWarning != null ? "ไม่พบของซ้ำในพนักงานที่ตรวจได้" : "ไม่พบของซ้ำ — import ปกติได้เลย";
         return Ok(new ApiResponse<object>(true, new
         {
             totalRows = req.Rows.Count,
             conflictCount = conflicts.Count,
             sessionRef = req.SessionRef,
-            conflictIds = conflicts.Select(c => c.Id)
-        }, conflicts.Count > 0
-            ? $"พบของซ้ำ {conflicts.Count} แถว — กรุณาเลือกว่าจะใช้ของเดิมหรือใหม่"
-            : "ไม่พบของซ้ำ — import ปกติได้เลย"));
+            conflictIds = conflicts.Select(c => c.Id),
+            warning = unreadableWarning,
+        }, unreadableWarning != null ? baseMessage + " · ⚠ " + unreadableWarning : baseMessage));
     }
 }

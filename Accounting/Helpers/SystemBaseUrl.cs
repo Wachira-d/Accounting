@@ -19,6 +19,12 @@ public static class SystemBaseUrl
     /// <summary>รอบ 227 (PLATFORM_OMISE_AUDIT B-4): ค่าใน appsettings ที่มากับซอร์ส — โดเมนที่<b>ไม่ใช่ของเรา</b> (ที่มาของบั๊กเด้งไป app.nextacc.com)</summary>
     public const string ShippedDefault = "https://app.nextacc.com";
 
+    /// <summary>รอบ 284: หน้าที่ผู้ดูแลตั้ง <c>SiteSettings.AppBaseUrl</c> จริง — ช่อง "App Base URL" ของหน้าอีเมลระบบ (เดิมข้อความหลายจุดชี้ "ตั้งค่าเว็บไซต์ (แท็บทั่วไป)"
+    /// / "ตั้งค่าระบบ" ซึ่งไม่มีช่องนี้) · ตัวตั้งเดียวของลิงก์ + ทางในเมนู</summary>
+    public const string AdminPagePath = "/admin/system-email.html";
+    /// <summary>ทางในเมนูแอดมินถึงช่อง AppBaseUrl (ข้อความถึงผู้ดูแล)</summary>
+    public const string AdminPageHint = "แอดมิน → อีเมลระบบ (SMTP) → ช่อง \"App Base URL\"";
+
     /// <summary>รอบ 227: "ตั้ง URL ของระบบแล้วจริง" = ผู้ดูแลตั้งในหน้า admin หรือ deployment ตั้ง <c>App:BaseUrl</c> เป็นค่าอื่นที่ไม่ใช่ค่าที่มากับซอร์ส ·
     /// ใช้กับด่านเปิดรับเงินค่าบริการจริง (PaymentLiveGate.PlatformRefusal) — ค่าที่มากับซอร์ส ≠ ตั้งแล้ว</summary>
     public static bool IsConfigured(string? adminBaseUrl, string? configBaseUrl)

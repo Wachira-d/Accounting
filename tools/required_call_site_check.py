@@ -1331,8 +1331,8 @@ RULES += [
          forbid=["WhtThreshold", "totalTip * pct / 100m"],
          why="D-05: ส่วนแบ่งรวม = กองทิป (JE สมดุล) · อัตรา/เกณฑ์ WHT จาก ThaiWhtRateTable"),
     dict(file=DUPDET, method="DetectEmployeeAsync",
-         must=["EncryptedIdMatch.Same("], forbid=["e.CitizenId == idCard"],
-         why="G2-06: คอลัมน์เข้ารหัส nonce สุ่ม เทียบใน SQL ไม่มีวันเจอ — ต้องถอดรหัสแล้วเทียบ"),
+         must=["EmployeeIdDuplicateScan.Scan("], forbid=["e.CitizenId == idCard"],
+         why="G2-06: คอลัมน์เข้ารหัส nonce สุ่ม เทียบใน SQL ไม่มีวันเจอ — ต้องถอดรหัสแล้วเทียบ (รอบ 284: ผ่าน EmployeeIdDuplicateScan ที่เรียก EncryptedIdMatch.Same + ข้ามค่าถอดไม่ได้)"),
     dict(file=PAYROLL, method="GeneratePnd1Async", must=["PiiMask.CitizenId("],
          why="G2-05: รายงาน ภ.ง.ด.1 ปิดบังเลขบัตรสำหรับผู้ไม่มี Pii.View"),
     dict(file=PAYROLL, method="GenerateSsoReportAsync", must=["SsoInsuredNumber.ForDisplay("],
@@ -22532,6 +22532,32 @@ RULES += [
 REVIEWER_CASES += [
     ("R282-1", "TryAutoAsync", "if (verdict.Auto)", "if (true)", True),
     ("R282-2", "RemindPendingAsync", "i.ConfirmRemindCount == r.ConfirmRemindCount", "true", True),
+]
+
+# รอบ 284 (แพ็ก F — งานคงค้างจากผลตรวจรายสัปดาห์ 2026-11-20): T4 L-1 · T4 L-6 · T3 MED-5 (สำเนา JS) — คำตัดสิน 284-1…
+_R284_WHY = "รอบ 284 (แพ็ก F): "
+RULES += [
+    dict(file="Services/Implementations/Import/DuplicateDetector.cs", method="DetectEmployeeAsync",
+         must=["EmployeeIdDuplicateScan.Scan(ids, idCard)", "await EmployeeIdsAsync(cid, ct)"], forbid=["EncryptedIdMatch.Same("],
+         why=_R284_WHY + "T4 L-1: เลขบัตรเดิมที่ถอดรหัสไม่ได้ต้องถูกข้าม (ไม่จับคู่ปลอมจาก ciphertext) ผ่านตัวตัดสินเดียว — ห้ามเทียบเองแบบเดิม"),
+    dict(file="Services/Import/ImportEntityResolver.cs", method="MatchByDetectorAsync",
+         must=["_duplicates.UnreadableEmployeeIdCountAsync(companyId, ct)", "EmployeeIdDuplicateScan.Warning(", "EmployeeIdDuplicateScan.IssueCode", "ImportIssueSeverity.Warning"],
+         why=_R284_WHY + "T4 L-1: ศูนย์นำเข้าพนักงาน — ตรวจซ้ำด้วยเลขบัตรไม่ได้ ⇒ คำเตือนที่ต้องรับทราบ (ไม่ใช่ \"ไม่พบ\" เงียบ)"),
+    dict(file="Controllers/ImportConflictController.cs", method="Detect",
+         must=["_detector.UnreadableEmployeeIdCountAsync(companyId, ct)", "EmployeeIdDuplicateScan.Warning("],
+         why=_R284_WHY + "T4 L-1: ทางตรวจซ้ำแบบเดิม (preview) บอกคำเตือนเดียวกัน"),
+    dict(file="Controllers/PayrollController.cs", method="ExportBankTransfer",
+         must=["PayrollExportSheets.BankTransferSummaryOf(rows)", "PayrollExportSheets.BankTransferRows(sheet)", "_pdpa.LogPiiAccessAsync("],
+         before=[("_pdpa.LogPiiAccessAsync(", "PayrollExportSheets.BankTransferRows(sheet)")],
+         why=_R284_WHY + "T4 L-6: ไฟล์ Excel มีแผ่นสรุปพร้อมโอน X/Y จากผลตัดสินแถวตัวเดียว (ไม่คำนวณใหม่) · จด PiiAccessLog ก่อนประกอบไฟล์"),
+    dict(file="Controllers/DocumentController.cs", method="ReceiptLineDefault",
+         must=["DenyDocAsync(", "d.CompanyId == companyId && d.Id == documentId", "DocumentLabels.For(src.DocumentLanguage)", "labels.SettlementReceiptLine(", "labels.SettlementUnitItem"],
+         why=_R284_WHY + "T3 MED-5: ค่าตั้งต้นบรรทัดใบเสร็จจาก DocumentLabels ตามภาษาของใบต้นทาง (ตัวเดียวกับใบเสร็จที่ระบบออก) · tenant + สิทธิ์ก่อนอ่าน"),
+]
+REVIEWER_CASES += [
+    ("R284-1", "DetectEmployeeAsync", "EmployeeIdDuplicateScan.Scan(ids, idCard).MatchId", "ids.FirstOrDefault(e => Accounting.Helpers.EncryptedIdMatch.Same(e.CitizenId, idCard)).Id as Guid?", True),
+    ("R284-2", "MatchByDetectorAsync", "await _duplicates.UnreadableEmployeeIdCountAsync(companyId, ct)", "0", True),
+    ("R284-3", "ExportBankTransfer", "PayrollExportSheets.BankTransferSummaryOf(rows)", "default!", True),
 ]
 
 if __name__ == "__main__":

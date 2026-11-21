@@ -130,9 +130,11 @@ builder.Configuration["Jwt:Secret"] = jwtSecret;
 // รอบ 219 เฟส 0 (P0-4): แหล่งคีย์ตัวเดียว (EncryptionKeyResolver) ใช้ร่วมกับ SecretProtector — production ปฏิเสธทั้งค่าว่างและ dev key ·
 // ฝ่ายค้านรอบ 219 B2/S3: ไม่เขียนค่ากลับเข้า config (SecretProtector ต้องเห็นค่า Security:EncryptionKey เดิมเพื่อถอดค่าที่เข้ารหัสไว้ก่อน) ·
 // ส่งคีย์ดิบเข้า EncryptedColumnConverter (ไม่ Trim — PBKDF2 ไวต่อช่องว่าง เหมือนพฤติกรรมเดิม)
-// (นิพจน์เลือกคีย์ของคอลัมน์ PII คงเดิมทุกตัวอักษร — เปลี่ยนแล้วข้อมูล PII เดิมถอดไม่ออก · ด่าน production ใช้ resolver ตัวเดียว)
-var encryptionKey = Environment.GetEnvironmentVariable("ENCRYPTION_KEY")
-    ?? builder.Configuration["Security:EncryptionKey"];
+// รอบ 284 (T4 L-9 · K5b): เดิม `env ?? config` ⇒ env สตริงว่าง/ช่องว่างล้วนชนะ config ⇒ PII ใช้ dev key (เครื่องนักพัฒนา) ขณะที่ SecretProtector ใช้คีย์ config
+// = สองคีย์ในระบบเดียว · ตอนนี้ใช้ Resolve ตัวเดียวกับด่าน production/SecretProtector (ค่าดิบไม่ Trim เหมือนเดิม — คีย์ที่มีค่าจริงได้ค่าเดิมทุกตัวอักษร) ·
+// แถวที่เคยเข้ารหัสด้วย dev key ในกรณีนั้นยังถอดได้ (dev key อยู่ในห่วงโซ่ถอด DecryptKeyChain → LegacyCandidates) แล้ว PiiReprotectJob ย้ายไปคีย์ปัจจุบัน
+var encryptionKey = Accounting.Helpers.EncryptionKeyResolver.Resolve(
+    Environment.GetEnvironmentVariable("ENCRYPTION_KEY"), builder.Configuration["Security:EncryptionKey"]);
 if (builder.Environment.IsProduction())
     Accounting.Helpers.EncryptionKeyResolver.RequireUsable(
         Accounting.Helpers.EncryptionKeyResolver.Resolve(Environment.GetEnvironmentVariable("ENCRYPTION_KEY"), builder.Configuration["Security:EncryptionKey"]),

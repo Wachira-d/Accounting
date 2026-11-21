@@ -9226,6 +9226,22 @@ retention ช่วงนี้เทียบช่วงก่อน + เส�
 - **ยังไม่มีสิทธิ์** (`CompanyUser.AccessPending`): `TenantAccessMiddleware` ปฏิเสธทุก API ของบริษัท 403 `TEAM-ACCESS-PENDING` ยกเว้น `PendingMemberAccess.IsAllowed` (GET my-permissions) ·
   หน้าเว็บอยู่ที่ `/pages/no-access.html` · เจ้าของ `PUT users/{id}/role` หรือผูกบทบาทกำหนดเอง ⇒ ปลด + audit
 
+### 6.284 รอบ 284 แพ็ก F — งานคงค้างจากผลตรวจรายสัปดาห์ (`erp-review/2026-11-21/dev-284-pack-f.md` · คำตัดสิน 284-1…284-6)
+- **นำเข้าพนักงาน (T4 L-1)** — ตัวตัดสินเดียว `Helpers/EmployeeIdDuplicateScan.Scan` (`DuplicateDetector.DetectEmployeeAsync`): เลขบัตร/เลขผู้เสียภาษีเดิมที่
+  ถอดรหัสไม่ได้ (`EncryptedColumnConverter.IsUnreadable`) **ไม่ถูกเทียบ** (กันจับคู่ปลอมจาก ciphertext) และถูกนับ ⇒ ศูนย์นำเข้า (`ImportEntityResolver.MatchByDetectorAsync`)
+  ใส่คำเตือน `employee-id-unreadable` (Warning — ต้องรับทราบก่อน commit) ให้แถวที่มีเลขบัตรแต่ไม่พบคนเดิม · ทางตรวจซ้ำเดิม `POST import-conflicts/detect` ส่ง `warning` + ข้อความ ·
+  ไม่เดาว่าซ้ำ (แถวยัง "สร้างใหม่" ได้หลังรับทราบ · ใส่รหัสพนักงานเดิมในไฟล์ ⇒ จับคู่ด้วยรหัส)
+- **คีย์ PII (T4 L-9)** — `Program.cs` เลือกคีย์คอลัมน์ PII ด้วย `EncryptionKeyResolver.Resolve` ตัวเดียวกับ SecretProtector/ด่าน production (env ว่าง/ช่องว่างล้วน ⇒ ใช้
+  `Security:EncryptionKey` · ค่าที่มีอยู่ไม่ Trim) · แถวที่เคยเข้ารหัสด้วย dev key ในกรณี env ว่างยังถอดได้ผ่าน `DecryptKeyChain` · runbook หมุนคีย์ระบุเรื่องช่องว่างท้ายคีย์
+- **ไฟล์โอนเงินเดือน (T4 L-6)** — `GET payroll/runs/{id}/bank-transfer?format=xlsx` = แผ่น "รายการโอน" (ไม่มีแถวรวม · ใช้อัปโหลด) + แผ่น "สรุป"
+  (`PayrollExportSheets.BankTransferSummaryOf`: พร้อมโอน X จาก Y ราย · ยอดพร้อมโอน · ยอดไม่พร้อม · ยอดรวม = ผลรวมของผลตัดสินแถว `PayrollBankTransfer.Evaluate`) · CSV แผ่นเดียวตามเดิม (ปุ่มบอก)
+- **ฟอร์มใบเสร็จผูกใบต้นทาง (T3 MED-5 ส่วนที่ค้าง)** — ค่าตั้งต้นบรรทัด/หน่วยจาก `GET document/{id}/receipt-line-default` (`DocumentLabels.For(ใบต้นทาง.DocumentLanguage)
+  .SettlementReceiptLine/SettlementUnitItem` — ตัวเดียวกับใบเสร็จที่ระบบออกเอง) · หน้าเว็บไม่มีสำเนาข้อความ · อยู่ในรายการอนุญาตของผู้ "เห็นเฉพาะของตัวเอง" (ตัวกรองแถว)
+- **URL ของระบบ** — ช่องจริง = `/admin/system-email.html` ช่อง "App Base URL" (`SystemBaseUrl.AdminPagePath/AdminPageHint` ตัวตั้งเดียว) · ข้อความ/ลิงก์ที่ชี้ "ตั้งค่าเว็บไซต์ (แท็บทั่วไป)"
+  หรือ "ตั้งค่าระบบ" แก้ทุกจุด (admin 3 หน้า · sso.js · ข้อความเซิร์ฟเวอร์ 9 จุด · ปุ่มแก้ของ Autopilot/หน้าพร้อมใช้งาน) · ป้ายช่องบอกว่า `https://app.nextacc.com` คือค่าเริ่มต้นที่ไม่ใช่โดเมนของเรา
+- ไม่เปลี่ยนเงิน/JE/สถานะเอกสาร · ไม่มี migration (ไม่มีค่าที่ persist ผิด — ดู dev-284 §ข้อ 10) · เทสต์ `PackFRound284Tests` (pure 8) + Db `PackFRound284DbTests` (2) · กติกา `_R284_` ·
+  Last verified commit <เติมในคอมมิตตามหลัง>
+
 ## 7. Validation gates (compliance — กฎเหล็ก #2)
 
 | Gate | Where | กระทำ |

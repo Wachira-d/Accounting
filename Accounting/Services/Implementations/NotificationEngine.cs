@@ -499,7 +499,7 @@ public class NotificationEngine : INotificationEngine
         {
             var link = NotificationLink.Absolute(await SystemBaseUrl.ResolveAsync(_db, _config), context.ActionUrl);
             if (link == null)
-                _logger.LogInformation("NotificationEngine: ไม่ใส่ลิงก์ในช่อง LINE/อีเมล — ยังไม่ได้ตั้ง URL ของระบบ (แอดมิน → ตั้งค่าระบบ / App:BaseUrl) หรือ ActionUrl ไม่ใช่ path ภายใน");
+                _logger.LogInformation("NotificationEngine: ไม่ใส่ลิงก์ในช่อง LINE/อีเมล — ยังไม่ได้ตั้ง URL ของระบบ (แอดมิน → อีเมลระบบ → App Base URL / App:BaseUrl) หรือ ActionUrl ไม่ใช่ path ภายใน");
             return link;
         }
         catch (Exception ex)

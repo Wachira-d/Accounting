@@ -208,7 +208,7 @@ public static class PartnerLinkRequestChannels
     /// <summary>บรรทัดคงที่จาก NextAcc ว่าใครเป็นผู้ส่ง (อีเมล + LINE)</summary>
     public static string SenderLine(string sender) => $"ข้อความนี้ส่งโดยบริษัท {sender} ผ่าน NextAcc — NextAcc ไม่ได้ตรวจสอบเนื้อหาธุรกิจของผู้ส่ง";
 
-    public const string NoBaseUrlReason = "ยังไม่ได้ตั้ง URL ของระบบ (แอดมิน → ตั้งค่าระบบ / App:BaseUrl) — ข้อความต้องมีลิงก์ให้คู่ค้ากด จึงยังไม่ส่ง";
+    public const string NoBaseUrlReason = "ยังไม่ได้ตั้ง URL ของระบบ (" + SystemBaseUrl.AdminPageHint + " / App:BaseUrl) — ข้อความต้องมีลิงก์ให้คู่ค้ากด จึงยังไม่ส่ง";
 
     /// <summary>เลขภาษีของคู่ค้าแบบปิดบัง (ข้อความในกลุ่ม — สมาชิกกลุ่มหลายคน) · ไม่ใช่ 13 หลัก ⇒ "-"</summary>
     private static string PartnerTaxMasked(string? taxId)
