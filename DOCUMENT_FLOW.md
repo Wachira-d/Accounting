@@ -3351,7 +3351,7 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
   `Contact.SlipTrustBlockedAt` (ไม่เรียนใหม่จนผู้ขายให้คืน) · การรับล่วงหน้าที่ยังไม่ยืนยัน: ออกใบในระบบ แต่งานหลังรับชำระไม่ส่งอีเมล/LINE และไม่แจ้งผู้ซื้อคู่ค้า
   (`DeliveryHeldAsync` ใน `PostPaymentAutomationService.ExecuteAsync` + `CreatePaymentAsync`) จน `ReleaseDeliveryAsync` · จอง `TrustVerifiedAt` ก่อนผูกบรรทัด (CAS) ·
   ป้าย `trustLabel`/ตัวกรอง `?trust=unverified` (หน้ารายการรับชำระ) · `PaymentResponse.ProvisionalLabel` (ประวัติการชำระของเอกสาร)
-  Last verified commit 19445ff6 · ชุดแก้ฝ่ายค้าน (เติมในคอมมิตตามหลัง)
+  Last verified commit 19445ff6 · ชุดแก้ฝ่ายค้าน afac9dcf
 
 ### 2.12g-264-P2 รอบ 264 แพ็ก P2 "อ่านบัญชีจากสลิป — QR ตรวจสลิป + ผู้โอน/ผู้รับ" (`erp-review/2026-11-12/team-264-a2b-design.md` §3.2/§4 · คำตัดสิน 264-4-1…8)
 

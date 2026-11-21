@@ -3,7 +3,7 @@ namespace Accounting.Helpers;
 /// <summary>
 /// รอบ 286 — ผู้จ่ายที่ไว้ใจได้ (คำสั่งเจ้าของ · <see cref="TrustedSlipPayerRule"/>) · idempotent (<c>IF NOT EXISTS</c>) · ชื่อ index ตรง <c>AccountingDbContext</c> ·
 /// ค่าตั้งต้น <c>SlipTrustedAutoEnabled = false</c> (บริษัทเดิมไม่เปลี่ยนพฤติกรรมเงียบ ๆ) · ไม่มีของเสียที่ persist ไว้ต้องซ่อม
-/// (คอลัมน์/ตารางใหม่ทั้งหมด · รายการชำระเดิมไม่มีกุญแจ ⇒ ไม่ถูกเรียนย้อนหลัง — ความไว้ใจเริ่มนับจากสลิปหลัง deploy) · commit 19445ff6
+/// (คอลัมน์/ตารางใหม่ทั้งหมด · รายการชำระเดิมไม่มีกุญแจ ⇒ ไม่ถูกเรียนย้อนหลัง — ความไว้ใจเริ่มนับจากสลิปหลัง deploy) · commit 19445ff6 · ฝ่ายค้าน afac9dcf
 /// </summary>
 public static class Round286Migration
 {
