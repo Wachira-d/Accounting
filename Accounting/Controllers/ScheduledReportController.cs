@@ -61,7 +61,13 @@ public class ScheduledReportController : ControllerBase
                 s.Format, s.IsActive, s.LastSentAt, s.LastResult
             })
             .ToListAsync();
-        return Ok(new ApiResponse<object>(true, rows));
+        // รอบ 284 ฝ่ายค้าน HIGH-3: บอกคีย์ที่รายงานแต่ละชนิดต้องใช้ (server computes · หน้าเว็บแสดงอย่างเดียว) · ชนิดที่ไม่รู้จัก = null
+        return Ok(new ApiResponse<object>(true, rows.Select(r => new
+        {
+            r.Id, r.Name, r.ReportCode, r.Frequency, r.DayOfWeek, r.DayOfMonth, r.HourBangkok, r.Recipients,
+            r.Format, r.IsActive, r.LastSentAt, r.LastResult,
+            RequiredPermissions = Accounting.Helpers.ScheduledReportAccess.KeysFor(r.ReportCode)?.Select(k => k.Replace("perm:", "")).ToList(),
+        }).ToList()));
     }
 
     [HttpPost]
