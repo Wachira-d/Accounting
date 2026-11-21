@@ -480,6 +480,7 @@ public class AccountingDbContext : DbContext
     public DbSet<CrossTenantDocumentLink> CrossTenantDocumentLinks => Set<CrossTenantDocumentLink>();
     public DbSet<PartnerLinkRequest> PartnerLinkRequests => Set<PartnerLinkRequest>();   // รอบ 264 (Helpers/PartnerLinkRequestMigration)
     public DbSet<PartnerLinkRequestNotice> PartnerLinkRequestNotices => Set<PartnerLinkRequestNotice>();   // รอบ 280 (Helpers/Round280Migration)
+    public DbSet<CompanyTaxIdVerificationRequest> CompanyTaxIdVerificationRequests => Set<CompanyTaxIdVerificationRequest>();   // รอบ 285 (Helpers/Round285Migration)
     public DbSet<TrustedSlipPayer> TrustedSlipPayers => Set<TrustedSlipPayer>();   // รอบ 286 (Helpers/Round286Migration) — ผู้จ่ายที่ไว้ใจได้
     public DbSet<PartnerPaymentPlan> PartnerPaymentPlans => Set<PartnerPaymentPlan>();   // รอบ 264 P4 (Helpers/PartnerPaymentPlanMigration)
     public DbSet<PartnerPaymentNotice> PartnerPaymentNotices => Set<PartnerPaymentNotice>();   // รอบ 258-3 F-H3 (Helpers/PartnerPaymentNoticeMigration)
@@ -3859,6 +3860,23 @@ public class AccountingDbContext : DbContext
             e.HasIndex(x => x.PartnerTaxId).HasFilter("\"AcceptedAt\" IS NULL").HasDatabaseName("IX_PartnerLinkRequests_PartnerTax_Open");   // รอบ 280
             e.HasQueryFilter(x => !x.IsDeleted);
         });
+        // รอบ 285 — ชื่อ index/คอลัมน์ต้องตรงกับ Helpers/Round285Migration
+        modelBuilder.Entity<CompanyTaxIdVerificationRequest>(e =>
+        {
+            e.Property(x => x.TaxId).HasMaxLength(13);
+            e.Property(x => x.BranchCode).HasMaxLength(5);
+            e.Property(x => x.CompanyName).HasMaxLength(300);
+            e.Property(x => x.EvidenceKind).HasMaxLength(32);
+            e.Property(x => x.EvidenceSha256).HasMaxLength(64);
+            e.Property(x => x.RegistryName).HasMaxLength(300);
+            e.Property(x => x.RegistryResult).HasMaxLength(16);
+            e.Property(x => x.Status).HasMaxLength(16);
+            e.Property(x => x.ReviewNote).HasMaxLength(1000);
+            e.HasIndex(x => new { x.CompanyId, x.Status }).HasDatabaseName("IX_CompanyTaxIdVerificationRequests_Company_Status");
+            e.HasIndex(x => x.Status).HasDatabaseName("IX_CompanyTaxIdVerificationRequests_Status");
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
+        modelBuilder.Entity<Company>().Property(x => x.TaxIdVerifiedFor).HasMaxLength(13);
         // รอบ 286 — ชื่อ index/คอลัมน์ต้องตรงกับ Helpers/Round286Migration
         modelBuilder.Entity<TrustedSlipPayer>(e =>
         {
@@ -4956,7 +4974,12 @@ public class AccountingDbContext : DbContext
             }
             if (entry.State != EntityState.Modified) continue;
             var before = Accounting.Helpers.ThaiTaxId.Normalize(entry.Property(nameof(Company.TaxId)).OriginalValue as string);
-            if (before != Accounting.Helpers.ThaiTaxId.Normalize(entry.Entity.TaxId)) entry.Entity.TaxIdSetAt = DateTime.UtcNow;
+            if (before != Accounting.Helpers.ThaiTaxId.Normalize(entry.Entity.TaxId))
+            {
+                entry.Entity.TaxIdSetAt = DateTime.UtcNow;
+                // รอบ 285 (คำตัดสิน 285-4): เปลี่ยนเลข ⇒ หลุดสถานะ "ยืนยันเลขภาษีแล้ว" ทุกทางเข้า (ต้องยื่นหลักฐานของเลขใหม่)
+                Accounting.Helpers.CompanyTaxIdVerification.ClearOnTaxIdChange(entry.Entity);
+            }
         }
     }
 

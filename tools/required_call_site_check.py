@@ -22542,6 +22542,45 @@ REVIEWER_CASES += [
     ("R282-2", "RemindPendingAsync", "i.ConfirmRemindCount == r.ConfirmRemindCount", "true", True),
 ]
 
+# รอบ 283 — ท่ออัตโนมัติคู่ค้าออกใบสำคัญจ่ายเป็นเอกสาร (คำสั่งเจ้าของ · คำตัดสิน 283-1…283-6 · erp-review/2026-11-21/dev-283-partner-pv.md) ·
+# ใบหลักฐานคู่การจ่าย (ไม่ลง JE ซ้ำ · ไม่ถือ VAT/ภาษีหัก · อ้าง 50 ทวิ ของการจ่าย) · ตัวตัดสินเดียว Helpers/SettlementPaymentVoucher · ตัวสร้างเดียว CreateSettlementPaymentVoucherCoreAsync
+_R283_WHY = "รอบ 283 (ใบสำคัญจ่ายจากท่อคู่ค้า — คำตัดสิน 283-1…283-6 · commit 699edd9d · erp-review/2026-11-21/dev-283-partner-pv.md): "
+_R283_PV = "Services/Implementations/DocumentService.SettlementPaymentVoucher.cs"
+RULES += [
+    dict(file="Services/Implementations/PartnerPayablePipeline.cs", method="ProcessAsync",
+         must=["IssuePaymentVoucherDocument: true"], must_lit=["{SettlementPaymentVoucher.PartnerAutoPaymentNotePrefix} ตามความยินยอมของ"],
+         why=_R283_WHY + "283-1: ท่อของผู้ซื้อขอใบสำคัญจ่ายในธุรกรรมเดียวกับการจ่าย · หัวหมายเหตุตัวเดียวกับผู้คัดใบก่อนรอบ 283"),
+    dict(file="Services/Implementations/DocumentService.cs", method="CreatePaymentAsync",
+         must=["if (request.IssuePaymentVoucherDocument == true)", "await IssueSettlementPaymentVoucherInPaymentAsync(companyId, doc, payment, createdBy);"],
+         before=[("_whtService.TryAutoIssueForDocumentAsync(", "await IssueSettlementPaymentVoucherInPaymentAsync("),
+                 ("await IssueSettlementPaymentVoucherInPaymentAsync(", "await transaction.CommitAsync();")],
+         why=_R283_WHY + "283-1/283-3: ใบสำคัญจ่ายออกหลัง 50 ทวิ ของการจ่าย (อ้างเลขได้ · ไม่ออกใบใหม่) และก่อน commit (ล้ม = การจ่ายทั้งก้อน rollback)"),
+    dict(file=_R283_PV, method="CreateSettlementPaymentVoucherCoreAsync",
+         must=["IsSettlementReceipt = true", "SettlementPaymentId = payment.Id", "VatAmount = SettlementPaymentVoucher.VatAmount",
+               "WithholdingTaxAmount = SettlementPaymentVoucher.WithholdingTaxAmount", "DocumentNumberGenerator.NextAsync(_db, companyId, DocumentType.PaymentVoucher,",
+               "DocumentPermissionHelper.CanApproveAsync(", "_db.AddChainedAuditLog(", "labels.SettlementPaymentVoucherLine("],
+         forbid=["AutoPostToJournalAsync(", "TryAutoIssueForDocumentAsync(", "ApplySourceDocumentAdjustmentsAsync("],
+         why=_R283_WHY + "283-1/283-2: ใบหลักฐาน — ไม่ลง JE/ไม่ตัดหนี้/ไม่ออก 50 ทวิ · ไม่ถือภาษี (ผู้อ่าน ภ.ง.ด./ภ.พ.30 ไม่นับซ้ำ) · เลขจากเล่ม PV ตามสิทธิ์อนุมัติ · audit"),
+    dict(file=_R283_PV, method="IssueSettlementPaymentVoucherAsync",
+         must_lit=["FOR UPDATE"], must=["SettlementPaymentVoucher.Decide(", "CreateSettlementPaymentVoucherCoreAsync(companyId, source!, payment!, actor, backfilled: true)"],
+         why=_R283_WHY + "283-5: ออกย้อนหลังเฉพาะแถวที่เลือก · ล็อกการจ่าย · ตัวตัดสินเดียว (มีใบแล้ว = ไม่ออกซ้ำ)"),
+    dict(file="Services/Implementations/DocumentService.cs", method="ReversePaymentInternalAsync",
+         must=["await VoidSettlementPaymentVouchersOfPaymentAsync(companyId, payment);"],
+         why=_R283_WHY + "283-4: ยกเลิกการจ่าย ⇒ ใบสำคัญจ่ายหลักฐานยกเลิกตาม (คงแถว)"),
+    dict(file="Services/Implementations/DocumentService.cs", method="ReverseMultiDocPaymentInternalAsync",
+         must=["await VoidSettlementPaymentVouchersOfPaymentAsync(companyId, payment);"],
+         why=_R283_WHY + "283-4: เส้นหลายใบสมมาตร"),
+    dict(file="Services/Implementations/DocumentService.cs", method="VoidDocumentAsync",
+         must=["doc.IsSettlementReceipt && doc.DocumentType == DocumentType.PaymentVoucher && doc.SettlementPaymentId is Guid settledPayId",
+               "return await VoidPaymentAsync(companyId, lp);"],
+         before=[("return await VoidPaymentAsync(companyId, lp);", "if (doc.IsSettlementReceipt)\n            throw")],
+         why=_R283_WHY + "283-4: ยกเลิกใบสำคัญจ่ายหลักฐาน = ยกเลิกการจ่ายเส้นเดิม (กลับ JE · คืนหนี้ · 50 ทวิ ตามกติกาเดิม)"),
+]
+REVIEWER_CASES += [
+    ("R283-1", "ProcessAsync", "IssuePaymentVoucherDocument: true", "IssuePaymentVoucherDocument: false", True),
+    ("R283-2", "CreateSettlementPaymentVoucherCoreAsync", "WithholdingTaxAmount = SettlementPaymentVoucher.WithholdingTaxAmount", "WithholdingTaxAmount = payment.WithholdingTaxAmount", True),
+]
+
 # รอบ 284 (แพ็ก F — งานคงค้างจากผลตรวจรายสัปดาห์ 2026-11-20): T4 L-1 · T4 L-6 · T3 MED-5 (สำเนา JS) — คำตัดสิน 284-1…
 _R284_WHY = "รอบ 284 (แพ็ก F): "
 RULES += [
@@ -22566,6 +22605,44 @@ REVIEWER_CASES += [
     ("R284-1", "DetectEmployeeAsync", "EmployeeIdDuplicateScan.Scan(ids, idCard).MatchId", "ids.FirstOrDefault(e => Accounting.Helpers.EncryptedIdMatch.Same(e.CitizenId, idCard)).Id as Guid?", True),
     ("R284-2", "MatchByDetectorAsync", "await _duplicates.UnreadableEmployeeIdCountAsync(companyId, ct)", "0", True),
     ("R284-3", "ExportBankTransfer", "PayrollExportSheets.BankTransferSummaryOf(rows)", "default!", True),
+]
+
+# ── รอบ 285: ยืนยันเลขผู้เสียภาษีของบริษัท (คำตัดสิน 285-1…285-6 · ตัวตัดสินเดียว Helpers/CompanyTaxIdVerification) ──
+_R285_WHY = "รอบ 285 (ยืนยันเลขผู้เสียภาษีของบริษัทด้วยหลักฐาน + ผู้ดูแลแพลตฟอร์มอนุมัติ): "
+_R285_SVC = "Services/Implementations/CompanyTaxIdVerificationService.cs"
+RULES += [
+    dict(file="Services/Implementations/CrossTenantWorkflowService.LinkRequests.cs", method="MaterializeIncomingLinkRequestsAsync",
+         must=["CompanyTaxIdVerification.IsVerified(me.TaxId, me.TaxIdVerifiedAt, me.TaxIdVerifiedFor)",
+               "CompanyTaxIdVerification.IncomingRequestCutoff(verified, me.TaxIdSetAt) is not DateTime setAt", "r.CreatedAt >= setAt"],
+         why=_R285_WHY + "285-3: ยืนยันแล้วเปิดคำขอย้อนหลัง · ยังไม่ยืนยัน = หลังตั้งเลข (ตัวตัดสินเดียว ห้ามประกอบเอง)"),
+    dict(file="Data/AccountingDbContext.cs", method="StampTaxIdSetAt", must=["CompanyTaxIdVerification.ClearOnTaxIdChange(entry.Entity)"],
+         why=_R285_WHY + "285-4: เปลี่ยนเลขภาษี (ทุกทางเข้า SaveChanges) ⇒ หลุดสถานะยืนยัน"),
+    dict(file=_R285_SVC, method="SubmitAsync",
+         must=["CompanyTaxIdVerification.SubmitProblem(", "UploadFileType.SniffAttachment(", "CompanyTaxIdVerification.CompareRegistryName(company.Name, registryName)",
+               "SHA256.HashData(content)", "CompanyTaxIdVerification.AttachmentEntityType", "_db.AddChainedAuditLog("],
+         forbid=["FuzzyMatcher", "Similarity("],
+         before=[("CompanyTaxIdVerification.CompareRegistryName(", "_files.UploadBytesAsync(")],
+         why=_R285_WHY + "285-1/285-2: ด่านยื่น · ชนิดไฟล์จากไบต์ · ชื่อขัดทะเบียน (ตรงตัว ไม่ fuzzy) ก่อนเก็บไฟล์ · hash หลักฐาน · audit"),
+    dict(file=_R285_SVC, method="ApproveAsync",
+         must=["_db.Database.ExecuteSqlRawAsync(", "CompanyTaxIdVerification.ApproveProblem(r.Status, r.TaxId, company.TaxId, r.RegistryResult, r.AttachmentId != null)",
+               "company.TaxIdVerifiedFor = r.TaxId", "Audit("],
+         before=[("CompanyTaxIdVerification.ApproveProblem(", "company.TaxIdVerifiedAt = nowUtc")],
+         why=_R285_WHY + "อนุมัติใต้ล็อกแถวบริษัท · เลขในคำขอต้องตรงเลขปัจจุบัน · audit"),
+    dict(file=_R285_SVC, method="RevokeAsync", must=["CompanyTaxIdVerification.ReasonProblem(reason)", "CompanyTaxIdVerification.ClearOnTaxIdChange(company)", "Audit("],
+         why=_R285_WHY + "ถอนต้องมีเหตุ · ล้างสถานะบริษัท · audit"),
+    dict(file=_R285_SVC, method="ReadEvidenceAsync", must=["_files.ReadBytesAsync(r.CompanyId, attId, ct)", "r.EvidenceSha256"],
+         why=_R285_WHY + "ผู้ดูแลเปิดไฟล์ด้วย tenant ของคำขอ · ไฟล์ถูกสลับ = ล้มดัง"),
+    dict(file="Controllers/CompanyTaxIdVerificationController.cs", method="Submit",
+         must=["_service.SubmitAsync(companyId, userId,", "JwtHelper.GetUserIdFromClaims(User)"],
+         why=_R285_WHY + "ยื่นหลักฐานผ่านบริการตัวเดียว (สิทธิ์ตั้งค่าบริษัทที่ attribute — write_permission_gate_check)"),
+    dict(file="Services/Implementations/CrossTenantWorkflowService.LinkRequests.cs", method="GetIncomingLinkRequestAsync",
+         must=["CompanyTaxIdVerification.IsVerified(requester.TaxId, requester.TaxIdVerifiedAt, requester.TaxIdVerifiedFor)",
+               "CompanyTaxIdVerification.PartnerTaxIdLabel(requesterVerified)"],
+         why=_R285_WHY + "285-5: ผู้รับเห็นว่าเลขของผู้ขอยืนยันแล้วหรือยัง (ป้ายจากเซิร์ฟเวอร์)"),
+]
+REVIEWER_CASES += [
+    ("R285-1", "MaterializeIncomingLinkRequestsAsync", "IncomingRequestCutoff(verified, me.TaxIdSetAt)", "IncomingRequestCutoff(true, me.TaxIdSetAt)", True),
+    ("R285-2", "ApproveAsync", "company.TaxIdVerifiedFor = r.TaxId", "company.TaxIdVerifiedFor = company.TaxId", True),
 ]
 
 # รอบ 286 (คำสั่งเจ้าของ: ผู้จ่ายที่ไว้ใจได้ — สลิปเหมือนเดิมต่างแค่วันที่/ref ⇒ อนุมัติอัตโนมัติ + รั้วที่ทีมเพิ่ม) — คำตัดสิน 286-1…286-9

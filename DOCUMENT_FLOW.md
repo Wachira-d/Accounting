@@ -3509,6 +3509,24 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
 - ยังไม่ทำ (แผน P-1…P-6 ในไฟล์ผล): อนุมัติใบซื้อร่างอัตโนมัติ · บัตร/พร้อมเพย์เป็นหลักฐานบัญชีจ่าย · เพดานความยินยอมเทียบยอดก่อนหัก · งานหลังรับชำระนับปลายทางคู่ค้า · ปลุกส่ง 50 ทวิ ทันที · รายงานการจ่ายเดิมที่หัก 0 ·
   Last verified `commit 22572b0c`
 
+- **รอบ 283 ใบสำคัญจ่ายเป็นเอกสารจากท่ออัตโนมัติของผู้ซื้อ (คำสั่งเจ้าของ · คำตัดสิน 283-1…283-6 · `erp-review/2026-11-21/dev-283-partner-pv.md`)**:
+  ทางมือของใบซื้อมีสองทาง — "บันทึกชำระเงิน" (`CreatePaymentAsync` · Payment + JE + 50 ทวิ ต่องวด · **ไม่มีเอกสาร PV**) กับ "แปลงเป็นใบสำคัญจ่าย" (PV ลง JE เอง + ตัดหนี้ +
+  50 ทวิ ตอนอนุมัติ) · ท่อ (`PartnerPayablePipeline.ProcessAsync`) ใช้ทางแรก (แถวการแจ้ง · ผูกรายการเดินบัญชี · ยกเลิกเมื่อผู้ขายยกเลิก · ส่ง 50 ทวิ ให้คู่ค้า อ้าง Payment ทั้งหมด) ⇒
+  **283-1** ท่อส่ง `IssuePaymentVoucherDocument: true` ⇒ ในธุรกรรมเดียวกับการจ่าย หลัง 50 ทวิ ของงวดนั้น: ใบสำคัญจ่าย**หลักฐานคู่การจ่าย** (`IsSettlementReceipt` + `SettlementPaymentId` —
+  ธงเดียวกับใบเสร็จหลักฐานฝั่งขาย ที่อนุมัติ/ยกเลิก/ลบพร้อมใบแม่/ตรวจ JE หาย ข้ามอยู่แล้ว) · `RelatedDocumentId` = ใบซื้อ · ยอด = เงินออก (10,400) · **VAT = ภาษีหัก = 0 บนใบ**
+  (ผู้อ่าน ภ.ง.ด.3/53 · `WhtRemitScope.SettledSourceIds` · ลิสต์รอออก 50 ทวิ · ภ.พ.30 ไม่เห็นใบนี้ ⇒ ไม่นับซ้ำ/ไม่ฟ้องขาด) · บรรทัดเดียวบอกยอดหนี้ที่ปิด + ภาษีหัก 300 + เลข 50 ทวิ
+  (`DocumentLabels.SettlementPaymentVoucherLine` th/en) · **ไม่ลง JE** (เงินออก 10,400 ลง GL ครั้งเดียวที่การจ่าย) · ออกไม่ได้ ⇒ การจ่ายทั้งก้อน rollback (ท่อคืนเป็นปุ่มเดียว + เหตุ) ·
+  **283-2** เลข: ผู้ให้ความยินยอมมีสิทธิ์อนุมัติ PV ⇒ เลขจริงจากเล่ม PV ทันที (`DocumentNumberGenerator`) · ไม่มี ⇒ ร่าง `DRAFT-` (อนุมัติภายหลังข้าม JE/ตัดหนี้ของใบหลักฐาน) ·
+  **283-3** 50 ทวิ ใบเดิม (`DocumentId` = ใบซื้อ · `SourcePaymentId` = การจ่าย) **ผูกกับ PV ด้วยกุญแจการจ่ายเดียวกัน** — ไม่ย้าย `DocumentId` (ผู้อ่านต่องวด · ยกเลิกการจ่าย ·
+  `PartnerWhtCertExchangeService` ใช้คู่ ใบซื้อ+การจ่าย) · ไม่ออกใบใหม่ · **283-4** ยกเลิกใบ PV ⇒ `VoidDocumentAsync` เรียก `VoidPaymentAsync` ของการจ่ายนั้น (กลับ JE · ใบซื้อกลับค้าง ·
+  50 ทวิ ตามกติกาเดิม — ร่างยกเลิก/ออกแล้วติดป้ายให้คนตัดสิน) · ยกเลิกการจ่าย (ทั้งเส้นใบเดียว/หลายใบ) ⇒ PV ยกเลิกตาม **คงแถวที่มองเห็น** (ใบมีเลข) + audit ·
+  ป้าย `OriginLabel` "⚙️ ระบบสร้างจากคู่ค้า" (`Document.OriginModule = PartnerAuto` · server computes) · audit `SettlementPaymentVoucherIssued` ·
+  **283-5** ใบที่ท่อบันทึกก่อนรอบนี้ (ไม่มี PV): `GET api/companies/{c}/partner-payments/without-voucher` (อ่านอย่างเดียว · หมายเหตุการจ่ายขึ้นต้นหัวของท่อ + การแจ้งที่บันทึกแล้ว) ·
+  `POST …/partner-payments/{paymentId}/payment-voucher` = ออกย้อนหลังทีละรายการ (สิทธิ์อนุมัติเอกสารซื้อ · ไม่รับ API key · ล็อกการจ่าย · ไม่ลง JE ซ้ำ · ไม่ออก 50 ทวิ ใหม่ ·
+  มีใบแล้ว = AlreadyIssued) · **283-6** ทางมือ ("บันทึกชำระเงิน" · ปุ่มเดียวของการแจ้ง · แจ้งโอน P4) ยังไม่ออก PV (ค่าเดิม — ตัวเลือกในโมดัลเป็นงานถัดไป) ·
+  ตัวตัดสิน `Helpers/SettlementPaymentVoucher` · ตัวสร้างเดียว `DocumentService.CreateSettlementPaymentVoucherCoreAsync` · ล็อก `_R283_*` (+7 · เคสฝ่ายค้าน R283-1/2) ·
+  เทสต์ `SettlementPaymentVoucherRound283Tests` (pure) · `PartnerSettlementVoucherRound283DbTests` (Db 2) · Last verified `commit 699edd9d`
+
 ### 2.12g-270 รอบ 270 งานค้างจาก 266/268/269 (คำตัดสิน 270-1-1…5 ใน `erp-review/2026-09-29/DECISIONS.md`)
 
 - **270-1-1 คืนมัดจำการจองหลายงวด (ฝ่ายค้าน 268 L7)**: `DocumentService.RefundDepositAsync` (ไม่ได้เลือกบัญชี) → `BookingDepositRefundPlanAsync` (ใบผูก `SiteBooking.ErpDocumentId`) →
@@ -4105,6 +4123,13 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
     ⇒ เปิดเฉพาะคำขอที่ส่ง**หลัง** `Company.TaxIdSetAt` (ประทับโดย `AccountingDbContext.StampTaxIdSetAt` ทุกทางเข้า) · คำขอก่อนหน้า ⇒ ผู้ขอ "ส่งแจ้งอีกครั้ง" · เปลี่ยนเลขภาษี (`CompanyService.UpdateAsync`) ⇒
     `VoidIncomingRequestsForOldTaxIdAsync` ยกเลิกคำขอรอเรายอมรับของเลขเดิม (Rejected + เหตุ + audit · คู่ที่เชื่อมแล้วไม่แตะ) ·
     migration `Round280Migration` (คอลัมน์ `PartnerLinkRequests.ContactId` + ตาราง `PartnerLinkRequestNotices` + `Companies.TaxIdSetAt` = เวลาที่ deploy สำหรับบริษัทเดิม · ไม่แก้ TopicsJson)
+  - **(รอบ 285 · คำตัดสิน 285-1…285-6) ยืนยันเลขผู้เสียภาษีของบริษัท**: หน้าตั้งค่าบริษัท (`settings.html` กล่องใต้ช่องเลขภาษี) ยื่นหลักฐาน ภ.พ.20/หนังสือรับรอง
+    (`POST /api/companies/{id}/tax-id-verification` · สิทธิ์ตั้งค่าบริษัท · ไฟล์ PDF/รูปจากไบต์ ≤ 10 MB · SHA-256 · ไฟล์แนบชนิด `CompanyTaxIdEvidence`) · ชื่อเทียบทะเบียนตรงตัว
+    (`IDbdLookupService` · ไม่ fuzzy · ขัด = ยื่นไม่ได้ · ทะเบียนไม่ตอบ = ป้าย "ตรวจไม่ได้") → ผู้ดูแลแพลตฟอร์ม `/admin/taxid-verifications.html`
+    (`api/admin/tax-id-verifications` · SystemAdmin) อนุมัติ/ปฏิเสธ/ถอน (เหตุ · audit `CompanyTaxIdVerificationRequest`) · อนุมัติ ⇒ `Company.TaxIdVerifiedAt/For/RequestId`
+    (ทางเดียว `CompanyTaxIdVerificationService.ApproveAsync` ใต้ `FOR UPDATE` แถวบริษัท) · **ยืนยันแล้ว ⇒ `MaterializeIncomingLinkRequestsAsync` เปิดทุกคำขอที่ยังไม่หมดอายุ
+    รวมที่ส่งก่อนสมัคร** (`CompanyTaxIdVerification.IncomingRequestCutoff`) · ยังไม่ยืนยัน = หลัง `TaxIdSetAt` เหมือนเดิม · เปลี่ยนเลขทุกทางเข้า ⇒ หลุดสถานะ
+    (`StampTaxIdSetAt` → `ClearOnTaxIdChange`) · การ์ดคำขอฝั่งผู้รับแสดงว่าเลขของผู้ขอยืนยันแล้วหรือยัง · migration `Round285Migration` (บริษัทเดิม = ยังไม่ยืนยัน)
   - **(รอบ 280 ฝ่ายค้าน LOW-2 ของรอบ 279) การ์ดสถานะ `#HeyNextAcc`**: กลุ่มผูกผู้ติดต่อหลายราย ⇒ `Replies.StatusMulti` (บริษัท · จำนวนผู้ติดต่อ · เรื่องที่ส่งรวม · ดูรายละเอียดที่เว็บ — ไม่มีชื่อ/ความยินยอมรายผู้ติดต่อ) ·
     ลิงก์ที่โพสต์เข้ากลุ่ม = `ProviderConsent.GroupGrantLinkOrMenu` (ไม่มี id บริษัทลูกค้า) · ผูกรายเดียว = การ์ดเดิม
   - **(D-M2) ใบซื้อร่างตามต้นฉบับ**: คัดลอกส่วนลดรายบรรทัด/ท้ายบิล (`DiscountAmount` · `BillDiscountPercent/Amount`) · ผลต่างปัดเศษ · ภาษีหัก ณ ที่จ่ายหัวใบ + บรรทัด · หน่วย · % ส่วนลด ·
@@ -10192,3 +10217,8 @@ _Last verified against codebase: 2026-11-20 (รอบ 280 ชุดแก้ฝ
 _Last verified against codebase: 2026-11-20 (รอบ 281 เส้นคู่ค้า A↔B ครบเส้น — §2.12g-281: ยอดก่อนหักของตัวคิดการแจ้ง (บั๊ก หัก 0) · คีย์แจ้งเตือนต่อขั้น 7 คีย์ + คัดลอกค่าตั้งเดิม · เส้นทางของใบ · ผูกผู้ติดต่อตอนส่งใบ — คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — commit 22572b0c)_
 
 _Last verified against codebase: 2026-11-20 (รอบ 281 ชุดแก้ฝ่ายค้าน MED-1/2 + LOW 1–6 — §2.12g-281: จ่ายเต็มเกินยอดค้างหลังหัก ⇒ หยุดพร้อมเหตุ · ผูกผู้ติดต่อไม่ซ้ำ/ไม่ผูกเลขขยะ · เส้นทางไม่เปิดยอดอีกฝั่ง · โหลดเป็นชุด · แจ้งหลัง commit · ธงคัดลอกค่าตั้ง — คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — commit 94c52138)_
+
+_Last verified against codebase: 2026-11-21 (รอบ 283 ใบสำคัญจ่ายเป็นเอกสารจากท่ออัตโนมัติคู่ค้า — §2.12g-281: ใบหลักฐานคู่การจ่าย (ไม่ลง JE ซ้ำ · ไม่ถือภาษี · อ้าง 50 ทวิ ของการจ่าย) · ยกเลิก PV = ยกเลิกการจ่าย · รายงาน + ออกย้อนหลัง — คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — commit 699edd9d)_
+
+_Last verified against codebase: 2026-11-21 (รอบ 285 — §2.12l ยืนยันเลขผู้เสียภาษีของบริษัทด้วย ภ.พ.20/หนังสือรับรอง + ผู้ดูแลแพลตฟอร์มอนุมัติ ·
+ยืนยันแล้วเห็นคำขอเชื่อมคู่ค้าที่ส่งก่อนสมัคร · เปลี่ยนเลข = หลุดสถานะ · ภ.ง.ด.1 ช่อง 5 คงเดิม (285-7: สเปก RD เปิดไม่ได้จาก session นี้) — commit ae317b36)_
