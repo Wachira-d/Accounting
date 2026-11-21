@@ -89,6 +89,35 @@ public class PartnerSettlementVoucherRound283DbTests
         }
         Assert.True(spy.Has(s.Buyer.Id, Accounting.Models.Constants.NotificationEvents.PartnerPaymentAutoRecorded));
 
+        // ฝ่ายค้าน MED-A1: ใบหลักฐานแก้ได้เฉพาะหมายเหตุ · ตัวออก 50 ทวิ ข้ามใบหลักฐานเสมอ
+        using (var c = DbTestDatabase.TryCreateContext()!)
+        {
+            var docs = F.Docs(c, spy);
+            var pv = await c.Documents.AsNoTracking().Include(d => d.Lines).SingleAsync(d => d.Id == pvId && d.CompanyId == s.Buyer.Id);
+            var line = pv.Lines.Single();
+            var same = new Accounting.Models.DTOs.Document.DocumentLineRequest(line.Description, line.Quantity, line.Unit, line.UnitPrice, line.DiscountPercent,
+                line.VatRate, line.WithholdingTaxRate, line.AccountId);
+            var notesOnly = await docs.UpdateDocumentAsync(s.Buyer.Id, pvId, new Accounting.Models.DTOs.Document.UpdateDocumentRequest(
+                pv.DocumentDate, null, pv.ContactId, pv.Reference, "หมายเหตุใหม่", new() { same }));
+            Assert.Equal("หมายเหตุใหม่", notesOnly.Notes);
+            var ex = await Assert.ThrowsAsync<BusinessRuleException>(() => docs.UpdateDocumentAsync(s.Buyer.Id, pvId, new Accounting.Models.DTOs.Document.UpdateDocumentRequest(
+                pv.DocumentDate, null, pv.ContactId, pv.Reference, "x", new() { same with { VatRate = 7m, WithholdingTaxRate = 3m } })));
+            Assert.Equal(SettlementPaymentVoucher.EvidenceEditRuleCode, ex.RuleCode);
+            var wht = await new Accounting.Services.Implementations.WithholdingTaxCertService(c, null!, null!,
+                    Microsoft.Extensions.Logging.Abstractions.NullLogger<Accounting.Services.Implementations.WithholdingTaxCertService>.Instance)
+                .TryAutoIssueForDocumentAsync(s.Buyer.Id, pvId, WhtCertIssueTrigger.Manual, s.OwnerB.ToString(), DateTime.UtcNow.Date);
+            Assert.Equal(WhtCertIssueAction.NotApplicable, wht.Action);
+            Assert.Equal(1, await c.WithholdingTaxCerts.CountAsync(w => w.CompanyId == s.Buyer.Id));
+            var after = await c.Documents.AsNoTracking().SingleAsync(d => d.Id == pvId && d.CompanyId == s.Buyer.Id);
+            Assert.Equal(0m, after.VatAmount);
+            Assert.Equal(0m, after.WithholdingTaxAmount);
+
+            // ฝ่ายค้าน LOW-A3: หน้ากระทบยอดธนาคาร — เงินออกนับครั้งเดียว (แถวการจ่าย) ไม่นับใบหลักฐานซ้ำ · ฝั่งผู้ขาย (ใบเสร็จหลักฐาน) เช่นกัน
+            var bank = new Accounting.Services.Implementations.BankService(c);
+            Assert.Equal(-10_400m, (await bank.GetReconciliationSummaryAsync(s.Buyer.Id, s.BankB)).DocumentBalance);
+            Assert.Equal(10_400m, (await bank.GetReconciliationSummaryAsync(s.Seller.Id, s.BankA)).DocumentBalance);
+        }
+
         // รันซ้ำ ⇒ ไม่มีการจ่าย/ใบที่สอง
         Assert.Equal(0, await F.BuyerPipelineAsync(s, spy));
         using (var c = DbTestDatabase.TryCreateContext()!)
@@ -217,9 +246,10 @@ public class PartnerSettlementVoucherRound283DbTests
         }
         using (var c = DbTestDatabase.TryCreateContext()!)
         {
+            c.DocumentDraftOnlyRequest = true;   // ฝ่ายค้าน MED-A2: คำขอ "เฉพาะร่าง" (รอบ 276) ⇒ ไม่ออกเลข เป็นร่างรออนุมัติ
             var r = await F.Docs(c, spy).IssueSettlementPaymentVoucherAsync(s.Buyer.Id, payId, s.OwnerB.ToString());
             Assert.Equal(SettlementPaymentVoucher.IssueAction.Issue, r.Action);
-            Assert.NotNull(r.VoucherNumber);
+            Assert.StartsWith("DRAFT-", r.VoucherNumber);
         }
         using (var c = DbTestDatabase.TryCreateContext()!)
         {

@@ -28,6 +28,8 @@ public partial class DocumentService
         var canApprove = true;
         if (_permissionService != null && Guid.TryParse(actor, out var actorUid))
             canApprove = await DocumentPermissionHelper.CanApproveAsync(_permissionService, companyId, actorUid, DocumentType.PaymentVoucher);
+        // ฝ่ายค้าน MED-A2: ด่าน "เฉพาะร่าง" (รอบ 276) ตัวเดียวกับเส้นอนุมัติ — ผู้กระทำ/คำขอเฉพาะร่าง ⇒ ใบเป็นร่างรออนุมัติ (ไม่ออกเลข)
+        canApprove = canApprove && await DocumentRestrictionGuard.MayFinalizeAsync(_db, companyId, actor);
         // 50 ทวิ ของการจ่ายนี้ (ออกตอนบันทึกจ่ายในธุรกรรมเดียวกัน · หรือก่อนหน้าสำหรับใบย้อนหลัง) — แสดงเลขบนใบ ไม่ออกใบใหม่
         var certNumber = payment.WithholdingTaxAmount > 0m
             ? await _db.WithholdingTaxCerts.AsNoTracking()

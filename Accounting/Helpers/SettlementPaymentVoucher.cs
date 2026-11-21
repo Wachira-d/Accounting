@@ -99,6 +99,28 @@ public static class SettlementPaymentVoucher
         => $"[{RuleCode}] " + (backfilled ? "ออกย้อนหลัง" : "ระบบสร้างจากคู่ค้า")
            + $" — หลักฐานคู่การจ่าย {paymentNumber} · ไม่ลงบัญชี/ไม่ตัดหนี้ซ้ำ (JE อยู่ที่การจ่าย) · ยกเลิกใบนี้ = ยกเลิกการจ่าย";
 
+    /// <summary>ฝ่ายค้าน MED-A1: เหตุที่ใบหลักฐานไม่ออก 50 ทวิ</summary>
+    public const string EvidenceNoWhtReason = "ใบหลักฐานคู่การจ่าย/รับชำระ — 50 ทวิ ของการจ่ายนี้อยู่ที่ใบตั้งหนี้ (ไม่ออกจากใบนี้)";
+
+    /// <summary>ฝ่ายค้าน MED-A1: ใบหลักฐาน (ใบสำคัญจ่ายหลักฐาน · ใบเสร็จหลักฐานฝั่งขาย) แก้ได้เฉพาะหมายเหตุ — ยอด/ภาษี/บรรทัด/ผู้ติดต่อ/วันที่ มาจากการชำระ</summary>
+    public const string EvidenceEditOnlyNotesMessage = "ใบนี้เป็นหลักฐานคู่การชำระ (ออกอัตโนมัติจากการบันทึกชำระ) — แก้ได้เฉพาะหมายเหตุ · ยอด/ภาษี/รายการมาจากการชำระ: ถ้าผิด ให้ยกเลิกการชำระแล้วบันทึกใหม่";
+    public const string EvidenceEditRuleCode = "SETTLEMENT-EVIDENCE-EDIT";
+
+    /// <summary>ฝ่ายค้าน MED-A1: คำขอแก้ใบหลักฐานแตะมากกว่าหมายเหตุไหม (ยอด/ภาษี/บรรทัด/ผู้ติดต่อ/วันที่) — ส่งค่าเดิมกลับมา (ฟอร์มส่งทั้งชุด) = ไม่นับว่าแตะ</summary>
+    public static bool EvidenceEditTouchesMoney(
+        IReadOnlyList<(decimal Qty, decimal UnitPrice, decimal Discount, decimal VatRate, decimal WhtRate)> currentLines,
+        IReadOnlyList<(decimal Qty, decimal UnitPrice, decimal Discount, decimal VatRate, decimal WhtRate)>? requestedLines,
+        Guid currentContact, Guid? requestedContact, DateTime currentDate, DateTime? requestedDate)
+    {
+        if (requestedContact is Guid rc && rc != Guid.Empty && rc != currentContact) return true;
+        if (requestedDate is DateTime rd && rd.Date != currentDate.Date) return true;
+        if (requestedLines == null) return false;
+        if (requestedLines.Count != currentLines.Count) return true;
+        for (var i = 0; i < currentLines.Count; i++)
+            if (requestedLines[i] != currentLines[i]) return true;
+        return false;
+    }
+
     /// <summary>ข้อความเมื่อยกเลิกใบหลักฐานที่การจ่ายถูกยกเลิกไปก่อนแล้ว</summary>
     public const string VoidedWithPaymentNote = "ยกเลิกพร้อมการจ่าย";
 }

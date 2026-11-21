@@ -122,9 +122,14 @@ public static class DocumentRestrictionGuard
 
     /// <summary>ด่านชั้น service: อนุมัติ/ยกเลิก/ออกเลข ทำไม่ได้เมื่อ (ก) คำขอนี้มาจากผู้ "เฉพาะร่าง" หรือ (ข) ผู้กระทำเป็นสมาชิก "เฉพาะร่าง" ·
     /// โยน <see cref="BusinessRuleException"/> 403 พร้อมทางไปต่อ (ส่งขออนุมัติ)</summary>
+    /// <summary>รอบ 283 ฝ่ายค้าน MED-A2: เงื่อนไขเดียวกับ <see cref="EnsureMayFinalizeAsync"/> แบบไม่โยน — เส้นที่ออกเลขเองนอก ApproveDocumentAsync
+    /// (ใบสำคัญจ่ายหลักฐาน) ใช้ตัดสิน "ออกเลข หรือ เป็นร่างรออนุมัติ"</summary>
+    public static async Task<bool> MayFinalizeAsync(AccountingDbContext db, Guid companyId, string? actor, CancellationToken ct = default)
+        => !(db.DocumentDraftOnlyRequest || (await ForActorAsync(db, companyId, actor, ct)).DraftOnly);
+
     public static async Task EnsureMayFinalizeAsync(AccountingDbContext db, Guid companyId, string? actor, string verb, CancellationToken ct = default)
     {
-        if (db.DocumentDraftOnlyRequest || (await ForActorAsync(db, companyId, actor, ct)).DraftOnly)
+        if (!await MayFinalizeAsync(db, companyId, actor, ct))
             throw new BusinessRuleException(DocumentRestrictionPolicy.DraftOnlyDeniedMessage(verb), DocumentRestrictionPolicy.DraftOnlyRuleCode, 403);
     }
 }

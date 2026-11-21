@@ -2988,6 +2988,22 @@ public partial class DocumentService : IDocumentService
             .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
 
+        // รอบ 283 ฝ่ายค้าน MED-A1: ใบหลักฐานคู่การชำระ (ใบสำคัญจ่ายหลักฐาน · ใบเสร็จหลักฐานฝั่งขาย) แก้ได้เฉพาะหมายเหตุ — เดิมร่างแก้ยอด/ภาษีได้ ⇒ อนุมัติแล้ว 50 ทวิ
+        // ใบที่สอง + VAT เข้าแดชบอร์ด · ส่งค่าเดิมทั้งชุด (ฟอร์ม) ⇒ บันทึกหมายเหตุ · แตะยอด/บรรทัด/ผู้ติดต่อ/วันที่ ⇒ ปฏิเสธพร้อมทางไปต่อ (ไม่ silent no-op)
+        if (doc.IsSettlementReceipt)
+        {
+            var cur = doc.Lines.Where(l => !l.IsDeleted).OrderBy(l => l.LineOrder)
+                .Select(l => (l.Quantity, l.UnitPrice, l.DiscountPercent, l.VatRate, l.WithholdingTaxRate)).ToList();
+            var req = request.Lines?.Select(l => (l.Quantity, l.UnitPrice, l.DiscountPercent, l.VatRate, l.WithholdingTaxRate)).ToList();
+            if (Accounting.Helpers.SettlementPaymentVoucher.EvidenceEditTouchesMoney(cur, req, doc.ContactId, request.ContactId, doc.DocumentDate, request.DocumentDate))
+                throw new Accounting.Helpers.BusinessRuleException(Accounting.Helpers.SettlementPaymentVoucher.EvidenceEditOnlyNotesMessage,
+                    Accounting.Helpers.SettlementPaymentVoucher.EvidenceEditRuleCode, 409);
+            doc.Notes = request.Notes;
+            doc.UpdatedAt = DateTime.UtcNow;
+            await _db.SaveChangesAsync();
+            return await GetDocumentAsync(companyId, documentId);
+        }
+
         // ── Document revision: เอกสาร operational ที่อนุมัติ/ส่งแล้ว "แก้ได้" ──
         // เกณฑ์เดียว: เอกสารที่ **ไม่มี JE / ไม่ขยับสต๊อก / ไม่เข้ารายงานภาษี**
         // แก้หลังอนุมัติได้โดยไม่กระทบบัญชี ตามธรรมเนียมการค้า (เลขที่คงเดิม +
@@ -10261,7 +10277,22 @@ public partial class DocumentService : IDocumentService
             var orphanPayment = await _db.Payments.IgnoreQueryFilters()
                 .FirstOrDefaultAsync(p => p.Id == settledPayId && p.CompanyId == companyId);
             if (orphanPayment != null) await VoidSettlementPaymentVouchersOfPaymentAsync(companyId, orphanPayment);
-            else { doc.Status = DocumentStatus.Voided; doc.UpdatedAt = DateTime.UtcNow; }
+            else
+            {
+                // ฝ่ายค้าน LOW-A4: ไม่พบแถวการจ่ายเลย ⇒ ยกเลิกใบหลักฐานอย่างเดียว + audit (เดิมไม่มีร่องรอย)
+                var before = doc.Status;
+                doc.Status = DocumentStatus.Voided; doc.UpdatedAt = DateTime.UtcNow;
+                _db.AddChainedAuditLog(new AuditLog
+                {
+                    CompanyId = companyId, Action = AuditAction.Update, EntityType = "Document", EntityId = doc.Id.ToString(),
+                    NewValues = System.Text.Json.JsonSerializer.Serialize(new
+                    {
+                        @event = "SettlementPaymentVoucherVoidedNoPayment", documentNumber = doc.DocumentNumber, from = before.ToString(),
+                        settlementPaymentId = settledPayId, ruleCode = Accounting.Helpers.SettlementPaymentVoucher.RuleCode,
+                    }),
+                    Timestamp = DateTime.UtcNow,
+                });
+            }
             await _db.SaveChangesAsync();
             return PaymentVoidResult.None;
         }
