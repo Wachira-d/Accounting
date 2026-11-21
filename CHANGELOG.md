@@ -7514,7 +7514,7 @@ LOW-1 "ส่งได้บางส่วน" · LOW-2 การ์ด `#HeyNe
 - 283-5: รายงาน + ออกย้อนหลังทีละรายการ (`partner-payments/without-voucher` · `partner-payments/{id}/payment-voucher`) · ป้าย `OriginLabel` บนรายการเอกสาร
 - เทสต์ pure `SettlementPaymentVoucherRound283Tests` · Db `PartnerSettlementVoucherRound283DbTests` (2) · กติกา `_R283_*` (+7) · คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว (ฐาน `accounting_test_r283`) · commit 699edd9d
 - ชุดสอง (ผู้ประสานงาน): ทุกการจ่ายของใบซื้อจากคู่ค้าได้ PV ผ่าน `SettlementPaymentVoucher.IssueOnPayment` (ปุ่มเดียว · แจ้งโอน P4 · บันทึกชำระมือ) · ใบซื้อทั่วไปไม่แตะ · `PayNextStepHint` · การ์ดออกย้อนหลังใน partners.html
-- ชุดสอง (ฝ่ายค้าน): MED-A1 ใบหลักฐานแก้ได้เฉพาะหมายเหตุ + 50 ทวิ ข้ามใบหลักฐาน + แดชบอร์ดไม่นับ VAT · MED-A2 ด่านเฉพาะร่าง ⇒ ร่าง · LOW-A3 กระทบยอดธนาคารไม่นับซ้ำ · LOW-A4 audit · commit SHA283B
+- ชุดสอง (ฝ่ายค้าน): MED-A1 ใบหลักฐานแก้ได้เฉพาะหมายเหตุ + 50 ทวิ ข้ามใบหลักฐาน + แดชบอร์ดไม่นับ VAT · MED-A2 ด่านเฉพาะร่าง ⇒ ร่าง · LOW-A3 กระทบยอดธนาคารไม่นับซ้ำ · LOW-A4 audit · commit c83fb6d1
 
 ## รอบ 284 (2026-11-21 · แพ็ก F งานคงค้างจากผลตรวจรายสัปดาห์ · `erp-review/2026-11-21/dev-284-pack-f.md`)
 
