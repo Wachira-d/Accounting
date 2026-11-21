@@ -40,12 +40,17 @@ public static class PartnerSlipCopyRule
     public sealed record Facts(
         bool ConsentOk, DateTime? ConsentGrantedAt, DateTime NoticeCreatedAt,
         bool HasIntent, bool IntentIsSlip, bool IntentSucceeded,
-        Guid? SlipAttachmentId, bool AttachmentFound, string? AttachmentChannel);
+        Guid? SlipAttachmentId, bool AttachmentFound, string? AttachmentChannel,
+        bool PurchaseFound = true, bool PartnerPairOk = true);
 
     public sealed record Verdict(Outcome Outcome, string Reason);
 
     public static Verdict Decide(Facts f)
     {
+        // รอบ 288b (ฝ่ายค้านข้อ 6): บริษัทต้นทางของการแจ้งต้องเป็นอีกฝ่ายของการเชื่อมที่ยังมีผล — ไม่ใช่ ⇒ ไม่อ่านข้อมูลบริษัทนั้นเลย (จบ ไม่รอ)
+        if (!f.PartnerPairOk) return new(Outcome.Done, PartnerMismatchReason);
+        // รอบ 288b (ฝ่ายค้านข้อ 3): ใบซื้อปลายทางถูกลบ/หาไม่พบ ⇒ สถานะปลายทางที่บอกเหตุ (เดิมรอตลอดไป บังคิว)
+        if (!f.PurchaseFound) return new(Outcome.Done, PurchaseMissingReason);
         if (!f.ConsentOk) return new(Outcome.Wait, "ผู้ซื้อยังไม่ได้ยินยอมรับสำเนาสลิป — ไม่ส่งรูปข้ามบริษัท");
         if (f.ConsentGrantedAt is DateTime g && f.NoticeCreatedAt < g)
             return new(Outcome.Done, "การชำระเกิดก่อนให้ความยินยอม — ไม่ส่งย้อนหลัง");
@@ -58,6 +63,17 @@ public static class PartnerSlipCopyRule
         return new(Outcome.Copy, "ผู้ขายยืนยันรับเงินจากสลิปนี้แล้ว — สำเนาแนบใบซื้อเป็นหลักฐาน");
     }
 
+    public const string PartnerMismatchReason = "บริษัทต้นทางของการแจ้งไม่ใช่คู่ค้าของการเชื่อมนี้ (หรือการเชื่อมไม่มีผลแล้ว) — ไม่คัดสำเนา";
+    public const string UnreadableReason = "อ่านไฟล์สลิปของผู้ขายไม่ได้ (ลองครบแล้วหรือไม่ใช่รูป/PDF) — ไม่ได้สำเนา";
+    public const string PurchaseMissingReason ="ไม่พบใบซื้อปลายทางของการแจ้งนี้ (ถูกลบ) — ไม่คัดสำเนา";
+
+    /// <summary>รอบ 288b (ฝ่ายค้านข้อ 3): ผล "ยังไม่ถึงเวลา" เลื่อนการตรวจครั้งถัดไปไปเท่านี้ (<c>PartnerPaymentNotice.SlipCopyNextCheckAt</c>) —
+    /// แถวที่รอไม่บังแถวใหม่ในชุด <c>Take</c> ของรอบถัดไป</summary>
+    public static readonly TimeSpan WaitRecheckEvery = TimeSpan.FromMinutes(30);
+
+    /// <summary>เวลาตรวจครั้งถัดไปของผล <see cref="Outcome.Wait"/> (ตัวคำนวณเดียว)</summary>
+    public static DateTime NextCheckAt(DateTime nowUtc) => nowUtc + WaitRecheckEvery;
+
     /// <summary>ช่องทางของสลิปที่ผู้ซื้อแจ้งโอนจากระบบตัวเอง (สำเนาไปหาผู้ขาย — ไม่ส่งกลับ) · ค่าตรงกับ <c>SlipEvidenceService.ChannelPartnerNextAcc</c></summary>
     public const string OwnChannel = "partner-nextacc";
 
@@ -66,4 +82,11 @@ public static class PartnerSlipCopyRule
 
     /// <summary>ป้ายบนการแจ้ง/หน้า (server computes)</summary>
     public const string CopiedLabel = "มีสำเนาสลิปแนบที่ใบซื้อ (จากผู้ขาย)";
+
+    /// <summary>รอบ 288b: ป้ายสถานะสำเนาสลิปของการแจ้ง (ผู้อ่าน: <c>PartnerPaymentNoticeService.ListAsync</c> ⇒ หน้า partners) · ได้สำเนา ⇒ <see cref="CopiedLabel"/> ·
+    /// จบโดยไม่ได้สำเนา (มีเหตุ) ⇒ "ไม่ได้สำเนาสลิป: เหตุ" · ยังไม่จบ/ไม่มีเหตุ ⇒ null (ไม่แสดง)</summary>
+    public static string? StatusLabel(Guid? copyAttachmentId, DateTime? checkedAt, string? note)
+        => copyAttachmentId != null ? CopiedLabel
+            : checkedAt != null && !string.IsNullOrWhiteSpace(note) ? "ไม่ได้สำเนาสลิป: " + note.Trim()
+            : null;
 }

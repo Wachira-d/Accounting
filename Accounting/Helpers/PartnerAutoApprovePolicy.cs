@@ -56,6 +56,10 @@ public static class PartnerAutoApprovePolicy
         public const string Wht = "Wht";
         public const string Warnings = "Warnings";
         public const string ApproveFailed = "ApproveFailed";
+        /// <summary>รอบ 288b: ผู้ขายออกใบกำกับภาษีอย่างย่อ (ม.86/6) — ภาษีซื้อต้องห้าม ม.82/5(2) ⇒ ไม่อนุมัติเอง</summary>
+        public const string AbbreviatedTaxInvoice = "AbbreviatedTaxInvoice";
+        /// <summary>รอบ 288b: ใบถูกแก้ระหว่างตรวจกับอนุมัติ (ตรา <see cref="ApprovalContentStamp"/> ไม่ตรงใต้ล็อก) ⇒ ร่าง + ตรวจใหม่รอบถัดไป</summary>
+        public const string ContentChanged = "ContentChanged";
     }
 
     /// <param name="LocalConfident">โมเดลในบ้านตอบผังเดียวกับบรรทัดด้วยความมั่นใจ ≥ เกณฑ์ (<see cref="LocalConfidentOf"/>)</param>
@@ -70,7 +74,8 @@ public static class PartnerAutoApprovePolicy
         bool IsTaxInvoice, IReadOnlyList<string> TaxInvoiceMissing,
         IReadOnlyList<Line> Lines,
         string? WhtProblem,
-        IReadOnlyList<string> ApprovalWarnings);
+        IReadOnlyList<string> ApprovalWarnings,
+        bool AbbreviatedTaxInvoice = false);
 
     public sealed record Verdict(bool Auto, string Code, string Reason)
     {
@@ -84,6 +89,8 @@ public static class PartnerAutoApprovePolicy
         if (!f.ConsentOk) return Hold(Codes.Consent, "ความยินยอมใช้ไม่ได้ตอนนี้: " + f.ConsentReason);
         if (!f.GrantorMayFinalize) return Hold(Codes.GrantorDraftOnly, "ผู้ให้ความยินยอมถูกตั้งให้ทำได้เฉพาะร่าง — อนุมัติแทนไม่ได้ (ผู้มีสิทธิ์อนุมัติต้องยืนยันความยินยอมใหม่)");
         if (!f.IsDraft) return Hold(Codes.NotDraft, "ใบไม่ใช่ร่างแล้ว");
+        // รอบ 288b (ฝ่ายค้านข้อ 4): ใบกำกับอย่างย่อจากผู้ขาย ⇒ บล็อกที่หัวใบ ไม่พึ่งธงเคลมบนบรรทัด (บรรทัดที่คัดลอกมาอาจยังตั้งว่าเคลมได้)
+        if (f.AbbreviatedTaxInvoice) return Hold(Codes.AbbreviatedTaxInvoice, AbbreviatedHoldMessage);
         if (f.SourceVoided) return Hold(Codes.SourceVoided, "ผู้ขายยกเลิกเอกสารต้นทางแล้ว — ไม่อนุมัติ");
         if (!string.Equals((f.Currency ?? "THB").Trim(), "THB", StringComparison.OrdinalIgnoreCase))
             return Hold(Codes.Currency, "ใบไม่ใช่สกุลบาท — ระบบไม่อนุมัติเอง");
@@ -144,6 +151,9 @@ public static class PartnerAutoApprovePolicy
             return $"ภาษีหัก ณ ที่จ่ายหัวใบ {headerWht:N2} ไม่ตรงผลรวมรายการ {lineSum:N2} — ให้คนตรวจ";
         return null;
     }
+
+    public const string AbbreviatedHoldMessage =
+        "ผู้ขายออกใบกำกับภาษีอย่างย่อ — ภาษีซื้อต้องห้าม (ป.รัษฎากร ม.82/5(2)) ระบบไม่อนุมัติเอง · ตั้ง VAT ของรายการเป็นต้นทุน (เคลมไม่ได้) หรือขอใบกำกับภาษีเต็มรูปจากผู้ขาย แล้วอนุมัติเอง";
 
     public const string InternalErrorMessage = "ข้อผิดพลาดภายในระบบ (ผู้ดูแลระบบดูบันทึกระบบ)";
 

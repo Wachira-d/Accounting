@@ -16,5 +16,8 @@ public static class Round288Migration
         """ALTER TABLE "PartnerPaymentNotices" ADD COLUMN IF NOT EXISTS "SlipCopyAttachmentId" uuid NULL;""",
         """ALTER TABLE "PartnerPaymentNotices" ADD COLUMN IF NOT EXISTS "SlipCopyCheckedAt" timestamp without time zone NULL;""",
         """ALTER TABLE "PartnerPaymentNotices" ADD COLUMN IF NOT EXISTS "SlipCopyAttempts" integer NOT NULL DEFAULT 0;""",
+        // รอบ 288b (ฝ่ายค้านข้อ 3): คิวสำเนาสลิปไม่บังกันเอง + สถานะปลายทางที่บอกเหตุ · แถวเดิม null = ตรวจได้เลย (ไม่มีของเสียที่ต้องซ่อม — แถวที่ค้างรอถูกเลื่อนเองในรอบแรก)
+        """ALTER TABLE "PartnerPaymentNotices" ADD COLUMN IF NOT EXISTS "SlipCopyNextCheckAt" timestamp without time zone NULL;""",
+        """ALTER TABLE "PartnerPaymentNotices" ADD COLUMN IF NOT EXISTS "SlipCopyNote" varchar(300) NULL;""",
     };
 }

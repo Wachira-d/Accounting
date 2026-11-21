@@ -274,4 +274,9 @@ public class PartnerPaymentNotice : TenantEntity
     public DateTime? SlipCopyCheckedAt { get; set; }
     /// <summary>รอบ 288: จำนวนครั้งที่ลองคัดสำเนาแล้วล้มชั่วคราว (อ่านไฟล์ไม่ได้) · ครบ <c>PartnerSlipCopyRule.MaxAttempts</c> ⇒ เลิกลอง</summary>
     public int SlipCopyAttempts { get; set; }
+    /// <summary>รอบ 288b (ฝ่ายค้านข้อ 3): ตรวจสำเนาสลิปครั้งถัดไปไม่ก่อนเวลานี้ (ผล "ยังไม่ถึงเวลา" — <c>PartnerSlipCopyRule.NextCheckAt</c>) ·
+    /// null = ตรวจได้เลย · กันแถวที่รอบังแถวใหม่ในชุดของรอบ</summary>
+    public DateTime? SlipCopyNextCheckAt { get; set; }
+    /// <summary>รอบ 288b: เหตุที่จบการตรวจสำเนาสลิปโดยไม่ได้สำเนา (ไม่มีใบซื้อ · ไม่ใช่คู่ค้า · ไม่มีสลิป · อ่านไฟล์ไม่ได้ครบรอบ ฯลฯ) — สถานะปลายทางที่บอกเหตุ · null = ได้สำเนา/ยังไม่จบ</summary>
+    public string? SlipCopyNote { get; set; }
 }

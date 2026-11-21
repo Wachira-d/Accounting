@@ -715,9 +715,13 @@ public class PartnerPayablePipeline
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 _db.ChangeTracker.Clear();
-                _logger.LogError(ex, "ประเมินอนุมัติใบซื้อร่างจากคู่ค้า {Doc} ของบริษัท {Company} เองไม่สำเร็จ — ใบยังเป็นร่าง", r.DocId, companyId);
+                _logger.LogError(ex, "ประเมินอนุมัติใบซื้อร่างจากคู่ค้า {Doc} ของบริษัท {Company} เองไม่สำเร็จ", r.DocId, companyId);
                 try
                 {
+                    // รอบ 288b (ฝ่ายค้านข้อ 5): อ่านสถานะจริงก่อนประทับ — ใบที่ออกแล้วต้องไม่ถูกประกาศว่า "ยังเป็นร่าง"
+                    var status = await _db.Documents.AsNoTracking().Where(d => d.Id == r.DocId && d.CompanyId == companyId)
+                        .Select(d => (DocumentStatus?)d.Status).FirstOrDefaultAsync(CancellationToken.None);
+                    if (status != DocumentStatus.Draft) continue;
                     await RecordAutoApproveHoldAsync(companyId, r.LinkId, r.DocId, r.AutoApproveCode,
                         new PartnerAutoApprovePolicy.Verdict(false, PartnerAutoApprovePolicy.Codes.ApproveFailed, "ระบบประเมินไม่สำเร็จ (ข้อผิดพลาดภายใน) — ตรวจแล้วอนุมัติเอง"),
                         nowUtc, CancellationToken.None);
@@ -757,6 +761,8 @@ public class PartnerPayablePipeline
         var doc = await _db.Documents.AsNoTracking().Include(d => d.Lines)
             .FirstOrDefaultAsync(d => d.Id == docId && d.CompanyId == companyId && !d.IsDeleted, ct);
         if (doc == null) return false;
+        // รอบ 288b (ฝ่ายค้านข้อ 1): ตราเนื้อหาของชุดที่ตรวจ — เส้นอนุมัติเทียบกับใบสดใต้ล็อกแถวใบ (แก้ระหว่างนั้น ⇒ ไม่อนุมัติ)
+        var stamp = ApprovalContentStamp.Of(doc);
         var contact = doc.ContactId is Guid contactId
             ? await _db.Contacts.AsNoTracking().FirstOrDefaultAsync(c => c.Id == contactId && c.CompanyId == companyId, ct)
             : null;
@@ -789,6 +795,15 @@ public class PartnerPayablePipeline
         var srcVoided = doc.PartnerInputVatEvidence == PartnerInputVatEvidence.SourceVoided
             || !await _db.Documents.AsNoTracking().IgnoreQueryFilters()
                 .AnyAsync(d => d.Id == sourceDocumentId && d.CompanyId == sourceCompanyId && !d.IsDeleted && d.Status != DocumentStatus.Voided, ct);
+        // รอบ 288b (ฝ่ายค้านข้อ 4): ใบต้นทางของผู้ขายในสายนี้ (ทุกลิงก์ที่ผูกกับใบซื้อนี้) เป็นใบกำกับอย่างย่อ ⇒ ภาษีซื้อต้องห้าม ม.82/5(2)
+        var chainSources = await _db.CrossTenantDocumentLinks.AsNoTracking()
+            .Where(l => l.TargetCompanyId == companyId && l.TargetDocumentId == docId && !l.IsDeleted && l.SourceCompanyId == sourceCompanyId)
+            .Select(l => l.SourceDocumentId).ToListAsync(ct);
+        if (!chainSources.Contains(sourceDocumentId)) chainSources.Add(sourceDocumentId);
+        var abbreviated = (await _db.Documents.AsNoTracking().IgnoreQueryFilters()
+                .Where(d => chainSources.Contains(d.Id) && d.CompanyId == sourceCompanyId && !d.IsDeleted)
+                .Select(d => d.ReceiptForm).ToListAsync(ct))
+            .Any(PartnerExchangeRules.IsAbbreviatedTaxInvoice);
         var whtProblem = PartnerAutoApprovePolicy.WhtProblem(
             lines.Select(l => new PartnerAutoApprovePolicy.WhtLine(l.WithholdingTaxRate, l.WithholdingTaxAmount)).ToList(),
             doc.WithholdingTaxAmount, doc.WhtPayerBorneAmount, doc.DocumentDate);
@@ -813,7 +828,7 @@ public class PartnerPayablePipeline
             GrantorMayFinalize: grantorMayFinalize,
             IsDraft: doc.Status == DocumentStatus.Draft, SourceVoided: srcVoided, Currency: doc.Currency,
             IsTaxInvoice: doc.HasTaxInvoiceReference, TaxInvoiceMissing: missing,
-            Lines: lineFacts, WhtProblem: whtProblem, ApprovalWarnings: warnings));
+            Lines: lineFacts, WhtProblem: whtProblem, ApprovalWarnings: warnings, AbbreviatedTaxInvoice: abbreviated));
         if (!verdict.Auto || consent.GrantorUserId is not Guid grantor)
         {
             await lockTx.RollbackAsync(CancellationToken.None);
@@ -823,12 +838,21 @@ public class PartnerPayablePipeline
         try
         {
             // เส้นอนุมัติตัวเดียว (เลข gap-free · ด่านร่างเท่านั้น/อนุมัติตัวเอง · ตรวจต้นทางสด · คำเตือนที่เกิดใหม่ระหว่างนี้ ⇒ โยน = ร่างตามเดิม)
-            await _docs.ApproveDocumentAsync(companyId, docId, grantor.ToString(), ApprovalAckSource.Unattended, withAiHints: false);
+            await _docs.ApproveDocumentAsync(companyId, docId, grantor.ToString(), ApprovalAckSource.Unattended, withAiHints: false,
+                expectedContentStamp: stamp);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             await lockTx.RollbackAsync(CancellationToken.None);
             _db.ChangeTracker.Clear();
+            if (ex is BusinessRuleException { RuleCode: ApprovalContentStamp.RuleCode })
+            {
+                // ใบถูกแก้ระหว่างตรวจ ⇒ ร่าง + เหตุ · watermark ว่าง ⇒ ประเมินชุดใหม่ในรอบถัดไป (ไม่รอ 15 นาที)
+                await RecordAutoApproveHoldAsync(companyId, linkId, docId, previousCode,
+                    new PartnerAutoApprovePolicy.Verdict(false, PartnerAutoApprovePolicy.Codes.ContentChanged, ApprovalContentStamp.ChangedMessage), nowUtc,
+                    CancellationToken.None, reevaluateNextRun: true);
+                return false;
+            }
             if (ex is DbUpdateException) _logger.LogError(ex, "อนุมัติใบซื้อร่างจากคู่ค้า {Doc} ของบริษัท {Company} เองล้มที่ฐานข้อมูล", docId, companyId);
             var why = PartnerAutoApprovePolicy.ApproveErrorMessage(ex is DocumentApprovalWarningsException, ex is BusinessRuleException or ArgumentException or KeyNotFoundException
                 or InvalidOperationException, ex.Message);
@@ -838,14 +862,83 @@ public class PartnerPayablePipeline
                 new PartnerAutoApprovePolicy.Verdict(false, PartnerAutoApprovePolicy.Codes.ApproveFailed, "อนุมัติเองไม่สำเร็จ: " + why), nowUtc, CancellationToken.None);
             return false;
         }
-        await lockTx.CommitAsync(ct);
-        await MarkAutoApprovedAsync(companyId, linkId, docId, partnershipId, consent, grantor, lineFacts, nowUtc, ct);
+        await lockTx.CommitAsync(CancellationToken.None);
+        // รอบ 288b (ฝ่ายค้านข้อ 5): อนุมัติสำเร็จแล้ว — ร่องรอยหลังอนุมัติล้มต้องไม่กลายเป็น "ใบยังเป็นร่าง" (ผู้เรียกชั้นนอกเคยประทับ ApproveFailed)
+        try
+        {
+            await MarkAutoApprovedAsync(companyId, linkId, docId, partnershipId, consent, grantor, lineFacts, nowUtc, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _db.ChangeTracker.Clear();
+            _logger.LogError(ex, "ใบซื้อ {Doc} ของบริษัท {Company} อนุมัติเองแล้ว แต่บันทึกร่องรอยหลังอนุมัติไม่ครบ — ซ่อมสถานะบนลิงก์ตามสถานะจริง", docId, companyId);
+            await EnsureApprovedTraceAsync(companyId, linkId, docId, partnershipId, consent, grantor, lineFacts, nowUtc);
+        }
         return true;
     }
+
+    /// <summary>รอบ 288b (ฝ่ายค้านข้อ 5): หลังอนุมัติสำเร็จแต่ร่องรอยล้ม — อ่านสถานะจริงจาก DB · ใบออกแล้ว ⇒ audit <see cref="AutoApprovedEvent"/> (ถ้ายังไม่มี) +
+    /// ลิงก์ = อนุมัติแล้ว (ไม่ประทับ "อนุมัติไม่สำเร็จ" · ไม่แจ้ง "ใบยังเป็นร่าง") · แต่ละขั้นแยกกัน ล้มขั้นใด = บันทึกระบบ (ใบอนุมัติแล้วตามจริง)</summary>
+    private async Task EnsureApprovedTraceAsync(Guid companyId, Guid linkId, Guid docId, Guid partnershipId, PartnerConsent.UseCheck consent, Guid grantor,
+        IReadOnlyList<PartnerAutoApprovePolicy.Line> lines, DateTime nowUtc)
+    {
+        var ct = CancellationToken.None;
+        try
+        {
+            var now = await _db.Documents.AsNoTracking().Where(x => x.Id == docId && x.CompanyId == companyId)
+                .Select(x => new { x.Status, x.DocumentNumber, x.TotalAmount }).FirstOrDefaultAsync(ct);
+            if (now == null || now.Status == DocumentStatus.Draft) return;
+            var docKey = docId.ToString();
+            var hasAudit = await _db.AuditLogs.AsNoTracking().AnyAsync(a => a.CompanyId == companyId && a.EntityType == "Document" && a.EntityId == docKey
+                && a.NewValues != null && a.NewValues.Contains(AutoApprovedEvent), ct);
+            if (!hasAudit)
+            {
+                _db.AddChainedAuditLog(ApprovedAudit(companyId, docId, partnershipId, consent, grantor, lines, now.TotalAmount, now.DocumentNumber, nowUtc));
+                await _db.SaveChangesAsync(ct);
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _db.ChangeTracker.Clear();
+            _logger.LogError(ex, "เขียน audit การอนุมัติเองของใบซื้อ {Doc} ซ้ำไม่สำเร็จ", docId);
+        }
+        try
+        {
+            await _db.CrossTenantDocumentLinks.Where(l => l.Id == linkId && l.TargetCompanyId == companyId)
+                .ExecuteUpdateAsync(u => u.SetProperty(l => l.AutoApproveCode, PartnerAutoApprovePolicy.Codes.Approved)
+                    .SetProperty(l => l.AutoApproveReason, (string?)null).SetProperty(l => l.AutoApproveEvaluatedAt, (DateTime?)nowUtc), ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogError(ex, "ประทับสถานะอนุมัติแล้วบนลิงก์ของใบซื้อ {Doc} ไม่สำเร็จ", docId);
+        }
+    }
+
+    /// <summary>ชื่อเหตุการณ์ audit ของการอนุมัติเอง (ตัวเดียว — ผู้เขียน <see cref="MarkAutoApprovedAsync"/> · <see cref="EnsureApprovedTraceAsync"/>)</summary>
+    public const string AutoApprovedEvent = "PartnerPurchaseAutoApproved";
+
+    private static AuditLog ApprovedAudit(Guid companyId, Guid docId, Guid partnershipId, PartnerConsent.UseCheck consent, Guid grantor,
+        IReadOnlyList<PartnerAutoApprovePolicy.Line> lines, decimal total, string? documentNumber, DateTime nowUtc) => new()
+    {
+        CompanyId = companyId, UserId = grantor, Action = AuditAction.Update, EntityType = "Document", EntityId = docId.ToString(),
+        NewValues = JsonSerializer.Serialize(new
+        {
+            @event = AutoApprovedEvent, consentId = consent.ConsentId, grantorUserId = grantor, partnershipId, cap = consent.MaxAmount,
+            total, documentNumber,
+            lines = lines.Select(l => new { l.Order, localConfident = l.LocalConfident, vendorConfirmed = l.VendorConfirmed }),
+            ruleCode = PartnerAutoApprovePolicy.RuleCode, legalReference = PartnerAutoApprovePolicy.LegalReference, consentRuleCode = PartnerConsent.RuleCode, usedAi = false,
+        }),
+        Timestamp = nowUtc,
+    };
 
     private async Task MarkAutoApprovedAsync(Guid companyId, Guid linkId, Guid docId, Guid partnershipId, PartnerConsent.UseCheck consent, Guid grantor,
         IReadOnlyList<PartnerAutoApprovePolicy.Line> lines, DateTime nowUtc, CancellationToken ct)
     {
+        // รอบ 288b (ฝ่ายค้านข้อ 5): audit ก่อน (ร่องรอยสำคัญที่สุด) แล้วจึงหมายเหตุ/ลิงก์ — ล้มกลางทาง ⇒ EnsureApprovedTraceAsync ซ่อมตามสถานะจริง
+        var after = await _db.Documents.AsNoTracking().Where(x => x.Id == docId && x.CompanyId == companyId)
+            .Select(x => new { x.DocumentNumber, x.TotalAmount }).FirstAsync(ct);
+        _db.AddChainedAuditLog(ApprovedAudit(companyId, docId, partnershipId, consent, grantor, lines, after.TotalAmount, after.DocumentNumber, nowUtc));
+        await _db.SaveChangesAsync(ct);
         var grantorName = await _db.Users.AsNoTracking().Where(u => u.Id == grantor).Select(u => u.FullName).FirstOrDefaultAsync(ct) ?? "ผู้ให้ความยินยอม";
         var note = PartnerAutoApprovePolicy.ApprovedNote(grantorName, consent.MaxAmount, nowUtc);
         await _db.Documents.Where(x => x.Id == docId && x.CompanyId == companyId)
@@ -853,21 +946,6 @@ public class PartnerPayablePipeline
         await _db.CrossTenantDocumentLinks.Where(l => l.Id == linkId && l.TargetCompanyId == companyId)
             .ExecuteUpdateAsync(u => u.SetProperty(l => l.AutoApproveCode, PartnerAutoApprovePolicy.Codes.Approved)
                 .SetProperty(l => l.AutoApproveReason, (string?)null).SetProperty(l => l.AutoApproveEvaluatedAt, (DateTime?)nowUtc), ct);
-        var after = await _db.Documents.AsNoTracking().Where(x => x.Id == docId && x.CompanyId == companyId)
-            .Select(x => new { x.DocumentNumber, x.TotalAmount, x.ContactId }).FirstAsync(ct);
-        _db.AddChainedAuditLog(new AuditLog
-        {
-            CompanyId = companyId, UserId = grantor, Action = AuditAction.Update, EntityType = "Document", EntityId = docId.ToString(),
-            NewValues = JsonSerializer.Serialize(new
-            {
-                @event = "PartnerPurchaseAutoApproved", consentId = consent.ConsentId, grantorUserId = grantor, partnershipId, cap = consent.MaxAmount,
-                total = after.TotalAmount, documentNumber = after.DocumentNumber,
-                lines = lines.Select(l => new { l.Order, localConfident = l.LocalConfident, vendorConfirmed = l.VendorConfirmed }),
-                ruleCode = PartnerAutoApprovePolicy.RuleCode, legalReference = PartnerAutoApprovePolicy.LegalReference, consentRuleCode = PartnerConsent.RuleCode, usedAi = false,
-            }),
-            Timestamp = nowUtc,
-        });
-        await _db.SaveChangesAsync(ct);
         // design §5.2: อนุมัติแล้ว ⇒ การแจ้ง "ผู้ขายรับเงินแล้ว" ที่ค้างของใบนี้ประเมินใหม่ทันทีในรอบนี้ (ไม่ต้องรอ 15 นาที)
         await _db.PartnerPaymentNotices
             .Where(n => n.CompanyId == companyId && n.TargetDocumentId == docId && n.Status == PartnerPaymentNoticeRule.StatusOpen)
@@ -892,7 +970,7 @@ public class PartnerPayablePipeline
 
     /// <summary>ไม่อนุมัติเอง ⇒ เหตุบนลิงก์ (watermark ทุกครั้ง) · เหตุเปลี่ยน ⇒ หมายเหตุบนใบร่าง + audit <c>PartnerPurchaseAutoApproveHeld</c> + แจ้งเตือน (ครั้งเดียวต่อเหตุ)</summary>
     private async Task RecordAutoApproveHoldAsync(Guid companyId, Guid linkId, Guid docId, string? previousCode, PartnerAutoApprovePolicy.Verdict verdict, DateTime nowUtc,
-        CancellationToken ct)
+        CancellationToken ct, bool reevaluateNextRun = false)
     {
         var reason = verdict.Reason.Length > 500 ? verdict.Reason[..500] : verdict.Reason;
         var announce = PartnerAutoApprovePolicy.ShouldAnnounceHold(previousCode, verdict.Code);
@@ -900,7 +978,7 @@ public class PartnerPayablePipeline
             await AppendDraftNoteAsync(companyId, docId, PartnerAutoApprovePolicy.HoldNote(reason, nowUtc), nowUtc, ct);
         await _db.CrossTenantDocumentLinks.Where(l => l.Id == linkId && l.TargetCompanyId == companyId)
             .ExecuteUpdateAsync(u => u.SetProperty(l => l.AutoApproveCode, verdict.Code).SetProperty(l => l.AutoApproveReason, reason)
-                .SetProperty(l => l.AutoApproveEvaluatedAt, (DateTime?)nowUtc), ct);
+                .SetProperty(l => l.AutoApproveEvaluatedAt, reevaluateNextRun ? null : (DateTime?)nowUtc), ct);
         if (!announce) return;
         _db.AddChainedAuditLog(new AuditLog
         {
@@ -948,8 +1026,10 @@ public class PartnerPayablePipeline
         var since = nowUtc.AddDays(-PartnerSlipCopyRule.LookbackDays);
         var ids = await _db.PartnerPaymentNotices.AsNoTracking()
             .Where(n => n.CompanyId == companyId && !n.IsDeleted && n.SellerVoidedAt == null && consented.Contains(n.TradingPartnershipId)
-                && n.PaymentIntentId != null && n.SlipCopyCheckedAt == null && n.CreatedAt >= since)
-            .OrderBy(n => n.CreatedAt).Select(n => n.Id).Take(SweepBatch).ToListAsync(ct);
+                && n.PaymentIntentId != null && n.SlipCopyCheckedAt == null && n.CreatedAt >= since
+                // รอบ 288b (ฝ่ายค้านข้อ 3): แถวที่ "ยังไม่ถึงเวลา" ถูกเลื่อนไป — ไม่บังแถวใหม่ในชุดนี้ (head-of-line)
+                && (n.SlipCopyNextCheckAt == null || n.SlipCopyNextCheckAt <= nowUtc))
+            .OrderBy(n => n.SlipCopyNextCheckAt ?? n.CreatedAt).ThenBy(n => n.CreatedAt).Select(n => n.Id).Take(SweepBatch).ToListAsync(ct);
         var copied = 0;
         foreach (var id in ids)
         {
@@ -961,6 +1041,16 @@ public class PartnerPayablePipeline
             {
                 _db.ChangeTracker.Clear();
                 _logger.LogError(ex, "รับสำเนาสลิปของการแจ้ง {Notice} ของบริษัท {Company} ไม่สำเร็จ — ลองรอบถัดไป", id, companyId);
+                // ล้มแล้วเลื่อนรอบถัดไป (แถวที่ล้มซ้ำไม่บังแถวอื่นในชุด)
+                try
+                {
+                    await _db.PartnerPaymentNotices.Where(x => x.Id == id && x.CompanyId == companyId && x.SlipCopyCheckedAt == null)
+                        .ExecuteUpdateAsync(u => u.SetProperty(x => x.SlipCopyNextCheckAt, (DateTime?)PartnerSlipCopyRule.NextCheckAt(nowUtc)), CancellationToken.None);
+                }
+                catch (Exception sex) when (sex is not OperationCanceledException)
+                {
+                    _logger.LogError(sex, "เลื่อนรอบตรวจสำเนาสลิปของการแจ้ง {Notice} ไม่สำเร็จ", id);
+                }
             }
         }
         return copied;
@@ -974,6 +1064,9 @@ public class PartnerPayablePipeline
         if (n == null || n.PaymentIntentId is not Guid intentId) return false;
         var purchase = await _db.Documents.AsNoTracking()
             .Where(d => d.Id == n.TargetDocumentId && d.CompanyId == companyId && !d.IsDeleted).Select(d => new { d.Id, d.TotalAmount, d.Currency }).FirstOrDefaultAsync(ct);
+        // รอบ 288b (ฝ่ายค้านข้อ 6): บริษัทต้นทางของการแจ้ง = อีกฝ่ายของการเชื่อมนี้จริง (สถานะการเชื่อมตรวจโดยความยินยอมข้างล่าง) — ก่อนอ่านข้อมูลของบริษัทนั้น
+        var pairOk = await _db.TradingPartnerships.AsNoTracking().AnyAsync(p => p.Id == n.TradingPartnershipId
+            && ((p.CompanyAId == companyId && p.CompanyBId == n.SourceCompanyId) || (p.CompanyBId == companyId && p.CompanyAId == n.SourceCompanyId)), ct);
 
         using var lockScope = _scopes.CreateScope();
         var lockDb = lockScope.ServiceProvider.GetRequiredService<AccountingDbContext>();
@@ -986,7 +1079,7 @@ public class PartnerPayablePipeline
             ? await _db.PartnerAutomationConsents.AsNoTracking().Where(c => c.Id == cid && c.CompanyId == companyId).Select(c => (DateTime?)c.GrantedAt).FirstOrDefaultAsync(ct)
             : null;
         // ข้อมูลฝั่งผู้ขาย: อ่านเฉพาะรายการของการแจ้งนี้ (กุญแจ = intent + บริษัทผู้ขาย + เอกสารต้นทาง) — อ่านหลังความยินยอมผ่านเท่านั้น
-        var intent = consent.Ok
+        var intent = consent.Ok && pairOk && purchase != null
             ? await _db.PaymentIntents.AsNoTracking().IgnoreQueryFilters()
                 .Where(i => i.Id == intentId && i.CompanyId == n.SourceCompanyId && i.SourceKind == PaymentSourceKind.Document && i.SourceId == n.SourceDocumentId)
                 .Select(i => new { i.MethodKind, i.Status, i.SlipAttachmentId }).FirstOrDefaultAsync(ct)
@@ -997,19 +1090,25 @@ public class PartnerPayablePipeline
                 .Select(a => new { a.StoragePath, a.CreatedBy }).FirstOrDefaultAsync(ct)
             : null;
         var verdict = PartnerSlipCopyRule.Decide(new PartnerSlipCopyRule.Facts(
-            ConsentOk: consent.Ok && purchase != null, ConsentGrantedAt: grantedAt, NoticeCreatedAt: n.CreatedAt,
+            ConsentOk: consent.Ok, ConsentGrantedAt: grantedAt, NoticeCreatedAt: n.CreatedAt,
             HasIntent: intent != null, IntentIsSlip: intent?.MethodKind == PaymentMethodKind.ManualSlip, IntentSucceeded: intent?.Status == PaymentIntentStatus.Succeeded,
-            SlipAttachmentId: intent?.SlipAttachmentId, AttachmentFound: file != null, AttachmentChannel: file?.CreatedBy));
+            SlipAttachmentId: intent?.SlipAttachmentId, AttachmentFound: file != null, AttachmentChannel: file?.CreatedBy,
+            PurchaseFound: purchase != null, PartnerPairOk: pairOk));
         if (verdict.Outcome == PartnerSlipCopyRule.Outcome.Wait)
         {
+            // รอบ 288b (ฝ่ายค้านข้อ 3): ผลรอประทับเวลาตรวจครั้งถัดไป (เดิมไม่ประทับ ⇒ แถวรอ 100 แถวแรกบังแถวใหม่ตลอดไป)
             await lockTx.RollbackAsync(CancellationToken.None);
+            await _db.PartnerPaymentNotices.Where(x => x.Id == noticeId && x.CompanyId == companyId && x.SlipCopyCheckedAt == null)
+                .ExecuteUpdateAsync(u => u.SetProperty(x => x.SlipCopyNextCheckAt, (DateTime?)PartnerSlipCopyRule.NextCheckAt(nowUtc)), ct);
             return false;
         }
         if (verdict.Outcome == PartnerSlipCopyRule.Outcome.Done)
         {
             await lockTx.RollbackAsync(CancellationToken.None);
+            var doneNote = verdict.Reason.Length > 300 ? verdict.Reason[..300] : verdict.Reason;
             await _db.PartnerPaymentNotices.Where(x => x.Id == noticeId && x.CompanyId == companyId && x.SlipCopyCheckedAt == null)
-                .ExecuteUpdateAsync(u => u.SetProperty(x => x.SlipCopyCheckedAt, (DateTime?)nowUtc), ct);
+                .ExecuteUpdateAsync(u => u.SetProperty(x => x.SlipCopyCheckedAt, (DateTime?)nowUtc).SetProperty(x => x.SlipCopyNote, doneNote)
+                    .SetProperty(x => x.SlipCopyNextCheckAt, (DateTime?)null), ct);
             return false;
         }
 
@@ -1027,7 +1126,9 @@ public class PartnerPayablePipeline
             var finalTry = n.SlipCopyAttempts + 1 >= PartnerSlipCopyRule.MaxAttempts || (bytes != null && bytes.Length > 0 && ext == null);
             await _db.PartnerPaymentNotices.Where(x => x.Id == noticeId && x.CompanyId == companyId && x.SlipCopyCheckedAt == null)
                 .ExecuteUpdateAsync(u => u.SetProperty(x => x.SlipCopyAttempts, x => x.SlipCopyAttempts + 1)
-                    .SetProperty(x => x.SlipCopyCheckedAt, x => finalTry ? nowUtc : x.SlipCopyCheckedAt), ct);
+                    .SetProperty(x => x.SlipCopyCheckedAt, x => finalTry ? nowUtc : x.SlipCopyCheckedAt)
+                    .SetProperty(x => x.SlipCopyNote, x => finalTry ? PartnerSlipCopyRule.UnreadableReason : x.SlipCopyNote)
+                    .SetProperty(x => x.SlipCopyNextCheckAt, x => finalTry ? null : (DateTime?)PartnerSlipCopyRule.NextCheckAt(nowUtc)), ct);
             return false;
         }
         var storedName = $"{Guid.NewGuid():N}{ext}";

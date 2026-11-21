@@ -6977,7 +6977,7 @@ public partial class DocumentService : IDocumentService
     /// null = ไม่มีนโยบาย (เหมือน Unattended) · ตัวตัดสินเดียว <c>ApprovalAcknowledgement.Unacknowledged(source, warnings, policy)</c></param>
     public async Task<DocumentResponse> ApproveDocumentAsync(Guid companyId, Guid documentId, string approvedBy,
         Accounting.Helpers.ApprovalAckSource ackSource, bool withAiHints, ICollection<string>? passedWarnings = null,
-        Accounting.Helpers.AutoApprovePolicy? autoApprovePolicy = null)
+        Accounting.Helpers.AutoApprovePolicy? autoApprovePolicy = null, string? expectedContentStamp = null)
     {
         // ด่านรอง (งบประมาณ Block · วางบิลเกิน · วงเงินเครดิต) ยอมให้ "ผู้ใช้/ระบบที่ส่งผ่านคำเตือน" override ได้ตามเดิม
         // แต่ API ไม่ได้รับทราบอะไรนอกจาก [Σ-GAP] ⇒ ไม่ override ด่านพวกนั้น
@@ -7494,6 +7494,14 @@ public partial class DocumentService : IDocumentService
                     .FirstAsync();
                 if (lockedStatus != DocumentStatus.Draft && lockedStatus != DocumentStatus.WaitingApproval)
                     throw new InvalidOperationException("เอกสารถูกอนุมัติไปแล้วโดยผู้ใช้งานคนอื่น กรุณารีเฟรชหน้านี้");
+                // รอบ 288b (ฝ่ายค้านข้อ 1): ผู้เรียกที่ตรวจเงื่อนไขก่อนล็อก (อนุมัติใบซื้อจากคู่ค้าเอง) ⇒ ใบสดใต้ล็อกต้องตรงตราที่ตรวจไว้ — ถูกแก้ระหว่างนั้น = ไม่อนุมัติ
+                if (expectedContentStamp != null)
+                {
+                    var lockedDoc = await _db.Documents.AsNoTracking().Include(d => d.Lines)
+                        .FirstAsync(d => d.Id == documentId && d.CompanyId == companyId);
+                    if (!string.Equals(Accounting.Helpers.ApprovalContentStamp.Of(lockedDoc), expectedContentStamp, StringComparison.Ordinal))
+                        throw new BusinessRuleException(Accounting.Helpers.ApprovalContentStamp.ChangedMessage, Accounting.Helpers.ApprovalContentStamp.RuleCode, 409);
+                }
                 // รอบ 266 ฝ่ายค้าน M1: ใบต้นทาง/ผู้ติดต่อของใบเสร็จต้องไม่ถูกฟอร์มแก้ไขอีกคำขอเปลี่ยนระหว่างที่อ่านไว้กับตอนล็อก
                 await EnsureReceiptSourceUnchangedUnderLockAsync(companyId, doc);
 

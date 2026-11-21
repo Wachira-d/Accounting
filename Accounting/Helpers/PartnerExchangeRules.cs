@@ -228,12 +228,16 @@ public static class PartnerExchangeRules
     /// ใบเสร็จที่ยังไม่ตรึง (null) = ไม่รู้ ⇒ <b>ไม่นับ</b> (ไม่เดาว่าเป็นใบกำกับ — F2 ข้อ 3) · ใบแจ้งหนี้/อื่น ๆ = ไม่ใช่</summary>
     /// <param name="receiptForm">รอบ 258-3 (ฝ่ายค้าน L6 · §82/5(2)): ใบเสร็จรับเงิน/ใบกำกับภาษี<b>อย่างย่อ</b> ⇒ ไม่ใช่หลักฐานภาษีซื้อ (false) · null = ไม่ทราบรูปแบบ (ตามเกณฑ์เดิม)</param>
     public static bool IsTaxInvoiceCarrier(DocumentType type, bool? isTaxInvoiceByLaw, decimal vatAmount, ReceiptForm? receiptForm = null)
-        => receiptForm != ReceiptForm.ReceiptTaxInvoiceAbbreviated && type switch
+        => !IsAbbreviatedTaxInvoice(receiptForm) && type switch
     {
         DocumentType.TaxInvoice => isTaxInvoiceByLaw != false,
         DocumentType.Receipt => isTaxInvoiceByLaw == true && vatAmount > 0.005m,
         _ => false,
     };
+
+    /// <summary>รอบ 288b: เอกสารของผู้ขายเป็นใบกำกับภาษี<b>อย่างย่อ</b> (ม.86/6 — รูปแบบที่ตรึงตอนออกเลข <c>Document.ReceiptForm</c>) ⇒ ผู้ซื้อเคลมภาษีซื้อไม่ได้ ม.82/5(2) ·
+    /// ตัวตัดสินเดียวของฝั่งผู้รับ (ผู้เรียก: <see cref="IsTaxInvoiceCarrier"/> · ด่านอนุมัติใบซื้อเอง <c>PartnerPayablePipeline</c>)</summary>
+    public static bool IsAbbreviatedTaxInvoice(ReceiptForm? receiptForm) => receiptForm == ReceiptForm.ReceiptTaxInvoiceAbbreviated;
 
     /// <summary>คำตัดสิน 257-3-5: ใบเสร็จที่เป็นใบกำกับ<b>ไม่สร้างใบซื้อร่างใบใหม่</b> — แนบหลักฐานเข้าใบซื้อเดิมของการขายครั้งเดียวกันเท่านั้น ·
     /// ไม่มีใบซื้อเดิม (ขายเงินสด) ⇒ เหตุบนแถวกล่องเข้า (ไม่เงียบ)</summary>
