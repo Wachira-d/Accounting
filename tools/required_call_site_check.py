@@ -22536,7 +22536,7 @@ REVIEWER_CASES += [
 
 # รอบ 283 — ท่ออัตโนมัติคู่ค้าออกใบสำคัญจ่ายเป็นเอกสาร (คำสั่งเจ้าของ · คำตัดสิน 283-1…283-6 · erp-review/2026-11-21/dev-283-partner-pv.md) ·
 # ใบหลักฐานคู่การจ่าย (ไม่ลง JE ซ้ำ · ไม่ถือ VAT/ภาษีหัก · อ้าง 50 ทวิ ของการจ่าย) · ตัวตัดสินเดียว Helpers/SettlementPaymentVoucher · ตัวสร้างเดียว CreateSettlementPaymentVoucherCoreAsync
-_R283_WHY = "รอบ 283 (ใบสำคัญจ่ายจากท่อคู่ค้า — คำตัดสิน 283-1…283-6 · erp-review/2026-11-21/dev-283-partner-pv.md): "
+_R283_WHY = "รอบ 283 (ใบสำคัญจ่ายจากท่อคู่ค้า — คำตัดสิน 283-1…283-6 · commit 699edd9d · erp-review/2026-11-21/dev-283-partner-pv.md): "
 _R283_PV = "Services/Implementations/DocumentService.SettlementPaymentVoucher.cs"
 RULES += [
     dict(file="Services/Implementations/PartnerPayablePipeline.cs", method="ProcessAsync",

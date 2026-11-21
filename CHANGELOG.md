@@ -7507,4 +7507,4 @@ LOW-1 "ส่งได้บางส่วน" · LOW-2 การ์ด `#HeyNe
 - 283-2/3: เลขจากเล่ม PV ตามสิทธิ์อนุมัติ · 50 ทวิ ใบเดียวผูกด้วยกุญแจการจ่าย (ไม่ย้าย `DocumentId` · ไม่ออกใหม่)
 - 283-4: ยกเลิก PV = ยกเลิกการจ่าย · ยกเลิกการจ่าย (ใบเดียว/หลายใบ) ⇒ PV ยกเลิกตาม คงแถว + audit
 - 283-5: รายงาน + ออกย้อนหลังทีละรายการ (`partner-payments/without-voucher` · `partner-payments/{id}/payment-voucher`) · ป้าย `OriginLabel` บนรายการเอกสาร
-- เทสต์ pure `SettlementPaymentVoucherRound283Tests` · Db `PartnerSettlementVoucherRound283DbTests` (2) · กติกา `_R283_*` (+7) · คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว (ฐาน `accounting_test_r283`) · commit SHA283
+- เทสต์ pure `SettlementPaymentVoucherRound283Tests` · Db `PartnerSettlementVoucherRound283DbTests` (2) · กติกา `_R283_*` (+7) · คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว (ฐาน `accounting_test_r283`) · commit 699edd9d

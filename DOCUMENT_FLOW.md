@@ -3492,7 +3492,7 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
   `POST …/partner-payments/{paymentId}/payment-voucher` = ออกย้อนหลังทีละรายการ (สิทธิ์อนุมัติเอกสารซื้อ · ไม่รับ API key · ล็อกการจ่าย · ไม่ลง JE ซ้ำ · ไม่ออก 50 ทวิ ใหม่ ·
   มีใบแล้ว = AlreadyIssued) · **283-6** ทางมือ ("บันทึกชำระเงิน" · ปุ่มเดียวของการแจ้ง · แจ้งโอน P4) ยังไม่ออก PV (ค่าเดิม — ตัวเลือกในโมดัลเป็นงานถัดไป) ·
   ตัวตัดสิน `Helpers/SettlementPaymentVoucher` · ตัวสร้างเดียว `DocumentService.CreateSettlementPaymentVoucherCoreAsync` · ล็อก `_R283_*` (+7 · เคสฝ่ายค้าน R283-1/2) ·
-  เทสต์ `SettlementPaymentVoucherRound283Tests` (pure) · `PartnerSettlementVoucherRound283DbTests` (Db 2) · Last verified `commit SHA283`
+  เทสต์ `SettlementPaymentVoucherRound283Tests` (pure) · `PartnerSettlementVoucherRound283DbTests` (Db 2) · Last verified `commit 699edd9d`
 
 ### 2.12g-270 รอบ 270 งานค้างจาก 266/268/269 (คำตัดสิน 270-1-1…5 ใน `erp-review/2026-09-29/DECISIONS.md`)
 
@@ -10162,4 +10162,4 @@ _Last verified against codebase: 2026-11-20 (รอบ 281 เส้นคู่
 
 _Last verified against codebase: 2026-11-20 (รอบ 281 ชุดแก้ฝ่ายค้าน MED-1/2 + LOW 1–6 — §2.12g-281: จ่ายเต็มเกินยอดค้างหลังหัก ⇒ หยุดพร้อมเหตุ · ผูกผู้ติดต่อไม่ซ้ำ/ไม่ผูกเลขขยะ · เส้นทางไม่เปิดยอดอีกฝั่ง · โหลดเป็นชุด · แจ้งหลัง commit · ธงคัดลอกค่าตั้ง — คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — commit 94c52138)_
 
-_Last verified against codebase: 2026-11-21 (รอบ 283 ใบสำคัญจ่ายเป็นเอกสารจากท่ออัตโนมัติคู่ค้า — §2.12g-281: ใบหลักฐานคู่การจ่าย (ไม่ลง JE ซ้ำ · ไม่ถือภาษี · อ้าง 50 ทวิ ของการจ่าย) · ยกเลิก PV = ยกเลิกการจ่าย · รายงาน + ออกย้อนหลัง — คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — commit SHA283)_
+_Last verified against codebase: 2026-11-21 (รอบ 283 ใบสำคัญจ่ายเป็นเอกสารจากท่ออัตโนมัติคู่ค้า — §2.12g-281: ใบหลักฐานคู่การจ่าย (ไม่ลง JE ซ้ำ · ไม่ถือภาษี · อ้าง 50 ทวิ ของการจ่าย) · ยกเลิก PV = ยกเลิกการจ่าย · รายงาน + ออกย้อนหลัง — คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — commit 699edd9d)_

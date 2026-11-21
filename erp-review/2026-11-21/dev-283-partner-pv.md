@@ -4,7 +4,7 @@
 > ผ่านเส้นเดียวกับทางมือ · เลขออกตอนอนุมัติ · ผูก 50 ทวิ ใบเดิม · ไม่ลงบัญชีซ้ำ · ป้าย "ระบบสร้างจากคู่ค้า" + audit · ใบเก่า ⇒ รายงาน + ออกย้อนหลัง
 >
 > คำตัดสิน `283-1…283-6` ใน `erp-review/2026-09-29/DECISIONS.md` · สถานะปัจจุบัน `DOCUMENT_FLOW.md` §2.12g-281 (บล็อก "รอบ 283") · เทสต์ `TEST_PLAN.md` T283-01…04 ·
-> คอมมิตงาน `SHA283` (เติมในคอมมิตตามหลัง) · คอมไพล์ + รันเทสต์ pure + Db ในเครื่องนี้แล้ว (.NET 8 + PostgreSQL 16 · ฐาน `accounting_test_r283`)
+> คอมมิตงาน `699edd9d` (เติมในคอมมิตตามหลัง) · คอมไพล์ + รันเทสต์ pure + Db ในเครื่องนี้แล้ว (.NET 8 + PostgreSQL 16 · ฐาน `accounting_test_r283`)
 
 ## 1. ทางมือทำอย่างไร (ยืนยันจากโค้ด)
 
@@ -32,8 +32,8 @@
 | ข้อ | สถานะ | ที่อยู่ |
 | --- | --- | --- |
 | 1) ทางมือสร้าง PV อย่างไร + ผูก 50 ทวิ | ✅ ยืนยันแล้ว (§1) | — |
-| 2) ท่อสร้าง PV ผ่านเส้นเดียว · เลข gap-free · ผูก 50 ทวิ เดิม · JE ไม่ซ้ำ · ป้าย + audit | ✅ `SHA283` | `CreatePaymentRequest.IssuePaymentVoucherDocument` · `DocumentService.SettlementPaymentVoucher.cs` · `Helpers/SettlementPaymentVoucher` |
-| 3) ใบเก่าไม่มี PV ⇒ รายงาน + ออกย้อนหลังเฉพาะแถวที่เลือก (ไม่ลง JE ซ้ำ) | ✅ `SHA283` (API · ยังไม่มีปุ่มบนหน้า — §4) | `GET partner-payments/without-voucher` · `POST partner-payments/{id}/payment-voucher` |
+| 2) ท่อสร้าง PV ผ่านเส้นเดียว · เลข gap-free · ผูก 50 ทวิ เดิม · JE ไม่ซ้ำ · ป้าย + audit | ✅ `699edd9d` | `CreatePaymentRequest.IssuePaymentVoucherDocument` · `DocumentService.SettlementPaymentVoucher.cs` · `Helpers/SettlementPaymentVoucher` |
+| 3) ใบเก่าไม่มี PV ⇒ รายงาน + ออกย้อนหลังเฉพาะแถวที่เลือก (ไม่ลง JE ซ้ำ) | ✅ `699edd9d` (API · ยังไม่มีปุ่มบนหน้า — §4) | `GET partner-payments/without-voucher` · `POST partner-payments/{id}/payment-voucher` |
 | 4) Db test 10,700/300 · PV 1 ใบ · 50 ทวิ ใบเดียว · เงินออกครั้งเดียว · ยกเลิกถอยถูก | ✅ | `PartnerSettlementVoucherRound283DbTests` (2) · pure 12 · mutation 2 จุดจับได้ |
 | 5) เอกสาร | ✅ | DOCUMENT_FLOW §2.12g-281 · TEST_PLAN · CHANGELOG · DECISIONS 283-1…6 |
 
