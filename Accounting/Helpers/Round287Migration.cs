@@ -10,5 +10,8 @@ public static class Round287Migration
     public static IReadOnlyList<string> Statements() => new[]
     {
         """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "SlipTrustedSendImmediately" boolean NOT NULL DEFAULT true;""",
+        // ฝ่ายค้าน 287 MED: งานที่ 286 กักไว้ถูกตั้ง NextAttemptAt = +30 วัน ⇒ ปลุกให้ประเมินตัวตัดสินใหม่รอบถัดไป (ค่าตั้งเปิด ⇒ ส่ง · ปิด/ล้ม ⇒ กักต่อตามระยะ HoldRecheck) ·
+        // รันซ้ำทุกครั้งที่เริ่มระบบได้ (แถวที่ล้มแล้วถูกตั้ง 30 วันอีกครั้งหลังประเมิน — ไม่ส่ง)
+        $"""UPDATE "PostPaymentAutomationRuns" SET "NextAttemptAt" = (now() at time zone 'utc') WHERE NOT "IsDeleted" AND "Status" = 'Pending' AND "NextAttemptAt" > (now() at time zone 'utc') + interval '2 days' AND "Message" LIKE '%{TrustedSlipPayerRule.DeliveryHeldNote}%';""",
     };
 }

@@ -3367,7 +3367,11 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
   ยังไม่ส่ง ⇒ ข้อความเดิม (ยังไม่ถึงผู้ซื้อ)
 - **ฝั่งคู่ค้า (287-4)** — ตรวจแล้วมีอยู่: ผู้ขายยกเลิกการรับเงิน ⇒ `VoidPaymentAsync` → `FlushPartnerNoticeWithdrawalsAsync` → `PartnerPaymentNoticeService.WithdrawForSellerPaymentAsync`
   (ยังไม่บันทึก ⇒ `Withdrawn` · บันทึกแล้ว ⇒ ป้ายบนใบซื้อ + แจ้งผู้ซื้อ · ไม่ยกเลิกการจ่ายของผู้ซื้อแทน) — ไม่มีโค้ดใหม่
-- เทสต์ pure `TrustedSlipSendImmediatelyRound287Tests` · Db `TrustedSlipSendImmediatelyRound287DbTests` (4) · กติกา `_R287_*` · Last verified commit 0fdbd4f3
+- **ชุดแก้ฝ่ายค้าน 287** — (MED) งานที่กักตรวจตัวตัดสินซ้ำตามระยะ `TrustedSlipPayerRule.HoldRecheck` (รอยืนยัน 1 ชม. · ล้มแล้ว 30 วัน — เดิม 30 วันเสมอ ⇒ เปิดค่าตั้งภายหลังไม่ปล่อย) ·
+  ปิด→เปิดค่าตั้ง ⇒ `WakeHeldDeliveriesAsync` ปลุกงานของบริษัททันที · แถวที่ 286 ตั้ง +30 วันไว้ก่อน deploy ⇒ `Round287Migration` ปลุก ·
+  (LOW-1) คิว LINE ตรวจ `DeliveryHoldForDocumentAsync` ก่อนยิงการ์ดใบเสร็จ (`ContactLineQueueService.DeferForTrustHoldAsync`) ·
+  (LOW-2) "ส่งแล้ว" ทาง LINE = แถวคิวที่ `SentAt` ไม่ว่าง (ขั้นเข้าคิวไม่นับ) · (LOW-3) `FailAsync` หาการชำระที่ไม่ถูกยกเลิก
+- เทสต์ pure `TrustedSlipSendImmediatelyRound287Tests` · Db `TrustedSlipSendImmediatelyRound287DbTests` (5) · กติกา `_R287_*` · Last verified commit 0fdbd4f3 · ชุดแก้ฝ่ายค้าน (เติมในคอมมิตตามหลัง)
 
 ### 2.12g-264-P2 รอบ 264 แพ็ก P2 "อ่านบัญชีจากสลิป — QR ตรวจสลิป + ผู้โอน/ผู้รับ" (`erp-review/2026-11-12/team-264-a2b-design.md` §3.2/§4 · คำตัดสิน 264-4-1…8)
 

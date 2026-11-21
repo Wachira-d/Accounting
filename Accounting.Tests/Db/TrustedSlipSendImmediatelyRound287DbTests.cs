@@ -230,4 +230,43 @@ public class TrustedSlipSendImmediatelyRound287DbTests
         Assert.DoesNotContain("ไปแล้ว", fail.Ctx.Message);
         Assert.True(await TrustedSlipVerifyService.DeliveryHeldAsync(db, s.CompanyId, pay.Id));
     }
+
+    /// <summary>ฝ่ายค้าน 287 MED: งานที่กักไว้ (ค่าตั้งปิด) ต้องไม่ค้าง 30 วัน — ตรวจซ้ำตามระยะสั้น · ผู้ขายเปิดค่าตั้งภายหลัง ⇒ ปลุก ⇒ รอบถัดไปส่ง ·
+    /// แถวที่ 286 ตั้งไว้ +30 วันก่อน deploy ⇒ migration ปลุก</summary>
+    [Fact]
+    public async Task T287_05_งานกักอยู่_เปิดค่าตั้งภายหลัง_ส่งรอบถัดไป()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var s = await T286.SeedAsync(db, sendImmediately: false, postPayEmail: true);
+        var v = T286.Build(db, s);
+        await T286.FirstTrustedAsync(db, s, v);
+        await BuyerReadyAsync(db, s);
+        var sender = new FakeSender();
+        await PostPay(db, sender).ProcessDueAsync();
+        sender.Sent.Clear();
+
+        var pay = await ProvisionalAsync(db, s, v, "287WAKELATER005");
+        var run = await RunOfAsync(db, s.CompanyId, pay.Id);
+        await PostPay(db, sender).ProcessRunAsync(run.Id, default);
+        Assert.Empty(sender.Sent);
+        run = await RunOfAsync(db, s.CompanyId, pay.Id);
+        Assert.Equal(PostPaymentAutomationPolicy.StatusPending, run.Status);
+        Assert.True(run.NextAttemptAt <= DateTime.UtcNow.AddHours(1).AddMinutes(1), "งานที่กักต้องตรวจซ้ำภายใน 1 ชม. (เดิม 30 วัน)");
+
+        // จำลองแถวที่ 286 ตั้งไว้ +30 วันก่อน deploy ⇒ migration ปลุก
+        await db.PostPaymentAutomationRuns.Where(r => r.Id == run.Id).ExecuteUpdateAsync(u => u.SetProperty(r => r.NextAttemptAt, DateTime.UtcNow.AddDays(30)));
+        foreach (var sql in Round287Migration.Statements()) await db.Database.ExecuteSqlRawAsync(sql);
+        Assert.True((await RunOfAsync(db, s.CompanyId, pay.Id)).NextAttemptAt <= DateTime.UtcNow);
+
+        // ผู้ขายเปิดค่าตั้ง ⇒ ปลุกงานของบริษัท (ไม่รอระยะตรวจซ้ำ) ⇒ รอบถัดไปส่ง
+        await db.PostPaymentAutomationRuns.Where(r => r.Id == run.Id).ExecuteUpdateAsync(u => u.SetProperty(r => r.NextAttemptAt, DateTime.UtcNow.AddHours(1)));
+        await db.CompanySettings.Where(x => x.CompanyId == s.CompanyId).ExecuteUpdateAsync(u => u.SetProperty(x => x.SlipTrustedSendImmediately, true));
+        Assert.Equal(1, await TrustedSlipVerifyService.WakeHeldDeliveriesAsync(db, s.CompanyId, DateTime.UtcNow));
+        db.ChangeTracker.Clear();
+        await PostPay(db, sender).ProcessRunAsync(run.Id, default);
+        var msg = Assert.Single(sender.Sent);
+        Assert.Contains("acct@buyer287.co.th", msg.To);
+        Assert.Equal(PostPaymentAutomationPolicy.StatusDone, (await RunOfAsync(db, s.CompanyId, pay.Id)).Status);
+    }
 }

@@ -116,6 +116,8 @@ public class LineConfigController : ControllerBase
         if (req.SlipTrustedDailyCap is decimal trustCap) s.SlipTrustedDailyCapPerKey = trustCap;
         if (req.SlipTrustedReviewDays is int trustDays) s.SlipTrustedReviewBusinessDays = trustDays;
         if (req.SlipTrustedCompanyCap is decimal trustCompanyCap) s.SlipTrustedCompanyOutstandingCap = trustCompanyCap;   // ฝ่ายค้าน HIGH-3
+        // ฝ่ายค้าน 287 MED: ปิด → เปิด ⇒ ปลุกงานส่งที่กักไว้หลังบันทึก (ไม่รอรอบตรวจซ้ำ)
+        var wakeHeldDeliveries = req.SlipTrustedSendImmediately == true && !s.SlipTrustedSendImmediately;
         if (req.SlipTrustedSendImmediately is bool trustSendNow) s.SlipTrustedSendImmediately = trustSendNow;   // รอบ 287 · ผู้อ่าน TrustedSlipVerifyService.DeliveryHeldAsync
         if (req.SlipAutoRecord is bool slipAuto) s.SlipAutoRecordEnabled = slipAuto;   // รอบ 282 · null = คงเดิม (ผู้อ่าน SlipAutoRecordService)   // รอบ 260 · null = คงเดิม (ปุ่มล้างรหัสไม่แตะ)
         // รอบ 257 C-M1: null = คงเดิม · "" = ล้าง · ค่า = ตั้งใหม่ (เดิม "" ถูกถือว่าคงเดิม ⇒ ล้างไม่ได้เงียบ ๆ)
@@ -145,6 +147,7 @@ public class LineConfigController : ControllerBase
         s.LineConfigured = false;
         await _db.SaveChangesAsync();
         var released = releaseQuiet ? await ReleaseQuietDeferredAsync(companyId) : 0;
+        if (wakeHeldDeliveries) await TrustedSlipVerifyService.WakeHeldDeliveriesAsync(_db, companyId, DateTime.UtcNow);   // ฝ่ายค้าน 287 MED
 
         var message = "บันทึกการตั้งค่า LINE เรียบร้อย" + (released > 0 ? $" · การ์ด LINE ที่รอชั่วโมงเงียบ {released} รายการจะส่งรอบถัดไป" : "");
         var relinkNote = await RecordOaSwitchAsync(companyId, before);

@@ -27,6 +27,15 @@
 
 Negative test: ให้ `DeliveryHeldAsync` ส่ง `false` แทนค่าตั้งเข้าตัวตัดสิน (เท่ากับพฤติกรรม 286) แล้ว T287_01 กับ T287_03 ล้มตามคาด
 
+## ชุดแก้ฝ่ายค้าน (คำตัดสิน 287-6/7)
+
+| ข้อ | สถานะ |
+| --- | --- |
+| MED งานที่กักค้าง `NextAttemptAt = +30 วัน` ⇒ ไม่ส่ง "รอบถัดไป" ตามที่ doc เขียน | แก้แล้ว — ตรวจซ้ำตาม `TrustedSlipPayerRule.HoldRecheck` (รอยืนยัน 1 ชม. · ล้มแล้ว 30 วัน) · ปิด→เปิดค่าตั้งปลุกทันที (`WakeHeldDeliveriesAsync`) · migration ปลุกแถว +30 วันเดิม · Db T287_05 |
+| LOW-1 คิว LINE ส่งการ์ดที่เข้าคิวก่อนตรวจย้อนล้ม | แก้แล้ว — `ContactLineQueueService.DeferForTrustHoldAsync` → `DeliveryHoldForDocumentAsync` (ตัวตัดสินเดียว) ก่อนยิง |
+| LOW-2 `DeliveredToBuyer` นับ LineReceipt แม้ 0 ปลายทาง | แก้แล้ว — นับเฉพาะขั้นอีเมล · LINE ดูแถวคิวที่ `SentAt` ไม่ว่าง |
+| LOW-3 `FailAsync` ไม่กรอง `IsDeleted` | แก้แล้ว |
+
 ## ตรวจแล้วไม่ใช่บั๊ก / ข้อจำกัด
 
 - เมื่อค่าตั้งเปิด และธนาคารยืนยันภายหลัง `ReleaseDeliveryAsync` จะแจ้งคู่ค้าซ้ำ แต่ไม่เกิดแถวที่สอง เพราะกุญแจกันซ้ำคือการชำระของผู้ขาย

@@ -191,6 +191,10 @@ public static class TrustedSlipPayerRule
     public static bool HoldDelivery(DateTime? provisionalAt, DateTime? verifiedAt, DateTime? failedAt, bool sendImmediately)
         => Unverified(provisionalAt, verifiedAt) && (failedAt != null || !sendImmediately);
 
+    /// <summary>ฝ่ายค้าน 287 MED: ระยะตรวจซ้ำของงานส่งที่ถูกกัก — รอยืนยัน ⇒ 1 ชม. (ค่าตั้งที่เปิดภายหลัง/deploy มีผลรอบถัดไป · ไม่ค้าง 30 วัน) ·
+    /// ตรวจย้อนล้มแล้ว ⇒ 30 วัน (กักถาวรจนผู้ขายตัดสิน) · ผู้เรียก <c>PostPaymentAutomationService</c> · <c>ContactLineQueueService</c></summary>
+    public static TimeSpan HoldRecheck(bool failed) => failed ? TimeSpan.FromDays(30) : TimeSpan.FromHours(1);
+
     /// <summary>รอบ 287 (287-3): ข้อความแจ้งผู้ขายเมื่อตรวจย้อนล้ม — ระบุว่าเอกสารถึงผู้ซื้อแล้วหรือยัง + ทางไปต่อตามกติกาเดิม (ระบบไม่ยกเลิก/ไม่ออกใบลดหนี้เอง) ·
     /// <paramref name="sentToBuyer"/> = มีขั้นส่งอีเมล/LINE ของงานหลังรับชำระที่ทำแล้ว · <paramref name="sentToPartner"/> = มีการแจ้งเข้าระบบผู้ซื้อคู่ค้าแล้ว</summary>
     public static string FailedNextStep(bool sentToBuyer, bool sentToPartner)

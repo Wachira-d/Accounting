@@ -66,12 +66,23 @@ public class TrustedSlipSendImmediatelyRound287Tests
     [InlineData("", false)]
     [InlineData("IssueReceipt", false)]
     [InlineData("IssueReceipt,EmailReceipt", true)]
-    [InlineData("LineReceipt", true)]
+    [InlineData("LineReceipt", false)]   // ฝ่ายค้าน 287 LOW-2: เข้าคิวไม่ใช่ส่ง (LINE ตัดสินจาก LineQueue.SentAt)
     [InlineData("EmailSourceAsReceipt", true)]
     [InlineData("IssueReceipt,EmailReceipt:0f8fad5bd9cb469fa16570867728950e", true)]
     [InlineData("123,IssueReceipt", false)]   // ตัวเลขไม่ใช่ชื่อขั้น (Enum.TryParse จะรับ — ห้ามใช้)
     public void ส่งแล้วไหม_อ่านจากขั้นที่ทำแล้ว(string? steps, bool expected)
         => Assert.Equal(expected, PostPaymentAutomationPolicy.DeliveredToBuyer(steps));
+
+    [Fact]
+    public void ระยะตรวจซ้ำของงานที่กัก_รอยืนยันสั้น_ล้มแล้วยาว()
+    {
+        Assert.Equal(TimeSpan.FromHours(1), TrustedSlipPayerRule.HoldRecheck(failed: false));   // ฝ่ายค้าน 287 MED: เดิม 30 วันเสมอ
+        Assert.Equal(TimeSpan.FromDays(30), TrustedSlipPayerRule.HoldRecheck(failed: true));
+    }
+
+    [Fact]
+    public void migration_ปลุกงานที่กักด้วยป้ายกักตัวเดียว()
+        => Assert.Contains(Round287Migration.Statements(), x => x.Contains("PostPaymentAutomationRuns") && x.Contains(TrustedSlipPayerRule.DeliveryHeldNote));
 
     [Fact]
     public void ประโยคความเสี่ยง_ภาษาคน_ตามคำสั่ง()
