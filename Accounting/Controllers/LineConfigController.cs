@@ -116,6 +116,7 @@ public class LineConfigController : ControllerBase
         if (req.SlipTrustedDailyCap is decimal trustCap) s.SlipTrustedDailyCapPerKey = trustCap;
         if (req.SlipTrustedReviewDays is int trustDays) s.SlipTrustedReviewBusinessDays = trustDays;
         if (req.SlipTrustedCompanyCap is decimal trustCompanyCap) s.SlipTrustedCompanyOutstandingCap = trustCompanyCap;   // ฝ่ายค้าน HIGH-3
+        if (req.SlipTrustedSendImmediately is bool trustSendNow) s.SlipTrustedSendImmediately = trustSendNow;   // รอบ 287 · ผู้อ่าน TrustedSlipVerifyService.DeliveryHeldAsync
         if (req.SlipAutoRecord is bool slipAuto) s.SlipAutoRecordEnabled = slipAuto;   // รอบ 282 · null = คงเดิม (ผู้อ่าน SlipAutoRecordService)   // รอบ 260 · null = คงเดิม (ปุ่มล้างรหัสไม่แตะ)
         // รอบ 257 C-M1: null = คงเดิม · "" = ล้าง · ค่า = ตั้งใหม่ (เดิม "" ถูกถือว่าคงเดิม ⇒ ล้างไม่ได้เงียบ ๆ)
         var tokenCleared = LineOwnOaGuard.Classify(req.ChannelAccessToken) == LineOwnOaGuard.InputKind.Clear;
@@ -356,7 +357,9 @@ public class LineConfigController : ControllerBase
         SlipTrustedDailyCap: s.SlipTrustedDailyCapPerKey,
         SlipTrustedReviewDays: s.SlipTrustedReviewBusinessDays,
         SlipTrustedRiskNotice: TrustedSlipPayerRule.RiskNotice,
-        SlipTrustedCompanyCap: s.SlipTrustedCompanyOutstandingCap);
+        SlipTrustedCompanyCap: s.SlipTrustedCompanyOutstandingCap,
+        SlipTrustedSendImmediately: s.SlipTrustedSendImmediately,
+        SlipTrustedSendRiskNotice: TrustedSlipPayerRule.SendImmediatelyRiskNotice);
 
     // ═══ รอบ 286: ผู้จ่ายที่ไว้ใจได้ — ผู้ขายดู/ถอน/ให้คืนรายกุญแจ (ด่านเดียวกับหน้าตั้งค่า LINE · ห้ามคีย์ API · ไม่มีชื่อผู้โอนใน DTO) ═══
 

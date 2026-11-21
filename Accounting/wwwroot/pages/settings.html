@@ -1204,6 +1204,13 @@
           <label>รอรายการเดินบัญชี (วันทำการ · ไม่เกิน 5) <input type="number" id="slipTrustedReviewDays" min="1" max="5" step="1" class="form-input" style="width:80px" /></label>
           <label>ยอดล่วงหน้าที่รอยืนยันรวมทั้งบริษัท (บาท) <input type="number" id="slipTrustedCompanyCap" min="0" step="0.01" class="form-input" style="width:150px" /></label>
         </div>
+        <!-- รอบ 287 (คำสั่งเจ้าของ · คำตัดสิน 287-1 · ค่าตั้งต้นเปิด): ส่งเอกสารหลังรับเงินทันที — ตัวตัดสิน TrustedSlipPayerRule.HoldDelivery · ประโยคความเสี่ยงจากเซิร์ฟเวอร์ -->
+        <label style="display:flex;gap:8px;align-items:flex-start;margin-top:8px">
+          <input type="checkbox" id="slipTrustedSendImmediately" />
+          <span>ส่งใบเสร็จ/ใบกำกับและเอกสารหลังรับเงินทันที สำหรับผู้จ่ายที่ไว้ใจได้
+            <span class="text-gray-500" style="font-size:12px;display:block">ส่งตามช่องทางที่ผู้ซื้อตั้งไว้ (อีเมล · LINE · ระบบของผู้ซื้อที่เป็นคู่ค้า) เหมือนรับเงินที่ธนาคารยืนยันแล้ว</span>
+            <span id="slipTrustedSendRisk" style="font-size:12px;display:block;color:#92400e;margin-top:4px"></span></span>
+        </label>
         <div style="margin-top:8px"><button type="button" class="btn btn-secondary btn-sm" onclick="Page._loadTrustedPayers(Layout.getCompanyId())">ดูรายชื่อผู้จ่ายที่ไว้ใจได้</button></div>
         <div id="trustedPayersList" style="font-size:12px;margin-top:8px"></div>
       </div>
@@ -2263,7 +2270,9 @@
             const tc = document.getElementById('slipTrustedDailyCap'); if (tc) tc.value = c.slipTrustedDailyCap ?? '';
             const td = document.getElementById('slipTrustedReviewDays'); if (td) td.value = c.slipTrustedReviewDays ?? '';
             const tcc = document.getElementById('slipTrustedCompanyCap'); if (tcc) tcc.value = c.slipTrustedCompanyCap ?? '';
-            const tr = document.getElementById('slipTrustedRisk'); if (tr) tr.textContent = c.slipTrustedRiskNotice ? '⚠️ ' + c.slipTrustedRiskNotice : ''; }   // รอบ 282 — ค่าจากเซิร์ฟเวอร์ (ค่าตั้งต้นปิด)   // รอบ 260 — ค่าจากเซิร์ฟเวอร์ (ค่าตั้งต้นเปิด)
+            const tr = document.getElementById('slipTrustedRisk'); if (tr) tr.textContent = c.slipTrustedRiskNotice ? '⚠️ ' + c.slipTrustedRiskNotice : '';
+            const ts = document.getElementById('slipTrustedSendImmediately'); if (ts) ts.checked = c.slipTrustedSendImmediately !== false;   // รอบ 287 — ค่าจากเซิร์ฟเวอร์ (ค่าตั้งต้นเปิด)
+            const tsr = document.getElementById('slipTrustedSendRisk'); if (tsr) tsr.textContent = c.slipTrustedSendRiskNotice ? '⚠️ ' + c.slipTrustedSendRiskNotice : ''; }   // รอบ 282 — ค่าจากเซิร์ฟเวอร์ (ค่าตั้งต้นปิด)   // รอบ 260 — ค่าจากเซิร์ฟเวอร์ (ค่าตั้งต้นเปิด)
           this._renderLineCustomerChannel(c.customerChannel);
           this._renderLineRelinkInvite(c.relinkInvite, c.webhookProblem);
           { const n = document.getElementById('lineTenantNotice'); if (n) { n.style.display = c.tenantLineNotice ? '' : 'none'; n.textContent = c.tenantLineNotice ? '🔔 ' + c.tenantLineNotice : ''; } }
@@ -2397,6 +2406,7 @@
           slipTrustedDailyCap: (v => v === '' ? null : Number(v))((document.getElementById('slipTrustedDailyCap') || { value: '' }).value.trim()),
           slipTrustedReviewDays: (v => v === '' ? null : Number(v))((document.getElementById('slipTrustedReviewDays') || { value: '' }).value.trim()),
           slipTrustedCompanyCap: (v => v === '' ? null : Number(v))((document.getElementById('slipTrustedCompanyCap') || { value: '' }).value.trim()),
+          slipTrustedSendImmediately: (el => el ? el.checked : null)(document.getElementById('slipTrustedSendImmediately')),   // รอบ 287 · ไม่มีช่อง = คงเดิม
         };
         try {
           const j = await API.put(`/api/companies/${cid}/line-config`, body);

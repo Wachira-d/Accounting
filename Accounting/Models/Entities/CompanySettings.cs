@@ -280,6 +280,10 @@ public class CompanySettings : TenantEntity
     /// <summary>รอบ 286 (ฝ่ายค้าน HIGH-3): เพดานยอดรับเงินล่วงหน้าที่ยังไม่ยืนยันรวมทั้งบริษัท (บาท · ตั้งต้น 100,000 · = ความเสียหายสูงสุด ณ เวลาใดเวลาหนึ่ง) ·
     /// ผู้อ่าน <c>TrustedSlipPayerService.TryProvisionalAsync</c></summary>
     public decimal SlipTrustedCompanyOutstandingCap { get; set; } = Accounting.Helpers.TrustedSlipPayerRule.DefaultCompanyOutstandingCap;
+    /// <summary>รอบ 287 (คำสั่งเจ้าของ · คำตัดสิน 287-1 · <b>ค่าตั้งต้นเปิด</b>): ส่งใบเสร็จ/ใบกำกับและเอกสารหลังรับเงินถึงผู้ซื้อทันที (อีเมล · LINE · แจ้งระบบคู่ค้า)
+    /// สำหรับการรับเงินล่วงหน้าของผู้จ่ายที่ไว้ใจได้ — ปิด ⇒ กักจนรายการเดินบัญชียืนยันแล้วปล่อยเอง (286 MED-1) · ตัวตัดสิน <c>TrustedSlipPayerRule.HoldDelivery</c> ·
+    /// ผู้อ่าน <c>TrustedSlipVerifyService.DeliveryHeldAsync</c> · echo ที่แท็บ LINE</summary>
+    public bool SlipTrustedSendImmediately { get; set; } = true;
     public DateTime? LineLastTestedAt { get; set; }
     public string? LineLastTestStatus { get; set; }
     /// <summary>รอบ 260-4 (team-A L8 · คำตัดสิน 260-4-1): ชั่วโมงเงียบของการ์ด LINE ถึงลูกค้า (เวลาไทย) — ตัวตัดสิน <c>Helpers/LineQuietHours</c> ·

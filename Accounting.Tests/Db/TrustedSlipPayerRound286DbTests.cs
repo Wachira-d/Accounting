@@ -29,9 +29,11 @@ public class TrustedSlipPayerRound286DbTests
     private const string Skip = "ไม่มีฐาน PostgreSQL (ACCOUNTING_TEST_PG) — ข้าม · หลักฐานอยู่ที่ job db-test";
     private static readonly SecretProtector Secrets = new("trusted-payer-286-db");
 
-    private sealed record Seed(Guid CompanyId, Guid ContactId, Guid BankId, LocalDiskFileStorage Storage);
+    internal sealed record Seed(Guid CompanyId, Guid ContactId, Guid BankId, LocalDiskFileStorage Storage);
 
-    private static async Task<Seed> SeedAsync(AccountingDbContext db, bool trustedOn = true, decimal dailyCap = 50_000m, decimal companyCap = 100_000m)
+    // รอบ 287: ค่าตั้ง "ส่งเอกสารทันที" ตั้งต้นเปิดที่ entity — เทสต์ 286 ล็อกพฤติกรรมกักส่ง (ปิด) ไว้ตามเดิม · เทสต์ 287 ส่งค่าเอง
+    internal static async Task<Seed> SeedAsync(AccountingDbContext db, bool trustedOn = true, decimal dailyCap = 50_000m, decimal companyCap = 100_000m,
+        bool sendImmediately = false, bool postPayEmail = false)
     {
         var tag = Guid.NewGuid().ToString("N")[..6];
         var company = new Company { Name = "สำนักงาน 286 " + tag, TaxId = "0105556000007", IsVatRegistered = true };
@@ -40,6 +42,7 @@ public class TrustedSlipPayerRound286DbTests
         db.CompanySettings.Add(new CompanySettings
         {
             CompanyId = company.Id, SlipAutoRecordEnabled = true, BankAutoSettleEnabled = true, SlipTrustedAutoEnabled = trustedOn, SlipTrustedDailyCapPerKey = dailyCap, SlipTrustedCompanyOutstandingCap = companyCap,
+            SlipTrustedSendImmediately = sendImmediately, PostPayEmailReceipt = postPayEmail,
         });
         ChartOfAccount Gl(string code, string name, AccountType type)
         {
@@ -64,7 +67,7 @@ public class TrustedSlipPayerRound286DbTests
         return new Seed(company.Id, buyer.Id, bankK.Id, storage);
     }
 
-    private static async Task<Document> InvoiceAsync(AccountingDbContext db, Seed s, decimal subTotal = 1_000m)
+    internal static async Task<Document> InvoiceAsync(AccountingDbContext db, Seed s, decimal subTotal = 1_000m)
     {
         var vat = Math.Round(subTotal * 0.07m, 2, MidpointRounding.AwayFromZero);
         var inv = new Document
@@ -81,10 +84,10 @@ public class TrustedSlipPayerRound286DbTests
 
     private static byte[] Png() => new byte[] { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A }.Concat(System.Text.Encoding.UTF8.GetBytes("slip-286-" + Guid.NewGuid())).ToArray();
 
-    private static readonly DateTime SlipDay = DateTime.UtcNow.AddHours(7).Date.AddDays(-1);
+    internal static readonly DateTime SlipDay = DateTime.UtcNow.AddHours(7).Date.AddDays(-1);
 
     /// <summary>สลิป: ผู้รับ = กสิกร ••0621 (บัญชีของบริษัท) · ผู้โอน = SCB xxx-x-x1234-x ชื่อ "นาย สมชาย ใจดี" (ค่าตั้งต้น)</summary>
-    private static OcrSlipText.Reading Slip(decimal amount, string qrRef, string payerName = "นาย สมชาย ใจดี", string payerMask = "xxx-x-x1234-x")
+    internal static OcrSlipText.Reading Slip(decimal amount, string qrRef, string payerName = "นาย สมชาย ใจดี", string payerMask = "xxx-x-x1234-x")
         => new(new[] { amount }, amount, SlipDay, qrRef, LooksLikeSlip: true,
             Payer: new OcrSlipText.SlipParty(OcrSlipText.PartyKind.BankAccount, "014", false, payerMask, payerName, null),
             Payee: new OcrSlipText.SlipParty(OcrSlipText.PartyKind.BankAccount, "004", false, "xxx-x-x0621-x", null, null),
@@ -98,10 +101,10 @@ public class TrustedSlipPayerRound286DbTests
     private static DocumentService DocSvc(AccountingDbContext db)
         => new(db, new AccountingService(db), null!, null!, null!, NullLogger<DocumentService>.Instance, null!, null!, null!);
 
-    private sealed record Svcs(LineChatSlipService Line, TrustedSlipVerifyService Verify, TrustedSlipPayerService Trusted, BankReceiptSettleService Bank,
+    internal sealed record Svcs(LineChatSlipService Line, TrustedSlipVerifyService Verify, TrustedSlipPayerService Trusted, BankReceiptSettleService Bank,
         IPaymentIntentService Intents);
 
-    private static Svcs Build(AccountingDbContext db, Seed s)
+    internal static Svcs Build(AccountingDbContext db, Seed s, INotificationEngine? notify = null)
     {
         var handler = new Accounting.Services.Payments.Handlers.DocumentPaymentHandler(db, DocSvc(db), F4Proxy<IGatewayAccountResolver>.Create((_, _) => null),
             NullLogger<Accounting.Services.Payments.Handlers.DocumentPaymentHandler>.Instance, s.Storage);
@@ -109,7 +112,7 @@ public class TrustedSlipPayerRound286DbTests
             NullLogger<PaymentIntentService>.Instance);
         var slips = new SlipEvidenceService(db, intents, s.Storage);
         var payLinks = new DocumentPayLinkService(db, Array.Empty<IPaymentProvider>(), Secrets, Config(), NullLogger<DocumentPayLinkService>.Instance, s.Storage);
-        var verify = new TrustedSlipVerifyService(db, NullLogger<TrustedSlipVerifyService>.Instance);
+        var verify = new TrustedSlipVerifyService(db, NullLogger<TrustedSlipVerifyService>.Instance, notify);
         var trusted = new TrustedSlipPayerService(db, intents, NullLogger<TrustedSlipPayerService>.Instance, Config(), s.Storage);
         var bank = new BankReceiptSettleService(db, DocSvc(db), NullLogger<BankReceiptSettleService>.Instance, null,
             F4Proxy<IPermissionService>.Create((m, _) => m == nameof(IPermissionService.HasPermissionAsync) ? true : null), verify);
@@ -122,7 +125,7 @@ public class TrustedSlipPayerRound286DbTests
 
     private static readonly Guid Uploader = Guid.NewGuid();
 
-    private static async Task<Guid> AddLineAsync(AccountingDbContext db, Seed s, decimal amount, string? reference)
+    internal static async Task<Guid> AddLineAsync(AccountingDbContext db, Seed s, decimal amount, string? reference)
     {
         var t = new BankTransaction
         {
@@ -136,12 +139,12 @@ public class TrustedSlipPayerRound286DbTests
         return t.Id;
     }
 
-    private static ForwardedSlip Fwd(Seed s, OcrSlipText.Reading r)
+    internal static ForwardedSlip Fwd(Seed s, OcrSlipText.Reading r)
         => new(s.CompanyId, new[] { s.ContactId }, LineChatSlipRule.Sources.CentralGroup, "grp-" + s.CompanyId.ToString("N")[..12], Guid.NewGuid().ToString("N"), Png(), r,
             ShowAmounts: true, SenderVerified: true);
 
     /// <summary>ครั้งแรก: สลิป + รายการเดินบัญชีตรง (เส้น 282) ⇒ บันทึกรับเงิน + เรียนกุญแจทันที</summary>
-    private static async Task<Document> FirstTrustedAsync(AccountingDbContext db, Seed s, Svcs v)
+    internal static async Task<Document> FirstTrustedAsync(AccountingDbContext db, Seed s, Svcs v)
     {
         var inv = await InvoiceAsync(db, s);
         await AddLineAsync(db, s, 1_070m, "286FIRSTREF0001");

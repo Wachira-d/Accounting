@@ -22799,5 +22799,29 @@ REVIEWER_CASES += [
     ("R286-4", "TryVerifyLineAsync", "refOnly || await OtherClaimantsAsync(pick, amount, ct)", "refOnly", True),
 ]
 
+# ═══ รอบ 287 (คำสั่งเจ้าของ · คำตัดสิน 287-1…): ส่งเอกสารหลังรับเงินทันทีสำหรับผู้จ่ายที่ไว้ใจได้ (ค่าตั้งต้นเปิด) ═══
+_R287_WHY = "รอบ 287 (ส่งเอกสารทันที · ผู้จ่ายที่ไว้ใจได้): "
+RULES += [
+    dict(file=_R286_VERIFY, method="DeliveryHeldAsync",
+         must=["x.SlipTrustedSendImmediately", "TrustedSlipPayerRule.HoldDelivery(i.TrustProvisionalAt, i.TrustVerifiedAt, i.TrustFailedAt, sendNow)", "x.TrustFailedAt"],
+         forbid=["return i != null && TrustedSlipPayerRule.Unverified("],
+         why=_R287_WHY + "ตัวตัดสินเดียวของการกักส่งอ่านค่าตั้ง (เปิด ⇒ ส่งทันที · ปิด ⇒ กักจนยืนยัน) · ตรวจย้อนล้มแล้วกักเสมอ"),
+    dict(file=_R286_VERIFY, method="FailAsync",
+         must=["await DeliveredAsync(_db, companyId, pid, ct)", "TrustedSlipPayerRule.FailedNextStep(delivered.Buyer, delivered.Partner)"],
+         before=[("await DeliveredAsync(_db, companyId, pid, ct)", "TrustedSlipPayerRule.FailedNextStep(delivered.Buyer, delivered.Partner)")],
+         why=_R287_WHY + "แจ้งผู้ขายเมื่อตรวจย้อนล้มต้องระบุตามข้อเท็จจริงว่าเอกสารถึงผู้ซื้อ (อีเมล/LINE/คู่ค้า) แล้วหรือยัง + ทางไปต่อ"),
+    dict(file=_R286_VERIFY, method="DeliveredAsync",
+         must=["PostPaymentAutomationPolicy.DeliveredToBuyer", "n.Status != PartnerPaymentNoticeRule.StatusWithdrawn", "r.CompanyId == companyId", "n.SourceCompanyId == companyId"],
+         why=_R287_WHY + "ข้อเท็จจริงการส่งมาจากขั้นที่ทำแล้วของงานหลังรับชำระ + แถวแจ้งคู่ค้า (tenant ของผู้ขาย) ไม่ใช่จากค่าตั้ง"),
+    dict(file="Controllers/LineConfigController.cs", method="Update",
+         must=["if (req.SlipTrustedSendImmediately is bool trustSendNow) s.SlipTrustedSendImmediately = trustSendNow;"],
+         why=_R287_WHY + "ค่าตั้งถูกเขียนจากหน้าตั้งค่า LINE (null = คงเดิม)"),
+]
+REVIEWER_CASES += [
+    ("R287-1", "DeliveryHeldAsync", "TrustedSlipPayerRule.HoldDelivery(i.TrustProvisionalAt, i.TrustVerifiedAt, i.TrustFailedAt, sendNow)",
+     "TrustedSlipPayerRule.Unverified(i.TrustProvisionalAt, i.TrustVerifiedAt)", True),
+    ("R287-2", "FailAsync", "TrustedSlipPayerRule.FailedNextStep(delivered.Buyer, delivered.Partner)", "TrustedSlipPayerRule.FailedNextStep(false, false)", True),
+]
+
 if __name__ == "__main__":
     sys.exit(main())

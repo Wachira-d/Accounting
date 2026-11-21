@@ -363,27 +363,49 @@ public sealed class TrustedSlipVerifyService
             return true;
         });
         if (!failed) return false;
+        // รอบ 287 (287-3): ข้อเท็จจริงว่าเอกสารถึงผู้ซื้อแล้วหรือยัง (ค่าตั้ง "ส่งเอกสารทันที") — ข้อความแจ้งระบุตามจริง
+        var paymentId = await _db.Payments.AsNoTracking().IgnoreQueryFilters()
+            .Where(x => x.CompanyId == companyId && x.Reference == GatewayPaymentRecord.Reference(p.Id)).Select(x => (Guid?)x.Id).FirstOrDefaultAsync(ct);
+        var delivered = paymentId is Guid pid ? await DeliveredAsync(_db, companyId, pid, ct) : (Buyer: false, Partner: false);
         var number = await _db.Documents.AsNoTracking().IgnoreQueryFilters().Where(d => d.Id == p.SourceId && d.CompanyId == companyId)
             .Select(d => d.DocumentNumber).FirstOrDefaultAsync(ct);
         await NotifyAsync(companyId, NotificationEvents.AutopilotSlipTrustedUnverified,
             $"⚠️ ไม่พบเงินเข้า {p.Amount:N2} บาท ของ {number ?? "เอกสาร"} ที่ระบบรับเงินล่วงหน้าไว้",
-            reason + " · ระบบถอนความไว้ใจทุกผู้โอนของผู้ติดต่อนี้และล็อกไว้แล้ว (ปลดได้ที่หน้าตั้งค่า LINE) · ตรวจรายการเดินบัญชี — ถ้าเงินไม่เข้าจริง ให้ยกเลิกการรับเงินนี้ที่เอกสาร (ใบเสร็จ/ใบกำกับที่ออกต้องออกใบยกเลิก) · ระบบไม่ยกเลิกเอง",
+            reason + " · ระบบถอนความไว้ใจทุกผู้โอนของผู้ติดต่อนี้และล็อกไว้แล้ว (ปลดได้ที่หน้าตั้งค่า LINE) · ตรวจรายการเดินบัญชี — " +
+                TrustedSlipPayerRule.FailedNextStep(delivered.Buyer, delivered.Partner),
             "/pages/documents.html?openDoc=" + p.SourceId, p.Id, ct);
         return true;
     }
 
     // ═══════════════ ฝ่ายค้าน MED-1: กักการส่งเอกสารถึงผู้ซื้อของการรับล่วงหน้า ═══════════════
 
-    /// <summary>การชำระนี้มาจากรายการรับเงินล่วงหน้าที่ธนาคารยังไม่ยืนยันไหม (ตัวตั้งเดียวของ "ห้ามส่งถึงผู้ซื้อ") — ผู้อ่าน:
-    /// <c>DocumentService.CreatePaymentAsync</c> (ไม่แจ้งผู้ซื้อคู่ค้า) · <c>PostPaymentAutomationService</c> (ออกใบในระบบได้ ไม่ส่งอีเมล/LINE)</summary>
+    /// <summary>การชำระนี้มาจากรายการรับเงินล่วงหน้าที่ต้องกักการส่งถึงผู้ซื้อไหม (ตัวตั้งเดียวของ "ห้ามส่งถึงผู้ซื้อ") — ผู้อ่าน:
+    /// <c>DocumentService.CreatePaymentAsync</c> (ไม่แจ้งผู้ซื้อคู่ค้า) · <c>PostPaymentAutomationService</c> (ออกใบในระบบได้ ไม่ส่งอีเมล/LINE) ·
+    /// รอบ 287 (287-1): ตัดสินที่ <see cref="TrustedSlipPayerRule.HoldDelivery"/> ด้วยค่าตั้ง <c>SlipTrustedSendImmediately</c> (ค่าตั้งต้นเปิด = ไม่กักระหว่างรอยืนยัน · ล้มแล้วกักเสมอ)</summary>
     public static async Task<bool> DeliveryHeldAsync(AccountingDbContext db, Guid companyId, Guid paymentId, CancellationToken ct = default)
     {
         var reference = await db.Payments.AsNoTracking().IgnoreQueryFilters().Where(x => x.Id == paymentId && x.CompanyId == companyId)
             .Select(x => x.Reference).FirstOrDefaultAsync(ct);
         if (!GatewayPaymentRecord.TryParseIntentId(reference, out var intentId)) return false;
         var i = await db.PaymentIntents.AsNoTracking().IgnoreQueryFilters().Where(x => x.Id == intentId && x.CompanyId == companyId)
-            .Select(x => new { x.TrustProvisionalAt, x.TrustVerifiedAt }).FirstOrDefaultAsync(ct);
-        return i != null && TrustedSlipPayerRule.Unverified(i.TrustProvisionalAt, i.TrustVerifiedAt);
+            .Select(x => new { x.TrustProvisionalAt, x.TrustVerifiedAt, x.TrustFailedAt }).FirstOrDefaultAsync(ct);
+        if (i == null || !TrustedSlipPayerRule.Unverified(i.TrustProvisionalAt, i.TrustVerifiedAt)) return false;
+        // ไม่มีแถวค่าตั้ง ⇒ ค่าตั้งต้นของ entity (เปิด) — ตัวเดียวกับคอลัมน์ DEFAULT true ของ Round287Migration
+        var sendNow = await db.CompanySettings.AsNoTracking().IgnoreQueryFilters().Where(x => x.CompanyId == companyId)
+            .Select(x => (bool?)x.SlipTrustedSendImmediately).FirstOrDefaultAsync(ct) ?? new CompanySettings().SlipTrustedSendImmediately;
+        return TrustedSlipPayerRule.HoldDelivery(i.TrustProvisionalAt, i.TrustVerifiedAt, i.TrustFailedAt, sendNow);
+    }
+
+    /// <summary>รอบ 287 (287-3): เอกสารของการชำระนี้ถึงผู้ซื้อไปแล้วหรือยัง — ข้อเท็จจริงจากฐาน ไม่เดา: ขั้นส่งอีเมล/LINE ของงานหลังรับชำระที่ทำแล้ว
+    /// (<see cref="PostPaymentAutomationPolicy.DeliveredToBuyer"/>) · แถวแจ้งผู้ซื้อคู่ค้าที่ยังไม่ถูกถอน · ผู้อ่าน <see cref="FailAsync"/> (ข้อความแจ้งผู้ขาย)</summary>
+    internal static async Task<(bool Buyer, bool Partner)> DeliveredAsync(AccountingDbContext db, Guid companyId, Guid paymentId, CancellationToken ct = default)
+    {
+        var steps = await db.PostPaymentAutomationRuns.AsNoTracking().IgnoreQueryFilters()
+            .Where(r => r.CompanyId == companyId && r.PaymentId == paymentId).Select(r => r.StepsDone).ToListAsync(ct);
+        var partner = await db.PartnerPaymentNotices.AsNoTracking().IgnoreQueryFilters()
+            .AnyAsync(n => n.SourceCompanyId == companyId && n.SellerPaymentId == paymentId && !n.IsDeleted
+                && n.Status != PartnerPaymentNoticeRule.StatusWithdrawn, ct);
+        return (steps.Any(PostPaymentAutomationPolicy.DeliveredToBuyer), partner);
     }
 
     /// <summary>ธนาคารยืนยันแล้ว ⇒ ปล่อยงานส่งเอกสารที่กักไว้ (รอบถัดไปของงานหลังรับชำระ) + แจ้งผู้ซื้อคู่ค้าที่ข้ามไว้ · ไม่โยน</summary>

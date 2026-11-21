@@ -51,7 +51,11 @@ public record LineConfigResponse(
     int SlipTrustedReviewDays = 3,
     string? SlipTrustedRiskNotice = null,
     /// <summary>รอบ 286 (ฝ่ายค้าน HIGH-3): เพดานยอดล่วงหน้าที่รอยืนยันรวมทั้งบริษัท</summary>
-    decimal SlipTrustedCompanyCap = 100_000m);
+    decimal SlipTrustedCompanyCap = 100_000m,
+    /// <summary>รอบ 287 (287-1 · ค่าตั้งต้นเปิด): ส่งใบเสร็จ/ใบกำกับและเอกสารหลังรับเงินทันทีสำหรับผู้จ่ายที่ไว้ใจได้ (<c>CompanySettings.SlipTrustedSendImmediately</c>) +
+    /// ประโยคความเสี่ยง (<c>TrustedSlipPayerRule.SendImmediatelyRiskNotice</c> · server computes)</summary>
+    bool SlipTrustedSendImmediately = true,
+    string? SlipTrustedSendRiskNotice = null);
 
 /// <summary>รอบ 259 (A-M6) · รอบ 260-4 (คำตัดสิน 260-4-3): ปลายทางทดสอบหนึ่งตัว — <paramref name="Key"/> = <c>LineOaHealth.TeamGroupTargetKey</c> หรือ
 /// <c>LineOaHealth.EndpointTargetKey</c> (เซิร์ฟเวอร์อ่าน id เอง · ไม่มี LINE id ใน DTO) · <paramref name="ReachesContact"/> = ข้อความทดสอบถึงผู้รับของผู้ติดต่อ (หน้าถามยืนยันก่อน)</summary>
@@ -96,7 +100,8 @@ public record UpdateLineConfigRequest(
     bool? SlipTrustedAuto = null,
     decimal? SlipTrustedDailyCap = null,
     int? SlipTrustedReviewDays = null,
-    decimal? SlipTrustedCompanyCap = null);
+    decimal? SlipTrustedCompanyCap = null,
+    bool? SlipTrustedSendImmediately = null);   // รอบ 287 · null = คงเดิม
 
 /// <summary>รอบ 286: ผู้ขายถอนความไว้ใจรายกุญแจ (เหตุไม่บังคับ)</summary>
 public record TrustedSlipPayerRevokeRequest(string? Reason);

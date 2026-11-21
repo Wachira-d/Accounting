@@ -3353,6 +3353,22 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
   ป้าย `trustLabel`/ตัวกรอง `?trust=unverified` (หน้ารายการรับชำระ) · `PaymentResponse.ProvisionalLabel` (ประวัติการชำระของเอกสาร)
   Last verified commit 19445ff6 · ชุดแก้ฝ่ายค้าน afac9dcf
 
+### 2.12g-287 รอบ 287 "ผู้จ่ายที่ไว้ใจได้ — ส่งใบเสร็จ/ใบกำกับและเอกสารหลังรับเงินทันที" (คำสั่งเจ้าของ · คำตัดสิน 287-1…287-5 · แทน 286-13 แบบมีค่าตั้ง)
+
+- **ค่าตั้ง (287-1)** — `CompanySettings.SlipTrustedSendImmediately` (**ค่าตั้งต้นเปิด** · `Round287Migration` DEFAULT true) · แท็บ LINE ของหน้าตั้งค่า ใต้ค่าตั้ง 286 ·
+  ประโยคความเสี่ยงจากเซิร์ฟเวอร์ `TrustedSlipPayerRule.SendImmediatelyRiskNotice` · echo `LineConfigResponse.SlipTrustedSendImmediately` · null = คงเดิม
+- **ตัวตัดสินเดียว (287-2)** — `TrustedSlipPayerRule.HoldDelivery(provisionalAt, verifiedAt, failedAt, sendImmediately)` ผ่าน `TrustedSlipVerifyService.DeliveryHeldAsync`
+  (ผู้อ่านเดิมสองจุด: `PostPaymentAutomationService.ExecuteAsync` = อีเมล/LINE ของงานหลังรับชำระ · `DocumentService.CreatePaymentAsync` = แจ้งผู้ซื้อคู่ค้า 264/281):
+  ไม่ใช่รายการล่วงหน้า/ยืนยันแล้ว ⇒ ไม่กัก · รอยืนยัน + เปิด ⇒ **ส่งทันทีตามเส้นปกติ** · รอยืนยัน + ปิด ⇒ กักจนธนาคารยืนยันแล้ว `ReleaseDeliveryAsync` ปล่อย (286 เดิม) ·
+  **ตรวจย้อนล้มแล้ว ⇒ กักเสมอ** (งานที่ยังไม่ได้ส่งไม่ส่งต่อ) · ช่องทางส่ง = ช่องที่ผู้ซื้อตั้งไว้ (ตัวหาผู้รับเดิม · ไม่เปิดช่องใหม่) · เพดาน/กุญแจ/ด่าน 286 ไม่แตะ
+- **ตรวจย้อนล้มหลังส่งแล้ว (287-3)** — `FailAsync` อ่านข้อเท็จจริง `TrustedSlipVerifyService.DeliveredAsync` (ขั้นส่งที่ทำแล้วใน `PostPaymentAutomationRun.StepsDone` ผ่าน
+  `PostPaymentAutomationPolicy.DeliveredToBuyer` · แถว `PartnerPaymentNotices` ของการชำระที่ยังไม่ถอน) ⇒ ข้อความแจ้ง `TrustedSlipPayerRule.FailedNextStep`:
+  "ส่งใบเสร็จ/ใบกำกับถึงผู้ซื้อไปแล้ว…" + ทางไปต่อ (ยกเลิกการรับเงินที่เอกสาร แล้วออกใบยกเลิก/ใบลดหนี้ตามกติกาเดิม และแจ้งผู้ซื้อ) · **ระบบไม่ยกเลิก/ไม่ออกใบลดหนี้เอง** ·
+  ยังไม่ส่ง ⇒ ข้อความเดิม (ยังไม่ถึงผู้ซื้อ)
+- **ฝั่งคู่ค้า (287-4)** — ตรวจแล้วมีอยู่: ผู้ขายยกเลิกการรับเงิน ⇒ `VoidPaymentAsync` → `FlushPartnerNoticeWithdrawalsAsync` → `PartnerPaymentNoticeService.WithdrawForSellerPaymentAsync`
+  (ยังไม่บันทึก ⇒ `Withdrawn` · บันทึกแล้ว ⇒ ป้ายบนใบซื้อ + แจ้งผู้ซื้อ · ไม่ยกเลิกการจ่ายของผู้ซื้อแทน) — ไม่มีโค้ดใหม่
+- เทสต์ pure `TrustedSlipSendImmediatelyRound287Tests` · Db `TrustedSlipSendImmediatelyRound287DbTests` (4) · กติกา `_R287_*` · Last verified commit (เติมในคอมมิตตามหลัง)
+
 ### 2.12g-264-P2 รอบ 264 แพ็ก P2 "อ่านบัญชีจากสลิป — QR ตรวจสลิป + ผู้โอน/ผู้รับ" (`erp-review/2026-11-12/team-264-a2b-design.md` §3.2/§4 · คำตัดสิน 264-4-1…8)
 
 - **QR (264-4-1)** — `TesseractSlipImageReader.ReadAsync` ถอด QR ในเครื่องก่อน OCR (`SlipQrImageDecoder` = SkiaSharp → ZXing.Net 0.16.9 · ไม่เรียกเครือข่าย · ล้ม = null) ⇒
