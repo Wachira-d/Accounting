@@ -2992,18 +2992,7 @@ public partial class DocumentService : IDocumentService
         // ใบที่สอง + VAT เข้าแดชบอร์ด · ส่งค่าเดิมทั้งชุด (ฟอร์ม) ⇒ บันทึกหมายเหตุ · แตะยอด/บรรทัด/ผู้ติดต่อ/วันที่ ⇒ ปฏิเสธพร้อมทางไปต่อ (ไม่ silent no-op)
         // (ขอเปลี่ยนใบต้นทาง = ด่าน RL-SOURCE เดิมด้านล่างปฏิเสธใบหลักฐานเอง — ไม่ดักที่นี่เพื่อให้รหัสกฎเดิม)
         if (doc.IsSettlementReceipt && (request.RelatedDocumentId == null || request.RelatedDocumentId == doc.RelatedDocumentId))
-        {
-            var cur = doc.Lines.Where(l => !l.IsDeleted).OrderBy(l => l.LineOrder)
-                .Select(l => (l.Quantity, l.UnitPrice, l.DiscountPercent, l.VatRate, l.WithholdingTaxRate)).ToList();
-            var req = request.Lines?.Select(l => (l.Quantity, l.UnitPrice, l.DiscountPercent, l.VatRate, l.WithholdingTaxRate)).ToList();
-            if (Accounting.Helpers.SettlementPaymentVoucher.EvidenceEditTouchesMoney(cur, req, doc.ContactId, request.ContactId, doc.DocumentDate, request.DocumentDate))
-                throw new Accounting.Helpers.BusinessRuleException(Accounting.Helpers.SettlementPaymentVoucher.EvidenceEditOnlyNotesMessage,
-                    Accounting.Helpers.SettlementPaymentVoucher.EvidenceEditRuleCode, 409);
-            doc.Notes = request.Notes;
-            doc.UpdatedAt = DateTime.UtcNow;
-            await _db.SaveChangesAsync();
-            return await GetDocumentAsync(companyId, documentId);
-        }
+            return await UpdateSettlementEvidenceNotesAsync(companyId, doc, request);
 
         // ── Document revision: เอกสาร operational ที่อนุมัติ/ส่งแล้ว "แก้ได้" ──
         // เกณฑ์เดียว: เอกสารที่ **ไม่มี JE / ไม่ขยับสต๊อก / ไม่เข้ารายงานภาษี**
@@ -16352,7 +16341,7 @@ public partial class DocumentService : IDocumentService
                 HasPayerSignature: !string.IsNullOrWhiteSpace(payment.PayerSignatureBase64),
                 PayerSignatureName: payment.PayerSignatureName,
                 WhtCertNotice: whtCertNotice,
-                Warnings: new[] { whtAboveNetWarning, voucherSkipNote }.Where(w => w != null).Select(w => w!).ToArray() is { Length: > 0 } ws ? ws : null);
+                Warnings: whtAboveNetWarning != null || voucherSkipNote != null ? new[] { whtAboveNetWarning, voucherSkipNote }.OfType<string>().ToArray() : null);
         }
         catch
         {

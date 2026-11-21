@@ -195,6 +195,22 @@ public partial class DocumentService
         return rows;
     }
 
+    /// <summary>ฝ่ายค้าน MED-A1: แก้ใบหลักฐานคู่การชำระ (ใบสำคัญจ่ายหลักฐาน · ใบเสร็จหลักฐานฝั่งขาย) — ได้เฉพาะหมายเหตุ · แตะยอด/บรรทัด/ผู้ติดต่อ/วันที่ ⇒ ปฏิเสธพร้อมทางไปต่อ</summary>
+    private async Task<Accounting.Models.DTOs.Document.DocumentResponse> UpdateSettlementEvidenceNotesAsync(Guid companyId, Document doc,
+        Accounting.Models.DTOs.Document.UpdateDocumentRequest request)
+    {
+        var cur = doc.Lines.Where(l => !l.IsDeleted).OrderBy(l => l.LineOrder)
+            .Select(l => (l.Quantity, l.UnitPrice, l.DiscountPercent, l.VatRate, l.WithholdingTaxRate)).ToList();
+        var req = request.Lines?.Select(l => (l.Quantity, l.UnitPrice, l.DiscountPercent, l.VatRate, l.WithholdingTaxRate)).ToList();
+        if (Accounting.Helpers.SettlementPaymentVoucher.EvidenceEditTouchesMoney(cur, req, doc.ContactId, request.ContactId, doc.DocumentDate, request.DocumentDate))
+            throw new Accounting.Helpers.BusinessRuleException(Accounting.Helpers.SettlementPaymentVoucher.EvidenceEditOnlyNotesMessage,
+                Accounting.Helpers.SettlementPaymentVoucher.EvidenceEditRuleCode, 409);
+        doc.Notes = request.Notes;
+        doc.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync();
+        return await GetDocumentAsync(companyId, doc.Id);
+    }
+
     /// <summary>ในเส้นกลับรายการการจ่าย (ใบเดียว · หลายใบ): ใบสำคัญจ่ายหลักฐานของการจ่ายนี้ ⇒ ยกเลิก (คงแถวที่มองเห็น — ใบมีเลขแล้ว ห้ามหาย) + audit ·
     /// ไม่มี JE ให้กลับ (หลักฐานอย่างเดียว) · ผู้เรียกถือธุรกรรม</summary>
     private async Task VoidSettlementPaymentVouchersOfPaymentAsync(Guid companyId, Payment payment)

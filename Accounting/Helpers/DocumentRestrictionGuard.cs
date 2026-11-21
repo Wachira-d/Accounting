@@ -129,7 +129,7 @@ public static class DocumentRestrictionGuard
 
     public static async Task EnsureMayFinalizeAsync(AccountingDbContext db, Guid companyId, string? actor, string verb, CancellationToken ct = default)
     {
-        if (!await MayFinalizeAsync(db, companyId, actor, ct))
+        if (db.DocumentDraftOnlyRequest || (await ForActorAsync(db, companyId, actor, ct)).DraftOnly)
             throw new BusinessRuleException(DocumentRestrictionPolicy.DraftOnlyDeniedMessage(verb), DocumentRestrictionPolicy.DraftOnlyRuleCode, 403);
     }
 }

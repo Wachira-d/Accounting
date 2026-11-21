@@ -22566,8 +22566,11 @@ RULES += [
          must=["SettlementPaymentVoucher.PayNextStepHint(d.DocumentType, d.PartnerSourceLinkId != null)"],
          why=_R283_WHY + "ผู้ประสานงาน ข้อ 3: ข้อความ 'ระบบจะออกใบสำคัญจ่าย' มาจากตัวตัดสินเดียวกับการจ่าย (หน้าไม่เขียนเอง)"),
     dict(file="Services/Implementations/DocumentService.cs", method="UpdateDocumentAsync",
+         must=["return await UpdateSettlementEvidenceNotesAsync(companyId, doc, request);"],
+         before=[("return await UpdateSettlementEvidenceNotesAsync(", "var isDocRevision")],
+         why=_R283_WHY + "ฝ่ายค้าน MED-A1: ใบหลักฐานคู่การชำระแก้ได้เฉพาะหมายเหตุ (เดิมแก้ยอด/ภาษีได้ ⇒ 50 ทวิ ใบที่สอง)"),
+    dict(file=_R283_PV, method="UpdateSettlementEvidenceNotesAsync",
          must=["SettlementPaymentVoucher.EvidenceEditTouchesMoney(", "SettlementPaymentVoucher.EvidenceEditRuleCode"],
-         before=[("SettlementPaymentVoucher.EvidenceEditTouchesMoney(", "var isDocRevision")],
          why=_R283_WHY + "ฝ่ายค้าน MED-A1: ใบหลักฐานคู่การชำระแก้ได้เฉพาะหมายเหตุ (เดิมแก้ยอด/ภาษีได้ ⇒ 50 ทวิ ใบที่สอง)"),
     dict(file="Services/Implementations/WithholdingTaxCertService.cs", method="TryAutoIssueForDocumentAsync",
          must=["SettlementPaymentVoucher.EvidenceNoWhtReason"], before=[("SettlementPaymentVoucher.EvidenceNoWhtReason", "LoadPayeePortionsAsync(")],
@@ -22595,7 +22598,7 @@ RULES += [
 ]
 REVIEWER_CASES += [
     ("R283-1", "ProcessAsync", "IssuePaymentVoucherDocument: true", "IssuePaymentVoucherDocument: false", True),
-    ("R283-4", "UpdateDocumentAsync", "if (doc.IsSettlementReceipt && (request.RelatedDocumentId == null", "if (false && (request.RelatedDocumentId == null", True),
+    ("R283-4", "UpdateDocumentAsync", "return await UpdateSettlementEvidenceNotesAsync(companyId, doc, request);", "{ }", True),
     ("R283-3", "CreatePaymentAsync", "doc.PartnerSourceLinkId != null)", "false)", True),
     ("R283-2", "CreateSettlementPaymentVoucherCoreAsync", "WithholdingTaxAmount = SettlementPaymentVoucher.WithholdingTaxAmount", "WithholdingTaxAmount = payment.WithholdingTaxAmount", True),
 ]
