@@ -482,6 +482,14 @@ public partial class DocumentPayLinkService : IDocumentPayLinkService
 
     // ═══════════════ หน้าชำระสาธารณะ ═══════════════
 
+    public async Task<Guid?> DocumentIdForTokenAsync(Guid companyId, string token, CancellationToken ct = default)
+    {
+        if (!DocumentPayLinkPolicy.LooksValid(token)) return null;
+        var d = await LoadDocAsync(companyId, null, DocumentPayLinkPolicy.TokenHash(token), ct);
+        if (d == null || !DocumentPayLinkPolicy.TokenMatches(token, d.PayLinkTokenHash)) return null;
+        return CustomerDocPage.StateOf(d.PayLinkTokenHash, d.PayLinkExpiresAt, d.PayLinkRevokedAt, DateTime.UtcNow) == CustomerDocPage.LinkState.Usable ? d.Id : null;
+    }
+
     public async Task<PublicDocumentPayView?> PublicViewAsync(Guid companyId, string token, CancellationToken ct = default)
     {
         // ฝ่ายค้าน 267-P5 LOW-9: หน้าเดียวถามชุดใบของใบวางบิลหลายรอบ (ยอด · ด่านจ่าย ×2) ⇒ จำผลไว้ช่วงสั้นของคำขอเปิดหน้านี้ (เส้นสาธารณะ — ไม่ยิง query ซ้ำหลายร้อย)

@@ -189,6 +189,10 @@ public static class NotificationAudiencePolicy
         Accounting.Models.Constants.NotificationEvents.PartnerPaymentAutoRecorded,
         Accounting.Models.Constants.NotificationEvents.PartnerWhtCertDelivered,
         Accounting.Models.Constants.NotificationEvents.PartnerWhtCertReceived,
+        // รอบ 282: บันทึกรับเงินจากสลิปเอง · สลิปรอยืนยัน · ยืนยันบัญชีที่จ่าย (วิธีสำรองของคำสั่งเจ้าของ 282-6) — ต้องถึงเจ้าของแม้ยังไม่ตั้งตาราง
+        Accounting.Models.Constants.NotificationEvents.AutopilotSlipAutoRecorded,
+        Accounting.Models.Constants.NotificationEvents.AutopilotSlipNeedsConfirm,
+        Accounting.Models.Constants.NotificationEvents.PartnerPaySourceNeedsConfirm,
     };
 
     /// <summary>เส้นผู้รับที่ระบุ (บริษัทยังไม่ตั้งคีย์) ส่งอีเมลด้วยไหม — คีย์กระดิ่งเท่านั้น = ไม่ส่ง · อื่น ๆ = กระดิ่ง + อีเมลเหมือนเดิม</summary>

@@ -345,11 +345,52 @@ public class PartnerPayablePipeline
                 .SetProperty(x => x.AutoBlockedCode, code)
                 .SetProperty(x => x.AutoEvaluatedAt, (DateTime?)nowUtc)
                 .SetProperty(x => x.UpdatedAt, (DateTime?)nowUtc), ct);
+        // รอบ 282 (คำสั่งเจ้าของ 282-6): ตรวจบัญชีที่จ่ายไม่ได้ ⇒ วิธีสำรอง: แจ้งให้ยืนยันที่หน้าใบซื้อ (ครั้งแรก + เตือนซ้ำตามตาราง SlipMoneySource · มีเพดาน)
+        if (code == PartnerAutoRecordPolicy.Codes.Source) await SourceNeedsConfirmAsync(n, r, nowUtc, ct);
         if (n.AutoBlockedCode == code) return;
         var fresh = await _db.PartnerPaymentNotices.AsNoTracking().FirstAsync(x => x.Id == n.Id && x.CompanyId == n.CompanyId, ct);
         PartnerPaymentNoticeService.Audit(_db, n.CompanyId, null, "PartnerPaymentAutoBlocked", fresh,
             extra: new { code, reason = r, ruleCode = PartnerAutoRecordPolicy.RuleCode, legalReference = PartnerAutoRecordPolicy.LegalReference, usedAi = false });
         await _db.SaveChangesAsync(ct);
+    }
+
+    /// <summary>รอบ 282: แจ้งผู้ซื้อให้ยืนยันบัญชีที่จ่าย — ครั้งแรกเมื่อพบเหตุ · เตือนซ้ำเมื่อ <see cref="SlipMoneySource.ReminderDue"/> (compare-and-set กันส่งซ้ำข้าม instance) ·
+    /// ยืนยันได้เฉพาะที่หน้าใบซื้อ (ล็อกอิน + สิทธิ์อนุมัติใบซื้อ — ปุ่ม “บันทึกจ่าย” เดิม · ไม่มีปุ่มยืนยันในกลุ่ม) · ล้มส่ง = LogError (เหตุอยู่บนแถวแล้ว)</summary>
+    private async Task SourceNeedsConfirmAsync(PartnerPaymentNotice n, string reason, DateTime nowUtc, CancellationToken ct)
+    {
+        var st = await _db.PartnerPaymentNotices.AsNoTracking().Where(x => x.Id == n.Id && x.CompanyId == n.CompanyId)
+            .Select(x => new { x.SourceNoticeAt, x.SourceRemindCount, x.SourceRemindedAt }).FirstOrDefaultAsync(ct);
+        if (st == null) return;
+        int reminder;
+        if (st.SourceNoticeAt == null)
+        {
+            if (await _db.PartnerPaymentNotices.Where(x => x.Id == n.Id && x.CompanyId == n.CompanyId && x.SourceNoticeAt == null)
+                    .ExecuteUpdateAsync(u => u.SetProperty(x => x.SourceNoticeAt, (DateTime?)nowUtc), ct) == 0) return;
+            reminder = 0;
+        }
+        else if (SlipMoneySource.ReminderDue(st.SourceNoticeAt.Value, st.SourceRemindCount, st.SourceRemindedAt, nowUtc))
+        {
+            if (await _db.PartnerPaymentNotices.Where(x => x.Id == n.Id && x.CompanyId == n.CompanyId && x.SourceRemindCount == st.SourceRemindCount)
+                    .ExecuteUpdateAsync(u => u.SetProperty(x => x.SourceRemindCount, st.SourceRemindCount + 1)
+                        .SetProperty(x => x.SourceRemindedAt, (DateTime?)nowUtc), ct) == 0) return;
+            reminder = st.SourceRemindCount + 1;
+        }
+        else return;
+        if (_notify == null) return;
+        try
+        {
+            await _notify.DispatchAsync(n.CompanyId, NotificationEvents.PartnerPaySourceNeedsConfirm, new NotificationContext
+            {
+                Title = (reminder > 0 ? $"🔔 เตือนครั้งที่ {reminder}: " : "") + $"ยืนยันบัญชีที่จ่าย {n.CashAmount:N2} บาท ของ {n.SourceDocumentNumber}",
+                Message = "ระบบไม่บันทึกจ่ายเอง — " + reason + " · เปิดใบซื้อ เลือกบัญชีที่จ่ายจริง (ระบบเสนอค่าที่น่าจะใช่พร้อมเหตุ) แล้วกด “บันทึกจ่าย”",
+                ActionUrl = $"/pages/documents.html?id={n.TargetDocumentId}",
+                EntityType = nameof(PartnerPaymentNotice), EntityId = n.Id,
+            });
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogError(ex, "แจ้งบริษัท {Company} ให้ยืนยันบัญชีที่จ่าย (การแจ้ง {Notice}) ไม่สำเร็จ — เหตุอยู่บนแถวแล้ว", n.CompanyId, n.Id);
+        }
     }
 
     /// <summary>ผู้ขายยกเลิกการรับชำระแล้วแต่ขั้นถอนตอนยกเลิกไม่ได้ทำงาน (ล้ม/แถวเก่า) ⇒ ถอนที่นี่ (ตรวจสด — ตาข่ายชั้นสอง)</summary>

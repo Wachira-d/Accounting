@@ -2675,7 +2675,7 @@ RULES += [
          why="G-8: ดู/ถามสถานะสด (เปลี่ยนสถานะ + ส่งต่อต้นทางได้) ต้องมีสิทธิ์ต้นทางหรือดูธนาคาร ก่อนถามผู้ให้บริการ"),
     dict(file=GW_CTL, method="ConfirmManually",
          must=["PaymentIntentPolicy.ManualConfirmBlockReason(", "SettlesDirectlyToBank"],
-         before=[("PaymentIntentPolicy.ManualConfirmBlockReason(", "_intents.ApplyChargeAsync(")],
+         before=[("PaymentIntentPolicy.ManualConfirmBlockReason(", "SlipIntentConfirmService(")],
          why="ทีม G: ยืนยันมือบนรายการที่ไม่มี charge ที่ผู้ให้บริการ = Dr บัญชีพักด้วยเงินที่ไม่มีวันถูกโอนมา"),
     dict(file=GW_CTL, method="Reconciliation",
          must=["GatewaySettlementMath.ConfirmedRangeUtc(", "i.SettledFeeDeducted"],
@@ -11769,7 +11769,7 @@ RULES += [
          before=[("PlatformRevenueSource.IsPlatformRevenue(req.SourceKind)", "_intents.StartAsync(")],
          why=_R219_WHY + "part B (b) รายการค่าบริการ NextAcc ห้ามเริ่มจาก body ของหน้าร้าน"),
     dict(file=GW_CTL, method="ConfirmManually",
-         before=[("DenyPlatformRevenueStaffAsync(", "_intents.ApplyChargeAsync(")],
+         before=[("DenyPlatformRevenueStaffAsync(", "SlipIntentConfirmService(")],
          why=_R219_WHY + "G-2 ร้านยืนยันรับเงินค่าบริการของตัวเองไม่ได้ (แอดมินแพลตฟอร์มใน tenant ผู้ให้บริการเท่านั้น)"),
     dict(file=GW_CTL, method="Redispatch",
          before=[("DenyPlatformRevenueStaffAsync(", "_intents.RedispatchAsync(")],
@@ -12091,7 +12091,7 @@ RULES += [
          why=_R218_WHY + "ฝ่ายค้าน B2: วันรับเงินตามหลักฐาน ไม่ใช่วันกดยืนยัน"),
     dict(file="Controllers/PaymentGatewayController.cs", method="ConfirmManually",
          must=["BookingSlipRule.GatewayManualConfirmProblem("],
-         before=[("BookingSlipRule.GatewayManualConfirmProblem(", "_intents.ApplyChargeAsync(")],
+         before=[("BookingSlipRule.GatewayManualConfirmProblem(", "SlipIntentConfirmService(")],
          why=_R218_WHY + "ฝ่ายค้านรอบ 2 K2: สลิปการจองตรวจที่หน้าการจองเท่านั้น (วันที่โอน · ล็อก · งวดปิด)"),
     # ── ฝ่ายค้านรอบ 218 รอบ 2 (K2/F1–F6 + โน้ต) ──
     dict(file="Services/Payments/PaymentIntentService.cs", method="ApplyChargeAsync",
@@ -16214,7 +16214,7 @@ RULES += [
     # H1: หลังบันทึกรับชำระ ⇒ ติดธงสลิปรอตรวจที่ยอดเกินยอดค้างใหม่
     dict(file=DOCSVC, method="CreatePaymentAsync", must=["DocumentSlipIntents.FlagSupersededAsync("],
          why=_R250A_WHY + "H1 สลิปรอตรวจที่ถูกแทนด้วยเงินก้อนอื่นต้องถูกติดธง"),
-    dict(file="Controllers/PaymentGatewayController.cs", method="ConfirmManually",
+    dict(file="Services/Payments/SlipIntentConfirmService.cs", method="ConfirmAsync",
          must=["DocumentSlipIntents.IsDocumentSlip(", "DocumentSlipIntents.ExceedsBalance(", "DocumentSlipIntents.ReceivedDate(", "PaidAtUtc: slipPaidAt"],
          before=[("DocumentSlipIntents.ExceedsBalance(", "_intents.ApplyChargeAsync(")],
          why=_R250A_WHY + "H1/M4 ยืนยันสลิปของเอกสาร: บล็อกยอดสลิปเกินยอดค้าง · วันรับเงิน = วันเงินเข้าตามหลักฐาน"),
@@ -18648,13 +18648,18 @@ RULES += [
     dict(file="Controllers/LineChatSlipController.cs", method="SlipFile", must=["_pdpa.LogPiiAccessAsync("],
          why=_R260_WHY + "ฝ่ายค้าน M4: เปิดดูรูปสลิป = อ่านข้อมูลส่วนบุคคล ⇒ PiiAccessLog (ม.37)"),
     dict(file=_R260_SLIP, method="HandleImageAsync",
-         must=["SettingsAsync(", "BindingAsync(", "SlipEvidenceRule.DetectPublicType(", "IsDuplicateFileAsync(", "IsDuplicateRefAsync(", "CandidatesAsync(",
-               "LineChatSlipRule.Decide(", "TrySubmitAsync(", "ChoiceItems(", "ToStaffAsync(", "LineChatSlipRule.Reasons.DuplicateRef",
-               "x.LineMessageId == msgId", "UnboundTodayAsync(", "FallbackToStaffAsync(", "DeleteQuietlyAsync(", "EnsureRopaAsync(", "DropFileAsync("],
-         before=[("x.LineMessageId == msgId", "_links.DownloadMessageContentAsync("), ("IsDuplicateFileAsync(", "_storage.WriteAsync("),
-                 ("LineChatSlipRule.Decide(", "TrySubmitAsync(")],
+         must=["SettingsAsync(", "BindingAsync(", "SlipEvidenceRule.DetectPublicType(", "IsDuplicateFileAsync(",
+               "x.LineMessageId == msgId", "UnboundTodayAsync(", "await CoreAsync("],
+         before=[("x.LineMessageId == msgId", "_links.DownloadMessageContentAsync("), ("IsDuplicateFileAsync(", "await CoreAsync(")],
          forbid=["ApplyChargeAsync(", "CreatePaymentAsync(", "PaymentIntentStatus.Succeeded", "AskAsync("],
-         why=_R260_WHY + "สลิปซ้ำไม่เขียนไฟล์/แถว · ผูกใบด้วยตัวตัดสินเดียว · ไม่ประทับรับเงิน (F2 ข้อ 3) · ไม่มี AI ในเส้นนี้"),
+         why=_R260_WHY + "สลิปซ้ำไม่เขียนไฟล์/แถว (ตรวจก่อนเข้าแกน) · ไม่ประทับรับเงิน (F2 ข้อ 3) · ไม่มี AI ในเส้นนี้"),
+    # รอบ 282: แกนหลังอ่านสลิปย้ายเข้า CoreAsync (ใช้ร่วมกับช่องทางที่ส่งต่อ) — กติกา 260 เดิมตามมาทั้งชุด
+    dict(file=_R260_SLIP, method="CoreAsync",
+         must=["IsDuplicateRefAsync(", "CandidatesAsync(", "LineChatSlipRule.Decide(", "TrySubmitAsync(", "ChoiceItems(", "ToStaffAsync(",
+               "LineChatSlipRule.Reasons.DuplicateRef", "FallbackToStaffAsync(", "DeleteQuietlyAsync(", "EnsureRopaAsync(", "DropFileAsync(", "_storage.WriteAsync("],
+         before=[("LineChatSlipRule.Decide(", "TrySubmitAsync(")],
+         forbid=["ApplyChargeAsync(", "CreatePaymentAsync(", "PaymentIntentStatus.Succeeded", "AskAsync("],
+         why=_R260_WHY + "ผูกใบด้วยตัวตัดสินเดียว · ไม่ประทับรับเงินในตัวรับสลิป (การบันทึกเงินอยู่ที่ SlipAutoRecordService → เส้นยืนยันตัวเดียว) · ไม่มี AI"),
     dict(file=_R260_SLIP, method="TrySubmitAsync",
          must=["_slips.SubmitAsync(", "bankRef: null"],
          forbid=["ApplyChargeAsync(", "CreatePaymentAsync(", "_intents.StartAsync(", "new PaymentIntent", "amount, row.OcrRef"],
@@ -18784,14 +18789,14 @@ REVIEWER_CASES += [
 # ตัวเลือกบัญชีที่ "แสดงให้ลูกค้าโอน" ตัวเดียวกับกล่องโอนของหน้าชำระ
 _R2602_WHY = "รอบ 260-2 บัญชีที่เงินตามสลิปเข้า: "
 RULES += [
-    dict(file=GW_CTL, method="ConfirmManually",
+    dict(file="Services/Payments/SlipIntentConfirmService.cs", method="ConfirmAsync",
          must=["SlipReceivingAccount.ResolveAsync(", "receiving.Decision.Ok", "final.Decision.Ok", "JobLock.RunExclusiveAsync(", "ConfirmLockPart(intentId)",
                "StampReceivingAccountAsync(", "RevertReceivingAccountAsync(", "PaymentIntentPolicy.Evaluate(current.Status, PaymentIntentStatus.Succeeded)",
                "updated.Status != PaymentIntentStatus.Succeeded"],
          before=[("SlipReceivingAccount.ResolveAsync(", "_intents.ApplyChargeAsync("), ("final.Decision.Ok", "StampReceivingAccountAsync("),
                  ("StampReceivingAccountAsync(", "_intents.ApplyChargeAsync(")],
          why=_R2602_WHY + "บัญชีที่เลือกผ่านตัวตัดสิน (ซ้ำใต้ล็อก — ฝ่ายค้าน M4) และถูกประทับ + audit ก่อนส่งต่อ handler · ไม่เปลี่ยนสถานะ = คืนค่าเดิม + ไม่ตอบ 200 (L3)"),
-    dict(file=GW_CTL, method="StampReceivingAccountAsync",
+    dict(file="Services/Payments/SlipIntentConfirmService.cs", method="StampReceivingAccountAsync",
          must=["BeginTransactionAsync(", "AddChainedAuditLog(", "SlipReceivingAccount.LegalReference", "UserId = ", "CommitAsync("],
          before=[("BeginTransactionAsync(", "ExecuteUpdateAsync("), ("SaveChangesAsync(", "CommitAsync(")],
          why=_R2602_WHY + "ฝ่ายค้าน L3: ประทับกับ audit ธุรกรรมเดียว · UserId + LegalReference"),
@@ -22474,6 +22479,60 @@ REVIEWER_CASES += [
     ("R280-4", "StatusCardAsync", "contactIds.Count > 1", "false", True),
 ]
 
+
+# ── รอบ 282: สลิปค่าสินค้า/บริการจากกลุ่ม LINE/อีเมล ⇒ บันทึกรับเงินเอง/หน้ายืนยัน + วิธีสำรองแจ้งยืนยันแหล่งเงินทั้งสองฝั่ง (คำตัดสิน 282-1…282-7) ──
+_R282_WHY = "รอบ 282 (สลิปจากกลุ่ม/อีเมล · แหล่งเงินตัวเดียว · หน้าชำระของคู่ค้า): "
+_R282_LCS = "Services/Implementations/LineChatSlipService.cs"
+_R282_AUTO = "Services/Implementations/SlipAutoRecordService.cs"
+RULES += [
+    dict(file="Services/Implementations/TaxSlipIntakeService.cs", method="IntakeAsync",
+         must=["GovPaymentSlip.Identify(reading)", "_paymentSlips.HandleForwardedAsync(", "SenderVerified: !senderUnverified",
+               "ShowAmounts: binding.ShowAmounts && binding.ContactIds.Count == 1"],
+         before=[("GovPaymentSlip.Identify(reading)", "_paymentSlips.HandleForwardedAsync("), ("agency.Kind == GovPaymentSlip.Kind.NotGovernment", "_paymentSlips.HandleForwardedAsync(")],
+         why=_R282_WHY + "ตัวจัดเส้นเดียว: อ่านครั้งเดียว → จำแนกสลิปรัฐก่อน (เส้น 272) → ไม่ใช่สลิปรัฐเท่านั้นที่ส่งต่อเส้นจับคู่ใบแจ้งหนี้ · ผู้ส่งอีเมลยืนยันไม่ได้ ⇒ ไม่บันทึกเอง"),
+    dict(file=_R282_LCS, method="HandleImageAsync", must=["await CoreAsync(new Core("],
+         why=_R282_WHY + "แชต/กลุ่ม OA บริษัทเดินแกนเดียวกับช่องทางที่ส่งต่อ"),
+    dict(file=_R282_LCS, method="HandleForwardedAsync",
+         must=["c.CompanyId == f.CompanyId && f.ContactIds.Contains(c.Id)", "LineChatSlipRule.ForwardedDailyCapPerSource", "IsDuplicateFileAsync(", "await CoreAsync(new Core("],
+         before=[("LineChatSlipRule.ForwardedDailyCapPerSource", "await CoreAsync(")],
+         why=_R282_WHY + "tenant isolation ของผู้ติดต่อ · rate limit ต่อแหล่งก่อนเก็บไฟล์ · กันไฟล์ซ้ำ"),
+    dict(file=_R282_LCS, method="CoreAsync",
+         must=["LineChatSlipRule.Decide(", "TrySubmitAsync(", "await AutoAsync(row, reading, senderVerified, ct)", "LineChatSlipRule.Reasons.ManyMatches"],
+         before=[("TrySubmitAsync(", "await AutoAsync(")],
+         forbid=["ApplyChargeAsync(", "CreatePaymentAsync("],
+         why=_R282_WHY + "ใบเดียว: แจ้งโอนผ่านประตูเดิมก่อน แล้วจึงให้ตัวบันทึกเองตัดสิน · ห้ามบันทึกเงินตรงในตัวรับสลิป · ช่องทางไม่มีปุ่ม ⇒ คิวผู้ขาย"),
+    dict(file=_R282_AUTO, method="TryAutoAsync",
+         must=["SlipReceivingAccount.ResolveAsync(", "SlipReceivingAccount.SlipPayeeMatch(", "SlipMoneySource.Decide(null, payee,", "SlipAutoRecordRule.Decide(",
+               "new SlipIntentConfirmService(_db, _intents).ConfirmAsync(", "PaymentEventSource.System", "if (verdict.Auto)", "dupStatuses.Contains(i.Status)"],
+         before=[("SlipAutoRecordRule.Decide(", "new SlipIntentConfirmService("), ("SlipMoneySource.Decide(", "SlipAutoRecordRule.Decide(")],
+         forbid=["CreatePaymentAsync(", "ApplyChargeAsync("],
+         why=_R282_WHY + "แหล่งเงินจากตัวตัดสินเดียว → ด่านครบ → เส้นยืนยันตัวเดียว (ไม่มีเส้นเงินที่สอง) · ไม่ผ่าน = เหตุ + แจ้ง ไม่ประทับชำระแล้ว"),
+    dict(file=_R282_AUTO, method="RemindPendingAsync",
+         must=["SlipMoneySource.ReminderDue(", "i.ConfirmRemindCount == r.ConfirmRemindCount", "i.CompanyId == r.CompanyId"],
+         why=_R282_WHY + "เตือนซ้ำตามตารางเดียว · compare-and-set กันส่งซ้ำข้าม instance · ผูกบริษัทของแถว"),
+    dict(file="Controllers/PaymentGatewayController.cs", method="ConfirmManually",
+         must=["new SlipIntentConfirmService(_db, _intents).ConfirmAsync("], forbid=["_intents.ApplyChargeAsync("],
+         why=_R282_WHY + "ปุ่มยืนยันของคนกับระบบบันทึกเองเดินเส้นยืนยันตัวเดียว (ไม่มีสำเนาในคอนโทรลเลอร์)"),
+    dict(file="Services/Implementations/PartnerPayablePipeline.cs", method="ReleaseAsync",
+         must=["if (code == PartnerAutoRecordPolicy.Codes.Source) await SourceNeedsConfirmAsync("],
+         why=_R282_WHY + "ฝั่งผู้ซื้อ: ตรวจบัญชีที่จ่ายไม่ได้ ⇒ วิธีสำรองแจ้งยืนยัน"),
+    dict(file="Services/Implementations/PartnerPayablePipeline.cs", method="SourceNeedsConfirmAsync",
+         must=["SlipMoneySource.ReminderDue(", "x.SourceRemindCount == st.SourceRemindCount", "NotificationEvents.PartnerPaySourceNeedsConfirm"],
+         why=_R282_WHY + "ตารางเตือนซ้ำตัวเดียวกับฝั่งผู้ขาย · compare-and-set"),
+    dict(file="Controllers/PartnerOutboundPaymentController.cs", method="ForPayLink",
+         must=["_service.PurchaseForPayLinkAsync(companyId, sellerCompanyId,", "await DenyAsync(companyId, userId, pid, false, ct)"],
+         why=_R282_WHY + "หน้าชำระของผู้ขาย: ใบซื้อของบริษัทผู้ใช้เท่านั้น + สิทธิ์ดูใบซื้อ ก่อนบอกว่ามีช่องบัญชี"),
+    dict(file="Services/Implementations/PartnerOutboundPaymentService.cs", method="PurchaseForPayLinkAsync",
+         must=["DocumentIdForTokenAsync(sellerCompanyId, token, ct)", "l.TargetCompanyId == companyId && l.SourceCompanyId == sellerCompanyId",
+               "TradingPartnershipStatus.Accepted", "d.CompanyId == companyId"],
+         why=_R282_WHY + "กุญแจ: โทเคนที่ใช้อยู่ · ลิงก์ปลายทางเป็นบริษัทผู้ใช้ · คู่ค้า Accepted (คนนอก/ผู้ขายไม่ได้ใบหรือบัญชี)"),
+    dict(file="Services/Background/AutopilotJob.cs", method="ExecuteAsync", must=["RemindPendingAsync(DateTime.UtcNow, stoppingToken)"],
+         why=_R282_WHY + "เตือนซ้ำสลิปรอยืนยันถูกต่อสายเข้างานเบื้องหลัง"),
+]
+REVIEWER_CASES += [
+    ("R282-1", "TryAutoAsync", "if (verdict.Auto)", "if (true)", True),
+    ("R282-2", "RemindPendingAsync", "i.ConfirmRemindCount == r.ConfirmRemindCount", "true", True),
+]
 
 if __name__ == "__main__":
     sys.exit(main())

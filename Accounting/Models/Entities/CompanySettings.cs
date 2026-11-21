@@ -266,6 +266,10 @@ public class CompanySettings : TenantEntity
     /// ปิด ⇒ รูปในกลุ่มกลับไปพฤติกรรมเดิม (ไม่อ่าน) ยกเว้นกลุ่มของลูกค้าที่เคยอนุญาต ได้คำตอบ "ระบบปิดรับสลิปชั่วคราว" · ผู้อ่าน <c>TaxSlipIntakeService</c> ·
     /// ผู้เขียน หน้า <c>tax-slip-desk.html</c></summary>
     public bool TaxSlipIntakeEnabled { get; set; } = true;
+
+    /// <summary>รอบ 282 (คำตัดสิน 282-3 · ค่าตั้งต้นปิด): บันทึกรับเงินจากสลิปเองเมื่อผ่านทุกด่าน (<c>SlipAutoRecordRule</c>: ยอดตรงใบเดียว · QR ธนาคาร · วันที่ ·
+    /// บัญชีผู้รับบนสลิปตรงบัญชีเดียวของบริษัท) · ปิด ⇒ สลิปผูกใบแล้วรอคนยืนยันเหมือนรอบ 260 · ผู้อ่าน <c>SlipAutoRecordService.TryAutoAsync</c> · echo ที่แท็บ LINE</summary>
+    public bool SlipAutoRecordEnabled { get; set; } = false;
     public DateTime? LineLastTestedAt { get; set; }
     public string? LineLastTestStatus { get; set; }
     /// <summary>รอบ 260-4 (team-A L8 · คำตัดสิน 260-4-1): ชั่วโมงเงียบของการ์ด LINE ถึงลูกค้า (เวลาไทย) — ตัวตัดสิน <c>Helpers/LineQuietHours</c> ·

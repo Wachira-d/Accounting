@@ -1169,6 +1169,15 @@
             หลายใบ = ลูกค้ากดเลือกในแชต · ไม่ตรง = เข้าคิวที่หน้ารายการรับชำระออนไลน์ · ระบบไม่ปิดหนี้จากสลิปเอง</span></span>
         </label>
       </div>
+      <!-- รอบ 282 (คำตัดสิน 282-3 · ค่าตั้งต้นปิด): บันทึกรับเงินจากสลิปเอง — ด่านอยู่ที่เซิร์ฟเวอร์ (SlipAutoRecordRule) หน้านี้แค่เปิด/ปิด -->
+      <div class="form-group">
+        <label style="display:flex;gap:8px;align-items:flex-start">
+          <input type="checkbox" id="slipAutoRecord" />
+          <span>บันทึกรับเงินจากสลิปเองเมื่อมั่นใจ (แชต/กลุ่ม LINE · อีเมล)
+            <span class="text-gray-400" style="font-size:12px;display:block">เฉพาะสลิปที่ยอดตรงใบค้างใบเดียว · มี QR ตรวจสลิปของธนาคาร · วันที่อยู่ในช่วง · บัญชีผู้รับบนสลิปตรงบัญชีธนาคารของบริษัทบัญชีเดียว —
+            ไม่ครบ = รอยืนยันที่หน้ารายการรับชำระ + แจ้งเตือน (ระบบไม่เดาบัญชี)</span></span>
+        </label>
+      </div>
       </details>
 
       <!-- รอบ 211: ช่องทางแจ้งลูกค้าปลายทาง (การจอง/ออเดอร์/สมาชิกเว็บ) — เซิร์ฟเวอร์ตัดสินทุกค่า หน้านี้แสดงอย่างเดียว -->
@@ -2218,7 +2227,8 @@
           { const clr = document.getElementById('lineClearSecretsBtn'); if (clr) clr.style.display = (c.hasAccessToken || c.hasChannelSecret) ? '' : 'none'; }
           document.getElementById('lineGroupId').value = c.defaultGroupId || '';
           document.getElementById('lineOaBasicId').value = c.oaBasicId || '';
-          { const cs = document.getElementById('lineChatSlipIntake'); if (cs) cs.checked = c.chatSlipIntake !== false; }   // รอบ 260 — ค่าจากเซิร์ฟเวอร์ (ค่าตั้งต้นเปิด)
+          { const cs = document.getElementById('lineChatSlipIntake'); if (cs) cs.checked = c.chatSlipIntake !== false; }
+          { const sa = document.getElementById('slipAutoRecord'); if (sa) sa.checked = c.slipAutoRecord === true; }   // รอบ 282 — ค่าจากเซิร์ฟเวอร์ (ค่าตั้งต้นปิด)   // รอบ 260 — ค่าจากเซิร์ฟเวอร์ (ค่าตั้งต้นเปิด)
           this._renderLineCustomerChannel(c.customerChannel);
           this._renderLineRelinkInvite(c.relinkInvite, c.webhookProblem);
           { const n = document.getElementById('lineTenantNotice'); if (n) { n.style.display = c.tenantLineNotice ? '' : 'none'; n.textContent = c.tenantLineNotice ? '🔔 ' + c.tenantLineNotice : ''; } }
@@ -2322,6 +2332,7 @@
           quietEndHour: Number(document.getElementById('lineQuietEnd').value),
           // รอบ 260: รับสลิปจากแชต LINE (ส่งค่าทุกครั้งที่บันทึก — ช่อง hydrate จากเซิร์ฟเวอร์)
           chatSlipIntake: !!(document.getElementById('lineChatSlipIntake') || {}).checked,
+          slipAutoRecord: !!(document.getElementById('slipAutoRecord') || {}).checked,
         };
         try {
           const j = await API.put(`/api/companies/${cid}/line-config`, body);

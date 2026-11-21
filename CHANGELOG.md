@@ -7493,3 +7493,11 @@ LOW-1 "ส่งได้บางส่วน" · LOW-2 การ์ด `#HeyNe
 - MED-2/LOW-1/LOW-2: ผูกผู้ติดต่อไม่ซ้ำ · ไม่ผูกเลขผิด/เลขขยะ/ผู้ติดต่อจากเงินเดือน · ธุรกรรมเดียว · `FindPartnerContactAsync` เลือกแบบกำหนดได้
 - LOW-3 ซ่อนยอดอีกฝั่งในเส้นทาง/การแจ้ง · LOW-4 โหลดเส้นทางเป็นชุด · LOW-5 แจ้งหลัง commit เสมอ · LOW-6 ธงคัดลอกค่าตั้งต่อบริษัท — commit 94c52138
 
+
+### รอบ 282 — สลิปค่าสินค้า/บริการจากกลุ่ม LINE/อีเมล ⇒ บันทึกรับเงินเอง/หน้ายืนยัน + วิธีสำรองแหล่งเงินทั้งสองฝั่ง + เลือกบัญชีบนหน้าชำระของคู่ค้า (คำตัดสิน 282-1…282-7)
+- 282-1: ตัวจัดเส้นเดียวใน `TaxSlipIntakeService.IntakeAsync` (อ่านครั้งเดียว · สลิปรัฐ = 272 · อื่น = `LineChatSlipService.HandleForwardedAsync`) — ปิด 275-D-4 · แกนเดียว `CoreAsync` ของแชต OA บริษัท/กลุ่ม OA กลาง/อีเมล
+- 282-2/3: `Helpers/SlipAutoRecordRule` + `SlipAutoRecordService` (ค่าตั้ง `SlipAutoRecordEnabled` ค่าตั้งต้นปิด) ⇒ เส้นยืนยันตัวเดียว `Services/Payments/SlipIntentConfirmService` (แยกจาก `ConfirmManually` โดยไม่เปลี่ยนพฤติกรรม · กติกา 250A/260-2 ย้ายตาม)
+- 282-4/5: ไม่มั่นใจ ⇒ รายการรอยืนยันเดิม + `AutoRecordReason` บนหน้ารายการรับชำระ + แจ้ง `autopilot.slip_needs_confirm` · อีเมลยืนยันผู้ส่งไม่ได้ ⇒ ไม่บันทึกเอง ไม่ตอบกลับ
+- 282-6 (คำสั่งเจ้าของ): `Helpers/SlipMoneySource` ตัวตัดสินแหล่งเงินเดียว · ฝั่ง B สลิปตรงบัญชีเดียวบันทึกเองได้ (กลับ 264-P2 M1) · แจ้ง `partner.pay_source_needs_confirm` · เตือนซ้ำ 1/3 วัน เพดาน 2 (`AutopilotJob` ขั้น `SlipConfirmReminders`)
+- 282-7 (คำสั่งเจ้าของ): `pay-document.html` + session ผู้ซื้อคู่ค้า ⇒ `for-pay-link` ⇒ ช่อง "จ่ายจากบัญชี" + ปุ่ม "จ่ายจากระบบของเรา" เดิม (บัญชีเก็บฝั่งผู้ซื้อ)
+- migration `Round282Migration` · เทสต์ pure `SlipAutoRecordRound282Tests` · Db `SlipAutoRecordRound282DbTests` + `PartnerOutboundRound264P4DbTests` (หน้าชำระ) · คอมมิต (เติมในคอมมิตตามหลัง)

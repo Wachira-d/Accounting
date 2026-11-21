@@ -1505,7 +1505,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **972 ไฟล์ · 10,589 `[Fact]` + 1,437 `[Theory]` (6,829 `InlineData`)** ณ 2026-11-20 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`) | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)**, **ReceiptFormRule (รูปแบบกระดาษหลักฐานรับเงิน · รอบ 203)** |
+| เทสต์ที่มี | **974 ไฟล์ · 10,604 `[Fact]` + 1,437 `[Theory]` (6,829 `InlineData`)** ณ 2026-11-21 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`) | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)**, **ReceiptFormRule (รูปแบบกระดาษหลักฐานรับเงิน · รอบ 203)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
 | CI | ✅ `.github/workflows/ci.yml` — static check → restore → build → test; รันบน PR/push เข้า main/master + `workflow_dispatch` (branch `claude/**` ปิดไว้ กัน mail spam ระหว่างพัฒนา) |
@@ -9271,3 +9271,21 @@ H2 (OCR ไม่พร้อม ⇒ แถวเข้าคิว) ล็อ�
 | T281-10 | ฝ่ายค้าน LOW-5: Db `ฝ่ายค้านLOW5_…` | ในธุรกรรม ⇒ ไม่แจ้งก่อน commit · commit+flush ⇒ แจ้ง · ย้อน ⇒ ไม่แจ้ง |
 | T281-11 | ฝ่ายค้าน LOW-6: Db `ฝ่ายค้านLOW6_…` · pure `คัดลอกค่าตั้ง_…` (ธง) | คัดลอกค่าตั้งเดิมตามมา · ลบแล้วบูตซ้ำไม่คัดลอกกลับ |
 | T281-12 | ฝ่ายค้าน LOW-3: pure `ฝ่ายค้านLOW3_…` · กติกา `_R281_*` เพิ่ม 5 (+ R281-3/4) | อีกฝั่งไม่เห็นยอด · ถอดด่าน ⇒ checker ฟ้อง |
+
+## รอบ 282 — สลิปค่าสินค้า/บริการจากกลุ่ม LINE/อีเมล ⇒ บันทึกรับเงินเอง/หน้ายืนยัน + วิธีสำรองแหล่งเงินทั้งสองฝั่ง (`erp-review/2026-11-21/dev-282-invoice-slip-group-email.md` · คำตัดสิน 282-1…282-7)
+
+| รหัส | เทสต์ | ล็อกอะไร |
+| --- | --- | --- |
+| T282-01 | Db `SlipAutoRecordRound282DbTests.กลุ่มOAกลาง_QRยอดตรงบัญชีผู้รับตรง_…` (DocumentService จริงผ่าน handler) | บวก: การชำระจริงลงบัญชีบนสลิป ณ วันที่บนสลิป · ยอดค้าง 0 · ref QR บนรายการ · audit · ตอบ "บันทึกแล้ว" |
+| T282-02 | Db `อีเมล_ยืนยันผู้ส่งได้_…_ยืนยันไม่ได้_รอยืนยัน…` | อีเมลบันทึกเหมือนกลุ่ม · ผู้ส่งยืนยันไม่ได้ ⇒ ไม่มีการชำระ + เหตุ + แจ้งแล้ว |
+| T282-03 | Db `บัญชีผู้รับไม่ใช่ของบริษัท_หรือไม่มีQR_…_คนยืนยันแล้วบันทึกครั้งเดียว` | ลบ: ไม่เดาบัญชี · ไม่ประทับบัญชี · ยืนยันจากหน้ายืนยัน ⇒ 1 การชำระ · กดซ้ำ ⇒ ไม่บันทึกซ้ำ (Conflict/AlreadyClosed) |
+| T282-04 | Db `ค่าตั้งปิด_พฤติกรรม260เดิม_…` | ทิศตรงข้าม: บริษัทที่ไม่เปิดไม่ถูกแตะ (รอยืนยัน · ไม่แจ้งซ้ำ) |
+| T282-05 | Db `ยอดไม่ตรง_และสองใบยอดเท่ากัน_…` | คิวผู้ขาย `NoMatch` / `ManyMatches` · ไม่มีรายการชำระ |
+| T282-06 | Db `สลิปซ้ำ_ไฟล์เดิมหรือเลขอ้างอิงQRเดิม_…` | กันซ้ำทั้งไฟล์และเลขธนาคาร · บันทึกครั้งเดียว |
+| T282-07 | Db `ผู้ติดต่อของบริษัทอื่น_…` | tenant isolation · ไม่เก็บไฟล์ |
+| T282-08 | Db `เตือนซ้ำ_…_มีเพดาน` | ไม่ถี่ · ครั้งละครั้ง · เพดาน 2 |
+| T282-09 | pure `SlipAutoRecordRound282Tests` (6 เคส) | แหล่งเงินตัวเดียว (ทุกทิศที่ห้ามเดา) · ฝั่ง B อ่านนโยบายจากตัวตั้งเดียว · ทุกด่านที่ไม่ผ่านมีรหัสเหตุ · ตารางเตือน · ข้อความถึงผู้ซื้อไม่รั่ว |
+| T282-10 | Db `PartnerOutboundRound264P4DbTests.รอบ282_หน้าชำระของผู้ขาย_…` | ผู้ซื้อคู่ค้าได้ใบซื้อของตัวเอง · โทเคนผิด/ผู้ขายเอง/บริษัทอื่น/คู่ค้ายังไม่ยอมรับ ⇒ ไม่ได้ |
+| T282-11 | ปรับ 4 เทสต์เดิม (`PartnerPaySourceSlipRound264Tests` · `BankPaymentLineMatchTests` · `PartnerPayableRound264Tests` · `TaxSlipRound272Tests`) | คำสั่งเจ้าของ 282-6: สลิปตรงบัญชีเดียวฝั่ง B บันทึกเองได้ (เดิม preselect) · ขัดค่าตั้ง/ผู้จ่ายเลือกยังไม่อัตโนมัติ |
+| T282-12 | กติกา `_R282_*` (+13 · เคสฝ่ายค้าน R282-1/2) + ย้ายกติกา 250A/260-2 ของ `ConfirmManually` ไป `SlipIntentConfirmService.ConfirmAsync` | ตัวจัดเส้น: สลิปรัฐก่อน · ห้ามบันทึกเงินในตัวรับสลิป · เส้นยืนยันตัวเดียว |
+

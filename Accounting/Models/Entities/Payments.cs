@@ -233,6 +233,15 @@ public class PaymentIntent : TenantEntity
     /// (ชั้น "ผู้รับบนสลิป") · <c>PartnerPaymentNoticeService.NotifyCoreAsync</c> (ผู้โอน ⇒ แถวแจ้งของผู้ซื้อ) · null = ไม่มีผลอ่าน (ผลเท่าเดิม)</summary>
     public string? SlipReadJson { get; set; }
 
+    /// <summary>รอบ 282: สลิปที่ระบบ<b>ไม่</b>บันทึกรับเงินเอง — รหัสเหตุ (<c>SlipAutoRecordRule.Codes</c>) · null = ไม่ได้ประเมิน/บันทึกเองแล้ว · ผู้เขียนเดียว <c>SlipAutoRecordService</c></summary>
+    public string? AutoRecordCode { get; set; }
+    /// <summary>รอบ 282: เหตุไทยที่ไม่บันทึกเอง (หน้ารายการรับชำระแสดงตรงตัว — server computes)</summary>
+    public string? AutoRecordReason { get; set; }
+    /// <summary>รอบ 282 (คำสั่งเจ้าของ 282-6): เวลาที่แจ้งผู้ขายให้ยืนยันครั้งแรก · จำนวน/เวลาเตือนซ้ำ (ตาราง <c>SlipMoneySource.ReminderDue</c> · มีเพดาน)</summary>
+    public DateTime? ConfirmNoticeAt { get; set; }
+    public int ConfirmRemindCount { get; set; }
+    public DateTime? ConfirmRemindedAt { get; set; }
+
     public int AttemptCount { get; set; }
     public DateTime? LastPolledAt { get; set; }
 

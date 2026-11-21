@@ -3284,6 +3284,35 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
   L8 ปีสองหลักตัวเดียว `OcrSlipText.TwoDigitYear` · L9 ปิดสวิตช์ ⇒ ปุ่มเดิมกดไม่ได้ (คิวพนักงาน) · ป้ายไฟล์แนบ `line-chat-staff`
 - เทสต์ `LineChatSlipRound260Tests` · Db `LineChatSlipRound260DbTests` — ยังไม่ได้คอมไพล์ในเครื่องนี้ · Last verified commit 91d7fdde (ฝ่ายค้าน: 65c031ed)
 
+### 2.12g-282 รอบ 282 "สลิปค่าสินค้า/บริการจากกลุ่ม LINE/อีเมล ⇒ บันทึกรับเงินเอง หรือหน้ายืนยัน" + วิธีสำรองแจ้งยืนยันแหล่งเงิน (คำตัดสิน 282-1…282-7)
+
+- **ตัวจัดเส้นเดียว (282-1 · ปิด 275-D-4 + T1 M5/M6)** — กลุ่มของ OA กลาง (`LineWebhookController.TryTaxSlipAsync` ⇒ `TaxSlipIntakeService.HandleLineMediaAsync`) และอีเมลขาเข้า
+  (`InboundEmailController` ⇒ `HandleEmailAsync` · `InboundEmailRule.SenderVerified`) ⇒ `TaxSlipIntakeService.IntakeAsync` อ่านสลิป**ครั้งเดียว** (QR `ThaiSlipQr` + OCR) ⇒
+  `GovPaymentSlip.Identify`: สลิปรัฐ ⇒ เส้น 272 เดิม · ไม่ใช่ ⇒ `ILineChatSlipService.HandleForwardedAsync` (บริษัท = ผู้ให้บริการ · ผู้ติดต่อ = ชุดที่ผูกกลุ่ม/อีเมล ·
+  แสดงยอดเฉพาะกลุ่มที่ผูกผู้ติดต่อเดียว) · `Handled=false` ⇒ คำตอบ 275-D เดิม · กลุ่ม/อีเมลที่ไม่ผูก ⇒ ไม่อ่านไฟล์ (ด่านเดิมของ 272) ·
+  แชต/กลุ่มของ OA บริษัทเดินแกนเดียวกัน (`LineChatSlipService.CoreAsync` — `HandleImageAsync` เรียก)
+- **แกนเดียว (`CoreAsync`)** — กันซ้ำ ref (QR/ข้อความ) → แถว `LineChatSlips` (`SourceKind` `nextacc-group`/`email`/`user`/`group`) + ไฟล์ → `LineChatSlipRule.Decide`
+  (ยอดตรงใบค้างของผู้ติดต่อทุกสตางค์หลังหัก ณ ที่จ่ายตามใบ · หลายผู้ติดต่อต้องเหลือผู้สมัครเดียว) → ใบเดียว: แจ้งโอนผ่าน `SlipEvidenceService.SubmitAsync` (ช่อง
+  `nextacc-group-customer`/`email-customer`) แล้ว `SlipAutoRecordService.TryAutoAsync` · หลายใบ: แชต OA บริษัท = ปุ่มเลือกเดิม · ช่องทางส่งต่อ = คิวผู้ขาย `ManyMatches` ·
+  ไม่ตรง = คิวผู้ขายพร้อมเหตุ · ด่านต่อแหล่ง 30 แถว/วันไทย (`LineChatSlipRule.ForwardedDailyCapPerSource`)
+- **บันทึกเอง (282-2/3)** — `SlipAutoRecordRule.Decide` (ค่าตั้ง `CompanySettings.SlipAutoRecordEnabled` ค่าตั้งต้น**ปิด** · ผู้ส่งอีเมลยืนยันได้ · ใบเดียว · QR CRC ถูก ·
+  เลขอ้างอิง QR ไม่ซ้ำ · วันที่บนสลิป ≥ วันเอกสาร ≤ วันนี้ ≤ 31 วัน · แหล่งเงิน `SlipMoneySource.Decide` = ผู้รับบนสลิปตรงบัญชีเดียวของบริษัท · บัญชีที่เส้นยืนยันจะลงตรงบัญชีนั้น)
+  ⇒ `SlipIntentConfirmService.ConfirmAsync` (เส้นยืนยันตัวเดียว — แยกจาก `PaymentGatewayController.ConfirmManually` ทั้งก้อน · ผู้ยืนยัน `slip-auto:SLIP-AUTO-RECORD` ·
+  แหล่งเหตุการณ์ System · วันรับเงิน = วันที่บนสลิป) ⇒ `DocumentPaymentHandler` ⇒ `CreatePaymentAsync` (ใบเสร็จ/ใบกำกับ ณ วันรับเงิน 275-C · แจ้งคู่ค้า 281 ในขั้นหลัง commit เดิม) ·
+  `PaymentIntent.SlipBankRef` = เลขจาก QR · audit `SlipAutoRecorded` · ตอบผู้ซื้อ "บันทึกรับเงินแล้ว" (ยอดเฉพาะเมื่อแสดงยอดได้) · แจ้ง `autopilot.slip_auto_recorded`
+- **ไม่มั่นใจ (282-4)** — รายการรอยืนยันเดิม (คิวเดียวของ 260 · หน้า `payment-intents.html` แสดง `autoRecordReason`) + `PaymentIntent.AutoRecordCode/Reason` + audit `SlipAutoRecordBlocked` ·
+  แจ้ง `autopilot.slip_needs_confirm` (ลิงก์หน้ายืนยัน) ยกเว้นค่าตั้งปิด (ประตูแจ้งโอนแจ้งเดิมแล้ว) · ตอบผู้ซื้อ "รอผู้ขายตรวจ" · ยืนยัน/ปฏิเสธที่หน้าเดิม (ล็อกอิน + สิทธิ์ยืนยันรับเงิน) ·
+  เลือกใบอื่น = คิวสลิปจากแชต (ผูกด้วยเลขที่) · ไม่มีขั้นใดประทับชำระแล้วเองโดยไม่ผ่านด่านครบหรือคนยืนยัน
+- **วิธีสำรองทั้งสองฝั่ง (คำสั่งเจ้าของ 282-6)** — ตัวตัดสินแหล่งเงินเดียว `Helpers/SlipMoneySource` (รายการเดินบัญชี › สลิปตรงบัญชีเดียว › ไม่รู้ = ห้ามเดา) · ฝั่ง B
+  `PartnerPaySourceAccount.Precedence` แถว BankLine/SlipUnique อ่าน `SlipMoneySource.AllowsAuto` (ผู้โอนบนสลิปตรงบัญชีเดียวของ B ⇒ บันทึกจ่ายเองได้ — แทน 264-P2 M1) ·
+  ไม่รู้บัญชีที่จ่าย (`PartnerAutoRecordPolicy.Codes.Source`) ⇒ `PartnerPayablePipeline.SourceNeedsConfirmAsync` แจ้ง `partner.pay_source_needs_confirm` (ลิงก์ใบซื้อ · ปุ่ม “บันทึกจ่าย” เดิม) ·
+  เตือนซ้ำตาราง `SlipMoneySource.ReminderDue` (1 วัน · 3 วัน · เพดาน 2 ครั้ง · compare-and-set) — ฝั่ง A ผ่าน `AutopilotJob` ขั้น `SlipConfirmReminders`
+- **หน้าชำระของผู้ขาย (คำสั่งเจ้าของ 282-7)** — `pay-document.html` เมื่อผู้เปิดมี session ของบริษัทอื่น ⇒ `GET partner-outbound-payments/for-pay-link` (บริษัทผู้ใช้ ·
+  `PartnerOutboundPaymentService.PurchaseForPayLinkAsync`: โทเคนที่ใช้อยู่ ⇒ ใบผู้ขาย · ลิงก์ InvoiceFlow ปลายทาง = บริษัทผู้ใช้ · คู่ค้า Accepted · สิทธิ์ดูใบซื้อ) ⇒ ช่อง "จ่ายจากบัญชี"
+  จาก `Options` เดิม ⇒ ปุ่ม "จ่ายจากระบบของเรา" เดิม (`StartGatewayAsync` — แผนชั้น PayerDeclared อยู่ฝั่งผู้ซื้อ · ผู้ขายเห็นแค่รายการชำระ) · ไม่ล็อกอิน/ไม่ใช่คู่ค้า ⇒ หน้าเดิม
+- เทสต์ pure `SlipAutoRecordRound282Tests` · Db `SlipAutoRecordRound282DbTests` + `PartnerOutboundRound264P4DbTests` (รอบ282_หน้าชำระ…) · migration `Round282Migration` ·
+  Last verified commit (เติมในคอมมิตตามหลัง)
+
 ### 2.12g-264-P2 รอบ 264 แพ็ก P2 "อ่านบัญชีจากสลิป — QR ตรวจสลิป + ผู้โอน/ผู้รับ" (`erp-review/2026-11-12/team-264-a2b-design.md` §3.2/§4 · คำตัดสิน 264-4-1…8)
 
 - **QR (264-4-1)** — `TesseractSlipImageReader.ReadAsync` ถอด QR ในเครื่องก่อน OCR (`SlipQrImageDecoder` = SkiaSharp → ZXing.Net 0.16.9 · ไม่เรียกเครือข่าย · ล้ม = null) ⇒

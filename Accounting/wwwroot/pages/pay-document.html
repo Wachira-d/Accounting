@@ -127,7 +127,55 @@
       english = !!(view.page && view.page.isEnglish);
       document.title = `${view.documentTitle || ''} ${view.documentNumber || ''}`.trim() || 'เอกสาร';
       render(flash);
+      partnerPayBox();
     }
+
+    // รอบ 282 (คำสั่งเจ้าของ 282-7): ผู้เปิดเป็นผู้ใช้ที่ล็อกอินของบริษัทผู้ซื้อซึ่งเชื่อมคู่ค้ากับผู้ขายแล้ว และใบนี้ผูกกับใบซื้อของเขา (เซิร์ฟเวอร์ของบริษัทผู้ซื้อตัดสิน) ⇒
+    // ช่อง "จ่ายจากบัญชี" — รายการบัญชีมาจากบริษัทผู้ซื้อเท่านั้น (ผู้ขาย/คนนอกไม่เห็น) · เลือกแล้วเดินปุ่ม "จ่ายจากระบบของเรา" ตัวเดิม (บัญชีเก็บที่ฝั่งผู้ซื้อ)
+    async function partnerPayBox() {
+      if (!token || lineReturn || !companyId) return;
+      let jwt = null, buyer = null;
+      try { jwt = localStorage.getItem('token'); buyer = (JSON.parse(localStorage.getItem('currentCompany') || 'null') || {}).id; } catch { return; }
+      if (!jwt || !buyer || String(buyer) === String(companyId)) return;
+      const h = { Authorization: 'Bearer ' + jwt };
+      const bp = `/api/companies/${encodeURIComponent(buyer)}/partner-outbound-payments`;
+      let m = null, o = null;
+      try { const r = await fetch(`${bp}/for-pay-link?sellerCompanyId=${c()}&token=${encodeURIComponent(token)}`, { headers: h }); m = await r.json().catch(() => null); } catch { return; }
+      if (!m || !m.success || !m.data || !m.data.eligible) return;
+      try { const r = await fetch(`${bp}/purchases/${encodeURIComponent(m.data.purchaseId)}`, { headers: h }); o = ((await r.json().catch(() => null)) || {}).data; } catch { return; }
+      if (!o || !o.eligible) return;
+      const box = document.createElement('div');
+      box.className = 'card';
+      box.style.marginTop = '12px';
+      const accounts = (o.accounts || []).map(a => /* html */ `<option value="${esc(a.value)}">${esc(a.label)}</option>`).join('');
+      const methods = (o.gatewayMethods || []).map(a => /* html */ `<option value="${esc(a.value)}">${esc(a.label)}</option>`).join('');
+      box.innerHTML = /* html */ `<div style="font-weight:600">จ่ายจากระบบของบริษัทคุณ (คู่ค้า NextAcc)</div>
+        <div style="font-size:12px;color:#475569;margin:4px 0 8px">บัญชีที่เลือกเก็บในระบบของบริษัทคุณเท่านั้น — ผู้ขายไม่เห็น · ${esc(o.gatewayAfterNote || '')}</div>
+        ${o.gatewayOffered && accounts && methods ? `<label>จ่ายจากบัญชี <select id="ppAcc">${accounts}</select></label>
+        <label style="margin-left:8px">ช่องทาง <select id="ppMethod">${methods}</select></label>
+        <button type="button" class="btn" id="ppGo" style="margin-top:8px">จ่ายจากบัญชีนี้</button>` : `<div class="err">${esc(o.gatewayProblem || o.problem || 'ยังจ่ายจากระบบของคุณไม่ได้')}</div>`}
+        <div id="ppMsg" role="status" style="margin-top:6px"></div>`;
+      card.after(box);
+      const go = document.getElementById('ppGo');
+      if (!go) return;
+      go.addEventListener('click', async () => {
+        go.disabled = true;
+        const msg = document.getElementById('ppMsg');
+        let j = null;
+        try {
+          const r = await fetch(`${bp}/purchases/${encodeURIComponent(m.data.purchaseId)}/gateway`, { method: 'POST',
+            headers: { ...h, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ bankAccountId: document.getElementById('ppAcc').value, method: document.getElementById('ppMethod').value, returnUrl: location.href }) });
+          j = await r.json().catch(() => null);
+        } catch { j = null; }
+        if (!j || !j.success || !j.data) { msg.textContent = (j && j.message) || 'เริ่มการชำระไม่สำเร็จ'; go.disabled = false; return; }
+        const url = safeExternal(j.data.authorizeUrl);
+        if (url) { location.href = url; return; }
+        msg.textContent = j.message || 'เริ่มการชำระแล้ว';
+      });
+    }
+    // ลิงก์ของธนาคาร/ผู้ให้บริการ (https เท่านั้น — ไม่รับ javascript:)
+    const safeExternal = (u) => (typeof u === 'string' && /^https:\/\//i.test(u)) ? u : null;
 
     // ลิงก์ใช้ไม่ได้ — เซิร์ฟเวอร์ไม่ส่งข้อมูลของใบ (ข้อความเดียวทุกเหตุ) · หมดอายุไม่นาน ⇒ เซิร์ฟเวอร์บอกว่าขอลิงก์ใหม่ได้ (ไม่ใช่ทางตัน)
     function renderUnusable(j, status) {

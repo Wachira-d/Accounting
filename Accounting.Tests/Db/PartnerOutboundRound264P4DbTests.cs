@@ -624,4 +624,26 @@ public class PartnerOutboundRound264P4DbTests
             Assert.Equal(2, (await EventsAsync(c, s.Buyer.Id, "PartnerPaymentNoticeSlipPayerCleared")).Count);
         }
     }
+
+    // ═══ รอบ 282 (คำสั่งเจ้าของ 282-7): หน้าชำระของผู้ขาย ⇒ ใบซื้อของผู้ซื้อที่ล็อกอิน (กุญแจ: โทเคน · ลิงก์ InvoiceFlow · คู่ค้า Accepted) ═══
+    [Fact]
+    public async Task รอบ282_หน้าชำระของผู้ขาย_ผู้ซื้อคู่ค้าได้ใบซื้อของตัวเอง_บริษัทอื่น_โทเคนผิด_คู่ค้ายังไม่ยอมรับ_ไม่ได้()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var s = await SeedAsync(db);
+        var (inv, pid) = await RoutedAsync(db, s);
+        var payLinks = F4Proxy<IDocumentPayLinkService>.Create((m, args) => m == nameof(IDocumentPayLinkService.DocumentIdForTokenAsync)
+            ? ((Guid)args[0]! == s.Seller.Id && (string)args[1]! == "tok-ok" ? inv.Id : (Guid?)null) : null);
+        var svc = Outbound(db, s, new List<CreatePaymentRequest>(), payLinks: payLinks);
+        Assert.Equal(pid, await svc.PurchaseForPayLinkAsync(s.Buyer.Id, s.Seller.Id, "tok-ok"));
+        Assert.Null(await svc.PurchaseForPayLinkAsync(s.Buyer.Id, s.Seller.Id, "tok-bad"));
+        Assert.Null(await svc.PurchaseForPayLinkAsync(s.Seller.Id, s.Seller.Id, "tok-ok"));    // ผู้ขายเปิดหน้าตัวเอง ⇒ ไม่มีช่องบัญชี
+        var stranger = new Company { Name = "บริษัทอื่น 282 " + Guid.NewGuid().ToString("N")[..6], TaxId = RandTax() };
+        db.Companies.Add(stranger);
+        await db.SaveChangesAsync();
+        Assert.Null(await svc.PurchaseForPayLinkAsync(stranger.Id, s.Seller.Id, "tok-ok"));     // ผู้ใช้บริษัทอื่นเปิดลิงก์ ⇒ ไม่ได้ใบซื้อ/บัญชีของใคร
+        await db.TradingPartnerships.Where(p => p.Id == s.PartnershipId).ExecuteUpdateAsync(u => u.SetProperty(p => p.Status, TradingPartnershipStatus.Pending));
+        Assert.Null(await svc.PurchaseForPayLinkAsync(s.Buyer.Id, s.Seller.Id, "tok-ok"));
+    }
 }

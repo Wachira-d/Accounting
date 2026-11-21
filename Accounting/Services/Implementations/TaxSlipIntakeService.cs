@@ -52,11 +52,14 @@ public class TaxSlipIntakeService
 
     public TaxSlipIntakeService(AccountingDbContext db, ProviderConsentService consent, TaxSlipChannelService channel, TaxSlipRemitService remitter,
         IStatutoryRemittanceService remit, ISlipImageReader reader, ICustomerLineLinkService links, Accounting.Services.Storage.IFileStorage storage,
-        ILogger<TaxSlipIntakeService> logger, INotificationEngine? notify = null, IPermissionService? perms = null)
+        ILogger<TaxSlipIntakeService> logger, INotificationEngine? notify = null, IPermissionService? perms = null, ILineChatSlipService? paymentSlips = null)
     {
         _db = db; _consent = consent; _channel = channel; _remitter = remitter; _remit = remit; _reader = reader; _links = links; _storage = storage;
-        _logger = logger; _notify = notify; _perms = perms;
+        _logger = logger; _notify = notify; _perms = perms; _paymentSlips = paymentSlips;
     }
+
+    /// <summary>รอบ 282 (คำตัดสิน 282-1): เส้นสลิปค่าสินค้า/บริการ (จับคู่ใบแจ้งหนี้ของ 260) — สลิปที่อ่านแล้วไม่ใช่สลิปรัฐ ส่งต่อที่นี่ (null = นอก DI ⇒ พฤติกรรม 275-D เดิม)</summary>
+    private readonly ILineChatSlipService? _paymentSlips;
 
     /// <summary>ฝ่ายค้าน 272 H2: อ่านสลิปไม่ได้ (เครื่องไม่มี OCR / ข้อความว่าง) — แถวเข้าคิวพนักงานเสมอ (ห้ามตอบว่า "ไม่ใช่สลิปภาษี" เมื่อยังไม่ได้อ่าน)</summary>
     public const string OcrOffRuleCode = "TAX-SLIP-OCR-OFF";
@@ -181,6 +184,23 @@ public class TaxSlipIntakeService
             // ไม่ใช่สลิปรัฐ: รูปที่ดูเป็นสลิป ⇒ บอกว่าไม่ได้บันทึก · รูปทั่วไป ⇒ ไม่ตอบ ไม่เก็บ (PDPA ม.22)
             // รอบ 275 แพ็ก D (M5): สลิปโอนทั่วไปในกลุ่มลูกค้าอาจเป็นค่าบริการที่ถูกเรียกเก็บผ่าน OA กลาง (รอบ 262) — ไม่มีเส้นรับในกลุ่มนี้ ⇒
             // บอกทางไปต่อตามจริง + กระดิ่งพนักงาน (ยอด/วันที่เท่านั้น · ไม่เก็บไฟล์) · ส่งต่อเข้าเส้นจับคู่ใบแจ้งหนี้ = backlog (dev-275-D)
+            // รอบ 282 (คำตัดสิน 282-1 · ปิด 275-D-4): ตัวจัดเส้นเดียว — อ่านครั้งเดียวที่นี่ · ไม่ใช่สลิปรัฐ ⇒ เส้นจับคู่ใบแจ้งหนี้ของ 260 (บริษัท = ผู้ให้บริการ ·
+            // ผู้ติดต่อ = ชุดที่ผูกกลุ่ม/อีเมลนี้) · เส้นนั้นตัดสินเองว่าเป็นงานของมันไหม (ไม่ผูก/ไม่ใช่รูปสลิป ⇒ พฤติกรรมเดิม)
+            if (_paymentSlips != null && (reading.LooksLikeSlip || reading.HasAnyAmount))
+            {
+                var fwd = await _paymentSlips.HandleForwardedAsync(new ForwardedSlip(providerId, binding.ContactIds,
+                    source == SourceEmail ? LineChatSlipRule.Sources.Email : LineChatSlipRule.Sources.CentralGroup, sourceKey, extId, bytes, reading,
+                    ShowAmounts: binding.ShowAmounts && binding.ContactIds.Count == 1, SenderVerified: !senderUnverified), ct);
+                if (fwd.Handled)
+                {
+                    if (fwd.Reply != null)
+                    {
+                        if (source == SourceEmail) { if (!senderUnverified && emailTo != null) await _channel.SendPaymentSlipReplyAsync(emailTo, fwd.Reply); }
+                        else await ReplyOnlyAsync(source, replyToken, emailTo, fwd.Reply, ct);
+                    }
+                    return;
+                }
+            }
             if (reading.LooksLikeSlip)
             {
                 await ReplyOnlyAsync(source, replyToken, emailTo, TaxSlipReplyCard.Text(Card.TransferNotTax, new(), false), ct);

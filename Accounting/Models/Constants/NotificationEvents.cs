@@ -101,6 +101,10 @@ public static class NotificationEvents
     public const string AutopilotQuotationBlocked = "autopilot.quotation_blocked";
     /// <summary>E-06: ลูกค้าแจ้งโอน/แนบสลิปผ่านพอร์ทัล (สลิป = ข้อบ่งชี้ ไม่ใช่รับชำระ) — ทันที</summary>
     public const string AutopilotSlipSubmitted = "autopilot.slip_submitted";
+    /// <summary>รอบ 282: ระบบบันทึกรับเงินจากสลิปเอง (ผ่านทุกด่าน <c>SlipAutoRecordRule</c>) — ผู้ส่งเดียว <c>SlipAutoRecordService</c></summary>
+    public const string AutopilotSlipAutoRecorded = "autopilot.slip_auto_recorded";
+    /// <summary>รอบ 282 (คำสั่งเจ้าของ 282-6): สลิปผูกใบแล้วแต่ระบบไม่มั่นใจ ⇒ ให้ผู้ขายยืนยันที่หน้ารายการรับชำระ (ครั้งแรก + เตือนซ้ำมีเพดาน) — ผู้ส่งเดียว <c>SlipAutoRecordService</c></summary>
+    public const string AutopilotSlipNeedsConfirm = "autopilot.slip_needs_confirm";
     /// <summary>E-14b: เงินโอนเข้าตรงใบค้างแต่บันทึกรับชำระอัตโนมัติไม่สำเร็จ (งวดปิด · ยอดเปลี่ยน ฯลฯ) — ทันที · รายการค้างในคิว "เงินเข้าที่รอยืนยัน"</summary>
     public const string AutopilotBankSettleFailed = "autopilot.bank_settle_failed";
     /// <summary>E-15: สรุป Autopilot ประจำวัน (ส่งแล้ว · รับเงิน · ใบเสร็จ · แปลงใบเสนอราคา · เงินโอนจับคู่ · เรื่องที่ระบบทำต่อไม่ได้) — วันละครั้งตามเวลาที่บริษัทตั้ง (ค่าตั้งต้น 08:40)</summary>
@@ -123,6 +127,8 @@ public static class NotificationEvents
     public const string PartnerSellerPaid = "partner.seller_paid";
     /// <summary>รอบ 281: (ผู้ซื้อ) ระบบของเราบันทึกจ่ายใบซื้อเองตามความยินยอม (ใบสำคัญจ่าย + ภาษีหัก/50 ทวิ ตามเส้นเดิม) — ผู้ส่งเดียว <c>PartnerPayablePipeline</c></summary>
     public const string PartnerPaymentAutoRecorded = "partner.payment_auto_recorded";
+    /// <summary>รอบ 282 (คำสั่งเจ้าของ 282-6): (ผู้ซื้อ) ระบบตรวจบัญชีที่จ่ายไม่ได้ (ไม่มีรายการเดินบัญชี/สลิปไม่ตรงบัญชี) ⇒ ให้ยืนยันบัญชีที่หน้าใบซื้อ (ครั้งแรก + เตือนซ้ำมีเพดาน) — ผู้ส่งเดียว <c>PartnerPayablePipeline</c></summary>
+    public const string PartnerPaySourceNeedsConfirm = "partner.pay_source_needs_confirm";
     /// <summary>รอบ 281: (ผู้จ่าย) หนังสือรับรอง 50 ทวิ ของเราเข้ากล่องรับของผู้ขายคู่ค้าแล้ว — ผู้ส่งเดียว <c>PartnerWhtCertExchangeService</c> (หลังกล่องรับตอบจริง)</summary>
     public const string PartnerWhtCertDelivered = "partner.wht_cert_delivered";
     /// <summary>รอบ 281: (ผู้ขาย) ได้รับ 50 ทวิ จากคู่ค้า NextAcc — ยืนยันเองด้วยที่มาแล้ว หรือรอคนยืนยัน — ผู้ส่งเดียว <c>WhtCertIntakeService.SubmitAsync</c> (ช่องทาง NextAccLink)</summary>
@@ -249,6 +255,8 @@ public static class NotificationEvents
         ("Accounting", RecurringUpcomingRun, "รายการประจำจะสร้างเอกสารในอีกไม่กี่วัน (ตั้งจำนวนวันที่รายการ)"),
         ("Accounting", AutopilotQuotationBlocked, "Autopilot: ลูกค้ายอมรับใบเสนอราคาแล้วแต่ระบบแปลงอัตโนมัติไม่ได้ (ต้องให้คนทำต่อ)"),
         ("Accounting", AutopilotSlipSubmitted, "Autopilot: ลูกค้าแจ้งโอน/แนบสลิปผ่านพอร์ทัลหรือหน้าชำระ (รอตรวจ)"),
+        ("Accounting", AutopilotSlipAutoRecorded, "Autopilot: ระบบบันทึกรับเงินจากสลิปเองแล้ว (ผ่านทุกด่าน)"),
+        ("Accounting", AutopilotSlipNeedsConfirm, "Autopilot: สลิปรอผู้ขายยืนยัน (ระบบไม่มั่นใจพอจะบันทึกเอง — มีเหตุ)"),
         ("Accounting", AutopilotBankSettleFailed, "Autopilot: เงินโอนเข้าตรงใบค้างแต่บันทึกรับชำระอัตโนมัติไม่สำเร็จ"),
         ("Accounting", AutopilotDailyDigest, "Autopilot: สรุปประจำวัน (สำเร็จ · รอยืนยัน · เรื่องที่ระบบทำต่อไม่ได้)"),
         ("Accounting", AutopilotPartnerExchange, "Autopilot: คู่ค้า NextAcc ยกเลิกเอกสาร/การรับเงิน/50 ทวิ ที่ส่งเข้ามาแล้ว · คำขอความยินยอม (ตรวจก่อนใช้)"),
@@ -256,6 +264,7 @@ public static class NotificationEvents
         ("Accounting", PartnerTaxInvoiceReceived, "คู่ค้า NextAcc: ได้ใบเสร็จ/ใบกำกับภาษีจากผู้ขาย แนบเข้าใบซื้อเดิมแล้ว"),
         ("Accounting", PartnerSellerPaid, "คู่ค้า NextAcc: ผู้ขายรับเงินของเราแล้ว (รอบันทึกจ่าย)"),
         ("Accounting", PartnerPaymentAutoRecorded, "คู่ค้า NextAcc: ระบบบันทึกจ่ายใบซื้อเองแล้ว (ใบสำคัญจ่าย + ภาษีหัก ณ ที่จ่าย)"),
+        ("Accounting", PartnerPaySourceNeedsConfirm, "คู่ค้า NextAcc: ระบบตรวจบัญชีที่จ่ายไม่ได้ — ยืนยันบัญชีที่หน้าใบซื้อ"),
         ("Accounting", PartnerWhtCertDelivered, "คู่ค้า NextAcc: ส่งหนังสือรับรอง 50 ทวิ เข้าระบบผู้ขายแล้ว"),
         ("Accounting", PartnerReceiptDelivered, "คู่ค้า NextAcc: ใบเสร็จ/ใบกำกับของเราเข้าระบบผู้ซื้อแล้ว"),
         ("Accounting", PartnerWhtCertReceived, "คู่ค้า NextAcc: ได้รับหนังสือรับรอง 50 ทวิ จากผู้ซื้อ (ยืนยันแล้ว/รอยืนยัน)"),

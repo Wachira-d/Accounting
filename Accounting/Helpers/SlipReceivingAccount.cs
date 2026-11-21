@@ -313,7 +313,7 @@ public static class SlipReceivingAccount
 
     /// <summary>รอบ 264 P2: ผู้รับบนสลิป (ผลอ่านที่ประทับบน intent) ⇒ <see cref="SlipAccountMatch"/> กับ<b>ทุกบัญชีที่ไม่ถูกลบ</b>ของบริษัท (ปิดใช้ยังนับเป็น "ของเรา" —
     /// กันเตือนผิดว่าไม่ใช่ของบริษัท) · ไม่มีผลอ่าน/ไม่รู้บทบาท ⇒ null (ผลเท่าเดิม)</summary>
-    internal static SlipAccountMatch.Result? SlipPayeeMatch(string? slipReadJson, IReadOnlyList<AccountFacts> accounts)
+    public static SlipAccountMatch.Result? SlipPayeeMatch(string? slipReadJson, IReadOnlyList<AccountFacts> accounts)
     {
         var stored = OcrSlipText.FromStoredJson(slipReadJson);
         if (stored?.Payee == null) return null;

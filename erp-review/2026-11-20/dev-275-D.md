@@ -22,7 +22,7 @@
 | M2 ปุ่มที่ล้มแน่นอนส่งการ์ดทุกครั้ง | ✅ แก้แล้ว | `CandidateBlocker` บนคิว (option disabled + เหตุ) และใน `StaffRemitAsync` · พนักงานกดล้ม = 409 ไม่ส่งการ์ด ไม่เปลี่ยนเหตุเดิม |
 | M3 กันซ้ำด้วยแฮชไฟล์ล็อกกับช่องทางแรก | ✅ แก้แล้ว | `TaxSlipChannelRedirect` + `ReprocessFromNewChannelAsync` (audit `TaxSlipResentFromOtherChannel`) |
 | M4 งานลบ 90 วันไม่มีแถว · แถวรอตัดสินไม่มีกำหนด | ✅ แก้แล้ว | ไม่ลบตอนปฏิเสธ · `PurgeClosedFilesAsync` ครอบ Rejected+Expired · `TaxSlipOpenAge` (คำตัดสิน 275-D-3) · OCR-OFF อ่านใหม่เมื่อ OCR กลับ · คอลัมน์ `StaffRemindedAt` |
-| M5 สลิปค่าบริการใน OA กลางไม่มีเส้น | ◐ ขั้นต่ำ | การ์ด `TransferNotTax` ตามจริง + กระดิ่งพนักงาน (ไม่เก็บรูป) · **เลื่อน:** ส่งต่อเข้าเส้นจับคู่ใบแจ้งหนี้ของผู้ให้บริการ (ต้องออกแบบ — 275-D-4) |
+| M5 สลิปค่าบริการใน OA กลางไม่มีเส้น | ◐ ขั้นต่ำ | การ์ด `TransferNotTax` ตามจริง + กระดิ่งพนักงาน (ไม่เก็บรูป) · **เลื่อน:** ส่งต่อเข้าเส้นจับคู่ใบแจ้งหนี้ของผู้ให้บริการ (ต้องออกแบบ — 275-D-4) · **รอบ 282 ปิดแล้ว** (คำตัดสิน 282-1 · `TaxSlipIntakeService.IntakeAsync` ⇒ `LineChatSlipService.HandleForwardedAsync` · `erp-review/2026-11-21/dev-282-invoice-slip-group-email.md`) |
 | M6 เส้น 260 ไม่รู้จักสลิปรัฐ | ✅ แก้แล้ว | `LineChatSlipRule.Decide` → `GovPaymentSlip.Identify` ก่อนจับคู่ ⇒ `Reasons.GovernmentSlip` + คำตอบ `Replies.GovernmentSlip` |
 | M7 วงจรใบขอชำระไม่ปิด | ✅ แก้แล้ว | `CloseOnRemitAsync` ใน `RemitAsync` (ทุกเส้น) และ `LinkAsync` · `ExpireDueAsync` ใน `TaxSlipJob` + การ์ด · ยกเลิกแจ้งกลุ่ม · ทีละใบต่อ (บริษัท·แบบ·งวด) |
 | M8 ไม่พบเงินออกประทับถาวร | ✅ แก้แล้ว | ตรวจซ้ำ 60 วัน · ไม่มีรายการเดินบัญชีหลังช่วง ⇒ ยังไม่ตรวจ · ผลเดิมไม่กระดิ่งซ้ำ |

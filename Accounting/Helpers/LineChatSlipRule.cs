@@ -59,6 +59,16 @@ public static class LineChatSlipRule
     /// <summary>ไฟล์รูปจากแชตใหญ่สุดที่ดึงมาอ่าน</summary>
     public const int MaxBytes = 10 * 1024 * 1024;
 
+    /// <summary>รอบ 282: แหล่งของแถว (<c>LineChatSlip.SourceKind</c>) นอกจาก "user"/"group" ของ OA บริษัท — กลุ่มของ OA กลาง · อีเมลขาเข้า</summary>
+    public static class Sources
+    {
+        public const string CentralGroup = "nextacc-group";
+        public const string Email = "email";
+    }
+
+    /// <summary>รอบ 282 (ด่าน rate limit ของช่องทางที่ส่งต่อมา): แถวต่อแหล่ง (กลุ่ม/อีเมลผู้ส่ง) ต่อวันไทย · เกิน ⇒ ไม่อ่าน ไม่เก็บ</summary>
+    public const int ForwardedDailyCapPerSource = 30;
+
     // ── สถานะของแถว LineChatSlip (ชื่อ ไม่ใช่เลข) ──
     public static class Statuses
     {
@@ -96,6 +106,8 @@ public static class LineChatSlipRule
         public const string IntakeOff = "IntakeOff";
         /// <summary>รอบ 275 แพ็ก D (M6): สลิปชำระหน่วยงานรัฐ (ภาษี/ประกันสังคม) — ไม่ใช่การโอนจ่ายร้าน ห้ามจับคู่กับเอกสารค้างชำระด้วยยอด</summary>
         public const string GovernmentSlip = "GovernmentSlip";
+        /// <summary>รอบ 282 (282-2): สลิปจากกลุ่มของ OA กลาง/อีเมล ที่ยอดตรงหลายใบ — ช่องทางนี้ไม่มีปุ่มเลือกใบ ⇒ ผู้ขายเลือกที่หน้าคิว</summary>
+        public const string ManyMatches = "ManyMatches";
 
         public static string Label(string? code) => code switch
         {
@@ -109,6 +121,7 @@ public static class LineChatSlipRule
             SystemError => "ระบบขัดข้องระหว่างบันทึกการแจ้งโอน — ผูกเองได้",
             IntakeOff => "ร้านปิดรับสลิปทางแชตก่อนลูกค้ากดเลือกใบ",
             GovernmentSlip => "สลิปนี้เป็นการชำระหน่วยงานรัฐ (ภาษี/ประกันสังคม) ไม่ใช่การโอนจ่ายเอกสารของร้าน — ระบบไม่จับคู่กับเอกสารค้างชำระ",
+            ManyMatches => "ยอดบนสลิปตรงเอกสารค้างหลายใบ (ส่งมาทางกลุ่ม LINE ของ NextAcc/อีเมล ซึ่งไม่มีปุ่มให้ลูกค้าเลือก) — เลือกใบที่ถูกต้องเอง",
             GrossBeforeWht => "ยอดสลิปเท่ายอดเต็มก่อนหัก ณ ที่จ่าย (ลูกค้าอาจไม่ได้หัก) — เกินยอดค้าง: ตรวจว่าจะรับส่วนเกินเป็นเงินรอจัดสรร หรือรอหนังสือ 50 ทวิ",
             _ => "ยังไม่ผูกเอกสาร",
         };
@@ -251,6 +264,13 @@ public static class LineChatSlipRule
 
         /// <summary>268-1-12: ไฟล์ PDF ที่ไม่ใช่สลิป (หลายหน้า/ไม่ดูเป็นสลิป) — ไม่เก็บไฟล์</summary>
         public const string PdfNotSlip = "ได้รับไฟล์แล้วค่ะ — ไฟล์นี้ไม่ใช่สลิปโอนเงิน ระบบจึงไม่ได้เก็บไว้ · ถ้าต้องการแจ้งโอน กรุณาส่งรูปหรือ PDF ของสลิปหน้าเดียว";
+
+        /// <summary>รอบ 282: ระบบบันทึกรับเงินจากสลิปเองแล้ว (ยอดเฉพาะเมื่อแสดงยอดได้ — กลุ่มที่ผูกหลายผู้ติดต่อไม่แสดง)</summary>
+        public static string Recorded(string documentNumber, decimal amount, bool showAmounts)
+            => LineMessageLimits.Truncate($"ได้รับสลิปและบันทึกรับเงินของ {documentNumber}{AmountPart(amount, showAmounts)} แล้วค่ะ — ใบเสร็จจะส่งตามมา", 300);
+
+        /// <summary>รอบ 282: สลิปผูกใบแล้ว แต่ระบบไม่มั่นใจพอจะบันทึกเอง ⇒ รอผู้ขายตรวจ (ไม่บอกเหตุภายในกับผู้ซื้อ)</summary>
+        public const string AwaitingSeller = "ได้รับสลิปแล้วค่ะ — รอผู้ขายตรวจรายการเงินเข้า แล้วจะส่งใบเสร็จให้";
 
         public const string StaffWillCheck = "ได้รับรูปแล้วค่ะ — ถ้าเป็นสลิปโอนเงิน ทางร้านจะตรวจและผูกกับเอกสารให้";
 

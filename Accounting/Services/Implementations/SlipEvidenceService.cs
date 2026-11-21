@@ -43,6 +43,10 @@ public class SlipEvidenceService
     public const string ChannelLineChat = "line-chat-customer";
     /// <summary>ฝ่ายค้าน 260-1 L9: สลิปจากแชตที่<b>พนักงาน</b>ผูกกับเอกสารเอง (ป้ายไฟล์แนบบอกว่าใครผูก — ไม่ใช่ลูกค้า)</summary>
     public const string ChannelLineChatStaff = "line-chat-staff";
+    /// <summary>รอบ 282: สลิปที่ผู้ซื้อส่งทางกลุ่ม LINE ของ OA กลาง (NextAcc) — เส้นเดียวกับแชต (<c>LineChatSlipService.HandleForwardedAsync</c>) · ไฟล์ไม่เสิร์ฟตรง</summary>
+    public const string ChannelNextAccGroup = "nextacc-group-customer";
+    /// <summary>รอบ 282: สลิปที่ผู้ซื้อแนบมาทางอีเมลขาเข้า (ผู้ส่งผูกกับผู้ติดต่อ) — เส้นเดียวกับแชต · ไฟล์ไม่เสิร์ฟตรง</summary>
+    public const string ChannelEmail = "email-customer";
     /// <summary>รอบ 264 P4 (design §6.2 · คำตัดสิน 264-5-12): ผู้ซื้อคู่ค้า NextAcc แจ้งโอนจากระบบของเขาเอง ⇒ สำเนาสลิปเข้าคิวรอยืนยันของเรา (ยังไม่ใช่เงินเข้า) ·
     /// ผู้เรียกเดียว <c>PartnerOutboundPaymentService.NotifyTransferAsync</c> ภายใต้ความยินยอม <c>ReceiveSlipCopy</c> ของเรา · ไฟล์ไม่เสิร์ฟตรง (มาจากนอกบริษัท)</summary>
     public const string ChannelPartnerNextAcc = "partner-nextacc";
@@ -64,7 +68,7 @@ public class SlipEvidenceService
             ?? throw new ArgumentException("รองรับเฉพาะรูปภาพ (JPEG/PNG/WEBP) หรือ PDF ของสลิป");
         var fromPayLink = channel == ChannelPayLink;
         // รอบ 260: สลิปจากแชต LINE ก็มาจากคนนอกระบบ ⇒ โฟลเดอร์ที่ไม่เสิร์ฟตรง (แบบหน้าชำระ) · ป้ายช่องทางของตัวเอง
-        var fromLineChat = channel is ChannelLineChat or ChannelLineChatStaff;
+        var fromLineChat = channel is ChannelLineChat or ChannelLineChatStaff or ChannelNextAccGroup or ChannelEmail;
         var nonServed = fromPayLink || fromLineChat || channel == ChannelPartnerNextAcc;
 
         SlipEvidenceResult? result = null;

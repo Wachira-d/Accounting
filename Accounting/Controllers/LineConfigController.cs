@@ -109,7 +109,8 @@ public class LineConfigController : ControllerBase
         if (req.QuietHoursEnabled is bool quietOn) s.LineQuietHoursEnabled = quietOn;
         if (req.QuietStartHour is int qs) s.LineQuietStartHour = qs;
         if (req.QuietEndHour is int qe) s.LineQuietEndHour = qe;
-        if (req.ChatSlipIntake is bool chatSlip) s.LineChatSlipIntakeEnabled = chatSlip;   // รอบ 260 · null = คงเดิม (ปุ่มล้างรหัสไม่แตะ)
+        if (req.ChatSlipIntake is bool chatSlip) s.LineChatSlipIntakeEnabled = chatSlip;
+        if (req.SlipAutoRecord is bool slipAuto) s.SlipAutoRecordEnabled = slipAuto;   // รอบ 282 · null = คงเดิม (ผู้อ่าน SlipAutoRecordService)   // รอบ 260 · null = คงเดิม (ปุ่มล้างรหัสไม่แตะ)
         // รอบ 257 C-M1: null = คงเดิม · "" = ล้าง · ค่า = ตั้งใหม่ (เดิม "" ถูกถือว่าคงเดิม ⇒ ล้างไม่ได้เงียบ ๆ)
         var tokenCleared = LineOwnOaGuard.Classify(req.ChannelAccessToken) == LineOwnOaGuard.InputKind.Clear;
         var secretCleared = LineOwnOaGuard.Classify(req.ChannelSecret) == LineOwnOaGuard.InputKind.Clear;
@@ -343,5 +344,6 @@ public class LineConfigController : ControllerBase
         QuietHoursEnabled: s.LineQuietHoursEnabled,
         QuietStartHour: s.LineQuietStartHour,
         QuietEndHour: s.LineQuietEndHour,
-        ChatSlipIntake: s.LineChatSlipIntakeEnabled);
+        ChatSlipIntake: s.LineChatSlipIntakeEnabled,
+        SlipAutoRecord: s.SlipAutoRecordEnabled);
 }

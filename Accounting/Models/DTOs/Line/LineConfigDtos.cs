@@ -38,6 +38,8 @@ public record LineConfigResponse(
     string? QuietHoursNote = null,
     /// <summary>รอบ 260: รับสลิปจากแชต LINE ⇒ ผูกเอกสาร (<c>CompanySettings.LineChatSlipIntakeEnabled</c> · echo กลับให้ฟอร์ม)</summary>
     bool ChatSlipIntake = true,
+    /// <summary>รอบ 282 (คำตัดสิน 282-3): บันทึกรับเงินจากสลิปเองเมื่อผ่านทุกด่าน (<c>CompanySettings.SlipAutoRecordEnabled</c> · ค่าตั้งต้นปิด · echo กลับให้ฟอร์ม)</summary>
+    bool SlipAutoRecord = false,
     /// <summary>รอบ 262 (คำตัดสิน 262-1-7): ประโยค "ส่งเอกสารถึงผู้ติดต่อทาง LINE" (<c>ProviderCentralOa.ContactSendNotice</c>) — บริษัทผู้ให้บริการไม่อ้างส่วนที่ถูกซ่อน</summary>
     string? ContactSendNotice = null,
     /// <summary>รอบ 262 (คำตัดสิน 262-1-7): แถวความพร้อม "ส่งเอกสารถึงผู้ติดต่อผ่าน LINE OA กลาง" ของบริษัทผู้ให้บริการ (<c>ProviderCentralOa.ReadinessRows</c>) · บริษัทอื่น = ว่าง</summary>
@@ -79,7 +81,9 @@ public record UpdateLineConfigRequest(
     int? QuietStartHour = null,
     int? QuietEndHour = null,
     /// <summary>รอบ 260: รับสลิปจากแชต LINE ⇒ ผูกเอกสาร · null = คงเดิม</summary>
-    bool? ChatSlipIntake = null);
+    bool? ChatSlipIntake = null,
+    /// <summary>รอบ 282: บันทึกรับเงินจากสลิปเอง · null = คงเดิม</summary>
+    bool? SlipAutoRecord = null);
 
 /// <param name="TargetKey">รอบ 259 (A-M6): ปลายทางที่ระบบรู้จัก (รอบ 260-4: <c>GET line-config/test-targets</c>) — มีค่า ⇒ ใช้แทน <paramref name="ToLineId"/></param>
 public record TestLineConfigRequest(string? ToLineId, string? TargetKey = null);
