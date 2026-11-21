@@ -21419,8 +21419,8 @@ RULES += [
          before=[("TaxFilingLockPolicy.DeclaredOrFiled(report.Status)", "TaxComplianceChecker(_db).CheckAsync(")],
          forbid=["SaveChangesAsync(", "catch"],
          why=_R275B_WHY + "M1 H2(3) ด่านเดียว: Error ของตัวตรวจ ⇒ บล็อก · ร่างไม่ตรงทะเบียน ⇒ 409 สร้างใหม่ · ไม่กลืน error"),
-    dict(file=_R275B_TAX, method="GenerateWhtReport", must=["WhtCertId = cert.Id", "WhtReportTotals.SummaryBranchKey(", "TaxPayerBranchCode = group.Key.Branch"],
-         before=[("ExtractTaxpayerFromJournalEntry(je)", "WhtReportTotals.SummaryBranchKey(")],
+    dict(file=_R275B_TAX, method="GenerateWhtReport", must=["WhtCertId = cert.Id", "WhtReportTotals.SyncSummaryRows(report)"],
+         before=[("ExtractTaxpayerFromJournalEntry(je)", "WhtReportTotals.SyncSummaryRows(report)")],   # รอบ 284: การจัดกลุ่ม (เลข + สาขา SummaryBranchKey) ย้ายเข้าตัวตัดสินเดียว
          why=_R275B_WHY + "H2 บรรทัดอ้างใบ 50 ทวิ · L2 แถวสรุปสร้างหลังบรรทัด JE ล้วน + คีย์สาขา"),
     dict(file=_R275B_TAX, method="LineResponseOf",
          must=["WhtReportLineRule.DescriptionLocked(", "WhtReportLineRule.AmountsLocked(", "WhtReportLineRule.IncludeNeedsReason(", "WhtCertId: l.WhtCertId"],
