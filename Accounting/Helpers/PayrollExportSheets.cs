@@ -143,12 +143,49 @@ public static class PayrollExportSheets
             PayrollBankTransfer.Evaluate(sheet.Status, l.NetPay, l.AdvanceRecovered, l.HasOutstandingAdvance, l.BankAccountNumber,
                 l.PaymentSourceIsBank))).ToList();
 
+    /// <summary>รอบ 284 (แพ็ก F · audit T4 L-6): สรุปของไฟล์รายการโอน — ผู้ใช้ที่กรองแถวไม่พร้อมออกเองต้องมีตัวเลขเทียบ "พร้อมโอน X จาก Y ราย"
+    /// · ยอดพร้อมโอน + ยอดไม่พร้อม = ยอดรวมทุกแถวของไฟล์ (ตัวไล่เดียวจากผลตัดสิน <see cref="PayrollBankTransfer.Evaluate"/> — ไม่คำนวณใหม่)</summary>
+    public sealed record BankTransferSummary(int ReadyCount, int TotalCount, decimal ReadyAmount, decimal NotReadyAmount, decimal TotalAmount);
+
+    public static BankTransferSummary BankTransferSummaryOf(IReadOnlyList<BankTransferRow> rows)
+    {
+        var ready = rows.Where(r => r.Decision.Ready).ToList();
+        var readyAmt = ready.Sum(r => r.Decision.TransferAmount);
+        var total = rows.Sum(r => r.Decision.TransferAmount);
+        return new BankTransferSummary(ready.Count, rows.Count, readyAmt, total - readyAmt, total);
+    }
+
+    /// <summary>แผ่น "สรุป" ของไฟล์ Excel — แยกจากแผ่นรายการ (แผ่นรายการไม่มีแถวรวม เพราะใช้อัปโหลด/คัดลอกเข้าธนาคาร)</summary>
+    public static IReadOnlyList<TabularColumn<(string Label, object? Value, string? Note)>> BankTransferSummaryColumns { get; } =
+        new List<TabularColumn<(string Label, object? Value, string? Note)>>
+        {
+            new("รายการ", r => r.Label),
+            new("ค่า", r => r.Value),
+            new("หมายเหตุ", r => r.Note),
+        };
+
+    public static IReadOnlyList<(string Label, object? Value, string? Note)> BankTransferSummaryRows(BankTransferSummary s, string payrollNumber)
+    {
+        var inv = System.Globalization.CultureInfo.InvariantCulture;
+        string Money(decimal v) => Math.Round(v, 2, MidpointRounding.AwayFromZero).ToString("#,##0.00", inv);
+        return new List<(string, object?, string?)>
+        {
+            ("รอบเงินเดือน", payrollNumber, null),
+            ("พร้อมโอน (ราย)", $"{s.ReadyCount} จาก {s.TotalCount} ราย", "อัปโหลดเฉพาะแถวสถานะ \"พร้อมโอน\" ในแผ่นรายการโอน"),
+            ("ยอดพร้อมโอน (บาท)", Money(s.ReadyAmount), "ยอดที่ธนาคารควรตัดเมื่ออัปโหลดแถวพร้อมโอนครบ — เทียบกับยอดในระบบธนาคารก่อนยืนยัน"),
+            ("ไม่พร้อมโอน (ราย)", $"{s.TotalCount - s.ReadyCount} ราย", s.TotalCount == s.ReadyCount ? null : "ดูเหตุในคอลัมน์ \"สถานะ\"/\"หมายเหตุ\" ของแผ่นรายการโอน"),
+            ("ยอดไม่พร้อมโอน (บาท)", Money(s.NotReadyAmount), null),
+            ("ยอดรวมทุกแถว (บาท)", Money(s.TotalAmount), "= ยอดพร้อมโอน + ยอดไม่พร้อมโอน"),
+        };
+    }
+
     /// <summary>
     /// ไฟล์รายการโอนเงินเดือน<b>รูปแบบกลาง</b> (ไม่ใช่รูปแบบเฉพาะธนาคาร) — เลขบัญชีเป็นเซลล์ข้อความตัวเลขล้วน: ในไฟล์ <b>Excel (.xlsx)</b> 0 นำหน้าคงอยู่ ·
     /// ไฟล์ <b>CSV</b> เก็บ 0 ครบ แต่<b>ถ้าเปิดด้วย Excel ตรง ๆ Excel จะตัด 0 นำหน้า</b> (ข้อจำกัดของ Excel — ฝ่ายค้านรอบส่งออก 2026-10-15 P2-5:
     /// คอมเมนต์เดิมอ้างว่า "Excel ไม่ตัด" ซึ่งจริงเฉพาะ .xlsx) ⇒ หน้าเว็บให้ปุ่ม Excel เป็นหลัก + คำเตือนบนปุ่ม CSV ·
     /// แถวที่แหล่งจ่ายไม่ใช่ธนาคาร = "จ่ายจากแหล่งอื่น" (ไม่พร้อมโอน · P2-4) · แถวเรียงตามแหล่งจ่าย (บัญชีธนาคารที่จ่าย) แล้วตามรหัสพนักงาน ·
-    /// ยอดไม่มีตัวคั่นหลักพัน · อ้างอิง = เลขที่รอบ-รหัสพนักงาน (ไม่ซ้ำในไฟล์) · วันที่ ISO ค.ศ. · ไม่มีแถวรวม (ไฟล์ใช้อัปโหลด/คัดลอก)
+    /// ยอดไม่มีตัวคั่นหลักพัน · อ้างอิง = เลขที่รอบ-รหัสพนักงาน (ไม่ซ้ำในไฟล์) · วันที่ ISO ค.ศ. · ไม่มีแถวรวม (ไฟล์ใช้อัปโหลด/คัดลอก) ·
+    /// รอบ 284 (T4 L-6): Excel มีแผ่น "สรุป" แยก (<see cref="BankTransferSummaryOf"/>) · CSV แผ่นเดียว ⇒ ไม่มีสรุปในไฟล์ (หน้าเว็บบอกบนปุ่ม)
     /// </summary>
     public static IReadOnlyList<TabularColumn<BankTransferRow>> BankTransfer { get; } = new List<TabularColumn<BankTransferRow>>
     {

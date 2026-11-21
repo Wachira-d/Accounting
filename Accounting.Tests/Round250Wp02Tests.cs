@@ -434,7 +434,7 @@ public class Round250Wp02Tests
         var r = PlatformGoLiveChecklist.Evaluate(AllGood() with { SystemBaseUrlConfigured = false, SystemBaseUrl = null });
         var b = Assert.Single(r.Items, i => i.Code == "BASEURL");
         Assert.Equal(PlatformGoLiveChecklist.Fail, b.Status);
-        Assert.Equal("/admin/site-settings.html", b.FixUrl);
+        Assert.Equal("/admin/system-email.html", b.FixUrl);   // รอบ 284: ช่อง App Base URL อยู่หน้าอีเมลระบบ
         Assert.DoesNotContain("http", Assert.Single(r.Items, i => i.Code == "SEND-URLS").Why);
     }
 

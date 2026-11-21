@@ -656,7 +656,7 @@
         document.getElementById('publicCheckoutEnabled').checked = !!d.enabled;
         box.innerHTML = `สถานะ: <b>${d.enabled ? 'เปิด' : 'ปิด'}</b> · ชำระออนไลน์: <b>${d.onlineAvailable ? (d.isTestMode ? '🧪 โหมดทดสอบ (ไม่มีเงินจริง)' : '✅ รับเงินจริง') : '❌ ' + esc(d.reason || 'ยังไม่พร้อม')}</b><br>
           URL ที่ส่งให้ Omise ตรวจ: <code>${esc(d.pricingUrl)}</code> · <code>${esc(d.checkoutUrl)}</code>
-          ${d.baseUrlFromSettings ? '' : '<br><span style="color:#92400e">⚠️ ยังไม่ได้ตั้ง "URL ของระบบ" (แท็บทั่วไป) — URL ด้านบนใช้โฮสต์ที่เปิดหน้าแอดมินอยู่ อาจไม่ใช่โดเมนจริง</span>'}`;
+          ${d.baseUrlFromSettings ? '' : '<br><span style="color:#92400e">⚠️ ยังไม่ได้ตั้ง "URL ของระบบ" — ตั้งที่ <a href="/admin/system-email.html#appBaseUrl" style="color:#92400e;font-weight:600;text-decoration:underline">อีเมลระบบ (SMTP) → ช่อง "App Base URL"</a> · URL ด้านบนใช้โฮสต์ที่เปิดหน้าแอดมินอยู่ อาจไม่ใช่โดเมนจริง</span>'}`;
       } catch (e) { box.textContent = 'โหลดไม่สำเร็จ: ' + e.message; }
     }
     document.getElementById('publicCheckoutSave').addEventListener('click', async () => {
