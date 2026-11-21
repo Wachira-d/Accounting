@@ -7509,4 +7509,4 @@ LOW-1 "ส่งได้บางส่วน" · LOW-2 การ์ด `#HeyNe
 - 284-3 (T4 L-6): ไฟล์โอนเงินเดือน Excel มีแผ่น "สรุป" พร้อมโอน X จาก Y ราย + ยอด
 - 284-4 (T3 MED-5 ส่วนที่ค้าง): `GET document/{id}/receipt-line-default` — ฟอร์มใบเสร็จไม่มีสำเนาข้อความไทย
 - 284-6: ข้อความ "URL ของระบบ" ชี้หน้า `/admin/system-email.html` ช่อง App Base URL (`SystemBaseUrl.AdminPagePath/AdminPageHint`) + ป้าย app.nextacc.com ไม่ใช่โดเมนเรา
-- 284-5: ด่าน `reports/month-snapshot` — ไม่ทำแยก (รายงานทั้ง AccountingController ไม่มีคีย์สิทธิ์) ⇒ คำถามเจ้าของ · เทสต์ `PackFRound284Tests` + Db `PackFRound284DbTests` · คอมมิต <เติมในคอมมิตตามหลัง>
+- 284-5: ด่าน `reports/month-snapshot` — ไม่ทำแยก (รายงานทั้ง AccountingController ไม่มีคีย์สิทธิ์) ⇒ คำถามเจ้าของ · เทสต์ `PackFRound284Tests` + Db `PackFRound284DbTests` · commit 6e5036e6

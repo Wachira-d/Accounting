@@ -1263,7 +1263,7 @@ public class PayrollController : ControllerBase
             purpose: $"ส่งออกไฟล์รายการโอนเงินเดือน รอบ {sheet.PayrollNumber}",
             ipAddress: HttpContext.Connection.RemoteIpAddress?.ToString(),
             userAgent: Request.Headers.UserAgent.ToString());
-        // รอบ 284 (T4 L-6): Excel = แผ่นรายการ (ไม่มีแถวรวม · ใช้อัปโหลด) + แผ่น "สรุป" พร้อมโอน X/Y ราย + ยอด · CSV แผ่นเดียวตามเดิม
+        // รอบ 284 (T4 L-6 · commit 6e5036e6): Excel = แผ่นรายการ (ไม่มีแถวรวม · ใช้อัปโหลด) + แผ่น "สรุป" พร้อมโอน X/Y ราย + ยอด · CSV แผ่นเดียวตามเดิม
         var rows = PayrollExportSheets.BankTransferRows(sheet);
         var baseName = $"payroll-bank-transfer-{sheet.PayrollNumber}";
         if (fmt == TabularFormat.Csv)

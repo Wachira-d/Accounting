@@ -9240,7 +9240,7 @@ retention ช่วงนี้เทียบช่วงก่อน + เส�
 - **URL ของระบบ** — ช่องจริง = `/admin/system-email.html` ช่อง "App Base URL" (`SystemBaseUrl.AdminPagePath/AdminPageHint` ตัวตั้งเดียว) · ข้อความ/ลิงก์ที่ชี้ "ตั้งค่าเว็บไซต์ (แท็บทั่วไป)"
   หรือ "ตั้งค่าระบบ" แก้ทุกจุด (admin 3 หน้า · sso.js · ข้อความเซิร์ฟเวอร์ 9 จุด · ปุ่มแก้ของ Autopilot/หน้าพร้อมใช้งาน) · ป้ายช่องบอกว่า `https://app.nextacc.com` คือค่าเริ่มต้นที่ไม่ใช่โดเมนของเรา
 - ไม่เปลี่ยนเงิน/JE/สถานะเอกสาร · ไม่มี migration (ไม่มีค่าที่ persist ผิด — ดู dev-284 §ข้อ 10) · เทสต์ `PackFRound284Tests` (pure 8) + Db `PackFRound284DbTests` (2) · กติกา `_R284_` ·
-  Last verified commit <เติมในคอมมิตตามหลัง>
+  Last verified commit 6e5036e6
 
 ## 7. Validation gates (compliance — กฎเหล็ก #2)
 
