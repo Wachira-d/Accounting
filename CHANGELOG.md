@@ -7521,4 +7521,4 @@ LOW-1 "ส่งได้บางส่วน" · LOW-2 การ์ด `#HeyNe
 - คำสั่งเจ้าของ: สลิปที่เคยยืนยัน + จับผู้โอน/เลขบัญชีได้ ⇒ ครั้งถัดไปที่เหมือนเดิม (ต่างแค่วันที่/ref) อนุมัติเอง — ทำพร้อมรั้ว: ความไว้ใจเกิดจากรายการเดินบัญชีจริงเท่านั้น ·
   บันทึก**ล่วงหน้า** (ค่าตั้งต้นปิด · ≤ ยอดสูงสุด × 1.5 · เพดานต่อวัน) แล้วตรวจย้อนในงานตัดชำระเดิม · ไม่พบใน N วันทำการ ⇒ แจ้งแรง + ถอนอัตโนมัติ (ไม่ยกเลิกเงินเอง)
 - `Helpers/TrustedSlipPayerRule` · `TrustedSlipPayerService` · `TrustedSlipVerifyService` · ตาราง `TrustedSlipPayers` · `Round286Migration` · หน้าตั้งค่าแท็บ LINE + `line-config/trusted-payers`
-- เทสต์ `TrustedSlipPayerRound286Tests` + Db `TrustedSlipPayerRound286DbTests` · คำตัดสิน 286-1…286-9
+- เทสต์ `TrustedSlipPayerRound286Tests` + Db `TrustedSlipPayerRound286DbTests` · คำตัดสิน 286-1…286-9 · commit 19445ff6

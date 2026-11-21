@@ -3344,7 +3344,7 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
   `GET line-config/trusted-payers` (ป้ายธนาคาร + เลขปิดบาง · ไม่มีชื่อ) · `POST …/{id}/revoke|reinstate` (สิทธิ์แก้ค่าตั้งบริษัท · ห้ามคีย์ API · audit)
 - ทุกทางเข้า (แชต/กลุ่ม OA บริษัท · กลุ่ม OA กลาง · อีเมล) เดินผ่าน `SlipAutoRecordService.TryAutoAsync` ตัวเดียว · ไม่มี AI (กติกาเชิงกุญแจ · kill-switch) ·
   เทสต์ pure `TrustedSlipPayerRound286Tests` · Db `TrustedSlipPayerRound286DbTests` · migration `Round286Migration` · กติกา `_R286_*`
-  Last verified commit (เติมในคอมมิตตามหลัง)
+  Last verified commit 19445ff6
 
 ### 2.12g-264-P2 รอบ 264 แพ็ก P2 "อ่านบัญชีจากสลิป — QR ตรวจสลิป + ผู้โอน/ผู้รับ" (`erp-review/2026-11-12/team-264-a2b-design.md` §3.2/§4 · คำตัดสิน 264-4-1…8)
 

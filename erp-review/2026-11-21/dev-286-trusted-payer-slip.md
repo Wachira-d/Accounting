@@ -15,7 +15,7 @@
 
 | ข้อ | สถานะ |
 | --- | --- |
-| 1 กุญแจผู้โอน + เกิดความไว้ใจจากรายการเดินบัญชีเท่านั้น | แก้แล้ว — `Helpers/TrustedSlipPayerRule.KeyFrom/Fingerprint` (HMAC ไม่เก็บชื่อ) · `TrustedSlipVerifyService.Proven/LearnAsync` · ตาราง `TrustedSlipPayers` |
+| 1 กุญแจผู้โอน + เกิดความไว้ใจจากรายการเดินบัญชีเท่านั้น | แก้แล้ว 19445ff6 — `Helpers/TrustedSlipPayerRule.KeyFrom/Fingerprint` (HMAC ไม่เก็บชื่อ) · `TrustedSlipVerifyService.Proven/LearnAsync` · ตาราง `TrustedSlipPayers` |
 | 2 สลิปตรงกุญแจ ⇒ บันทึกล่วงหน้า (ค่าตั้งต้นปิด · × 1.5 · เพดานต่อวัน) | แก้แล้ว — `TrustedSlipPayerService.TryProvisionalAsync` ผ่านเส้นยืนยันตัวเดียว · ล็อกต่อกุญแจ |
 | 3 ตรวจย้อน · ไม่พบ ⇒ แจ้งแรง + ถอน · ไม่ยกเลิกเอง | แก้แล้ว — `TryVerifyLineAsync` (เรียกจาก `EvaluateLineAsync` ก่อนหาใบค้าง) · `SweepAsync` (AutopilotJob) · `FailAsync` |
 | 3 ใบเสร็จ/ใบกำกับ | ตัดสินแล้ว (286-6) — ออกทันทีตามเส้นเดิม เพราะ §78/1 + §89(2) · ถ้ารอจะเสี่ยงรายงาน ภ.พ.30 ขาด |
