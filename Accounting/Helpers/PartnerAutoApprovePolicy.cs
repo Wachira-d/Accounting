@@ -145,6 +145,16 @@ public static class PartnerAutoApprovePolicy
         return null;
     }
 
+    public const string InternalErrorMessage = "ข้อผิดพลาดภายในระบบ (ผู้ดูแลระบบดูบันทึกระบบ)";
+
+    /// <summary>ข้อความถึงผู้ใช้เมื่อเส้นอนุมัติปฏิเสธ — ข้อความกติกาภาษาไทยของเส้นอนุมัติส่งต่อตรง · ข้อความภายในของ framework (อังกฤษ/LINQ/SQL) ไม่ขึ้นจอ (ฝ่ายค้าน L8 เดิม)</summary>
+    public static string ApproveErrorMessage(bool isWarnings, bool isRuleKind, string? message)
+    {
+        if (isWarnings) return "มีข้อสังเกตก่อนอนุมัติที่ต้องให้คนดู";
+        if (isRuleKind && !string.IsNullOrWhiteSpace(message) && message.Any(ch => ch >= '\u0E00' && ch <= '\u0E7F')) return Trunc(message.Trim(), 300);
+        return InternalErrorMessage;
+    }
+
     /// <summary>หมายเหตุภายในบนใบที่ยังไม่อนุมัติเอง (เหตุจาก <see cref="Decide"/>)</summary>
     public static string HoldNote(string reason, DateTime nowUtc)
         => $"{HoldMarker} {nowUtc.AddHours(7):dd/MM/yyyy HH:mm}: ⚙️ ระบบยังไม่อนุมัติใบนี้เอง — {reason} · ตรวจแล้วกดอนุมัติเองได้ตามปกติ";

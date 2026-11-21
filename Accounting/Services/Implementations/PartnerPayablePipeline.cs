@@ -830,7 +830,10 @@ public class PartnerPayablePipeline
             await lockTx.RollbackAsync(CancellationToken.None);
             _db.ChangeTracker.Clear();
             if (ex is DbUpdateException) _logger.LogError(ex, "อนุมัติใบซื้อร่างจากคู่ค้า {Doc} ของบริษัท {Company} เองล้มที่ฐานข้อมูล", docId, companyId);
-            var why = ex is DocumentApprovalWarningsException ? "มีข้อสังเกตก่อนอนุมัติที่ต้องให้คนดู" : UserMessageOf(ex);
+            var why = PartnerAutoApprovePolicy.ApproveErrorMessage(ex is DocumentApprovalWarningsException, ex is BusinessRuleException or ArgumentException or KeyNotFoundException
+                or InvalidOperationException, ex.Message);
+            if (why == PartnerAutoApprovePolicy.InternalErrorMessage && ex is not DbUpdateException)
+                _logger.LogError(ex, "อนุมัติใบซื้อร่างจากคู่ค้า {Doc} ของบริษัท {Company} เองล้ม (ข้อผิดพลาดภายใน)", docId, companyId);
             await RecordAutoApproveHoldAsync(companyId, linkId, docId, previousCode,
                 new PartnerAutoApprovePolicy.Verdict(false, PartnerAutoApprovePolicy.Codes.ApproveFailed, "อนุมัติเองไม่สำเร็จ: " + why), nowUtc, CancellationToken.None);
             return false;

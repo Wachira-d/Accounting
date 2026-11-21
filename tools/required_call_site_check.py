@@ -22840,5 +22840,70 @@ REVIEWER_CASES += [
     ("R287-2", "FailAsync", "TrustedSlipPayerRule.FailedNextStep(delivered.Buyer, delivered.Partner)", "TrustedSlipPayerRule.FailedNextStep(false, false)", True),
 ]
 
+# ═══ รอบ 288 (คำสั่งเจ้าของ "ทำให้ใช้งานได้ทั้งหมด" · คำตัดสิน 288-1…): งานอัตโนมัติกับคู่ค้า — AutoApprovePurchase + ReceiveSlipCopy ต่อสายจริง ═══
+_R288_WHY = "รอบ 288 (งานอัตโนมัติกับคู่ค้า ใช้งานได้ทั้งหมด): "
+_R288_PIPE = "Services/Implementations/PartnerPayablePipeline.cs"
+RULES += [
+    dict(file=_R288_PIPE, method="RunOnceAsync",
+         must=["SuggestDraftGlAsync(companyId, nowUtc, ct)", "AutoApproveDraftsAsync(companyId, nowUtc, ct)", "CopySlipsAsync(companyId, nowUtc, ct)",
+               "RunForCompanyAsync(companyId, nowUtc, ct)"],
+         before=[("SuggestDraftGlAsync(companyId, nowUtc, ct)", "AutoApproveDraftsAsync(companyId, nowUtc, ct)"),
+                 ("AutoApproveDraftsAsync(companyId, nowUtc, ct)", "RunForCompanyAsync(companyId, nowUtc, ct)")],
+         why=_R288_WHY + "ขั้นอนุมัติเองถูกต่อสายเข้างานเบื้องหลัง: ผังบัญชีก่อน ⇒ อนุมัติ ⇒ บันทึกจ่าย (ใบต้องอนุมัติก่อนจ่าย)"),
+    dict(file=_R288_PIPE, method="AutoApproveDraftsAsync",
+         must=["c.CompanyId == companyId", "l.TargetCompanyId == companyId", "d.CompanyId == companyId", "d.PartnerSourceLinkId == l.Id",
+               "d.Status == DocumentStatus.Draft", "PartnerAutoApprovePolicy.ReevaluateEvery"],
+         why=_R288_WHY + "เฉพาะใบร่างของบริษัทนี้ที่มาจากเอกสารคู่ค้า (ลิงก์ของใบ) ของคู่ที่ยินยอม · watermark ต่อใบ"),
+    dict(file=_R288_PIPE, method="AutoApproveOneAsync",
+         must=["consentSvc.CheckForWriteAsync(companyId, partnershipId, Scope.AutoApprovePurchase, CapOf(doc), ct)",
+               "lockDb.Database.BeginTransactionAsync(", "PartnerAutoApprovePolicy.Decide(", "DocumentRestrictionGuard.UserIsDraftOnlyAsync(",
+               "TaxInvoiceCompletenessChecker.Evaluate(doc, contact).MissingFields", "PartnerAutoApprovePolicy.WhtProblem(", "_docs.PreviewApprovalWarningsAsync(companyId, docId)",
+               "PartnerAutoApprovePolicy.LocalConfidentOf(", "VendorConfirmedAccountsAsync(", "f.CompanyId == companyId", "a.CompanyId == companyId",
+               "_docs.ApproveDocumentAsync(companyId, docId, grantor.ToString(), ApprovalAckSource.Unattended, withAiHints: false)",
+               "lockTx.CommitAsync(", "RecordAutoApproveHoldAsync(", "MarkAutoApprovedAsync("],
+         must_re=[r"if\s*\(\s*!\s*verdict\s*\.\s*Auto\b"],
+         must_lit=["idle_in_transaction_session_timeout"],
+         before=[("BeginTransactionAsync(", "CheckForWriteAsync("), ("CheckForWriteAsync(", "PartnerAutoApprovePolicy.Decide("),
+                 ("PartnerAutoApprovePolicy.Decide(", "_docs.ApproveDocumentAsync("), ("_docs.ApproveDocumentAsync(", "lockTx.CommitAsync(")],
+         forbid=[".CheckAsync(", "ApprovalAckSource.User", "ApprovalAckSource.SystemWorkflow", "UnattendedWithPolicy", "AskAsync(", "CapAmount.Thb("],
+         why=_R288_WHY + "ความยินยอมตรวจเพื่อเขียนในธุรกรรมล็อกที่ถือจนอนุมัติเสร็จ · ตัวตัดสินเดียว · ใบกำกับ ม.86/4 ผ่านตัวตรวจเดิม · ผังมั่นใจจากโมเดลในบ้าน/ประวัติผู้ขาย · "
+             "คำเตือนก่อนอนุมัติจากตัวรวบรวมเดิม · อนุมัติผ่านเส้นเดียว (เลข gap-free) ด้วย GUID ผู้ให้ · ไม่ประทับว่าคนรับทราบคำเตือน · ไม่เรียก AI"),
+    dict(file=_R288_PIPE, method="VendorConfirmedAccountsAsync",
+         must=["l.Document.CompanyId == companyId", "l.Document.ContactId == cid", "PartnerAutoApprovePolicy.ApprovedMarker", "DocumentStatus.Draft", "DocumentStatus.Voided"],
+         why=_R288_WHY + "ผังที่ผู้ใช้ยืนยัน = ใบที่คนอนุมัติของผู้ขายรายนี้ · ไม่นับใบที่ระบบอนุมัติเอง (ไม่เรียนจากตัวเอง)"),
+    dict(file=_R288_PIPE, method="RecordAutoApproveHoldAsync",
+         must=["PartnerAutoApprovePolicy.ShouldAnnounceHold(previousCode, verdict.Code)", "NotificationEvents.PartnerPurchaseAutoApproveHeld", "AddChainedAuditLog(",
+               "l.TargetCompanyId == companyId"],
+         must_lit=['"PartnerPurchaseAutoApproveHeld"'],
+         forbid=["ApproveDocumentAsync("],
+         why=_R288_WHY + "ไม่ผ่าน ⇒ ร่าง + เหตุ + แจ้ง (ครั้งเดียวต่อเหตุ) · ไม่ประทับเอง"),
+    dict(file=_R288_PIPE, method="MarkAutoApprovedAsync",
+         must=["AddChainedAuditLog(", "PartnerAutoApprovePolicy.RuleCode", "PartnerAutoApprovePolicy.LegalReference", "NotificationEvents.PartnerPurchaseAutoApproved",
+               "n.TargetDocumentId == docId", "SetProperty(n => n.AutoEvaluatedAt, (DateTime?)null)"],
+         must_lit=['"PartnerPurchaseAutoApproved"'],
+         why=_R288_WHY + "audit + แจ้งเตือนคีย์คู่ค้า · อนุมัติแล้วการแจ้งค้างของใบประเมินใหม่ทันที (design §5.2)"),
+    dict(file=_R288_PIPE, method="CopySlipOneAsync",
+         must=["consentSvc.CheckForWriteAsync(companyId, n.TradingPartnershipId, Scope.ReceiveSlipCopy,", "PartnerSlipCopyRule.Decide(",
+               "i.CompanyId == n.SourceCompanyId", "i.SourceId == n.SourceDocumentId", "a.CompanyId == n.SourceCompanyId", "a.EntityId == n.SourceDocumentId",
+               "x.CompanyId == companyId", "EntityId = n.TargetDocumentId", "PartnerSlipCopyRule.AttachmentCreatedBy", "lockTx.CommitAsync("],
+         must_lit=['"PartnerSlipCopyReceived"', "idle_in_transaction_session_timeout"],
+         before=[("CheckForWriteAsync(", "PartnerSlipCopyRule.Decide("), ("PartnerSlipCopyRule.Decide(", "ReadAllBytesAsync("),
+                 ("var intent = consent.Ok", "ReadAllBytesAsync(")],
+         forbid=[".CheckAsync(", "AskAsync("],
+         why=_R288_WHY + "ReceiveSlipCopy: ไม่ยินยอม ⇒ ไม่อ่าน/ไม่ส่งรูป · เฉพาะไฟล์ที่ผูกกับรายการชำระของการแจ้งนี้ (กุญแจ intent + บริษัท + เอกสารต้นทาง) · แนบใบซื้อของผู้ซื้อ"),
+    dict(file="Services/Implementations/SlipEvidenceService.cs", method="SubmitAsync",
+         must=["SetProperty(i => i.SlipAttachmentId, (Guid?)slipAttachmentId)", "Id = slipAttachmentId,"],
+         why=_R288_WHY + "ลิงก์รายการชำระ → ไฟล์สลิป (ผู้อ่าน: สำเนาให้ผู้ซื้อที่ยินยอม · ไม่เดาไฟล์จากเวลา)"),
+    dict(file="Services/Implementations/PartnerConsentService.cs", method="HasNeedAsync",
+         must=["DocumentRestrictionGuard.UserIsDraftOnlyAsync(_db, companyId, userId)"],
+         why=_R288_WHY + "ผู้ใช้ 'ทำได้เฉพาะร่าง' ให้/ใช้ความยินยอมที่อนุมัติแทนไม่ได้"),
+]
+REVIEWER_CASES += [
+    ("R288-1", "AutoApproveOneAsync", "ApprovalAckSource.Unattended, withAiHints: false", "ApprovalAckSource.User, withAiHints: false", True),
+    ("R288-2", "AutoApproveOneAsync", "Scope.AutoApprovePurchase, CapOf(doc), ct)", "Scope.AutoApprovePurchase, null, ct)", True),
+    ("R288-3", "CopySlipOneAsync", "a.CompanyId == n.SourceCompanyId", "a.CompanyId != Guid.Empty", True),
+    ("R288-4", "RecordAutoApproveHoldAsync", "PartnerAutoApprovePolicy.ShouldAnnounceHold(previousCode, verdict.Code)", "true", True),
+]
+
 if __name__ == "__main__":
     sys.exit(main())

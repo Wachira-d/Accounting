@@ -355,7 +355,7 @@ public static class PartnerConsent
 
     /// <summary>ป้ายผลจริงของขอบเขต (server computes · หน้าแสดง) — ขอบเขตที่ยังไม่มีท่ออ่านต้องบอกตรง ๆ ว่ายังไม่มีผล (ห้าม silent no-op)</summary>
     public static string? EffectNote(ScopeDef d)
-        => d.CompanyWideToggle ? "เรื่องนี้เปิด/ปิดพร้อมกันทุกคู่ค้าที่หน้า \u201cคู่ค้าที่ใช้ NextAcc\u201d (ยังแยกเปิดทีละคู่ค้าไม่ได้)"
+        => d.CompanyWideToggle ? "เรื่องนี้เปิด/ปิดด้วยค่าตั้งของทั้งบริษัท (ทุกคู่ค้าพร้อมกัน) ที่หน้า \u201cคู่ค้าที่ใช้ NextAcc\u201d — ยังแยกเปิดทีละคู่ค้าไม่ได้"
          : d.Scope == Scope.AutoRecordPayment && !PartnerPaySourceAccount.ConsentDefaultAutoEnabled ? PartnerPaySourceAccount.ConsentDefaultNotAutoNote
          : !d.ReaderWired ? "ให้ไว้ล่วงหน้าได้ — ตอนนี้ระบบยังไม่ทำงานนี้เอง"
          : null;
