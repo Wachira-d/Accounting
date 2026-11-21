@@ -17,7 +17,7 @@
 
 | ข้อ | สถานะ |
 | --- | --- |
-| 1 ค่าตั้ง "ส่งเอกสารทันที" (ค่าตั้งต้นเปิด · แท็บ LINE · ประโยคความเสี่ยง) | แก้แล้ว: `CompanySettings.SlipTrustedSendImmediately` · `Round287Migration` · DTO echo · หน้า `settings.html` · ประโยคความเสี่ยง `TrustedSlipPayerRule.SendImmediatelyRiskNotice` · ผู้อ่าน `DeliveryHeldAsync` (settings_reader_check ผ่าน) |
+| 1 ค่าตั้ง "ส่งเอกสารทันที" (ค่าตั้งต้นเปิด · แท็บ LINE · ประโยคความเสี่ยง) | แก้แล้ว 0fdbd4f3: `CompanySettings.SlipTrustedSendImmediately` · `Round287Migration` · DTO echo · หน้า `settings.html` · ประโยคความเสี่ยง `TrustedSlipPayerRule.SendImmediatelyRiskNotice` · ผู้อ่าน `DeliveryHeldAsync` (settings_reader_check ผ่าน) |
 | 2 เปิด ⇒ ส่งตามเส้นปกติทันที · ปิด ⇒ พฤติกรรม 286 | แก้แล้ว: ตัวตัดสินเดียว `TrustedSlipPayerRule.HoldDelivery` ครอบผู้อ่านเดิมทั้ง 2 จุด (มีทางเข้า 2 จุด รูปแบบเดิมที่ไม่อ่านค่าตั้งเหลือ 0 จุด) · ตรวจย้อนล้มแล้วกักเสมอ |
 | 3 ล้มหลังส่งแล้ว ⇒ แจ้งว่า "ส่งไปแล้ว" + ทางไปต่อ | แก้แล้ว: `DeliveredAsync` อ่านข้อเท็จจริงจากขั้นที่ทำแล้วของงานหลังรับชำระและแถวแจ้งคู่ค้า แล้วประกอบข้อความด้วย `FailedNextStep` · ระบบไม่ยกเลิกและไม่ออกใบลดหนี้เอง |
 | 3 ฝั่งคู่ค้า: ยกเลิกแล้วระบบผู้ซื้อได้สถานะยกเลิก | ตรวจแล้วมีอยู่: `VoidPaymentAsync` → `WithdrawForSellerPaymentAsync` · ถ้ายังไม่บันทึกจะได้สถานะ Withdrawn ถ้าบันทึกแล้วจะติดป้ายบนใบซื้อและแจ้งผู้ซื้อ |

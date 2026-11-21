@@ -7549,4 +7549,4 @@ _รอบ 285 (2026-11-21): ยืนยันเลขผู้เสียภ
 
 - คำสั่งเจ้าของ: ผู้จ่ายที่ไว้ใจได้ ⇒ ส่งใบกำกับ/เอกสารอื่นอัตโนมัติได้เลย — ค่าตั้ง `SlipTrustedSendImmediately` (ค่าตั้งต้นเปิด · แท็บ LINE) แทน 286-13 แบบมีค่าตั้ง ·
   ตัวตัดสิน `TrustedSlipPayerRule.HoldDelivery` (ล้มแล้วกักเสมอ) · แจ้งเตือนตรวจย้อนล้มระบุว่าส่งไปแล้ว + ทางไปต่อ (`FailedNextStep` · `DeliveredAsync`)
-- `Round287Migration` · เทสต์ `TrustedSlipSendImmediatelyRound287Tests` + Db `TrustedSlipSendImmediatelyRound287DbTests` · กติกา `_R287_*` · คำตัดสิน 287-1…287-5
+- `Round287Migration` · เทสต์ `TrustedSlipSendImmediatelyRound287Tests` + Db `TrustedSlipSendImmediatelyRound287DbTests` · กติกา `_R287_*` · คำตัดสิน 287-1…287-5 · commit 0fdbd4f3
