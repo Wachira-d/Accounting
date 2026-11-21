@@ -8441,7 +8441,10 @@
             // info beyond status (e.g., "◐ จ่าย 50%" / "✓ แปลงครบ").
             // ใบเสร็จหลักฐานรับเงิน (auto คู่การชำระ) — ป้ายกันงง: ไม่ใช่ยอดขายซ้ำ
             // (JE/VAT อยู่ที่ Payment + ใบกำกับต้นทางแล้ว) ยกเลิกผ่าน "ยกเลิกการชำระเงิน"
-            const settlementBadge = d.isSettlementReceipt
+            // รอบ 283: ใบสำคัญจ่ายหลักฐานคู่การจ่ายที่ระบบสร้างจากคู่ค้า — ป้ายจากเซิร์ฟเวอร์ (originLabel) แทนป้าย "หลักฐานรับเงิน"
+            const settlementBadge = d.originLabel
+              ? `<span style="background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe;border-radius:4px;padding:1px 6px;font-size:10px;margin-left:6px;white-space:nowrap" title="${Layout.esc(d.originLabel)}${d.reference ? ' · ' + Layout.esc(d.reference) : ''} — ยกเลิกใบนี้ = ยกเลิกการจ่าย">${Layout.esc(d.originLabel)}${d.reference ? ' · ' + Layout.esc(d.reference) : ''}</span>`
+              : d.isSettlementReceipt
               ? `<span style="background:#f0fdf4;color:#15803d;border:1px solid #bbf7d0;border-radius:4px;padding:1px 6px;font-size:10px;margin-left:6px;white-space:nowrap" title="ใบเสร็จหลักฐานรับเงินของ ${Layout.esc(d.reference || 'ใบกำกับ/ใบแจ้งหนี้')} — ไม่ลงบัญชี/VAT ซ้ำ (ยอดขายอยู่ที่ใบกำกับต้นทาง)">🧾 หลักฐานรับเงิน${d.reference ? ' · ' + Layout.esc(d.reference) : ''}</span>`
               : '';
             // รอบ 196: ใบต้นทาง (ใบเสนอราคา/PR/PO/GRN/ใบส่งของ) — ป้ายบอกว่าออกเป็นอะไรแล้ว ("✓ ออกใบแจ้งหนี้ INV-… แล้ว")

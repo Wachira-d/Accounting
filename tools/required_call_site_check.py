@@ -22542,6 +22542,45 @@ REVIEWER_CASES += [
     ("R282-2", "RemindPendingAsync", "i.ConfirmRemindCount == r.ConfirmRemindCount", "true", True),
 ]
 
+# รอบ 283 — ท่ออัตโนมัติคู่ค้าออกใบสำคัญจ่ายเป็นเอกสาร (คำสั่งเจ้าของ · คำตัดสิน 283-1…283-6 · erp-review/2026-11-21/dev-283-partner-pv.md) ·
+# ใบหลักฐานคู่การจ่าย (ไม่ลง JE ซ้ำ · ไม่ถือ VAT/ภาษีหัก · อ้าง 50 ทวิ ของการจ่าย) · ตัวตัดสินเดียว Helpers/SettlementPaymentVoucher · ตัวสร้างเดียว CreateSettlementPaymentVoucherCoreAsync
+_R283_WHY = "รอบ 283 (ใบสำคัญจ่ายจากท่อคู่ค้า — คำตัดสิน 283-1…283-6 · commit 699edd9d · erp-review/2026-11-21/dev-283-partner-pv.md): "
+_R283_PV = "Services/Implementations/DocumentService.SettlementPaymentVoucher.cs"
+RULES += [
+    dict(file="Services/Implementations/PartnerPayablePipeline.cs", method="ProcessAsync",
+         must=["IssuePaymentVoucherDocument: true"], must_lit=["{SettlementPaymentVoucher.PartnerAutoPaymentNotePrefix} ตามความยินยอมของ"],
+         why=_R283_WHY + "283-1: ท่อของผู้ซื้อขอใบสำคัญจ่ายในธุรกรรมเดียวกับการจ่าย · หัวหมายเหตุตัวเดียวกับผู้คัดใบก่อนรอบ 283"),
+    dict(file="Services/Implementations/DocumentService.cs", method="CreatePaymentAsync",
+         must=["if (request.IssuePaymentVoucherDocument == true)", "await IssueSettlementPaymentVoucherInPaymentAsync(companyId, doc, payment, createdBy);"],
+         before=[("_whtService.TryAutoIssueForDocumentAsync(", "await IssueSettlementPaymentVoucherInPaymentAsync("),
+                 ("await IssueSettlementPaymentVoucherInPaymentAsync(", "await transaction.CommitAsync();")],
+         why=_R283_WHY + "283-1/283-3: ใบสำคัญจ่ายออกหลัง 50 ทวิ ของการจ่าย (อ้างเลขได้ · ไม่ออกใบใหม่) และก่อน commit (ล้ม = การจ่ายทั้งก้อน rollback)"),
+    dict(file=_R283_PV, method="CreateSettlementPaymentVoucherCoreAsync",
+         must=["IsSettlementReceipt = true", "SettlementPaymentId = payment.Id", "VatAmount = SettlementPaymentVoucher.VatAmount",
+               "WithholdingTaxAmount = SettlementPaymentVoucher.WithholdingTaxAmount", "DocumentNumberGenerator.NextAsync(_db, companyId, DocumentType.PaymentVoucher,",
+               "DocumentPermissionHelper.CanApproveAsync(", "_db.AddChainedAuditLog(", "labels.SettlementPaymentVoucherLine("],
+         forbid=["AutoPostToJournalAsync(", "TryAutoIssueForDocumentAsync(", "ApplySourceDocumentAdjustmentsAsync("],
+         why=_R283_WHY + "283-1/283-2: ใบหลักฐาน — ไม่ลง JE/ไม่ตัดหนี้/ไม่ออก 50 ทวิ · ไม่ถือภาษี (ผู้อ่าน ภ.ง.ด./ภ.พ.30 ไม่นับซ้ำ) · เลขจากเล่ม PV ตามสิทธิ์อนุมัติ · audit"),
+    dict(file=_R283_PV, method="IssueSettlementPaymentVoucherAsync",
+         must_lit=["FOR UPDATE"], must=["SettlementPaymentVoucher.Decide(", "CreateSettlementPaymentVoucherCoreAsync(companyId, source!, payment!, actor, backfilled: true)"],
+         why=_R283_WHY + "283-5: ออกย้อนหลังเฉพาะแถวที่เลือก · ล็อกการจ่าย · ตัวตัดสินเดียว (มีใบแล้ว = ไม่ออกซ้ำ)"),
+    dict(file="Services/Implementations/DocumentService.cs", method="ReversePaymentInternalAsync",
+         must=["await VoidSettlementPaymentVouchersOfPaymentAsync(companyId, payment);"],
+         why=_R283_WHY + "283-4: ยกเลิกการจ่าย ⇒ ใบสำคัญจ่ายหลักฐานยกเลิกตาม (คงแถว)"),
+    dict(file="Services/Implementations/DocumentService.cs", method="ReverseMultiDocPaymentInternalAsync",
+         must=["await VoidSettlementPaymentVouchersOfPaymentAsync(companyId, payment);"],
+         why=_R283_WHY + "283-4: เส้นหลายใบสมมาตร"),
+    dict(file="Services/Implementations/DocumentService.cs", method="VoidDocumentAsync",
+         must=["doc.IsSettlementReceipt && doc.DocumentType == DocumentType.PaymentVoucher && doc.SettlementPaymentId is Guid settledPayId",
+               "return await VoidPaymentAsync(companyId, lp);"],
+         before=[("return await VoidPaymentAsync(companyId, lp);", "if (doc.IsSettlementReceipt)\n            throw")],
+         why=_R283_WHY + "283-4: ยกเลิกใบสำคัญจ่ายหลักฐาน = ยกเลิกการจ่ายเส้นเดิม (กลับ JE · คืนหนี้ · 50 ทวิ ตามกติกาเดิม)"),
+]
+REVIEWER_CASES += [
+    ("R283-1", "ProcessAsync", "IssuePaymentVoucherDocument: true", "IssuePaymentVoucherDocument: false", True),
+    ("R283-2", "CreateSettlementPaymentVoucherCoreAsync", "WithholdingTaxAmount = SettlementPaymentVoucher.WithholdingTaxAmount", "WithholdingTaxAmount = payment.WithholdingTaxAmount", True),
+]
+
 # รอบ 284 (แพ็ก F — งานคงค้างจากผลตรวจรายสัปดาห์ 2026-11-20): T4 L-1 · T4 L-6 · T3 MED-5 (สำเนา JS) — คำตัดสิน 284-1…
 _R284_WHY = "รอบ 284 (แพ็ก F): "
 RULES += [

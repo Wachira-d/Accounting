@@ -7507,6 +7507,13 @@ LOW-1 "ส่งได้บางส่วน" · LOW-2 การ์ด `#HeyNe
 - MED-1 ประทับตามความจริงหลังล้ม (`RecordedAsync`) · MED-2 ฝั่ง B สลิปผู้โอนต้องเลขท้าย ≥ 4 + ชื่อตรง (`SlipMoneySource.PayerSlipStrong`) · LOW งวดปิด/ภ.พ.30 ยื่นแล้ว ⇒ `PeriodLocked`
 - คอมมิต 181fe606
 
+### รอบ 283 — ใบสำคัญจ่ายเป็นเอกสารจากท่ออัตโนมัติคู่ค้า (คำสั่งเจ้าของ · คำตัดสิน 283-1…283-6 · `erp-review/2026-11-21/dev-283-partner-pv.md`)
+- 283-1: ท่อของผู้ซื้อขอ `IssuePaymentVoucherDocument: true` ⇒ `CreatePaymentAsync` ออกใบสำคัญจ่ายหลักฐานคู่การจ่ายในธุรกรรมเดียวกัน (ไม่ลง JE · ไม่ตัดหนี้ · VAT/ภาษีหักบนใบ = 0 · เลข 50 ทวิ บนบรรทัด) · ล้ม = การจ่าย rollback
+- 283-2/3: เลขจากเล่ม PV ตามสิทธิ์อนุมัติ · 50 ทวิ ใบเดียวผูกด้วยกุญแจการจ่าย (ไม่ย้าย `DocumentId` · ไม่ออกใหม่)
+- 283-4: ยกเลิก PV = ยกเลิกการจ่าย · ยกเลิกการจ่าย (ใบเดียว/หลายใบ) ⇒ PV ยกเลิกตาม คงแถว + audit
+- 283-5: รายงาน + ออกย้อนหลังทีละรายการ (`partner-payments/without-voucher` · `partner-payments/{id}/payment-voucher`) · ป้าย `OriginLabel` บนรายการเอกสาร
+- เทสต์ pure `SettlementPaymentVoucherRound283Tests` · Db `PartnerSettlementVoucherRound283DbTests` (2) · กติกา `_R283_*` (+7) · คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว (ฐาน `accounting_test_r283`) · commit 699edd9d
+
 ## รอบ 284 (2026-11-21 · แพ็ก F งานคงค้างจากผลตรวจรายสัปดาห์ · `erp-review/2026-11-21/dev-284-pack-f.md`)
 
 - 284-1 (T4 L-1): `Helpers/EmployeeIdDuplicateScan` — ตัวจับซ้ำนำเข้าพนักงานข้ามเลขบัตรเดิมที่ถอดรหัสไม่ได้ + คำเตือน `employee-id-unreadable` ที่ศูนย์นำเข้า/ทางตรวจซ้ำเดิม

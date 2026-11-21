@@ -304,6 +304,20 @@ public sealed class DocumentLabels
                _ => "",
            };
 
+    /// <summary>รอบ 283: บรรทัดเดียวของใบสำคัญจ่ายหลักฐานคู่การจ่าย (Helpers/SettlementPaymentVoucher) — เงินออก · ภาษีหัก · เลข 50 ทวิ ของการจ่ายนี้</summary>
+    public string SettlementPaymentVoucherLine(string sourceNumber, decimal cash, decimal wht, string? whtCertNumber)
+    {
+        var s = string.Format(this["settlement_pv_line"], sourceNumber, cash.ToString("N2"));
+        if (wht > 0m)
+            s += string.Format(this["settlement_pv_line_wht"], wht.ToString("N2"), (cash + wht).ToString("N2"))
+                 + (string.IsNullOrWhiteSpace(whtCertNumber) ? this["settlement_pv_line_no_cert"] : string.Format(this["settlement_pv_line_cert"], whtCertNumber));
+        return s;
+    }
+
+    /// <summary>รอบ 283: หมายเหตุ (พิมพ์) ของใบสำคัญจ่ายหลักฐานคู่การจ่าย</summary>
+    public string SettlementPaymentVoucherNote(string sourceNumber, DateTime paidOn)
+        => string.Format(this["settlement_pv_note"], sourceNumber, Date(paidOn));
+
     /// <summary>หน่วยของบรรทัดเดียวบนใบเสร็จรับชำระ</summary>
     public string SettlementUnitItem => this["settlement_unit_item"];
 
@@ -442,6 +456,12 @@ public sealed class DocumentLabels
         ["settlement_receipt_note_tax_invoice"] = " — ทำหน้าที่ใบกำกับภาษี ณ วันรับเงิน (มาตรา 78/1)",
         ["settlement_receipt_note_installment"] = " — ทำหน้าที่ใบกำกับภาษี ณ วันรับเงินของงวดนี้ (มาตรา 78/1) · ภาษีมูลค่าเพิ่มตามส่วนของเงินที่รับ",
         ["settlement_unit_item"] = "รายการ",
+        // รอบ 283: ใบสำคัญจ่ายหลักฐานคู่การจ่ายที่ระบบสร้างจากคู่ค้า (Helpers/SettlementPaymentVoucher)
+        ["settlement_pv_line"] = "จ่ายชำระตามเอกสารเลขที่ {0} — เงินโอน {1} บาท",
+        ["settlement_pv_line_wht"] = " · หักภาษี ณ ที่จ่าย {0} บาท (ปิดหนี้รวม {1} บาท)",
+        ["settlement_pv_line_cert"] = " · หนังสือรับรองการหักภาษี ณ ที่จ่าย (50 ทวิ) เลขที่ {0}",
+        ["settlement_pv_line_no_cert"] = " · หนังสือรับรอง 50 ทวิ ดูที่เอกสารตั้งหนี้",
+        ["settlement_pv_note"] = "ใบสำคัญจ่ายประกอบการจ่ายชำระเอกสารเลขที่ {0} วันที่ {1} — ลงบัญชีที่การจ่ายแล้ว",
         ["total_deposit_applied"] = "หักเงินมัดจำ",
         ["total_deposit_tax_invoiced"] = "หักมูลค่ามัดจำ (ก่อน VAT) ตามใบกำกับภาษี",
         ["total_rounding"] = "ผลต่างจากการปัดเศษ",
@@ -628,6 +648,11 @@ public sealed class DocumentLabels
         ["settlement_receipt_note_tax_invoice"] = " — serves as the tax invoice at the time of payment (Section 78/1)",
         ["settlement_receipt_note_installment"] = " — serves as the tax invoice for this instalment at the time of payment (Section 78/1) · VAT in proportion to the amount received",
         ["settlement_unit_item"] = "item",
+        ["settlement_pv_line"] = "Payment of document No. {0} — transferred {1} THB",
+        ["settlement_pv_line_wht"] = " · withholding tax {0} THB (total settled {1} THB)",
+        ["settlement_pv_line_cert"] = " · withholding tax certificate (50 Tawi) No. {0}",
+        ["settlement_pv_line_no_cert"] = " · see the withholding tax certificate on the source document",
+        ["settlement_pv_note"] = "Payment voucher supporting the payment of document No. {0} dated {1} — posted with the payment",
         ["total_deposit_applied"] = "Less deposit",
         ["total_deposit_tax_invoiced"] = "Less deposit already tax-invoiced (excl. VAT)",
         ["total_rounding"] = "Rounding adjustment",
