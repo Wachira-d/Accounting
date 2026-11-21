@@ -106,7 +106,7 @@ public class PartnerPayableRound264Tests
 
         var agree = D(new(Usable(), SlipMatch: new(PartnerPaySourceAccount.SlipKind.Unique, BankA), ConsentDefault: BankA));
         Assert.Equal(Origin.SlipUnique, agree.Origin);
-        Assert.True(agree.AllowsAuto);   // รอบ 282 (คำสั่งเจ้าของ 282-6 แทน 264-P2 M1): สลิปตรงบัญชีเดียว + ค่าตั้งตรงกัน = บันทึกเองได้
+        Assert.False(agree.AllowsAuto);   // รอบ 282 ฝ่ายค้าน MED-2: สลิปไม่มีชื่อผู้โอน/เลขท้าย ≥4 ⇒ ยังไม่บันทึกเอง
         Assert.Equal(BankA, agree.BankAccountId);
         Assert.Empty(agree.Losers);
     }

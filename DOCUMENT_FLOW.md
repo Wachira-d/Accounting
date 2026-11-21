@@ -3303,6 +3303,12 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
 - **ไม่มั่นใจ (282-4)** — รายการรอยืนยันเดิม (คิวเดียวของ 260 · หน้า `payment-intents.html` แสดง `autoRecordReason`) + `PaymentIntent.AutoRecordCode/Reason` + audit `SlipAutoRecordBlocked` ·
   แจ้ง `autopilot.slip_needs_confirm` (ลิงก์หน้ายืนยัน) ยกเว้นค่าตั้งปิด (ประตูแจ้งโอนแจ้งเดิมแล้ว) · ตอบผู้ซื้อ "รอผู้ขายตรวจ" · ยืนยัน/ปฏิเสธที่หน้าเดิม (ล็อกอิน + สิทธิ์ยืนยันรับเงิน) ·
   เลือกใบอื่น = คิวสลิปจากแชต (ผูกด้วยเลขที่) · ไม่มีขั้นใดประทับชำระแล้วเองโดยไม่ผ่านด่านครบหรือคนยืนยัน
+- **ชุดแก้ฝ่ายค้าน 282 (คำตัดสิน 282-8…282-11)** — **HIGH-1: สลิปอย่างเดียวไม่บันทึกรับเงิน** (QR ไม่มียอด/บัญชี/ผู้รับ · CRC สาธารณะ ⇒ แต่งรูปได้):
+  `SlipAutoRecordService.TryAutoAsync` ไม่เรียกเส้นยืนยันเองแล้ว — ด่านสลิปครบ (`SlipAutoRecordRule.SlipReady`) ⇒ หารายการเดินบัญชีของบัญชีบนสลิป ยอดตรง วันตรง ยังไม่จับคู่ (หนึ่งรายการ) ⇒
+  `IBankReceiptSettleService.EvaluateLineAsync` (ตัวตัดสินเงินเข้าเดียว: แหล่งบรรทัด · สิทธิ์ผู้นำเข้า · `BankAutoSettleEnabled` · ตัวระบุตัว = เลขอ้างอิง QR บนรายการชำระ) ⇒ บันทึกเงินที่นั่น ·
+  ไม่มี/ไม่ผ่าน ⇒ `NoBankLine` + ป้าย "QR ตรวจได้แค่ว่าเป็นรูปแบบสลิป ไม่ได้ยืนยันว่าเงินเข้า" + แจ้ง · รายการเดินบัญชีมาทีหลัง ⇒ งาน BankAutoSettle เดิมจับคู่ย้อน (ทุกทางเข้ารวมแชต 1:1 ของ 260) ·
+  MED-1 ล้มหลังเงินลง ⇒ `RecordedAsync` ประทับตามจริง · MED-2 ฝั่ง B สลิปผู้โอนบันทึกเองได้เฉพาะเลขท้าย ≥ 4 + ชื่อผู้โอนตรงชื่อบริษัท (`SlipMoneySource.PayerSlipStrong` —
+  การแจ้งไม่เก็บชื่อ ⇒ ตอนนี้แจ้งยืนยันเสมอ) · LOW งวดบัญชีปิด/เดือน ภ.พ.30 ยื่นแล้ว ⇒ `PeriodLocked` · ยอดคงค้างกันซ้อนด้วยล็อกต่อบริษัท + `PendingProblem` ของประตูแจ้งโอนเดิม
 - **วิธีสำรองทั้งสองฝั่ง (คำสั่งเจ้าของ 282-6)** — ตัวตัดสินแหล่งเงินเดียว `Helpers/SlipMoneySource` (รายการเดินบัญชี › สลิปตรงบัญชีเดียว › ไม่รู้ = ห้ามเดา) · ฝั่ง B
   `PartnerPaySourceAccount.Precedence` แถว BankLine/SlipUnique อ่าน `SlipMoneySource.AllowsAuto` (ผู้โอนบนสลิปตรงบัญชีเดียวของ B ⇒ บันทึกจ่ายเองได้ — แทน 264-P2 M1) ·
   ไม่รู้บัญชีที่จ่าย (`PartnerAutoRecordPolicy.Codes.Source`) ⇒ `PartnerPayablePipeline.SourceNeedsConfirmAsync` แจ้ง `partner.pay_source_needs_confirm` (ลิงก์ใบซื้อ · ปุ่ม “บันทึกจ่าย” เดิม) ·
@@ -3311,7 +3317,7 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
   `PartnerOutboundPaymentService.PurchaseForPayLinkAsync`: โทเคนที่ใช้อยู่ ⇒ ใบผู้ขาย · ลิงก์ InvoiceFlow ปลายทาง = บริษัทผู้ใช้ · คู่ค้า Accepted · สิทธิ์ดูใบซื้อ) ⇒ ช่อง "จ่ายจากบัญชี"
   จาก `Options` เดิม ⇒ ปุ่ม "จ่ายจากระบบของเรา" เดิม (`StartGatewayAsync` — แผนชั้น PayerDeclared อยู่ฝั่งผู้ซื้อ · ผู้ขายเห็นแค่รายการชำระ) · ไม่ล็อกอิน/ไม่ใช่คู่ค้า ⇒ หน้าเดิม
 - เทสต์ pure `SlipAutoRecordRound282Tests` · Db `SlipAutoRecordRound282DbTests` + `PartnerOutboundRound264P4DbTests` (รอบ282_หน้าชำระ…) · migration `Round282Migration` ·
-  Last verified commit 14abedf7
+  Last verified commit 181fe606 (ชุดแก้ฝ่ายค้าน) · 14abedf7
 
 ### 2.12g-264-P2 รอบ 264 แพ็ก P2 "อ่านบัญชีจากสลิป — QR ตรวจสลิป + ผู้โอน/ผู้รับ" (`erp-review/2026-11-12/team-264-a2b-design.md` §3.2/§4 · คำตัดสิน 264-4-1…8)
 

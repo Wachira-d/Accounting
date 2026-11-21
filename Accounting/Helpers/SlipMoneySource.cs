@@ -52,6 +52,14 @@ public static class SlipMoneySource
         };
     }
 
+    /// <summary>ฝ่ายค้าน MED-2: หลักที่เห็นขั้นต่ำของ "สลิปผู้โอน" ที่บันทึกจ่ายเองได้ (ตัวจับคู่ยังรับ 3 หลักเพื่อเสนอค่า — ไม่ใช่เกณฑ์บันทึกเอง)</summary>
+    public const int PayerAutoMinDigits = 4;
+
+    /// <summary>ฝ่ายค้าน MED-2: สลิปผู้โอนแน่นพอให้บันทึกจ่ายเองไหม — เลขท้าย ≥ 4 หลัก <b>และ</b> ชื่อผู้โอนตรงชื่อบริษัท (ไม่ครบ ⇒ แจ้งยืนยัน)</summary>
+    public static bool PayerSlipStrong(int visibleDigits, bool payerNameMatches) => visibleDigits >= PayerAutoMinDigits && payerNameMatches;
+
+    public const string PayerSlipWeakReason = "สลิปยืนยันผู้โอนไม่ครบ (ต้องเห็นเลขท้ายบัญชี ≥ 4 หลัก และชื่อผู้โอนตรงชื่อบริษัท — บัญชีส่วนตัวของกรรมการอาจมีเลขท้ายเหมือน)";
+
     // ═══ วิธีสำรอง: แจ้งเตือนให้ยืนยัน + เตือนซ้ำ (ไม่ถี่ · มีเพดาน) — ตัวเดียวของทั้งสองฝั่ง ═══
 
     /// <summary>เตือนซ้ำหลังแจ้งครั้งแรก/ครั้งก่อนเมื่อพ้นช่วงนี้ (ครั้งที่ 1 = 1 วัน · ครั้งที่ 2 = 3 วัน)</summary>
