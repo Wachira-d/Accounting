@@ -53,7 +53,7 @@ public class SlipAutoRecordRound282Tests
 
     private static SlipAutoRecordRule.Facts Good() => new(SettingOn: true, SenderVerified: true, SingleMatch: true, QrVerified: true, RefDuplicate: false,
         SlipDateTh: Today, DocumentDateTh: Today.AddDays(-3), Money: SlipMoneySource.Decide(null, Unique(AccK), new[] { AccK }),
-        ReceivingBank: AccK, ReceivingDocChannelBank: null, ReceivingProblem: null, NowUtc: Now);
+        ReceivingBank: AccK, ReceivingDocChannelBank: null, ReceivingProblem: null, NowUtc: Now, BankLineConfirmed: true);
 
     [Fact]
     public void ผ่านทุกด่าน_บันทึกเอง_สืบทอดแหล่งเงินเอกสารที่เป็นบัญชีเดียวกันก็ผ่าน()
@@ -84,6 +84,8 @@ public class SlipAutoRecordRound282Tests
             (Good() with { ReceivingProblem = "ต้องเลือกบัญชี" }, SlipAutoRecordRule.Codes.ReceivingConflict),
             (Good() with { ReceivingBank = AccS }, SlipAutoRecordRule.Codes.ReceivingConflict),
             (Good() with { ReceivingBank = null, ReceivingDocChannelBank = null }, SlipAutoRecordRule.Codes.ReceivingConflict),   // เอกสารลงเงินสด/ผังอื่น
+            (Good() with { PeriodLocked = true }, SlipAutoRecordRule.Codes.PeriodLocked),
+            (Good() with { BankLineConfirmed = false }, SlipAutoRecordRule.Codes.NoBankLine),
         };
         foreach (var (f, code) in cases)
         {
@@ -114,5 +116,32 @@ public class SlipAutoRecordRound282Tests
         Assert.DoesNotContain("บัญชี", LineChatSlipRule.Replies.AwaitingSeller.Replace("รายการเงินเข้า", ""));
         Assert.DoesNotContain("1,070.00", LineChatSlipRule.Replies.Recorded("INV-1", 1070m, showAmounts: false));
         Assert.Contains("1,070.00", LineChatSlipRule.Replies.Recorded("INV-1", 1070m, showAmounts: true));
+    }
+
+    [Fact]
+    public void ฝ่ายค้านHIGH1_สลิปแต่งยอด_QRถูก_ไม่มีรายการเดินบัญชี_ไม่บันทึก_มีรายการเดินบัญชีตรง_บันทึก()
+    {
+        // QR ไม่มียอด/บัญชี/ผู้รับ + CRC เป็นสูตรสาธารณะ ⇒ รูปแต่งยอด 50,000 จากการโอนจริง 1 บาท ผ่านด่านสลิปได้ทั้งหมด
+        var forged = Good() with { BankLineConfirmed = false };
+        Assert.True(SlipAutoRecordRule.SlipReady(forged));                    // ด่านของสลิปผ่าน (จึงลองหารายการเดินบัญชี)
+        var v = SlipAutoRecordRule.Decide(forged);
+        Assert.False(v.Auto);
+        Assert.Equal(SlipAutoRecordRule.Codes.NoBankLine, v.Code);
+        Assert.StartsWith(SlipAutoRecordRule.QrCaveat, v.Reason);
+        Assert.True(SlipAutoRecordRule.Decide(forged with { BankLineConfirmed = true }).Auto);
+        Assert.False(SlipAutoRecordRule.SlipReady(forged with { QrVerified = false }));
+    }
+
+    [Fact]
+    public void ฝ่ายค้านMED2_ผู้ซื้อ_บัญชีส่วนตัวเลขท้ายเหมือน_ไม่จับ_หลักฐานแน่นจึงบันทึกเอง()
+    {
+        var usable = new Dictionary<Guid, string> { [AccK] = "กสิกรไทย ••0621" };
+        PartnerPaySourceAccount.Decision D(int digits, bool name)
+            => PartnerPaySourceAccount.Decide(new(usable, SlipMatch: new PartnerPaySourceAccount.Slip(PartnerPaySourceAccount.SlipKind.Unique, AccK, digits, name)));
+        Assert.False(D(4, false).AllowsAuto);   // เลขท้ายเหมือน แต่ชื่อผู้โอนไม่ใช่บริษัท (บัญชีส่วนตัวกรรมการ)
+        Assert.False(D(3, true).AllowsAuto);    // เห็นแค่ 3 หลัก
+        Assert.Contains(SlipMoneySource.PayerSlipWeakReason, D(4, false).Reason);
+        Assert.Equal(AccK, D(4, false).BankAccountId);   // ยังเสนอค่าให้คนยืนยัน
+        Assert.True(D(4, true).AllowsAuto);
     }
 }

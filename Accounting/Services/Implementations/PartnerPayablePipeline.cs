@@ -619,7 +619,8 @@ public class PartnerPayablePipeline
         var r = SlipAccountMatch.Match(party, accounts);
         return r.Kind switch
         {
-            SlipAccountMatch.Kind.Unique => new PartnerPaySourceAccount.Slip(PartnerPaySourceAccount.SlipKind.Unique, r.AccountId),
+            // ฝ่ายค้าน MED-2 (รอบ 282): ชื่อผู้โอนไม่ถูกเก็บบนการแจ้ง (PDPA · 264-P2) ⇒ PayerNameMatches = false ⇒ สลิปผู้โอนเสนอค่าได้ แต่ไม่บันทึกเอง (แจ้งยืนยัน)
+            SlipAccountMatch.Kind.Unique => new PartnerPaySourceAccount.Slip(PartnerPaySourceAccount.SlipKind.Unique, r.AccountId, party.VisibleDigits.Count, PayerNameMatches: false),
             SlipAccountMatch.Kind.Many => new PartnerPaySourceAccount.Slip(PartnerPaySourceAccount.SlipKind.Many),
             SlipAccountMatch.Kind.NotOurs => new PartnerPaySourceAccount.Slip(PartnerPaySourceAccount.SlipKind.NotOurs),
             SlipAccountMatch.Kind.Unreadable => new PartnerPaySourceAccount.Slip(PartnerPaySourceAccount.SlipKind.Unreadable),

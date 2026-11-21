@@ -22490,6 +22490,11 @@ RULES += [
                "ShowAmounts: binding.ShowAmounts && binding.ContactIds.Count == 1"],
          before=[("GovPaymentSlip.Identify(reading)", "_paymentSlips.HandleForwardedAsync("), ("agency.Kind == GovPaymentSlip.Kind.NotGovernment", "_paymentSlips.HandleForwardedAsync(")],
          why=_R282_WHY + "ตัวจัดเส้นเดียว: อ่านครั้งเดียว → จำแนกสลิปรัฐก่อน (เส้น 272) → ไม่ใช่สลิปรัฐเท่านั้นที่ส่งต่อเส้นจับคู่ใบแจ้งหนี้ · ผู้ส่งอีเมลยืนยันไม่ได้ ⇒ ไม่บันทึกเอง"),
+    dict(file=_R282_LCS, method="AutoAsync", must=["await _auto.RecordedAsync(row.CompanyId, intentId, CancellationToken.None)"],
+         before=[("_auto.RecordedAsync(", "SlipAutoRecordRule.Codes.ConfirmFailed")],
+         why=_R282_WHY + "ฝ่ายค้าน MED-1: ล้มหลังเงินลงแล้ว ⇒ ประทับตามความจริง ไม่ประทับ ConfirmFailed กลับทิศ"),
+    dict(file="Helpers/PartnerPaySourceAccount.cs", method="Decide", must=["SlipMoneySource.PayerSlipStrong("],
+         why=_R282_WHY + "ฝ่ายค้าน MED-2: สลิปผู้โอนบันทึกจ่ายเองได้เฉพาะเลขท้าย ≥4 + ชื่อผู้โอนตรงชื่อบริษัท"),
     dict(file=_R282_LCS, method="HandleImageAsync", must=["await CoreAsync(new Core("],
          why=_R282_WHY + "แชต/กลุ่ม OA บริษัทเดินแกนเดียวกับช่องทางที่ส่งต่อ"),
     dict(file=_R282_LCS, method="HandleForwardedAsync",
@@ -22502,11 +22507,13 @@ RULES += [
          forbid=["ApplyChargeAsync(", "CreatePaymentAsync("],
          why=_R282_WHY + "ใบเดียว: แจ้งโอนผ่านประตูเดิมก่อน แล้วจึงให้ตัวบันทึกเองตัดสิน · ห้ามบันทึกเงินตรงในตัวรับสลิป · ช่องทางไม่มีปุ่ม ⇒ คิวผู้ขาย"),
     dict(file=_R282_AUTO, method="TryAutoAsync",
-         must=["SlipReceivingAccount.ResolveAsync(", "SlipReceivingAccount.SlipPayeeMatch(", "SlipMoneySource.Decide(null, payee,", "SlipAutoRecordRule.Decide(",
-               "new SlipIntentConfirmService(_db, _intents).ConfirmAsync(", "PaymentEventSource.System", "if (verdict.Auto)", "dupStatuses.Contains(i.Status)"],
-         before=[("SlipAutoRecordRule.Decide(", "new SlipIntentConfirmService("), ("SlipMoneySource.Decide(", "SlipAutoRecordRule.Decide(")],
-         forbid=["CreatePaymentAsync(", "ApplyChargeAsync("],
-         why=_R282_WHY + "แหล่งเงินจากตัวตัดสินเดียว → ด่านครบ → เส้นยืนยันตัวเดียว (ไม่มีเส้นเงินที่สอง) · ไม่ผ่าน = เหตุ + แจ้ง ไม่ประทับชำระแล้ว"),
+         must=["SlipReceivingAccount.ResolveAsync(", "SlipReceivingAccount.SlipPayeeMatch(", "SlipMoneySource.Decide(null, payee,", "SlipAutoRecordRule.SlipReady(facts)",
+               "_bankSettle.EvaluateLineAsync(", "LineSettledDocumentAsync(", "facts with { BankLineConfirmed = recorded }", "if (verdict.Auto)",
+               "dupStatuses.Contains(i.Status)", "PeriodLockedAsync(", "t.ReconciliationStatus == ReconciliationStatus.Unmatched && t.MatchedPaymentId == null"],
+         before=[("SlipAutoRecordRule.SlipReady(facts)", "_bankSettle.EvaluateLineAsync("), ("LineSettledDocumentAsync(", "facts with { BankLineConfirmed = recorded }")],
+         forbid=["CreatePaymentAsync(", "ApplyChargeAsync(", "SlipIntentConfirmService(", "BankLineConfirmed = true"],
+         why=_R282_WHY + "282-8 (ฝ่ายค้าน HIGH-1): สลิปอย่างเดียวห้ามบันทึกเงิน — บันทึกได้เฉพาะเมื่อรายการเดินบัญชีที่ตรงถูกตัวตัดสินเงินเข้าเดียวตัดชำระจริง · "
+             + "ห้ามเรียกเส้นยืนยันเอง · ห้ามประทับรายการเดินบัญชีว่ายืนยันเองโดยไม่ดูผลจริง"),
     dict(file=_R282_AUTO, method="RemindPendingAsync",
          must=["SlipMoneySource.ReminderDue(", "i.ConfirmRemindCount == r.ConfirmRemindCount", "i.CompanyId == r.CompanyId"],
          why=_R282_WHY + "เตือนซ้ำตามตารางเดียว · compare-and-set กันส่งซ้ำข้าม instance · ผูกบริษัทของแถว"),
@@ -22530,7 +22537,8 @@ RULES += [
          why=_R282_WHY + "เตือนซ้ำสลิปรอยืนยันถูกต่อสายเข้างานเบื้องหลัง"),
 ]
 REVIEWER_CASES += [
-    ("R282-1", "TryAutoAsync", "if (verdict.Auto)", "if (true)", True),
+    ("R282-1", "TryAutoAsync", "facts with { BankLineConfirmed = recorded }", "facts with { BankLineConfirmed = true }", True),
+    ("R282-3", "TryAutoAsync", "_bankSettle.EvaluateLineAsync(", "_ = (", True),
     ("R282-2", "RemindPendingAsync", "i.ConfirmRemindCount == r.ConfirmRemindCount", "true", True),
 ]
 

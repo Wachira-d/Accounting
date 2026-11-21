@@ -86,6 +86,12 @@ public sealed class LineChatSlipService : ILineChatSlipService
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
+            // ฝ่ายค้าน MED-1: ล้มหลังเงินลงแล้ว ⇒ ประทับตามความจริง (บันทึกแล้ว) + LogError + ตอบผู้ซื้อตามจริง — ไม่ประทับ ConfirmFailed กลับทิศ
+            if (await _auto.RecordedAsync(row.CompanyId, intentId, CancellationToken.None))
+            {
+                _logger.LogError(ex, "สลิป {SlipId}: เงินของรายการ {IntentId} ลงบัญชีแล้ว แต่ขั้นตามหลังล้ม — สถานะจริง = บันทึกแล้ว", row.Id, intentId);
+                return true;
+            }
             _logger.LogError(ex, "บันทึกรับเงินเองจากสลิป {SlipId} (รายการ {IntentId}) ล้ม — รายการยังรอผู้ขายยืนยัน", row.Id, intentId);
             await _db.PaymentIntents.Where(i => i.Id == intentId && i.CompanyId == row.CompanyId)
                 .ExecuteUpdateAsync(u => u.SetProperty(i => i.AutoRecordCode, SlipAutoRecordRule.Codes.ConfirmFailed)

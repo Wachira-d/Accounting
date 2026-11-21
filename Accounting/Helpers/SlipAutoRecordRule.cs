@@ -28,6 +28,10 @@ public static class SlipAutoRecordRule
         public const string MoneySource = "MoneySource";
         public const string ReceivingConflict = "ReceivingConflict";
         public const string ConfirmFailed = "ConfirmFailed";
+        /// <summary>282-8: ด่านสลิปผ่านครบ แต่ยังไม่มีรายการเดินบัญชียืนยันเงินเข้า (สลิปอย่างเดียวห้ามบันทึกเอง)</summary>
+        public const string NoBankLine = "NoBankLine";
+        /// <summary>LOW (ฝ่ายค้าน 282): วันที่บนสลิปอยู่ในงวดบัญชีที่ปิด/เดือน ภ.พ.30 ที่ยื่นแล้ว</summary>
+        public const string PeriodLocked = "PeriodLocked";
     }
 
     /// <param name="SettingOn">ค่าตั้งของบริษัทผู้ขาย <c>CompanySettings.SlipAutoRecordEnabled</c> (ค่าตั้งต้นปิด — คำตัดสิน 282-3)</param>
@@ -40,8 +44,19 @@ public static class SlipAutoRecordRule
     /// <param name="ReceivingBank">บัญชีที่เส้นยืนยัน (<c>SlipReceivingAccount.ResolveAsync</c>) จะใช้ · null + <paramref name="ReceivingProblem"/> null = สืบทอดแหล่งเงินของเอกสาร</param>
     /// <param name="ReceivingDocChannelBank">เอกสารตั้งแหล่งเงินเป็นบัญชีธนาคารนี้ (สืบทอด — ต้องตรงบัญชีบนสลิป)</param>
     /// <param name="RefDuplicate">เลขอ้างอิงจาก QR ซ้ำกับรายการชำระอื่นของบริษัทที่รอตรวจ/รับเงินแล้ว (สลิปเดียวจ่ายสองใบไม่ได้)</param>
+    /// <param name="PeriodLocked">วันที่บนสลิปอยู่ในงวดบัญชีที่ปิด หรือเดือน ภ.พ.30 ที่ยื่น/ล็อกแล้ว</param>
+    /// <param name="BankLineConfirmed">282-8 (ฝ่ายค้าน HIGH-1): รายการเดินบัญชีของบัญชีบนสลิป ยอดตรง วันตรง ยังไม่จับคู่ <b>และ</b> ตัวตัดสินเงินเข้าเดียว
+    /// (<see cref="BankReceiptAutoSettle"/>) ปิดหนี้ได้ — false = สลิปอย่างเดียว ⇒ ห้ามบันทึกเอง</param>
     public sealed record Facts(bool SettingOn, bool SenderVerified, bool SingleMatch, bool QrVerified, bool RefDuplicate, DateTime? SlipDateTh, DateTime DocumentDateTh,
-        SlipMoneySource.Verdict Money, Guid? ReceivingBank, Guid? ReceivingDocChannelBank, string? ReceivingProblem, DateTime NowUtc);
+        SlipMoneySource.Verdict Money, Guid? ReceivingBank, Guid? ReceivingDocChannelBank, string? ReceivingProblem, DateTime NowUtc,
+        bool PeriodLocked = false, bool BankLineConfirmed = false);
+
+    /// <summary>282-8: ป้ายตรง ๆ (หน้าตั้งค่า/หน้ายืนยัน/เหตุบนรายการ) — QR ไม่มียอด/บัญชี/ผู้รับ · CRC เป็นสูตรสาธารณะ ⇒ แต่งรูปได้</summary>
+    /// (ชุดแก้ฝ่ายค้าน commit 181fe606)
+    public const string QrCaveat = "QR ตรวจได้แค่ว่าเป็นรูปแบบสลิป ไม่ได้ยืนยันว่าเงินเข้า";
+
+    /// <summary>ด่านของสลิปผ่านครบไหม (ยังไม่นับรายการเดินบัญชี) — ผู้เรียกใช้ตัดสินว่าจะลองจับคู่รายการเดินบัญชีหรือไม่</summary>
+    public static bool SlipReady(Facts f) => Decide(f with { BankLineConfirmed = true }).Auto;
 
     public sealed record Verdict(bool Auto, string Code, string Reason)
     {
@@ -61,19 +76,21 @@ public static class SlipAutoRecordRule
         var today = (f.NowUtc + Bangkok).Date;
         if (slipDay.Date > today || slipDay.Date < today.AddDays(-MaxSlipAgeDays) || slipDay.Date < f.DocumentDateTh.Date)
             return No(Codes.DateOutOfRange, $"วันที่บนสลิป {slipDay:dd/MM/yyyy} อยู่นอกช่วงที่บันทึกเองได้ (ก่อนวันเอกสาร/อนาคต/เก่ากว่า {MaxSlipAgeDays} วัน)");
+        if (f.PeriodLocked) return No(Codes.PeriodLocked, $"วันที่บนสลิป {slipDay:dd/MM/yyyy} อยู่ในงวดบัญชีที่ปิด/เดือน ภ.พ.30 ที่ยื่นแล้ว — ตรวจแล้วบันทึกเอง (ระบบไม่ลงย้อนงวดที่ปิด)");
         if (!f.Money.Auto) return No(Codes.MoneySource, f.Money.Reason);
         if (f.ReceivingProblem != null) return No(Codes.ReceivingConflict, f.ReceivingProblem);
         // บัญชีที่เส้นยืนยันจะลงต้องเป็นบัญชีเดียวกับที่สลิปชี้ (override ตรง หรือสืบทอดแหล่งเงินของเอกสารที่เป็นบัญชีนั้น)
         var lands = f.ReceivingBank ?? f.ReceivingDocChannelBank;
         if (lands != f.Money.AccountId)
             return No(Codes.ReceivingConflict, "บัญชีบนสลิปไม่ตรงแหล่งเงินที่ตั้งบนเอกสาร — หลักฐานขัดกัน ระบบไม่บันทึกเอง (เลือกบัญชีที่เงินเข้าจริง)");
-        return new Verdict(true, Codes.Ok, "ผ่านทุกด่าน: ยอดตรงใบเดียว · QR ธนาคาร · วันที่ · " + f.Money.Reason);
+        // 282-8 (ฝ่ายค้าน HIGH-1): สลิปอย่างเดียวห้ามบันทึกรับเงินเอง — ต้องมีรายการเดินบัญชียืนยันเงินเข้าจริง
+        if (!f.BankLineConfirmed)
+            return No(Codes.NoBankLine, QrCaveat + " — ยังไม่มีรายการเดินบัญชีที่ยืนยันเงินเข้า (ยอด/วัน/บัญชีตรง) · ตรวจรายการเงินเข้าแล้วกดยืนยัน (ค่าที่ระบบเสนอครบแล้ว) · "
+                + "รายการเดินบัญชีเข้ามาภายหลังและตรง ⇒ ระบบตัดชำระให้เองตามค่าตั้งตัดชำระจากรายการเดินบัญชี");
+        return new Verdict(true, Codes.Ok, "ผ่านทุกด่าน: ยอดตรงใบเดียว · รายการเดินบัญชียืนยันเงินเข้า · " + f.Money.Reason);
     }
 
     private static Verdict No(string code, string reason) => new(false, code, reason);
-
-    /// <summary>ข้อความที่ประทับบนประวัติรายการ (ผู้สอบบัญชีถามว่าใคร/เพราะอะไร)</summary>
-    public static string ConfirmReason(string channelLabel) => "⚙️ ระบบบันทึกรับเงินเองจากสลิป (" + channelLabel + ") — ผ่านทุกด่าน " + RuleCode;
 
     /// <summary>ป้ายช่องทาง (server computes)</summary>
     public static string ChannelLabel(string? sourceKind) => sourceKind switch
