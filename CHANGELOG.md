@@ -7529,4 +7529,4 @@ _รอบ 285 (2026-11-21): ยืนยันเลขผู้เสียภ
 - 285-7: ภ.ง.ด.1 ช่อง 5 ของผู้ไม่มีเลข 13 หลัก — คงเติม 0 + ป้ายเดิม (สเปก RD เปิดไม่ได้จาก session · บันทึกที่ค้นแล้ว)
 - migration `Round285Migration` · เทสต์ pure `CompanyTaxIdVerificationRound285Tests` · Db `CompanyTaxIdVerificationRound285DbTests` · กติกา `_R285_*` · คอมมิต ae317b36
 - ข้อเพิ่ม + ฝ่ายค้าน (285-8…285-12): แจ้งผู้ดูแลแพลตฟอร์มเมื่อยื่น · แจ้งบริษัทเมื่อตัดสินพร้อมเหตุ · หลักฐานผ่าน `IFileStorage` (ไม่ใช่ FileAttachments) เก็บ 5 ปี เปิดได้เฉพาะเจ้าของ+ผู้ดูแล + PiiAccessLog ·
-  เลข+สาขาหนึ่งยืนยันได้บริษัทเดียว (ต้องถอนของเดิมก่อน) · ชื่อขัดทะเบียนยื่นได้ติดธง อนุมัติต้องมีเหตุ · ทะเบียนไม่ตอบ LogWarning · Db `CompanyTaxIdVerificationAdminNotifyRound285DbTests`
+  เลข+สาขาหนึ่งยืนยันได้บริษัทเดียว (ต้องถอนของเดิมก่อน) · ชื่อขัดทะเบียนยื่นได้ติดธง อนุมัติต้องมีเหตุ · ทะเบียนไม่ตอบ LogWarning · Db `CompanyTaxIdVerificationAdminNotifyRound285DbTests` · คอมมิต baca6f2d + 6c0c61fd

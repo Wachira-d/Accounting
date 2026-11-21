@@ -75,7 +75,7 @@
 | MED-B2 ชื่อการค้า/อังกฤษยื่นไม่ได้ | ✅ จริง | ยื่นได้ติดธง · อนุมัติต้องมีเหตุ (audit) |
 | LOW-B3 catch กว้าง | ✅ จริง | `when (ex is not OperationCanceledException)` + `LogWarning` |
 
-คอลัมน์ `CompanyTaxIdVerificationRequests.AttachmentId` ของเวอร์ชันแรก (ถ้าฐานใดรันไปแล้ว) ไม่มีผู้อ่าน — ไม่มีแถวจริงก่อน deploy
+คอมมิตชุดนี้: baca6f2d + 6c0c61fd · คอลัมน์ `CompanyTaxIdVerificationRequests.AttachmentId` ของเวอร์ชันแรก (ถ้าฐานใดรันไปแล้ว) ไม่มีผู้อ่าน — ไม่มีแถวจริงก่อน deploy
 
 ## 9. หลักฐาน
 
