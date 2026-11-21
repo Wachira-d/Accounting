@@ -109,7 +109,7 @@ public sealed class TrustedSlipVerifyService
 
     // ═══════════════ ตรวจย้อนรายการล่วงหน้า ═══════════════
 
-    private sealed record Pending(Guid Id, Guid CompanyId, Guid SourceId, decimal Amount, Guid AccountId, DateTime? PaidAt, DateTime ProvisionalAt,
+    private sealed record ProvisionalRow(Guid Id, Guid CompanyId, Guid SourceId, decimal Amount, Guid AccountId, DateTime? PaidAt, DateTime ProvisionalAt,
         string? SlipBankRef, string? KeyHash, DateTime? FailedAt);
 
     /// <summary>รายการเดินบัญชีเงินเข้าหนึ่งรายการ ⇒ ตรงรายการรับเงินล่วงหน้าที่ยังไม่ยืนยันไหม (บัญชี · ยอด · วันในช่วง · เลขอ้างอิงธนาคารก่อน) · ตรงหนึ่งเดียว ⇒ ผูกกับการชำระเดิม ·
@@ -124,7 +124,7 @@ public sealed class TrustedSlipVerifyService
         var cands = await _db.PaymentIntents.AsNoTracking()
             .Where(i => i.CompanyId == companyId && i.TrustProvisionalAt != null && i.TrustVerifiedAt == null
                 && i.TrustKeyAccountId == line.BankAccountId && i.Amount == amount && i.PaidAt >= from && i.PaidAt < to)
-            .Select(i => new Pending(i.Id, i.CompanyId, i.SourceId, i.Amount, i.TrustKeyAccountId!.Value, i.PaidAt, i.TrustProvisionalAt!.Value, i.SlipBankRef,
+            .Select(i => new ProvisionalRow(i.Id, i.CompanyId, i.SourceId, i.Amount, i.TrustKeyAccountId!.Value, i.PaidAt, i.TrustProvisionalAt!.Value, i.SlipBankRef,
                 i.TrustKeyHash, i.TrustFailedAt))
             .Take(5).ToListAsync(ct);
         var pick = Pick(cands, line.Reference);
@@ -133,7 +133,7 @@ public sealed class TrustedSlipVerifyService
     }
 
     /// <summary>เลขอ้างอิงธนาคารตรงหนึ่งเดียว ⇒ ตัวนั้น · ไม่มีใครตรงเลขและมีผู้สมัครเดียว ⇒ ตัวนั้น · อื่น ๆ ⇒ ไม่เดา</summary>
-    private static Pending? Pick(IReadOnlyList<Pending> cands, string? lineReference)
+    private static ProvisionalRow? Pick(IReadOnlyList<ProvisionalRow> cands, string? lineReference)
     {
         var byRef = cands.Where(c => SlipEvidenceRule.RefMatchesLine(c.SlipBankRef, lineReference)).ToList();
         if (byRef.Count == 1) return byRef[0];
@@ -142,7 +142,7 @@ public sealed class TrustedSlipVerifyService
     }
 
     /// <summary>ผูกบรรทัดกับการชำระของรายการล่วงหน้า + ประทับยืนยัน + audit ในธุรกรรมเดียว · การชำระต้องยังอยู่ ยอด/บัญชีตรง</summary>
-    private async Task<bool> LinkAsync(Pending p, Guid lineId, DateTime nowUtc, CancellationToken ct)
+    private async Task<bool> LinkAsync(ProvisionalRow p, Guid lineId, DateTime nowUtc, CancellationToken ct)
     {
         var companyId = p.CompanyId;
         var reference = GatewayPaymentRecord.Reference(p.Id);
@@ -210,7 +210,7 @@ public sealed class TrustedSlipVerifyService
         var pending = await _db.PaymentIntents.AsNoTracking().IgnoreQueryFilters()
             .Where(i => i.TrustProvisionalAt != null && i.TrustVerifiedAt == null && i.TrustFailedAt == null && i.TrustKeyAccountId != null)
             .OrderBy(i => i.TrustReviewDueAt).Take(Batch)
-            .Select(i => new { P = new Pending(i.Id, i.CompanyId, i.SourceId, i.Amount, i.TrustKeyAccountId!.Value, i.PaidAt, i.TrustProvisionalAt!.Value, i.SlipBankRef,
+            .Select(i => new { P = new ProvisionalRow(i.Id, i.CompanyId, i.SourceId, i.Amount, i.TrustKeyAccountId!.Value, i.PaidAt, i.TrustProvisionalAt!.Value, i.SlipBankRef,
                 i.TrustKeyHash, i.TrustFailedAt), i.TrustReviewDueAt })
             .ToListAsync(ct);
         foreach (var r in pending)
@@ -221,7 +221,7 @@ public sealed class TrustedSlipVerifyService
     }
 
     /// <summary>หนึ่งรายการล่วงหน้า: ผูกแล้วทางอื่น ⇒ ยืนยัน · หาเจอ ⇒ ผูก · ผู้ขายยกเลิกการรับเงิน หรือครบกำหนดไม่พบ ⇒ ล้ม + ถอนความไว้ใจ + แจ้งแรง</summary>
-    private async Task<bool> VerifyOneAsync(Pending p, DateTime? dueUtc, DateTime nowUtc, CancellationToken ct)
+    private async Task<bool> VerifyOneAsync(ProvisionalRow p, DateTime? dueUtc, DateTime nowUtc, CancellationToken ct)
     {
         var companyId = p.CompanyId;
         var reference = GatewayPaymentRecord.Reference(p.Id);
@@ -263,7 +263,7 @@ public sealed class TrustedSlipVerifyService
     }
 
     /// <summary>ล้ม: ประทับบนรายการ + ถอนความไว้ใจของกุญแจ + audit ในธุรกรรมเดียว (compare-and-set) แล้วแจ้งแรง · <b>ไม่ยกเลิกการรับเงินเอง</b></summary>
-    private async Task<bool> FailAsync(Pending p, string reason, DateTime nowUtc, CancellationToken ct)
+    private async Task<bool> FailAsync(ProvisionalRow p, string reason, DateTime nowUtc, CancellationToken ct)
     {
         var companyId = p.CompanyId;
         var strategy = _db.Database.CreateExecutionStrategy();
