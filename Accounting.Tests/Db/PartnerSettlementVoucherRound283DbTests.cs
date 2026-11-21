@@ -89,6 +89,35 @@ public class PartnerSettlementVoucherRound283DbTests
         }
         Assert.True(spy.Has(s.Buyer.Id, Accounting.Models.Constants.NotificationEvents.PartnerPaymentAutoRecorded));
 
+        // ฝ่ายค้าน MED-A1: ใบหลักฐานแก้ได้เฉพาะหมายเหตุ · ตัวออก 50 ทวิ ข้ามใบหลักฐานเสมอ
+        using (var c = DbTestDatabase.TryCreateContext()!)
+        {
+            var docs = F.Docs(c, spy);
+            var pv = await c.Documents.AsNoTracking().Include(d => d.Lines).SingleAsync(d => d.Id == pvId && d.CompanyId == s.Buyer.Id);
+            var line = pv.Lines.Single();
+            var same = new Accounting.Models.DTOs.Document.DocumentLineRequest(line.Description, line.Quantity, line.Unit, line.UnitPrice, line.DiscountPercent,
+                line.VatRate, line.WithholdingTaxRate, line.AccountId);
+            var notesOnly = await docs.UpdateDocumentAsync(s.Buyer.Id, pvId, new Accounting.Models.DTOs.Document.UpdateDocumentRequest(
+                pv.DocumentDate, null, pv.ContactId, pv.Reference, "หมายเหตุใหม่", new() { same }));
+            Assert.Equal("หมายเหตุใหม่", notesOnly.Notes);
+            var ex = await Assert.ThrowsAsync<BusinessRuleException>(() => docs.UpdateDocumentAsync(s.Buyer.Id, pvId, new Accounting.Models.DTOs.Document.UpdateDocumentRequest(
+                pv.DocumentDate, null, pv.ContactId, pv.Reference, "x", new() { same with { VatRate = 7m, WithholdingTaxRate = 3m } })));
+            Assert.Equal(SettlementPaymentVoucher.EvidenceEditRuleCode, ex.RuleCode);
+            var wht = await new Accounting.Services.Implementations.WithholdingTaxCertService(c, null!, null!,
+                    Microsoft.Extensions.Logging.Abstractions.NullLogger<Accounting.Services.Implementations.WithholdingTaxCertService>.Instance)
+                .TryAutoIssueForDocumentAsync(s.Buyer.Id, pvId, WhtCertIssueTrigger.Manual, s.OwnerB.ToString(), DateTime.UtcNow.Date);
+            Assert.Equal(WhtCertIssueAction.NotApplicable, wht.Action);
+            Assert.Equal(1, await c.WithholdingTaxCerts.CountAsync(w => w.CompanyId == s.Buyer.Id));
+            var after = await c.Documents.AsNoTracking().SingleAsync(d => d.Id == pvId && d.CompanyId == s.Buyer.Id);
+            Assert.Equal(0m, after.VatAmount);
+            Assert.Equal(0m, after.WithholdingTaxAmount);
+
+            // ฝ่ายค้าน LOW-A3: หน้ากระทบยอดธนาคาร — เงินออกนับครั้งเดียว (แถวการจ่าย) ไม่นับใบหลักฐานซ้ำ · ฝั่งผู้ขาย (ใบเสร็จหลักฐาน) เช่นกัน
+            var bank = new Accounting.Services.Implementations.BankService(c);
+            Assert.Equal(-10_400m, (await bank.GetReconciliationSummaryAsync(s.Buyer.Id, s.BankB)).DocumentBalance);
+            Assert.Equal(10_400m, (await bank.GetReconciliationSummaryAsync(s.Seller.Id, s.BankA)).DocumentBalance);
+        }
+
         // รันซ้ำ ⇒ ไม่มีการจ่าย/ใบที่สอง
         Assert.Equal(0, await F.BuyerPipelineAsync(s, spy));
         using (var c = DbTestDatabase.TryCreateContext()!)
@@ -114,6 +143,81 @@ public class PartnerSettlementVoucherRound283DbTests
         using var chk = DbTestDatabase.TryCreateContext()!;
         Assert.False(AuditHashChain.Analyze(await chk.AuditLogs.AsNoTracking().Where(a => a.CompanyId == s.Buyer.Id && a.RowHash != null).OrderBy(a => a.Id).ToListAsync())
             .HasIntegrityFindings);
+    }
+
+    /// <summary>ใบแจ้งหนี้ → ใบซื้อร่าง → ผู้ซื้อจ่ายผ่านลิงก์ของผู้ขาย · ผู้ซื้อ<b>ไม่มีความยินยอม</b> ⇒ ท่อไม่บันทึก (คนต้องกด)</summary>
+    private static async Task<(F.Seed S, Guid PurchaseId, F.Spy Spy)> HumanFlowAsync(Accounting.Data.AccountingDbContext db)
+    {
+        var spy = new F.Spy();
+        var s = await F.SeedAsync(db, consent: false);
+        var inv = await F.InvoiceAsync(db, s);
+        var purchaseId = await F.RouteAndApproveAsync(s, inv, spy);
+        await F.BuyerPaysThroughLinkAsync(s, inv.Id, 10_400m, 300m, spy);
+        Assert.Equal(0, await F.BuyerPipelineAsync(s, spy));
+        return (s, purchaseId, spy);
+    }
+
+    private static async Task AssertOnePvAsync(F.Seed s, Guid purchaseId)
+    {
+        using var c = DbTestDatabase.TryCreateContext()!;
+        var bp = await c.Payments.AsNoTracking().SingleAsync(p => p.CompanyId == s.Buyer.Id && p.DocumentId == purchaseId);
+        var pv = await c.Documents.AsNoTracking().SingleAsync(d => d.CompanyId == s.Buyer.Id && d.DocumentType == DocumentType.PaymentVoucher);
+        Assert.Equal(bp.Id, pv.SettlementPaymentId);
+        Assert.Equal(purchaseId, pv.RelatedDocumentId);
+        Assert.Equal(0m, pv.WithholdingTaxAmount);
+        Assert.False(await c.JournalEntries.AnyAsync(j => j.CompanyId == s.Buyer.Id && j.SourceDocumentId == pv.Id));
+        Assert.Equal(10_400m, await BankNetCreditAsync(c, s.Buyer.Id));
+        Assert.Equal(1, await c.WithholdingTaxCerts.CountAsync(w => w.CompanyId == s.Buyer.Id && w.Status != WithholdingTaxCertStatus.Voided));
+    }
+
+    [Fact]
+    public async Task ปุ่มเดียว_บันทึกจ่ายตามที่ผู้ขายรับแล้ว_ได้ใบสำคัญจ่ายแบบเดียวกับท่อ()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var (s, purchaseId, spy) = await HumanFlowAsync(db);
+        using (var c = DbTestDatabase.TryCreateContext()!)
+        {
+            var notice = await c.PartnerPaymentNotices.AsNoTracking().IgnoreQueryFilters().SingleAsync(n => n.CompanyId == s.Buyer.Id && n.TargetDocumentId == purchaseId);
+            var svc = new Accounting.Services.Implementations.PartnerPaymentNoticeService(c, F.Docs(c, spy),
+                Microsoft.Extensions.Logging.Abstractions.NullLogger<Accounting.Services.Implementations.PartnerPaymentNoticeService>.Instance, spy);
+            await svc.RecordAsync(s.Buyer.Id, notice.Id, s.OwnerB, s.BankB, null);
+        }
+        await AssertOnePvAsync(s, purchaseId);
+    }
+
+    [Fact]
+    public async Task บันทึกชำระมือบนใบซื้อจากคู่ค้า_ทางเดียวกับแจ้งโอนP4_ได้ใบสำคัญจ่าย_ใบซื้อทั่วไปไม่มี()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var (s, purchaseId, spy) = await HumanFlowAsync(db);
+        // ทางมือ/แจ้งโอน P4: CreatePaymentAsync(Manual) ไม่ส่งคำขอ PV — ตัวตัดสินเดียวเห็นว่าใบมาจากคู่ค้า ⇒ ออก
+        using (var c = DbTestDatabase.TryCreateContext()!)
+            await F.Docs(c, spy).CreatePaymentAsync(s.Buyer.Id, new Accounting.Models.DTOs.Document.CreatePaymentRequest(purchaseId, DateTime.UtcNow.Date, 10_400m,
+                PaymentMethod.BankTransfer, "MANUAL-283", null, null, WithholdingTaxAmount: 300m, OverrideBankAccountId: s.BankB), s.OwnerB.ToString(), PaymentEntrySource.Manual);
+        await AssertOnePvAsync(s, purchaseId);
+
+        // ทิศตรงข้าม: ใบซื้อทั่วไป (ไม่ได้มาจากคู่ค้า) — การจ่ายเส้นเดียวกันไม่มีใบสำคัญจ่าย (พฤติกรรมเดิม) · ข้อความขั้นต่อไปบอกตรงตามนั้น
+        var spy2 = new F.Spy();
+        var s2 = await F.SeedAsync(db, consent: false);
+        var inv2 = await F.InvoiceAsync(db, s2);
+        var pur2 = await F.RouteAndApproveAsync(s2, inv2, spy2);
+        using (var c = DbTestDatabase.TryCreateContext()!)
+        {
+            await c.Documents.Where(d => d.Id == pur2 && d.CompanyId == s2.Buyer.Id).ExecuteUpdateAsync(u => u.SetProperty(d => d.PartnerSourceLinkId, (Guid?)null));
+            await F.Docs(c, spy2).CreatePaymentAsync(s2.Buyer.Id, new Accounting.Models.DTOs.Document.CreatePaymentRequest(pur2, DateTime.UtcNow.Date, 10_400m,
+                PaymentMethod.BankTransfer, "MANUAL-283B", null, null, WithholdingTaxAmount: 300m, OverrideBankAccountId: s2.BankB), s2.OwnerB.ToString(), PaymentEntrySource.Manual);
+        }
+        using (var c = DbTestDatabase.TryCreateContext()!)
+        {
+            Assert.True(await c.Payments.AnyAsync(p => p.CompanyId == s2.Buyer.Id && p.DocumentId == pur2));
+            Assert.False(await c.Documents.AnyAsync(d => d.CompanyId == s2.Buyer.Id && d.DocumentType == DocumentType.PaymentVoucher));
+            var view = await F.Docs(c, spy2).GetDocumentAsync(s2.Buyer.Id, pur2);
+            Assert.Contains("ไม่ออกใบสำคัญจ่ายแยก", view.PayNextStepHint);
+            var view1 = await F.Docs(c, spy).GetDocumentAsync(s.Buyer.Id, purchaseId);
+            Assert.Contains("ออกใบสำคัญจ่าย (หลักฐานคู่การจ่าย", view1.PayNextStepHint);
+        }
     }
 
     [Fact]
@@ -142,9 +246,10 @@ public class PartnerSettlementVoucherRound283DbTests
         }
         using (var c = DbTestDatabase.TryCreateContext()!)
         {
+            c.DocumentDraftOnlyRequest = true;   // ฝ่ายค้าน MED-A2: คำขอ "เฉพาะร่าง" (รอบ 276) ⇒ ไม่ออกเลข เป็นร่างรออนุมัติ
             var r = await F.Docs(c, spy).IssueSettlementPaymentVoucherAsync(s.Buyer.Id, payId, s.OwnerB.ToString());
             Assert.Equal(SettlementPaymentVoucher.IssueAction.Issue, r.Action);
-            Assert.NotNull(r.VoucherNumber);
+            Assert.StartsWith("DRAFT-", r.VoucherNumber);
         }
         using (var c = DbTestDatabase.TryCreateContext()!)
         {
@@ -161,13 +266,13 @@ public class PartnerSettlementVoucherRound283DbTests
             Assert.Equal(pv.Id, again.VoucherId);
             Assert.Equal(1, await c.Documents.CountAsync(d => d.CompanyId == s.Buyer.Id && d.DocumentType == DocumentType.PaymentVoucher));
         }
-        // ทิศตรงข้าม: การจ่ายที่ "คน" บันทึก (หมายเหตุไม่ใช่ของท่อ) ไม่ขึ้นรายงาน แม้ไม่มีใบสำคัญจ่าย
+        // ทิศตรงข้าม: การจ่ายของใบซื้อทั่วไป (ไม่ได้มาจากคู่ค้า) ไม่ขึ้นรายงาน แม้ไม่มีใบสำคัญจ่าย
         using (var c = DbTestDatabase.TryCreateContext()!)
         {
             await c.Documents.Where(d => d.CompanyId == s.Buyer.Id && d.DocumentType == DocumentType.PaymentVoucher)
                 .ExecuteUpdateAsync(u => u.SetProperty(d => d.Status, DocumentStatus.Voided));
             Assert.Single(await F.Docs(c, spy).ListPartnerPaymentsWithoutVoucherAsync(s.Buyer.Id));   // ใบเดิมยกเลิก ⇒ กลับมาขึ้น
-            await c.Payments.Where(p => p.Id == payId && p.CompanyId == s.Buyer.Id).ExecuteUpdateAsync(u => u.SetProperty(p => p.Notes, "บันทึกจ่ายตามที่ผู้ขายรับแล้ว (คนกด)"));
+            await c.Documents.Where(d => d.Id == purchaseId && d.CompanyId == s.Buyer.Id).ExecuteUpdateAsync(u => u.SetProperty(d => d.PartnerSourceLinkId, (Guid?)null));
             Assert.Empty(await F.Docs(c, spy).ListPartnerPaymentsWithoutVoucherAsync(s.Buyer.Id));
         }
     }

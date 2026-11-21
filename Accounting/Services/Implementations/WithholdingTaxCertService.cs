@@ -889,6 +889,9 @@ public partial class WithholdingTaxCertService : IWithholdingTaxCertService
         DateTime? paymentDate = null, Guid? sourcePaymentId = null, decimal? paymentWhtAmount = null,
         bool paidAtTrigger = true, bool issueAsIssued = true)
     {
+        // รอบ 283 ฝ่ายค้าน MED-A1: ใบหลักฐานคู่การจ่าย/รับชำระ ไม่ใช่ทางเข้าออก 50 ทวิ (ใบของการจ่ายออกที่ใบตั้งหนี้แล้ว) — ข้ามเสมอทุกจุดเรียก ทั้งใบรายเดียว/หลายผู้ถูกหัก
+        if (await _db.Documents.AsNoTracking().AnyAsync(d => d.Id == documentId && d.CompanyId == companyId && d.IsSettlementReceipt))
+            return new WhtAutoIssueOutcome(WhtCertIssueAction.NotApplicable, null, null, null, Accounting.Helpers.SettlementPaymentVoucher.EvidenceNoWhtReason);
         // รอบ 204 (ข้อ 143): ใบหลายผู้ถูกหัก ⇒ ตัดสิน/ออกต่อผู้ถูกหัก · ใบรายเดียว ⇒ เส้นเดิมทุกประการ
         var portions = await LoadPayeePortionsAsync(companyId, documentId);
         if (WhtPayeeSplit.IsMultiPayee(portions))

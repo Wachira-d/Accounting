@@ -28,6 +28,8 @@ public partial class DocumentService
         var canApprove = true;
         if (_permissionService != null && Guid.TryParse(actor, out var actorUid))
             canApprove = await DocumentPermissionHelper.CanApproveAsync(_permissionService, companyId, actorUid, DocumentType.PaymentVoucher);
+        // ฝ่ายค้าน MED-A2: ด่าน "เฉพาะร่าง" (รอบ 276) ตัวเดียวกับเส้นอนุมัติ — ผู้กระทำ/คำขอเฉพาะร่าง ⇒ ใบเป็นร่างรออนุมัติ (ไม่ออกเลข)
+        canApprove = canApprove && await DocumentRestrictionGuard.MayFinalizeAsync(_db, companyId, actor);
         // 50 ทวิ ของการจ่ายนี้ (ออกตอนบันทึกจ่ายในธุรกรรมเดียวกัน · หรือก่อนหน้าสำหรับใบย้อนหลัง) — แสดงเลขบนใบ ไม่ออกใบใหม่
         var certNumber = payment.WithholdingTaxAmount > 0m
             ? await _db.WithholdingTaxCerts.AsNoTracking()
@@ -128,17 +130,20 @@ public partial class DocumentService
         return new(true, payment.IsDeleted, payment.Amount, source.DocumentType, source.Status, source.IsDeleted, existing, converted);
     }
 
-    /// <summary>ในธุรกรรมของ <see cref="CreatePaymentAsync"/>: คำขอให้ออกใบสำคัญจ่ายหลักฐาน ⇒ ตัดสิน + สร้าง · ตัดสินว่าออกไม่ได้ ⇒ โยน (การจ่ายทั้งก้อน rollback —
-    /// ผู้เรียกอัตโนมัติไม่ได้ "จ่ายแล้วไม่มีใบ" เงียบ ๆ)</summary>
-    private async Task<Document?> IssueSettlementPaymentVoucherInPaymentAsync(Guid companyId, Document source, Payment payment, string actor)
+    /// <summary>ในธุรกรรมของ <see cref="CreatePaymentAsync"/>: ตัดสิน + สร้างใบสำคัญจ่ายหลักฐาน · <paramref name="strict"/> (ผู้เรียกขอเอง เช่น ท่ออัตโนมัติ) + ออกไม่ได้ ⇒ โยน
+    /// (การจ่ายทั้งก้อน rollback — ไม่มี "จ่ายแล้วไม่มีใบ" เงียบ ๆ) · ไม่ strict (ค่าตั้งต้นของใบจากคู่ค้า) + ออกไม่ได้ ⇒ คืนเหตุให้ผู้เรียกแสดงในคำตอบการจ่าย (null = ออกแล้ว/มีอยู่แล้ว)</summary>
+    private async Task<string?> IssueSettlementPaymentVoucherInPaymentAsync(Guid companyId, Document source, Payment payment, string actor, bool strict)
     {
         var decision = SettlementPaymentVoucher.Decide(await SettlementVoucherFactsAsync(companyId, payment, source));
         if (decision.Action == SettlementPaymentVoucher.IssueAction.AlreadyIssued) return null;
         if (decision.Action != SettlementPaymentVoucher.IssueAction.Issue)
-            throw new BusinessRuleException(decision.Reason, SettlementPaymentVoucher.RuleCode, 409);
-        var pv = await CreateSettlementPaymentVoucherCoreAsync(companyId, source, payment, actor, backfilled: false);
+        {
+            if (strict) throw new BusinessRuleException(decision.Reason, SettlementPaymentVoucher.RuleCode, 409);
+            return "ไม่ได้ออกใบสำคัญจ่ายของการจ่ายนี้: " + decision.Reason;
+        }
+        await CreateSettlementPaymentVoucherCoreAsync(companyId, source, payment, actor, backfilled: false);
         await _db.SaveChangesAsync();
-        return pv;
+        return null;
     }
 
     /// <summary>
@@ -172,16 +177,13 @@ public partial class DocumentService
         });
     }
 
-    /// <summary>รายงาน (อ่านอย่างเดียว): การจ่ายที่ท่อคู่ค้าบันทึกเอง (หมายเหตุขึ้นต้น <see cref="SettlementPaymentVoucher.PartnerAutoPaymentNotePrefix"/> + การแจ้งที่บันทึกแล้วอ้างถึง)
-    /// ที่ยังไม่มีใบสำคัญจ่ายหลักฐานที่มีผล — ใบที่บันทึกก่อนรอบ 283 · ใบที่การจ่ายถูกยกเลิกไม่ขึ้น</summary>
+    /// <summary>รายงาน (อ่านอย่างเดียว): การจ่ายใบซื้อ/ค่าใช้จ่ายที่มาจากคู่ค้า (<c>PartnerSourceLinkId</c> — ทุกทางเข้า ตัวตัดสินเดียวกับ <see cref="SettlementPaymentVoucher.IssueOnPayment"/>)
+    /// ที่ยังไม่มีใบสำคัญจ่ายหลักฐานที่มีผล — ใบที่บันทึกก่อนรอบ 283 · ใบที่การจ่ายถูกยกเลิก/ไม่มีเงินออกไม่ขึ้น · ใบซื้อทั่วไปไม่ขึ้น</summary>
     public async Task<List<PartnerPaymentWithoutVoucherRow>> ListPartnerPaymentsWithoutVoucherAsync(Guid companyId, int take = 200)
     {
-        var recordedIds = _db.PartnerPaymentNotices.AsNoTracking()
-            .Where(n => n.CompanyId == companyId && n.Status == PartnerPaymentNoticeRule.StatusRecorded && n.RecordedPaymentId != null)
-            .Select(n => n.RecordedPaymentId!.Value);
         var rows = await _db.Payments.AsNoTracking()
-            .Where(p => p.CompanyId == companyId && !p.IsDeleted && recordedIds.Contains(p.Id)
-                && p.Notes != null && p.Notes.StartsWith(SettlementPaymentVoucher.PartnerAutoPaymentNotePrefix)
+            .Where(p => p.CompanyId == companyId && !p.IsDeleted && p.Amount > 0m
+                && p.Document.CompanyId == companyId && p.Document.PartnerSourceLinkId != null
                 && (p.Document.DocumentType == DocumentType.PurchaseInvoice || p.Document.DocumentType == DocumentType.Expense)
                 && !_db.Documents.Any(d => d.CompanyId == companyId && d.DocumentType == DocumentType.PaymentVoucher && d.SettlementPaymentId == p.Id
                     && !d.IsDeleted && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected))
@@ -191,6 +193,22 @@ public partial class DocumentService
                 p.DocumentId, p.Document.DocumentNumber, p.Document.Contact != null ? p.Document.Contact.Name : null))
             .ToListAsync();
         return rows;
+    }
+
+    /// <summary>ฝ่ายค้าน MED-A1: แก้ใบหลักฐานคู่การชำระ (ใบสำคัญจ่ายหลักฐาน · ใบเสร็จหลักฐานฝั่งขาย) — ได้เฉพาะหมายเหตุ · แตะยอด/บรรทัด/ผู้ติดต่อ/วันที่ ⇒ ปฏิเสธพร้อมทางไปต่อ</summary>
+    private async Task<Accounting.Models.DTOs.Document.DocumentResponse> UpdateSettlementEvidenceNotesAsync(Guid companyId, Document doc,
+        Accounting.Models.DTOs.Document.UpdateDocumentRequest request)
+    {
+        var cur = doc.Lines.Where(l => !l.IsDeleted).OrderBy(l => l.LineOrder)
+            .Select(l => (l.Quantity, l.UnitPrice, l.DiscountPercent, l.VatRate, l.WithholdingTaxRate)).ToList();
+        var req = request.Lines?.Select(l => (l.Quantity, l.UnitPrice, l.DiscountPercent, l.VatRate, l.WithholdingTaxRate)).ToList();
+        if (Accounting.Helpers.SettlementPaymentVoucher.EvidenceEditTouchesMoney(cur, req, doc.ContactId, request.ContactId, doc.DocumentDate, request.DocumentDate))
+            throw new Accounting.Helpers.BusinessRuleException(Accounting.Helpers.SettlementPaymentVoucher.EvidenceEditOnlyNotesMessage,
+                Accounting.Helpers.SettlementPaymentVoucher.EvidenceEditRuleCode, 409);
+        doc.Notes = request.Notes;
+        doc.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync();
+        return await GetDocumentAsync(companyId, doc.Id);
     }
 
     /// <summary>ในเส้นกลับรายการการจ่าย (ใบเดียว · หลายใบ): ใบสำคัญจ่ายหลักฐานของการจ่ายนี้ ⇒ ยกเลิก (คงแถวที่มองเห็น — ใบมีเลขแล้ว ห้ามหาย) + audit ·

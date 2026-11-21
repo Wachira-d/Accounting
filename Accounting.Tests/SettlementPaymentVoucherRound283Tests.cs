@@ -73,6 +73,41 @@ public class SettlementPaymentVoucherRound283Tests
     }
 
     [Fact]
+    public void ทุกทางเข้า_ใบซื้อจากคู่ค้าได้PV_ใบซื้อทั่วไปไม่ได้_คำขอชนะ()
+    {
+        Assert.True(SettlementPaymentVoucher.IssueOnPayment(null, DocumentType.PurchaseInvoice, fromPartner: true));
+        Assert.True(SettlementPaymentVoucher.IssueOnPayment(null, DocumentType.Expense, fromPartner: true));
+        Assert.False(SettlementPaymentVoucher.IssueOnPayment(null, DocumentType.PurchaseInvoice, fromPartner: false));
+        Assert.False(SettlementPaymentVoucher.IssueOnPayment(null, DocumentType.Invoice, fromPartner: true));
+        Assert.True(SettlementPaymentVoucher.IssueOnPayment(true, DocumentType.PurchaseInvoice, fromPartner: false));
+        Assert.False(SettlementPaymentVoucher.IssueOnPayment(false, DocumentType.PurchaseInvoice, fromPartner: true));
+        Assert.True(SettlementPaymentVoucher.StrictOnPayment(true));
+        Assert.False(SettlementPaymentVoucher.StrictOnPayment(null));
+    }
+
+    [Fact]
+    public void ข้อความขั้นต่อไป_ตรงความจริง()
+    {
+        Assert.Contains("ออกใบสำคัญจ่าย (หลักฐานคู่การจ่าย", SettlementPaymentVoucher.PayNextStepHint(DocumentType.PurchaseInvoice, true));
+        Assert.Contains("ไม่ออกใบสำคัญจ่ายแยก", SettlementPaymentVoucher.PayNextStepHint(DocumentType.PurchaseInvoice, false));
+        Assert.Null(SettlementPaymentVoucher.PayNextStepHint(DocumentType.Invoice, false));
+    }
+
+    [Fact]
+    public void ฝ่ายค้านMEDA1_ใบหลักฐานแก้ได้เฉพาะหมายเหตุ()
+    {
+        var cur = new List<(decimal, decimal, decimal, decimal, decimal)> { (1m, 10_400m, 0m, 0m, 0m) };
+        var c = Guid.NewGuid(); var d = new DateTime(2026, 11, 21);
+        Assert.False(SettlementPaymentVoucher.EvidenceEditTouchesMoney(cur, null, c, null, d, null));
+        Assert.False(SettlementPaymentVoucher.EvidenceEditTouchesMoney(cur, new List<(decimal, decimal, decimal, decimal, decimal)> { (1m, 10_400m, 0m, 0m, 0m) }, c, c, d, d));
+        Assert.True(SettlementPaymentVoucher.EvidenceEditTouchesMoney(cur, new List<(decimal, decimal, decimal, decimal, decimal)> { (1m, 10_400m, 0m, 7m, 0m) }, c, c, d, d));
+        Assert.True(SettlementPaymentVoucher.EvidenceEditTouchesMoney(cur, new List<(decimal, decimal, decimal, decimal, decimal)> { (1m, 10_400m, 0m, 0m, 3m) }, c, null, d, null));
+        Assert.True(SettlementPaymentVoucher.EvidenceEditTouchesMoney(cur, new List<(decimal, decimal, decimal, decimal, decimal)>(), c, null, d, null));
+        Assert.True(SettlementPaymentVoucher.EvidenceEditTouchesMoney(cur, null, c, Guid.NewGuid(), d, null));
+        Assert.True(SettlementPaymentVoucher.EvidenceEditTouchesMoney(cur, null, c, null, d, d.AddDays(1)));
+    }
+
+    [Fact]
     public void บรรทัดบนใบ_ไทย_มีภาษีหัก_และเลข50ทวิ()
     {
         var th = DocumentLabels.For(null).SettlementPaymentVoucherLine("PI-001", 10_400m, 300m, "WHT-2026-0001");

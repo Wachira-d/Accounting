@@ -466,6 +466,8 @@ public class DashboardService : IDashboardService
                     // undue 11640 ที่ยังไม่ถึงกำหนด (ใบกำกับไม่ครบ/ภ.พ.36 ยังไม่รับรู้)
                     // ยังเคลมไม่ได้ → ไม่นับ (ให้ตรงหลักรายงาน)
                     && !(d.InputVatPostedAsUndue && d.InputVatBecameClaimableAt == null)
+                    // รอบ 283 ฝ่ายค้าน MED-A1: ใบหลักฐานคู่การจ่าย/รับชำระ (IsSettlementReceipt) ไม่ใช่แหล่งภาษี — VAT อยู่ที่ใบตั้งหนี้แล้ว
+                    && !d.IsSettlementReceipt
                     && (d.DocumentType == DocumentType.PurchaseInvoice
                         || d.DocumentType == DocumentType.Expense
                         || d.DocumentType == DocumentType.PaymentVoucher
