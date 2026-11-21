@@ -207,7 +207,7 @@
               ${r.dispute.amount != null ? `<div style="font-size:11px">ยอดโต้แย้ง ${Layout.money(r.dispute.amount)}${r.dispute.reason ? ' · ' + Layout.esc(r.dispute.reason) : ''}</div>` : ''}
               ${r.dispute.needsAttention && r.dispute.nextStep ? `<div style="color:#b45309;font-size:11px">${Layout.esc(r.dispute.nextStep)}</div>` : ''}</div>` : ''}</td>
           <td style="font-size:11.5px">${Layout.esc(r.confirmedBy || '—')}
-            ${r.autoRecordReason ? `<div style="color:#b45309;font-size:11px;margin-top:2px" title="ระบบไม่บันทึกรับเงินจากสลิปเอง — ตรวจแล้วกดยืนยัน/ปฏิเสธ">⚠️ รอยืนยัน: ${Layout.esc(r.autoRecordReason)}</div>` : ''}
+            ${r.autoRecordReason ? `<div style="color:#b45309;font-size:11px;margin-top:2px" title="QR ตรวจได้แค่ว่าเป็นรูปแบบสลิป ไม่ได้ยืนยันว่าเงินเข้า — ตรวจรายการเงินเข้าแล้วกดยืนยัน/ปฏิเสธ">⚠️ รอยืนยัน: ${Layout.esc(r.autoRecordReason)}</div>` : ''}
             ${r.receivingAccountOriginLabel ? `<div style="color:#475569;font-size:11px;margin-top:2px" title="บัญชีที่เงินตามสลิปเข้า (ตัดสินตอนยืนยัน)">🏦 ${Layout.esc(r.receivingAccountLabel || r.receivingAccountOriginLabel)}${r.receivingAccountLabel ? ' · ' + Layout.esc(r.receivingAccountOriginLabel) : ''}</div>` : ''}</td>
           <td style="white-space:nowrap">
             <button class="btn btn-sm btn-secondary" onclick="Page.events('${r.id}')">ประวัติ</button>

@@ -7501,3 +7501,9 @@ LOW-1 "ส่งได้บางส่วน" · LOW-2 การ์ด `#HeyNe
 - 282-6 (คำสั่งเจ้าของ): `Helpers/SlipMoneySource` ตัวตัดสินแหล่งเงินเดียว · ฝั่ง B สลิปตรงบัญชีเดียวบันทึกเองได้ (กลับ 264-P2 M1) · แจ้ง `partner.pay_source_needs_confirm` · เตือนซ้ำ 1/3 วัน เพดาน 2 (`AutopilotJob` ขั้น `SlipConfirmReminders`)
 - 282-7 (คำสั่งเจ้าของ): `pay-document.html` + session ผู้ซื้อคู่ค้า ⇒ `for-pay-link` ⇒ ช่อง "จ่ายจากบัญชี" + ปุ่ม "จ่ายจากระบบของเรา" เดิม (บัญชีเก็บฝั่งผู้ซื้อ)
 - migration `Round282Migration` · เทสต์ pure `SlipAutoRecordRound282Tests` · Db `SlipAutoRecordRound282DbTests` + `PartnerOutboundRound264P4DbTests` (หน้าชำระ) · คอมมิต 14abedf7
+
+### รอบ 282 ชุดแก้ฝ่ายค้าน (HIGH 1 · คำตัดสิน 282-8…282-11)
+- HIGH-1: สลิปอย่างเดียวไม่บันทึกรับเงิน — บันทึกเองเฉพาะเมื่อรายการเดินบัญชีตรงผ่านตัวตัดสินเงินเข้าเดียว (`EvaluateLineAsync`) · ไม่ผ่าน ⇒ หน้ายืนยัน + ป้าย QR · `SlipAutoRecordService` ไม่เรียกเส้นยืนยันเองแล้ว
+- MED-1 ประทับตามความจริงหลังล้ม (`RecordedAsync`) · MED-2 ฝั่ง B สลิปผู้โอนต้องเลขท้าย ≥ 4 + ชื่อตรง (`SlipMoneySource.PayerSlipStrong`) · LOW งวดปิด/ภ.พ.30 ยื่นแล้ว ⇒ `PeriodLocked`
+- คอมมิต (เติมในคอมมิตตามหลัง)
+

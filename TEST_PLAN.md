@@ -1505,7 +1505,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **974 ไฟล์ · 10,604 `[Fact]` + 1,437 `[Theory]` (6,829 `InlineData`)** ณ 2026-11-21 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`) | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)**, **ReceiptFormRule (รูปแบบกระดาษหลักฐานรับเงิน · รอบ 203)** |
+| เทสต์ที่มี | **974 ไฟล์ · 10,608 `[Fact]` + 1,437 `[Theory]` (6,829 `InlineData`)** ณ 2026-11-21 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`) | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)**, **ReceiptFormRule (รูปแบบกระดาษหลักฐานรับเงิน · รอบ 203)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
 | CI | ✅ `.github/workflows/ci.yml` — static check → restore → build → test; รันบน PR/push เข้า main/master + `workflow_dispatch` (branch `claude/**` ปิดไว้ กัน mail spam ระหว่างพัฒนา) |
@@ -9288,4 +9288,8 @@ H2 (OCR ไม่พร้อม ⇒ แถวเข้าคิว) ล็อ�
 | T282-10 | Db `PartnerOutboundRound264P4DbTests.รอบ282_หน้าชำระของผู้ขาย_…` | ผู้ซื้อคู่ค้าได้ใบซื้อของตัวเอง · โทเคนผิด/ผู้ขายเอง/บริษัทอื่น/คู่ค้ายังไม่ยอมรับ ⇒ ไม่ได้ |
 | T282-11 | ปรับ 4 เทสต์เดิม (`PartnerPaySourceSlipRound264Tests` · `BankPaymentLineMatchTests` · `PartnerPayableRound264Tests` · `TaxSlipRound272Tests`) | คำสั่งเจ้าของ 282-6: สลิปตรงบัญชีเดียวฝั่ง B บันทึกเองได้ (เดิม preselect) · ขัดค่าตั้ง/ผู้จ่ายเลือกยังไม่อัตโนมัติ |
 | T282-12 | กติกา `_R282_*` (+13 · เคสฝ่ายค้าน R282-1/2) + ย้ายกติกา 250A/260-2 ของ `ConfirmManually` ไป `SlipIntentConfirmService.ConfirmAsync` | ตัวจัดเส้น: สลิปรัฐก่อน · ห้ามบันทึกเงินในตัวรับสลิป · เส้นยืนยันตัวเดียว |
+| T282-13 | ฝ่ายค้าน HIGH-1: Db `ฝ่ายค้านHIGH1_สลิปแต่งยอด_QRถูก_ไม่มีรายการเดินบัญชี_…` · pure `ฝ่ายค้านHIGH1_…` | สลิปแต่งยอด + QR ถูก + เงินเข้าจริง 1 บาท ⇒ ไม่มีการชำระ · `NoBankLine` + ป้าย QR · มีรายการเดินบัญชีตรง ⇒ บันทึก (T282-01) |
+| T282-14 | ฝ่ายค้าน MED-1: Db T282-01 + HIGH-1 (`RecordedAsync`) | ผลจริงหลังล้ม: บันทึกแล้ว = true · สลิปอย่างเดียว = false |
+| T282-15 | ฝ่ายค้าน MED-2: pure `ฝ่ายค้านMED2_ผู้ซื้อ_บัญชีส่วนตัวเลขท้ายเหมือน_ไม่จับ_…` + ปรับเทสต์ 264 เดิมกลับเป็น "ไม่บันทึกเอง" | เลขท้าย 4 ไม่มีชื่อ / 3 หลักมีชื่อ ⇒ ไม่บันทึก แต่ยังเสนอค่า · 4 หลัก + ชื่อ ⇒ บันทึก |
+| T282-16 | ฝ่ายค้าน LOW: Db `ฝ่ายค้านLOW_สลิปในงวดที่ปิด_…_10700หัก300_สลิป10400ตรง` | ภ.พ.30 เดือนนั้นยื่นแล้ว ⇒ `PeriodLocked` ไม่บันทึก · ยอดหลังหัก 10,400 ตรงใบ |
 

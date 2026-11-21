@@ -39,7 +39,7 @@ public class SlipAutoRecordRound282DbTests
         var company = new Company { Name = "สำนักงาน 282 " + tag, TaxId = "0105556000007", IsVatRegistered = true };
         db.Companies.Add(company);
         await db.SaveChangesAsync();
-        db.CompanySettings.Add(new CompanySettings { CompanyId = company.Id, SlipAutoRecordEnabled = autoOn });
+        db.CompanySettings.Add(new CompanySettings { CompanyId = company.Id, SlipAutoRecordEnabled = autoOn, BankAutoSettleEnabled = true });
         ChartOfAccount Gl(string code, string name, AccountType type)
         {
             var a = new ChartOfAccount { CompanyId = company.Id, AccountCode = code, AccountName = name, AccountType = type, Level = 4, IsActive = true };
@@ -107,10 +107,30 @@ public class SlipAutoRecordRound282DbTests
             NullLogger<PaymentIntentService>.Instance);
         var slips = new SlipEvidenceService(db, intents, s.Storage);
         var payLinks = new DocumentPayLinkService(db, Array.Empty<IPaymentProvider>(), Secrets, Config(), NullLogger<DocumentPayLinkService>.Instance, s.Storage);
-        var auto = new SlipAutoRecordService(db, intents, NullLogger<SlipAutoRecordService>.Instance, s.Storage);
+        // 282-8: ผู้บันทึกเงินคือตัวตัดสินเงินเข้าจากรายการเดินบัญชีตัวเดียว (DocumentService จริง · ผู้อัปโหลด statement มีสิทธิ์อนุมัติ)
+        var bank = new BankReceiptSettleService(db, DocSvc(db), NullLogger<BankReceiptSettleService>.Instance, null,
+            F4Proxy<IPermissionService>.Create((m, _) => m == nameof(IPermissionService.HasPermissionAsync) ? true : null));
+        var auto = new SlipAutoRecordService(db, intents, NullLogger<SlipAutoRecordService>.Instance, s.Storage, bankSettle: bank);
         var reader = F4Proxy<ISlipImageReader>.Create((m, _) => m == "get_IsAvailable" ? true : null);
         var line = F4Proxy<ICustomerLineLinkService>.Create((_, _) => null);
         return (new LineChatSlipService(db, Secrets, line, reader, payLinks, slips, s.Storage, NullLogger<LineChatSlipService>.Instance, auto: auto), auto);
+    }
+
+    private static readonly Guid Uploader = Guid.NewGuid();
+
+    /// <summary>รายการเดินบัญชีเงินเข้า (statement หน้าบัญชีธนาคาร — แหล่งที่ปิดหนี้เองได้)</summary>
+    /// <param name="reference">เลขอ้างอิงที่ธนาคารพิมพ์บนรายการ (statement จริงแสดงเลขรายการ = เลขบน QR สลิป) — ตัวระบุตัวของตัวตัดสินเงินเข้า</param>
+    private static async Task AddLineAsync(AccountingDbContext db, Seed s, decimal amount, string? reference = null, DateTime? day = null)
+    {
+        db.BankTransactions.Add(new BankTransaction
+        {
+            CompanyId = s.CompanyId, BankAccountId = s.BankId, TransactionDate = day ?? SlipDay, TransactionType = BankTransactionType.Deposit, Amount = amount,
+            Description = "รับโอน", Reference = reference, ReconciliationStatus = ReconciliationStatus.Unmatched, EntrySource = BankReceiptAutoSettle.SourceStatement,
+            CreatedByUserId = Uploader, CreatedBy = Uploader.ToString(),
+            // ประเมินแล้วรอบก่อนเป็น "เสนอ" (ไม่มีตัวระบุตัวก่อนสลิปมา) — และกันงานรอบทั้งฐานของเทสต์อื่นหยิบบรรทัดนี้ (ฐานร่วม · ประเมินซ้ำหลัง 6 ชม.)
+            AutoSettleVerdict = BankReceiptAutoSettle.Stamps.Suggest, AutoSettleEvaluatedAt = DateTime.UtcNow,
+        });
+        await db.SaveChangesAsync();
     }
 
     private static ForwardedSlip Fwd(Seed s, OcrSlipText.Reading r, string source = LineChatSlipRule.Sources.CentralGroup, bool verified = true, byte[]? bytes = null,
@@ -119,13 +139,14 @@ public class SlipAutoRecordRound282DbTests
             ShowAmounts: true, SenderVerified: verified);
 
     [Fact]
-    public async Task กลุ่มOAกลาง_QRยอดตรงบัญชีผู้รับตรง_บันทึกรับเงินจริงลงบัญชีนั้น_ณวันที่บนสลิป_ตอบว่าบันทึกแล้ว()
+    public async Task กลุ่มOAกลาง_QRยอดตรงบัญชีผู้รับตรง_มีรายการเดินบัญชีตรง_บันทึกรับเงินจริงลงบัญชีนั้น_ณวันที่บนสลิป_ตอบว่าบันทึกแล้ว()
     {
         using var db = DbTestDatabase.TryCreateContext();
         if (db == null) { _out.WriteLine(Skip); return; }
         var s = await SeedAsync(db);
         var inv = await InvoiceAsync(db, s);
-        var (svc, _) = Svc(db, s);
+        await AddLineAsync(db, s, 1_070m, "0167902468A1ERTY0209");
+        var (svc, auto) = Svc(db, s);
         var res = await svc.HandleForwardedAsync(Fwd(s, Slip(1_070m, "0167902468A1ERTY0209")));
         Assert.True(res.Handled);
         Assert.Contains("บันทึกรับเงิน", res.Reply);
@@ -133,12 +154,11 @@ public class SlipAutoRecordRound282DbTests
 
         using var c = DbTestDatabase.TryCreateContext()!;
         var intent = await c.PaymentIntents.AsNoTracking().SingleAsync(i => i.CompanyId == s.CompanyId);
-        Assert.Equal(PaymentIntentStatus.Succeeded, intent.Status);
-        Assert.StartsWith(SlipAutoRecordService.Actor, intent.ConfirmedBy);
-        Assert.Equal("0167902468A1ERTY0209", intent.SlipBankRef);   // เลขธนาคารจาก QR = ตัวกันซ้ำ
-        Assert.Equal(s.BankId, intent.ReceivingBankAccountId);
+        Assert.Equal("0167902468A1ERTY0209", intent.SlipBankRef);   // เลขธนาคารจาก QR = ตัวกันซ้ำ + สัญญาณของตัวจับคู่รายการเดินบัญชี
         Assert.Null(intent.AutoRecordCode);
+        Assert.True(await auto.RecordedAsync(s.CompanyId, intent.Id));   // ฝ่ายค้าน MED-1: ผลจริง = บันทึกแล้ว (ตัวตัดสินว่าจะประทับอะไรหลังล้ม)
         var pay = await c.Payments.AsNoTracking().SingleAsync(p => p.CompanyId == s.CompanyId && p.DocumentId == inv.Id);
+        Assert.True(await c.BankTransactions.AnyAsync(t => t.CompanyId == s.CompanyId && t.MatchedPaymentId == pay.Id));   // เงินเข้าจริงผูกกับการชำระ
         Assert.Equal(1_070m, pay.Amount);
         Assert.Equal(s.BankId, pay.BankAccountId);
         Assert.Equal(SlipDay, pay.PaymentDate.Date);                      // วันรับเงิน = วันที่บนสลิป (§78/1) ไม่ใช่วันที่ระบบรับรูป
@@ -157,6 +177,8 @@ public class SlipAutoRecordRound282DbTests
         var s = await SeedAsync(db);
         var a = await InvoiceAsync(db, s, 1_000m);
         var b = await InvoiceAsync(db, s, 2_000m);
+        await AddLineAsync(db, s, 1_070m, "EMAILREF000001");
+        await AddLineAsync(db, s, 2_140m, "EMAILREF000002");
         var (svc, _) = Svc(db, s);
         var ok = await svc.HandleForwardedAsync(Fwd(s, Slip(1_070m, "EMAILREF000001"), LineChatSlipRule.Sources.Email));
         Assert.Contains("บันทึกรับเงิน", ok.Reply);
@@ -270,8 +292,8 @@ public class SlipAutoRecordRound282DbTests
         var sameRef = await svc.HandleForwardedAsync(Fwd(s, Slip(2_140m, "DUPREF00000001")));
         Assert.Equal(LineChatSlipRule.Replies.Duplicate, sameRef.Reply);
         using var c = DbTestDatabase.TryCreateContext()!;
-        Assert.Equal(1, await c.Payments.CountAsync(p => p.CompanyId == s.CompanyId));
-        Assert.Equal(inv.Id, (await c.Payments.AsNoTracking().SingleAsync(p => p.CompanyId == s.CompanyId)).DocumentId);
+        Assert.Equal(1, await c.PaymentIntents.CountAsync(i => i.CompanyId == s.CompanyId));   // สลิปเดียวไม่กลายเป็นสองรายการ
+        Assert.Equal(inv.Id, (await c.PaymentIntents.AsNoTracking().SingleAsync(i => i.CompanyId == s.CompanyId)).SourceId);
         Assert.True(await c.LineChatSlips.AnyAsync(x => x.CompanyId == s.CompanyId && x.Reason == LineChatSlipRule.Reasons.DuplicateRef));
     }
 
@@ -319,5 +341,58 @@ public class SlipAutoRecordRound282DbTests
         await auto.RemindPendingAsync(now);
         using var c2 = DbTestDatabase.TryCreateContext()!;
         return await c2.PaymentIntents.AsNoTracking().Where(i => i.CompanyId == s.CompanyId).SumAsync(i => i.ConfirmRemindCount) - before;
+    }
+
+    [Fact]
+    public async Task ฝ่ายค้านHIGH1_สลิปแต่งยอด_QRถูก_ไม่มีรายการเดินบัญชี_ไม่บันทึก_รายการเดินบัญชียอดไม่ตรงก็ไม่บันทึก()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var s = await SeedAsync(db);
+        var inv = await InvoiceAsync(db, s, 50_000m);   // ใบ 53,500
+        await AddLineAsync(db, s, 1m);                   // เงินเข้าจริงแค่ 1 บาท (สลิปจริงถูกแต่งยอด)
+        var (svc, auto) = Svc(db, s);
+        var r = await svc.HandleForwardedAsync(Fwd(s, Slip(53_500m, "FORGED00000001")));
+        Assert.Equal(LineChatSlipRule.Replies.AwaitingSeller, r.Reply);
+        using var c = DbTestDatabase.TryCreateContext()!;
+        Assert.False(await c.Payments.AnyAsync(p => p.CompanyId == s.CompanyId));
+        var i = await c.PaymentIntents.AsNoTracking().SingleAsync(x => x.CompanyId == s.CompanyId && x.SourceId == inv.Id);
+        Assert.True(PaymentIntentPolicy.IsOpen(i.Status));
+        Assert.Equal(SlipAutoRecordRule.Codes.NoBankLine, i.AutoRecordCode);
+        Assert.Contains(SlipAutoRecordRule.QrCaveat, i.AutoRecordReason);
+        Assert.NotNull(i.ConfirmNoticeAt);
+        Assert.False(await auto.RecordedAsync(s.CompanyId, i.Id));
+        Assert.Equal(53_500m, (await c.Documents.AsNoTracking().SingleAsync(d => d.Id == inv.Id)).BalanceDue);
+    }
+
+    [Fact]
+    public async Task ฝ่ายค้านLOW_สลิปในงวดที่ปิด_ไม่บันทึกเอง_และยอดหลังหักณที่จ่าย_10700หัก300_สลิป10400ตรง()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var s = await SeedAsync(db);
+        var corp = new Contact { CompanyId = s.CompanyId, Name = "บริษัท ผู้ซื้อหักภาษี 282 จำกัด", IsCustomer = true, ContactType = ContactType.JuristicPerson,
+            TaxId = "0107537000017", Address = "2 ถนนสาทร กรุงเทพฯ" };
+        db.Contacts.Add(corp);
+        await db.SaveChangesAsync();
+        var inv = new Document
+        {
+            CompanyId = s.CompanyId, ContactId = corp.Id, DocumentType = DocumentType.Invoice, Status = DocumentStatus.Approved,
+            DocumentNumber = "INV282W-" + Random.Shared.Next(100000, 999999), DocumentDate = DateTime.UtcNow.AddHours(7).Date.AddDays(-3),
+            SubTotal = 10_000m, VatAmount = 700m, WithholdingTaxAmount = 300m, TotalAmount = 10_400m, BalanceDue = 10_400m, Currency = "THB",
+        };
+        inv.Lines.Add(new DocumentLine { LineOrder = 1, Description = "ค่าบริการ", Quantity = 1, UnitPrice = 10_000m, Amount = 10_000m, VatRate = 7m, VatAmount = 700m });
+        db.Documents.Add(inv);
+        // เดือน ภ.พ.30 ของวันที่บนสลิปยื่นแล้ว ⇒ ไม่บันทึกเองแม้มีรายการเดินบัญชีตรง
+        db.TaxReports.Add(new TaxReport { CompanyId = s.CompanyId, TaxType = TaxType.VAT, Year = SlipDay.Year, Month = SlipDay.Month, Status = TaxReportStatus.Filed });
+        await db.SaveChangesAsync();
+        await AddLineAsync(db, s, 10_400m, "WHT00000000001");
+        var (svc, _) = Svc(db, s);
+        await svc.HandleForwardedAsync(Fwd(s, Slip(10_400m, "WHT00000000001"), contacts: new[] { corp.Id }));
+        using var c = DbTestDatabase.TryCreateContext()!;
+        var i = await c.PaymentIntents.AsNoTracking().SingleAsync(x => x.CompanyId == s.CompanyId && x.SourceId == inv.Id);
+        Assert.Equal(10_400m, i.Amount);                                                // 10,700 หัก 300 ⇒ สลิป 10,400 ตรงใบ (ตัวจับคู่ 260)
+        Assert.Equal(SlipAutoRecordRule.Codes.PeriodLocked, i.AutoRecordCode);
+        Assert.False(await c.Payments.AnyAsync(p => p.CompanyId == s.CompanyId));
     }
 }
