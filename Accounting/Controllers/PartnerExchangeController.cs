@@ -44,6 +44,30 @@ public class PartnerExchangeController : ControllerBase
             await svc.ListAsync(companyId, vis.Revenue, vis.Purchase, documentId, limit ?? 20, ct)));
     }
 
+    /// <summary>รอบ 283 (คำสั่งเจ้าของ): การจ่ายที่ระบบบันทึกเองจากคู่ค้าก่อนรอบ 283 ซึ่งยังไม่มีใบสำคัญจ่าย — อ่านอย่างเดียว · ผู้ที่เห็นเอกสารซื้อ</summary>
+    [HttpGet("partner-payments/without-voucher")]
+    public async Task<ActionResult<ApiResponse<List<PartnerPaymentWithoutVoucherRow>>>> PaymentsWithoutVoucher(Guid companyId)
+    {
+        var vis = await DocumentPermissionHelper.VisibleDirectionsAsync(_perms, companyId, JwtHelper.GetUserIdFromClaims(User));
+        if (!vis.Purchase) return Denied(PermissionKeys.DocumentPurchaseView);
+        return Ok(new ApiResponse<List<PartnerPaymentWithoutVoucherRow>>(true, await _docs.ListPartnerPaymentsWithoutVoucherAsync(companyId)));
+    }
+
+    /// <summary>รอบ 283: "ออกใบสำคัญจ่ายย้อนหลัง" ให้การจ่ายที่เลือก (ทีละรายการ) — ไม่ลง JE ซ้ำ · ไม่ออก 50 ทวิ ใหม่ · สิทธิ์อนุมัติเอกสารซื้อ · ไม่รับ API key · audit</summary>
+    [HttpPost("partner-payments/{paymentId:guid}/payment-voucher")]
+    [Accounting.Filters.RequirePermission(PermissionKeys.DocumentPurchaseApprove)]
+    [Accounting.Filters.RejectApiKey("ออกใบสำคัญจ่ายย้อนหลัง")]
+    public async Task<ActionResult<ApiResponse<SettlementVoucherResult>>> IssueVoucher(Guid companyId, Guid paymentId)
+    {
+        var r = await _docs.IssueSettlementPaymentVoucherAsync(companyId, paymentId, JwtHelper.GetUserIdFromClaims(User).ToString());
+        return r.Action switch
+        {
+            SettlementPaymentVoucher.IssueAction.Issue => Ok(new ApiResponse<SettlementVoucherResult>(true, r, $"ออกใบสำคัญจ่าย {r.VoucherNumber} แล้ว (ไม่ลงบัญชีซ้ำ)")),
+            SettlementPaymentVoucher.IssueAction.AlreadyIssued => Ok(new ApiResponse<SettlementVoucherResult>(true, r, r.Reason)),
+            _ => StatusCode(409, new ApiResponse<SettlementVoucherResult>(false, r, r.Reason)),
+        };
+    }
+
     private ObjectResult Denied(string key)
         => StatusCode(403, new ApiResponse<object>(false, new { requiredPermission = key.Replace("perm:", "") }, PermissionKeys.DeniedMessage(key)));
 

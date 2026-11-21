@@ -7501,3 +7501,10 @@ LOW-1 "ส่งได้บางส่วน" · LOW-2 การ์ด `#HeyNe
 - 282-6 (คำสั่งเจ้าของ): `Helpers/SlipMoneySource` ตัวตัดสินแหล่งเงินเดียว · ฝั่ง B สลิปตรงบัญชีเดียวบันทึกเองได้ (กลับ 264-P2 M1) · แจ้ง `partner.pay_source_needs_confirm` · เตือนซ้ำ 1/3 วัน เพดาน 2 (`AutopilotJob` ขั้น `SlipConfirmReminders`)
 - 282-7 (คำสั่งเจ้าของ): `pay-document.html` + session ผู้ซื้อคู่ค้า ⇒ `for-pay-link` ⇒ ช่อง "จ่ายจากบัญชี" + ปุ่ม "จ่ายจากระบบของเรา" เดิม (บัญชีเก็บฝั่งผู้ซื้อ)
 - migration `Round282Migration` · เทสต์ pure `SlipAutoRecordRound282Tests` · Db `SlipAutoRecordRound282DbTests` + `PartnerOutboundRound264P4DbTests` (หน้าชำระ) · คอมมิต 14abedf7
+
+### รอบ 283 — ใบสำคัญจ่ายเป็นเอกสารจากท่ออัตโนมัติคู่ค้า (คำสั่งเจ้าของ · คำตัดสิน 283-1…283-6 · `erp-review/2026-11-21/dev-283-partner-pv.md`)
+- 283-1: ท่อของผู้ซื้อขอ `IssuePaymentVoucherDocument: true` ⇒ `CreatePaymentAsync` ออกใบสำคัญจ่ายหลักฐานคู่การจ่ายในธุรกรรมเดียวกัน (ไม่ลง JE · ไม่ตัดหนี้ · VAT/ภาษีหักบนใบ = 0 · เลข 50 ทวิ บนบรรทัด) · ล้ม = การจ่าย rollback
+- 283-2/3: เลขจากเล่ม PV ตามสิทธิ์อนุมัติ · 50 ทวิ ใบเดียวผูกด้วยกุญแจการจ่าย (ไม่ย้าย `DocumentId` · ไม่ออกใหม่)
+- 283-4: ยกเลิก PV = ยกเลิกการจ่าย · ยกเลิกการจ่าย (ใบเดียว/หลายใบ) ⇒ PV ยกเลิกตาม คงแถว + audit
+- 283-5: รายงาน + ออกย้อนหลังทีละรายการ (`partner-payments/without-voucher` · `partner-payments/{id}/payment-voucher`) · ป้าย `OriginLabel` บนรายการเอกสาร
+- เทสต์ pure `SettlementPaymentVoucherRound283Tests` · Db `PartnerSettlementVoucherRound283DbTests` (2) · กติกา `_R283_*` (+7) · คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว (ฐาน `accounting_test_r283`) · commit SHA283

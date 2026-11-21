@@ -10251,6 +10251,20 @@ public partial class DocumentService : IDocumentService
         // RevertSourceDocumentAdjustments → ลบ PaidAmount ของใบแจ้งหนี้ทั้งที่
         // Payment + JE ยังอยู่ → AR ติดลบ + เก็บเงินซ้ำได้ (audit B3). ทางถูก:
         // ยกเลิก "การชำระเงิน" (payment) → ระบบ void ใบเสร็จนี้ให้เอง (cascade ครบ)
+        // รอบ 283 (283-4): ใบสำคัญจ่ายหลักฐานคู่การจ่าย — ยกเลิกใบ = ยกเลิกการจ่าย (เส้นเดิมตัวเดียว: กลับ JE · คืนยอดหนี้ · 50 ทวิ ตามกติกาเดิม · ใบนี้ยกเลิกตาม) ·
+        // การจ่ายถูกยกเลิกไปแล้ว ⇒ ยกเลิกใบนี้อย่างเดียว (ไม่มี JE ให้กลับ)
+        if (doc.IsSettlementReceipt && doc.DocumentType == DocumentType.PaymentVoucher && doc.SettlementPaymentId is Guid settledPayId)
+        {
+            var livePayment = await _db.Payments.AsNoTracking()
+                .Where(p => p.Id == settledPayId && p.CompanyId == companyId && !p.IsDeleted).Select(p => (Guid?)p.Id).FirstOrDefaultAsync();
+            if (livePayment is Guid lp) return await VoidPaymentAsync(companyId, lp);
+            var orphanPayment = await _db.Payments.IgnoreQueryFilters()
+                .FirstOrDefaultAsync(p => p.Id == settledPayId && p.CompanyId == companyId);
+            if (orphanPayment != null) await VoidSettlementPaymentVouchersOfPaymentAsync(companyId, orphanPayment);
+            else { doc.Status = DocumentStatus.Voided; doc.UpdatedAt = DateTime.UtcNow; }
+            await _db.SaveChangesAsync();
+            return PaymentVoidResult.None;
+        }
         if (doc.IsSettlementReceipt)
             throw new InvalidOperationException(
                 "ใบเสร็จนี้ออกอัตโนมัติจากการบันทึกชำระเงิน — กรุณา 'ยกเลิกการชำระเงิน' แทน " +
@@ -12490,6 +12504,7 @@ public partial class DocumentService : IDocumentService
 
         // ใบเสร็จรับเงินหลักฐานที่ออกคู่กับการชำระนี้ (ถ้ามี) — ยกเลิก หรือติดธง "ต้องยกเลิกทาง e-Tax" ตามคำตัดสินด้านบน (รอบ 200 ทีม V1)
         var etaxCancellationFlag = await ApplyAutoReceiptOnPaymentVoidAsync(companyId, receiptDecision, receiptDoc, payment.PaymentNumber);
+        await VoidSettlementPaymentVouchersOfPaymentAsync(companyId, payment);   // รอบ 283: ใบสำคัญจ่ายหลักฐานคู่การจ่าย (คงแถว · audit)
 
         // Restore document balance (รวมค่าธรรมเนียมที่เคยล้างเอกสารด้วย)
         // + หนี้ที่เคยปิดด้วยบรรทัดปรับ (รอบ 193 — ขา JE ถูกกลับพร้อม JE การชำระข้างบนแล้ว)
@@ -12842,6 +12857,7 @@ public partial class DocumentService : IDocumentService
 
         // 4) ใบเสร็จหลักฐานที่ออกคู่กับการชำระ (evidence-only ไม่มี JE) — ยกเลิก หรือติดธง "ต้องยกเลิกทาง e-Tax" (รอบ 200 ทีม V1)
         var etaxCancellationFlag = await ApplyAutoReceiptOnPaymentVoidAsync(companyId, receiptDecision, receiptDoc, pn);
+        await VoidSettlementPaymentVouchersOfPaymentAsync(companyId, payment);   // รอบ 283
         foreach (var own in allocationReceipts.Values)
             etaxCancellationFlag = CombineNotices(etaxCancellationFlag,
                 await ApplyAutoReceiptOnPaymentVoidAsync(companyId, own.Decision, own.Receipt, pn));
@@ -16209,6 +16225,11 @@ public partial class DocumentService : IDocumentService
                         ? payment.WithholdingTaxAmount : null);
                 whtCertNotice = whtOutcome.UserNotice;
             }
+
+            // รอบ 283 (คำสั่งเจ้าของ · 283-1): ผู้ขอ (ท่ออัตโนมัติคู่ค้า) ต้องการใบสำคัญจ่ายเป็นเอกสาร ⇒ ใบหลักฐานคู่การจ่ายนี้ (ไม่ลง JE ซ้ำ · อ้าง 50 ทวิ ข้างบน) ·
+            // ในธุรกรรมเดียวกัน — ออกไม่ได้ = โยน ⇒ การจ่ายทั้งก้อน rollback (ไม่มี "จ่ายแล้วไม่มีใบ" เงียบ ๆ)
+            if (request.IssuePaymentVoucherDocument == true)
+                await IssueSettlementPaymentVoucherInPaymentAsync(companyId, doc, payment, createdBy);
 
             // tax point §78/1: รับชำระใบแจ้งหนี้บริการ (modal ชำระเงิน) → VAT ที่พัก
             // 21913 ถึงกำหนด → reclass Dr 21913 / Cr 21911 + stamp เข้า ภ.พ.30
@@ -22211,6 +22232,7 @@ public partial class DocumentService : IDocumentService
         // ต้อง echo กลับ ไม่งั้นร่องรอยอยู่แต่ในฐานข้อมูลกับ audit ผู้ใช้ไม่เห็น
         InternalNotes: d.InternalNotes,
         OriginModule: d.OriginModule,
+        OriginLabel: Accounting.Helpers.SettlementPaymentVoucher.OriginLabel(d.OriginModule),
         EtaxAutoFailed: Accounting.Helpers.EtaxAutoFailedNote.Has(d.InternalNotes),
         PartnerRoutingFailed: Accounting.Helpers.PartnerRoutingFailedNote.Has(d.InternalNotes),
         ReplacedByDocumentId: d.ReplacedByDocumentId,

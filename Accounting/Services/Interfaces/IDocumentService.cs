@@ -391,6 +391,13 @@ public interface IDocumentService
     /// <c>DocumentVoidPreconditions.AutoReceiptOnPaymentVoid</c>)</summary>
     /// <para>รอบ 235 (ฝ่ายค้าน S4): <paramref name="beforeCommit"/> = งานของผู้เรียกที่ต้อง commit <b>ในธุรกรรมเดียวกับ</b>การยกเลิก (เช่น audit ของผู้เรียก) ·
     /// ไม่ถูกเรียกเมื่อการชำระถูกยกเลิกไปแล้ว (no-op idempotent)</para>
+    /// <summary>รอบ 283: ออกใบสำคัญจ่ายหลักฐาน "ย้อนหลัง" ให้การจ่ายใบซื้อที่บันทึกไปแล้ว (เฉพาะรายการที่เลือก) — ไม่ลง JE ซ้ำ · ไม่ออก 50 ทวิ ใหม่ ·
+    /// ตัวตัดสิน <c>Helpers/SettlementPaymentVoucher</c></summary>
+    Task<Accounting.Services.Implementations.SettlementVoucherResult> IssueSettlementPaymentVoucherAsync(Guid companyId, Guid paymentId, string actor);
+
+    /// <summary>รอบ 283: รายงานอ่านอย่างเดียว — การจ่ายที่ท่อคู่ค้าบันทึกเองแต่ยังไม่มีใบสำคัญจ่าย (ใบที่บันทึกก่อนรอบ 283)</summary>
+    Task<List<Accounting.Services.Implementations.PartnerPaymentWithoutVoucherRow>> ListPartnerPaymentsWithoutVoucherAsync(Guid companyId, int take = 200);
+
     Task<PaymentVoidResult> VoidPaymentAsync(Guid companyId, Guid paymentId,
         Accounting.Helpers.PaymentVoidCause cause = Accounting.Helpers.PaymentVoidCause.User,
         Func<Accounting.Models.Entities.Payment, Task>? beforeCommit = null);
