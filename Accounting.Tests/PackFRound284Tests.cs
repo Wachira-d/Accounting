@@ -327,4 +327,69 @@ public class PackFRound284Tests
         Assert.Empty(add2);
         Assert.Same(sum, Assert.Single(rem2));
     }
+
+    // ───────────── ฝ่ายค้าน 284 (HIGH-1…3 · MED-1…3 · LOW) ─────────────
+
+    private static string[]? GateKeys(Type t, string? method = null)
+    {
+        var attrs = method == null
+            ? t.GetCustomAttributes(typeof(Accounting.Filters.RequireReportAccessAttribute), true)
+            : t.GetMethods().Single(x => x.Name == method).GetCustomAttributes(typeof(Accounting.Filters.RequireReportAccessAttribute), true);
+        var a = attrs.Cast<Accounting.Filters.RequireReportAccessAttribute>().SingleOrDefault();
+        return a == null ? null : (string[])typeof(Accounting.Filters.RequireReportAccessAttribute)
+            .GetField("_keys", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!.GetValue(a)!;
+    }
+
+    [Fact]
+    public void R284A_HIGH1_HIGH2_มือถือและLINEผ่านด่านเดียวกับยอดเดือน()
+    {
+        var mobile = Src("Accounting", "Controllers", "MobileController.cs");
+        Assert.Contains("FinancialReportAccess.AllowsAsync(db, permissions, companyId, JwtHelper.GetUserIdFromClaims(User), FinancialReportAccess.MonthSnapshot)", mobile);
+        Assert.Contains("GetMobileDashboardAsync(companyId, financials)", mobile);
+        var line = Src("Accounting", "Services", "Implementations", "LineBotService.cs");
+        var gate = line.IndexOf("FinancialReportAccess.AllowsAsync(_db, _perms, companyId, user.Id, FinancialReportAccess.MonthSnapshot)", StringComparison.Ordinal);
+        Assert.True(gate > 0 && gate < line.IndexOf("ReportableJournal.WherePeriodActivity(_db.JournalEntryLines)", gate, StringComparison.Ordinal));   // ตรวจก่อนคำนวณ
+        Assert.DoesNotMatch("ปุ่ม", FinancialReportAccess.NoFinancialAccessNotice);                     // ข้อความไม่อ้างปุ่มบนเว็บ
+    }
+
+    [Fact]
+    public void R284A_HIGH3_รายงานตั้งเวลา_คีย์ตามชนิด_ผู้รับภายนอกต้องอนุมัติ_ทิศตรงข้ามสมาชิกส่งได้()
+    {
+        Assert.Equal(new[] { Accounting.Models.Constants.PermissionKeys.ReportsFinancial }, ScheduledReportAccess.KeysFor("pnl"));
+        Assert.Equal(new[] { Accounting.Models.Constants.PermissionKeys.ReportsOperational }, ScheduledReportAccess.KeysFor("AR_AGING"));
+        Assert.Null(ScheduledReportAccess.KeysFor("SALARY_DUMP"));                                  // ชนิดที่ไม่รู้จัก ⇒ ปฏิเสธ
+        var members = new HashSet<string> { "acc@co.th" };
+        Assert.Equal(new[] { "x@gmail.com" }, ScheduledReportAccess.UnapprovedRecipients(new[] { "ACC@co.th ", "x@gmail.com" }, members, null));
+        Assert.Empty(ScheduledReportAccess.UnapprovedRecipients(new[] { "acc@co.th" }, members, null));    // ทิศตรงข้าม: สมาชิกส่งได้เสมอ
+        Assert.Empty(ScheduledReportAccess.UnapprovedRecipients(new[] { "x@gmail.com" }, members, new[] { "X@gmail.com" }));
+        // เจ้าของบันทึก ⇒ อนุมัติรายชื่อภายนอก · คนอื่นบันทึก ⇒ คงเฉพาะที่อนุมัติไว้ (เพิ่มเองไม่ได้)
+        Assert.Equal(new[] { "x@gmail.com" }, ScheduledReportAccess.ApprovedAfterSave(new[] { "acc@co.th", "x@gmail.com" }, members, null, saverIsOwner: true));
+        Assert.Empty(ScheduledReportAccess.ApprovedAfterSave(new[] { "x@gmail.com" }, members, null, saverIsOwner: false));
+        Assert.Equal(new[] { "x@gmail.com" }, ScheduledReportAccess.ApprovedAfterSave(new[] { "x@gmail.com" }, members, new[] { "x@gmail.com", "old@y.com" }, false));
+        var disp = Src("Accounting", "Services", "Implementations", "ScheduledReportDispatcher.cs");
+        var g = disp.IndexOf("ScheduledReportAccess.SendProblemAsync(", StringComparison.Ordinal);
+        Assert.True(g > 0 && g < disp.IndexOf("BuildReportBodyAsync(sp, db, s, nowBkk, ct)", StringComparison.Ordinal));   // ตรวจสิทธิ์ก่อนสร้างตัวเลข
+        Assert.Contains("NotifyRefusedAsync(db, s, refusal, ct)", disp);
+    }
+
+    [Fact]
+    public void R284A_MED1_MED3_LOW_ด่านภาษี_งบประมาณคีย์แคบ_ความเสี่ยงและลูกหนี้()
+    {
+        var tax = typeof(Accounting.Controllers.TaxController);
+        foreach (var m in new[] { "GetTaxReports", "GetTaxReport", "ExportTaxReportXlsx", "ExportTaxReportPdf" })
+            Assert.Equal(MenuPermissionMap.LegacyKeys["tax"], GateKeys(tax, m));
+        Assert.Equal(MenuPermissionMap.LegacyKeys["risk"], GateKeys(typeof(Accounting.Controllers.RiskController)));
+        Assert.NotNull(GateKeys(typeof(Accounting.Controllers.AdvancedArApController)));
+        Assert.Equal(Accounting.Models.Constants.PermissionKeys.ReportsBudget, GateKeys(typeof(Accounting.Controllers.BudgetController), "GetBudgetVsActual")![0]);
+        // migration: เมนูงบประมาณได้คีย์งบประมาณ ไม่ใช่ "งบการเงิน" ทั้งชุด
+        Assert.Contains(Round284Migration.MenuGrants, g => g.MenuId == "budget" && g.Key == Accounting.Models.Constants.PermissionKeys.ReportsBudget);
+        Assert.DoesNotContain(Round284Migration.MenuGrants, g => g.MenuId == "budget" && g.Key == Accounting.Models.Constants.PermissionKeys.ReportsFinancial);
+        Assert.True(BuiltInRolePermissions.Grants(UserRole.Accountant, Accounting.Models.Constants.PermissionKeys.ReportsBudget));
+        Assert.Contains(Accounting.Models.Constants.PermissionKeys.Catalog, c => c.Key == Accounting.Models.Constants.PermissionKeys.ReportsBudget);
+        // MED-2: JE ทั้งบริษัทต้องมีคีย์ · JE ของใบเดียว (หน้าเอกสาร) คงเดิม
+        var acc = Src("Accounting", "Controllers", "AccountingController.cs");
+        Assert.Contains("if (sourceDocumentId == null && string.IsNullOrWhiteSpace(sourceDocumentNumber)", acc);
+        Assert.Contains("FinancialReportAccess.AllowsAsync(db, permissions, companyId, userId, FinancialReportAccess.Ledger)", acc);
+        Assert.Equal(MenuPermissionMap.LegacyKeys["general-ledger"], FinancialReportAccess.Ledger);
+    }
 }

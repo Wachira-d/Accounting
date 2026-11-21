@@ -7538,3 +7538,4 @@ _รอบ 285 (2026-11-21): ยืนยันเลขผู้เสียภ
   บันทึก**ล่วงหน้า** (ค่าตั้งต้นปิด · ≤ ยอดสูงสุด × 1.5 · เพดานต่อวัน) แล้วตรวจย้อนในงานตัดชำระเดิม · ไม่พบใน N วันทำการ ⇒ แจ้งแรง + ถอนอัตโนมัติ (ไม่ยกเลิกเงินเอง)
 - `Helpers/TrustedSlipPayerRule` · `TrustedSlipPayerService` · `TrustedSlipVerifyService` · ตาราง `TrustedSlipPayers` · `Round286Migration` · หน้าตั้งค่าแท็บ LINE + `line-config/trusted-payers`
 - เทสต์ `TrustedSlipPayerRound286Tests` + Db `TrustedSlipPayerRound286DbTests` · คำตัดสิน 286-1…286-9 · commit 19445ff6
+- 284-12…16 (ชุดแก้ฝ่ายค้าน HIGH 3 · MED 3 · LOW): มือถือ · LINE ดูยอด · รายงานตั้งเวลา (`ScheduledReportAccess`) · TaxController · สมุดรายวันทั้งบริษัท · `Reports.Budget` · Risk/AdvancedArAp — `FinancialReportAccess` ตัวเดียว · คอมมิต <เติมในคอมมิตตามหลัง>

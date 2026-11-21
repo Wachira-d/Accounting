@@ -9312,6 +9312,12 @@ retention ช่วงนี้เทียบช่วงก่อน + เส�
   (หน้าหลักโหมดง่ายแสดงป้ายแทนการ์ด) · สมุดรายวัน (`journals`) คงเดิม (อ่านผ่าน `ForUser` · หน้าเอกสารใช้ดู JE ของใบ) · ด่านเข้มเดิม (แดชบอร์ด/FP&A/ผู้บริหาร/งบรวม/ส่งออกบัญชี) ไม่เปลี่ยน ·
   เมนู `MenuPermissionMap.LegacyKeys` (reports · general-ledger · aging · arap-analysis · cash-forecast) ตัดด้วยกติกาเดียว · `Round284Migration` (ครั้งเดียว · marker `r284-report-keys-from-menus`)
   บทบาทเดิมที่ติ๊กเมนูรายงานได้คีย์ของหน้า (ไม่ทับค่าที่เจ้าของตั้ง) · ค่าตั้งต้นบทบาทระบบ (`SeedDefaultRolesAsync`) ได้คีย์ตามเมนู · ผู้ "เห็นเฉพาะของตัวเอง" (276) ถูกกันที่รายการอนุญาตเหมือนเดิม
+- **ชุดแก้ฝ่ายค้าน 284 (284-12…16)** — ทางรั่วอื่นของยอดการเงินผ่าน `FinancialReportAccess` ตัวเดียว: `GET mobile/companies/{id}/dashboard` (ไม่มีสิทธิ์ ⇒ ไม่คำนวณยอดเงิน ·
+  `FinancialsHidden` + เหตุ · จำนวนงาน/การแจ้งเตือนคงส่ง) · LINE "ดูยอด" (ตอบเหตุ) · รายงานตั้งเวลา (`Helpers/ScheduledReportAccess`: สร้าง/แก้ต้องมี `Reports.Export` + คีย์ตามชนิด ·
+  ผู้รับภายนอกต้องเป็นรายชื่อที่เจ้าของบันทึก (`ScheduledReports.ApprovedExternalRecipientsJson`) · ตอนส่งตรวจผู้รับผิดชอบ = `UpdatedBy ?? CreatedBy` ยังเป็นสมาชิก + มีสิทธิ์ ·
+  ไม่ผ่าน ⇒ ไม่ส่ง + กระดิ่งเจ้าของ/ผู้รับผิดชอบ · แถวรุ่นเก่าไม่รู้ผู้รับผิดชอบ ⇒ ไม่ส่งจนมีคนบันทึกใหม่) · `tax` GET รายการ/รายใบ/ส่งออก = `Tax.Export`|`Tax.File` ·
+  `accounting/journals` ทั้งบริษัท (ไม่ระบุใบ) = `Accounting.View`|`Reports.Financial` (JE ของใบเดียวคงเดิม) · งบประมาณเทียบจริง = คีย์ใหม่ `Reports.Budget`|`Reports.Financial`
+  (migration เมนูงบประมาณ ⇒ `Reports.Budget` ไม่ใช่งบการเงินทั้งชุด · ยังไม่ deploy จึงแก้ตารางตรง) · `risk` · `ar-ap` = `Reports.Operational`|`Reports.Financial`
 - **ใบเสร็จรับชำระ + ค่าธรรมเนียมฝั่งผู้รับ (Q2 · 284-8)** — `SettlementReceiptTotals.ReceiptPaperAmount` = เงินเข้า + ค่าธรรมเนียม ⇒ หัว/บรรทัด/ยอดรับชำระ = ยอดที่ลูกค้าจ่ายเต็ม
   (749,000 ไม่ใช่ 748,970) · ใบเสร็จรับชำระไม่ลงบัญชี ⇒ GL ไม่เปลี่ยน · ใบที่ออกแล้วไม่แก้ย้อนหลัง · บรรทัดปรับไม่รวม
 - **หักมัดจำในตัวไล่ยอด (Q3 · 284-9)** — `SettlementReceiptTotals.Walk` ⇒ `PriorOther` = ยอดไล่ได้ − ยอดค้างจริง (การหักมัดจำบวก `PaidAmount` โดยไม่มีแถว) นับเป็นการตัดยอดก่อนการรับครั้งนี้ ⇒

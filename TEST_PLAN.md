@@ -1505,7 +1505,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **982 ไฟล์ · 10,667 `[Fact]` + 1,440 `[Theory]` (6,842 `InlineData`)** ณ 2026-11-21 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`) | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)**, **ReceiptFormRule (รูปแบบกระดาษหลักฐานรับเงิน · รอบ 203)** |
+| เทสต์ที่มี | **982 ไฟล์ · 10,672 `[Fact]` + 1,440 `[Theory]` (6,842 `InlineData`)** ณ 2026-11-21 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`) | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)**, **ReceiptFormRule (รูปแบบกระดาษหลักฐานรับเงิน · รอบ 203)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
 | CI | ✅ `.github/workflows/ci.yml` — static check → restore → build → test; รันบน PR/push เข้า main/master + `workflow_dispatch` (branch `claude/**` ปิดไว้ กัน mail spam ระหว่างพัฒนา) |
@@ -9345,3 +9345,5 @@ H2 (OCR ไม่พร้อม ⇒ แถวเข้าคิว) ล็อ�
 | T286-06 | Db `T286_06_…` | ผู้ขายกดยืนยันอย่างเดียวไม่เกิดความไว้ใจ · รายการเดินบัญชีจับคู่ภายหลัง ⇒ เกิด |
 | T286-07 | pure `TrustedSlipPayerRound286Tests` (6 เคส) | กุญแจต้องครบ · ลายนิ้วมือไม่ขึ้นกับช่องว่าง/ตัวพิมพ์ แต่ต่างทุกชิ้น + ผูกบริษัท · ไม่มีความลับ ⇒ โยน · ทุกทางของ Decide + ขอบเพดาน · วันทำการ + วันหยุด · ช่วงค่าตั้ง |
 | T286-08 | กติกา `_R286_*` (+8 · เคสฝ่ายค้าน R286-1…3) | ด่าน 282 ก่อนใช้ความไว้ใจ · เรียนเฉพาะเมื่อผูกรายการเดินบัญชี · ตรวจย้อนก่อนหาใบค้าง · ห้ามยกเลิกเงินเอง/ห้ามประทับยืนยันเอง |
+| T284-13 | pure `R284A_*` (3) + Db `R284A_HIGH1_*` · `R284A_HIGH3_*` | ฝ่ายค้าน: มือถือไม่มีสิทธิ์ไม่ได้ยอดเงิน/มีสิทธิ์ได้เดิม · LINE ตรวจก่อนคำนวณ · รายงานตั้งเวลา: คีย์ตามชนิด · ผู้รับภายนอกต้องอนุมัติ (สมาชิกส่งได้) · ผู้รับผิดชอบหมดสิทธิ์/ออก/ไม่รู้ ⇒ ไม่ส่ง · ภาษี/ความเสี่ยง/ลูกหนี้ติดด่าน · งบประมาณคีย์แคบ · JE ทั้งบริษัทต้องมีคีย์ |
+| T284-14 | กติกา `_R284_*` ฝ่ายค้าน (+7 · เคส R284-6/7) | ถอดด่าน/ย้ายลำดับแล้วฟ้อง |
