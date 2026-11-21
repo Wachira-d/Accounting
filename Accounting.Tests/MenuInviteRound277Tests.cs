@@ -84,7 +84,7 @@ public class MenuInviteRound277Tests
         Assert.True(a > 0 && b > a, "หา navItems ใน layout.js ไม่เจอ");
         var ids = Regex.Matches(src[a..b], @"\{ id: '([a-z0-9-]+)'").Select(m => m.Groups[1].Value).ToHashSet();
         Assert.True(ids.Count > 100, $"อ่านเมนูได้ {ids.Count} ตัว — ตัวอ่านเพี้ยน");
-        var groups = new[] { MenuPermissionMap.Keys.Keys.ToHashSet(), MenuPermissionMap.DirectionMenus.Keys.ToHashSet(), MenuPermissionMap.RoleMenuOnly.ToHashSet() };
+        var groups = new[] { MenuPermissionMap.Keys.Keys.ToHashSet(), MenuPermissionMap.LegacyKeys.Keys.ToHashSet(), MenuPermissionMap.DirectionMenus.Keys.ToHashSet(), MenuPermissionMap.RoleMenuOnly.ToHashSet() };
         var missing = ids.Where(id => groups.Count(g => g.Contains(id)) == 0).OrderBy(x => x).ToList();
         var twice = ids.Where(id => groups.Count(g => g.Contains(id)) > 1).OrderBy(x => x).ToList();
         var extra = groups.SelectMany(g => g).Where(id => !ids.Contains(id)).OrderBy(x => x).ToList();

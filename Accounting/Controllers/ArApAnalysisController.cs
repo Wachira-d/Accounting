@@ -1,3 +1,5 @@
+using Accounting.Models.Constants;
+using Accounting.Filters;
 using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.ArApAnalysis;
 using Accounting.Services.Interfaces;
@@ -9,6 +11,8 @@ namespace Accounting.Controllers;
 [ApiController]
 [Route("api/companies/{companyId:guid}/arap-analysis")]
 [Authorize]
+// รอบ 284 (คำตัดสิน 284-7): ตัวเลขการเงินรวมของบริษัท — ด่าน FinancialReportAccess (ไม่ผูกบทบาท = เดิม)
+[RequireReportAccess(PermissionKeys.ReportsOperational)]
 public class ArApAnalysisController : ControllerBase
 {
     private readonly IArApAnalysisService _service;

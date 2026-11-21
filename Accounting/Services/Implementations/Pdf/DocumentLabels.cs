@@ -289,9 +289,18 @@ public sealed class DocumentLabels
         _ => this["settlement_src_invoice"],
     };
 
+    /// <summary>รอบ 284 (T3 LOW-2): ชื่อใบต้นทางบนบรรทัดอ้างอิง — หัวที่ใบนั้นพิมพ์จริงเมื่อภาษาตรงกับใบนี้ · นอกนั้น <see cref="SettlementSourceLabel"/></summary>
+    public string SourceHeadingLabel(Accounting.Helpers.SettlementReceiptTotals.Source s)
+        => !string.IsNullOrWhiteSpace(s.Heading) && string.Equals(s.HeadingLanguage, IsEnglish ? "en" : "th", StringComparison.OrdinalIgnoreCase)
+            ? s.Heading!.Trim() : SettlementSourceLabel(s.Type);
+
     /// <summary>บรรทัดรายการของใบเสร็จรับชำระ (รอบ 275 MED-5 — เดิม literal ไทยใน DocumentService) · <paramref name="installment"/> = ใบกำกับรายงวดของงานบริการ</summary>
     public string SettlementReceiptLine(Accounting.Models.Enums.DocumentType sourceType, string sourceNumber, bool installment)
-        => string.Format(this[installment ? "settlement_installment_line" : "settlement_receipt_line"], SettlementSourceLabel(sourceType), sourceNumber);
+        => SettlementReceiptLine(SettlementSourceLabel(sourceType), sourceNumber, installment);
+
+    /// <summary>รอบ 284 (T3 LOW-2): บรรทัดรายการด้วยชื่อใบต้นทางที่ส่งมา (<see cref="SourceHeadingLabel"/>)</summary>
+    public string SettlementReceiptLine(string sourceLabel, string sourceNumber, bool installment)
+        => string.Format(this[installment ? "settlement_installment_line" : "settlement_receipt_line"], sourceLabel, sourceNumber);
 
     /// <summary>หมายเหตุของใบเสร็จรับชำระ (พิมพ์บนกระดาษ) — วันที่รับ + วิธีรับ + บทบาทใบกำกับ ณ วันรับเงิน</summary>
     public string SettlementReceiptNote(Accounting.Models.Enums.DocumentType sourceType, string sourceNumber, DateTime receivedOn, string method,
@@ -318,7 +327,8 @@ public sealed class DocumentLabels
             lines.Add(string.Format(this["settlement_via_billing_note"], bn.Number, Date(bn.Date)));
         foreach (var s in v.References)
         {
-            var srcLabel = SettlementSourceLabel(s.Type);
+            // รอบ 284 (T3 LOW-2): ชื่อที่ใบต้นทางพิมพ์จริง (ภาษาเดียวกับใบเสร็จ) — ไม่ใช่ชื่อชนิดตายตัว · ไม่รู้/คนละภาษา ⇒ ชื่อชนิดเดิม
+            var srcLabel = SourceHeadingLabel(s);
             // L1: ภาษีหักทั้งใบไม่พิมพ์ที่นี่ (งวดผ่อนจะบวกไม่ลง) — พิมพ์ของการรับครั้งนี้ข้างล่าง
             lines.Add(string.Format(this["settlement_ref_line"], srcLabel, s.Number, Date(s.Date),
                 M(s.SubTotal), M(s.VatAmount), M(Accounting.Helpers.SettlementReceiptTotals.GrossOf(s))));
@@ -327,6 +337,8 @@ public sealed class DocumentLabels
         foreach (var cn in v.PriorCreditNotes ?? Array.Empty<Accounting.Helpers.SettlementReceiptTotals.LedgerEvent>())
             lines.Add(string.Format(this["settlement_cn_line"], cn.Number ?? "", Date(cn.Date), M(cn.Amount)));
         if (v.PriorSettled > 0.005m) lines.Add(string.Format(this["settlement_prior_paid"], M(v.PriorSettled)));
+        // รอบ 284 (284-9): หักเงินมัดจำที่รับแล้ว = การตัดยอด (ไม่ใช่ส่วนลด) — บอกที่มาให้ยอดคงค้างก่อนรับบวกลบลง
+        if (v.PriorOther > 0.005m) lines.Add(string.Format(this["settlement_prior_deposit"], M(v.PriorOther)));
         if (v.This is { } me)
         {
             if (Math.Abs(me.FeeAmount) >= 0.005m || Math.Abs(me.AdjustmentAmount) >= 0.005m)
@@ -423,6 +435,7 @@ public sealed class DocumentLabels
         ["settlement_via_billing_note"] = "(ตามใบวางบิลเลขที่ {0} ลงวันที่ {1})",
         ["settlement_cn_line"] = "หักใบลดหนี้เลขที่ {0} ลงวันที่ {1}: {2}",
         ["settlement_prior_paid"] = "รับชำระก่อนหน้า {0}",
+        ["settlement_prior_deposit"] = "ตัดยอดด้วยเงินมัดจำที่รับแล้ว {0}",
         ["settlement_this_breakdown"] = "ตัดชำระครั้งนี้ {0}: รับเงิน {1}{2}",
         ["settlement_this_fee"] = " · ค่าธรรมเนียมที่ถูกหัก {0}",
         ["settlement_this_adjust"] = " · รายการปรับยอด {0}",
@@ -610,6 +623,7 @@ public sealed class DocumentLabels
         ["settlement_via_billing_note"] = "(Per Billing Note No. {0} dated {1})",
         ["settlement_cn_line"] = "Less Credit Note No. {0} dated {1}: {2}",
         ["settlement_prior_paid"] = "Previously received {0}",
+        ["settlement_prior_deposit"] = "Settled by deposit received {0}",
         ["settlement_this_breakdown"] = "Settled by this payment {0}: cash received {1}{2}",
         ["settlement_this_fee"] = " · fee deducted {0}",
         ["settlement_this_adjust"] = " · adjustments {0}",

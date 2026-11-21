@@ -72,4 +72,40 @@ public class PackFRound284DbTests
         Assert.Null(res[1].EntityId);                         // คนใหม่จริง
         Assert.Empty(res[1].Issues);
     }
+
+    private sealed class KeyPerms : Accounting.Services.Interfaces.IPermissionService
+    {
+        private readonly HashSet<(Guid, string)> _grants;
+        public KeyPerms(params (Guid User, string Key)[] g) => _grants = g.ToHashSet();
+        public Task<bool> HasPermissionAsync(Guid companyId, Guid userId, string permissionKey) => Task.FromResult(_grants.Contains((userId, permissionKey)));
+        public Task<List<string>> GetUserPermissionsAsync(Guid companyId, Guid userId) => Task.FromResult(new List<string>());
+    }
+
+    [Fact]
+    public async Task R284_Q1_ด่านรายงาน_ไม่ผูกบทบาทผ่าน_บทบาทไม่มีคีย์ไม่ผ่าน_มีคีย์ผ่าน_ไม่ใช่สมาชิกและรอสิทธิ์ไม่ผ่าน()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var company = new Company { Name = "บริษัททดสอบด่านรายงาน 284", TaxId = "0105561012346", BranchCode = "00000" };
+        db.Companies.Add(company);
+        var role = new CompanyRole { CompanyId = company.Id, Name = "พนักงาน 284" };
+        db.CompanyRoles.Add(role);
+        User U(string n) { var u = new User { Email = $"r284-{n}-{Guid.NewGuid():N}@test.local", PasswordHash = "x", FullName = n }; db.Users.Add(u); return u; }
+        var legacy = U("legacy"); var custom = U("custom"); var keyed = U("keyed"); var pending = U("pending"); var outsider = U("outsider");
+        await db.SaveChangesAsync();
+        db.CompanyUsers.AddRange(
+            new CompanyUser { UserId = legacy.Id, CompanyId = company.Id, Role = UserRole.Staff },
+            new CompanyUser { UserId = custom.Id, CompanyId = company.Id, Role = UserRole.Staff, CompanyRoleId = role.Id },
+            new CompanyUser { UserId = keyed.Id, CompanyId = company.Id, Role = UserRole.Staff, CompanyRoleId = role.Id },
+            new CompanyUser { UserId = pending.Id, CompanyId = company.Id, Role = UserRole.Staff, AccessPending = true });
+        await db.SaveChangesAsync();
+        var perms = new KeyPerms((keyed.Id, Accounting.Models.Constants.PermissionKeys.ReportsFinancial));
+        var keys = new[] { Accounting.Models.Constants.PermissionKeys.ReportsFinancial };
+        Assert.True(await FinancialReportAccess.AllowsAsync(db, perms, company.Id, legacy.Id, keys));     // (ก) เดิม
+        Assert.False(await FinancialReportAccess.AllowsAsync(db, perms, company.Id, custom.Id, keys));    // บทบาทไม่ติ๊กคีย์
+        Assert.True(await FinancialReportAccess.AllowsAsync(db, perms, company.Id, keyed.Id, keys));
+        Assert.False(await FinancialReportAccess.AllowsAsync(db, perms, company.Id, pending.Id, keys));
+        Assert.False(await FinancialReportAccess.AllowsAsync(db, perms, company.Id, outsider.Id, keys));  // fail closed
+        Assert.False(await FinancialReportAccess.AllowsAsync(db, perms, Guid.NewGuid(), legacy.Id, keys)); // บริษัทอื่น
+    }
 }

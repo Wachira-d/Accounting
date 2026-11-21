@@ -15340,6 +15340,17 @@ public partial class DocumentService : IDocumentService
         carryVatFromSource = roleMode == Accounting.Helpers.SettlementTaxInvoiceRole.Mode.FullCopy;
         var installment = roleMode == Accounting.Helpers.SettlementTaxInvoiceRole.Mode.Installment && taxInvoicePlan is { VatAmount: > 0m };
         var labels = Accounting.Services.Implementations.Pdf.DocumentLabels.For(invoice.DocumentLanguage);
+        // รอบ 284 (284-8 · T3 LOW-5): ใบเสร็จเปล่าแสดงยอดที่ลูกค้าชำระเต็ม (เงินเข้า + ค่าธรรมเนียมฝั่งผู้รับ) — ตัวตัดสินเดียว
+        var paperAmount = Accounting.Helpers.SettlementReceiptTotals.ReceiptPaperAmount(payment.Amount, payment.FeeAmount);
+        // รอบ 284 (T3 LOW-2): ชื่อใบต้นทางบนบรรทัดรายการ = หัวที่ใบนั้นพิมพ์จริง (ตัวตัดสินเดียวกับ PDF) เมื่อภาษาตรงกัน · ไม่พบ ⇒ ชื่อชนิดเดิม
+        var srcHeadingSource = new Accounting.Helpers.SettlementReceiptTotals.Source(invoice.DocumentType, invoice.DocumentNumber, invoice.DocumentDate, 0m, 0m, 0m, 0m);
+        try
+        {
+            var h = await PdfGenerationService.ResolveDocumentHeadingAsync(_db, companyId, invoice.Id);
+            srcHeadingSource = srcHeadingSource with { Heading = h.Title, HeadingLanguage = h.Language };
+        }
+        catch (KeyNotFoundException) { /* ใบต้นทางไม่อยู่ในชุดที่มองเห็น — ใช้ชื่อชนิด */ }
+        var srcLabel = labels.SourceHeadingLabel(srcHeadingSource);
         // carryVatFromSource (เคส ข): ใบแจ้งหนี้บริการ (VAT พัก 21913) รับครบงวด
         // เดียว → ใบเสร็จนี้ทำหน้าที่ "ใบกำกับภาษี ณ วันรับเงิน" (§78/1) — copy
         // บรรทัด + Sub/VAT/WHT/Total จากใบแจ้งหนี้ (เหมือนผลแปลงใบแจ้งหนี้→ใบเสร็จ)
@@ -15412,14 +15423,14 @@ public partial class DocumentService : IDocumentService
             BranchId = invoice.BranchId,   // และสาขาที่ออกใบกำกับต้นทาง (§87)
             DocumentTemplateId = invoice.DocumentTemplateId,
             ProjectId = invoice.ProjectId,
-            SubTotal = installment ? taxInvoicePlan!.SubTotal : carryVatFromSource ? invoice.SubTotal : payment.Amount,
+            SubTotal = installment ? taxInvoicePlan!.SubTotal : carryVatFromSource ? invoice.SubTotal : paperAmount,
             DiscountAmount = carryVatFromSource ? invoice.DiscountAmount : 0m,
             // ปกติ: VAT อยู่ที่ใบกำกับต้นทางแล้ว — ไม่คิดซ้ำ (VAT=0)
             // carryVat: ใบนี้คือใบกำกับ ณ วันรับเงิน → ถือ VAT ของใบแจ้งหนี้ · งวดงานบริการ → VAT ตามส่วนของงวดนี้ (ตัวตัดสินคิดให้)
             VatAmount = installment ? taxInvoicePlan!.VatAmount : carryVatFromSource ? invoice.VatAmount : 0m,
             WithholdingTaxAmount = installment ? taxInvoicePlan!.WithholdingTaxAmount : carryVatFromSource ? invoice.WithholdingTaxAmount : 0m,
-            TotalAmount = installment ? taxInvoicePlan!.TotalAmount : carryVatFromSource ? invoice.TotalAmount : payment.Amount,
-            PaidAmount = installment ? taxInvoicePlan!.TotalAmount : carryVatFromSource ? invoice.TotalAmount : payment.Amount,
+            TotalAmount = installment ? taxInvoicePlan!.TotalAmount : carryVatFromSource ? invoice.TotalAmount : paperAmount,
+            PaidAmount = installment ? taxInvoicePlan!.TotalAmount : carryVatFromSource ? invoice.TotalAmount : paperAmount,
             BalanceDue = 0m,
             // ช่องทางเงินของใบเสร็จ = ของการชำระ (ธนาคาร หรือผังตรงที่เลือก/สืบทอด — PC#5 · เอกสารลูกสืบทอด กฎ #4 A)
             BankAccountId = payment.BankAccountId,
@@ -15488,7 +15499,7 @@ public partial class DocumentService : IDocumentService
                 {
                     DocumentId = receipt.Id,
                     LineOrder = ln++,
-                    Description = labels.SettlementReceiptLine(invoice.DocumentType, invoice.DocumentNumber, installment: !taxInvoicePlan.ClosesSource),
+                    Description = labels.SettlementReceiptLine(srcLabel, invoice.DocumentNumber, installment: !taxInvoicePlan.ClosesSource),
                     Quantity = 1m,
                     Unit = labels.SettlementUnitItem,
                     UnitPrice = rl.Base,
@@ -15504,11 +15515,11 @@ public partial class DocumentService : IDocumentService
             {
                 DocumentId = receipt.Id,
                 LineOrder = 1,
-                Description = labels.SettlementReceiptLine(invoice.DocumentType, invoice.DocumentNumber, installment: false),
+                Description = labels.SettlementReceiptLine(srcLabel, invoice.DocumentNumber, installment: false),
                 Quantity = 1m,
                 Unit = labels.SettlementUnitItem,
-                UnitPrice = payment.Amount,
-                Amount = payment.Amount,
+                UnitPrice = paperAmount,
+                Amount = paperAmount,
                 VatRate = 0m,
                 VatAmount = 0m,
             });
