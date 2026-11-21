@@ -4097,8 +4097,10 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
     `VoidIncomingRequestsForOldTaxIdAsync` ยกเลิกคำขอรอเรายอมรับของเลขเดิม (Rejected + เหตุ + audit · คู่ที่เชื่อมแล้วไม่แตะ) ·
     migration `Round280Migration` (คอลัมน์ `PartnerLinkRequests.ContactId` + ตาราง `PartnerLinkRequestNotices` + `Companies.TaxIdSetAt` = เวลาที่ deploy สำหรับบริษัทเดิม · ไม่แก้ TopicsJson)
   - **(รอบ 285 · คำตัดสิน 285-1…285-6) ยืนยันเลขผู้เสียภาษีของบริษัท**: หน้าตั้งค่าบริษัท (`settings.html` กล่องใต้ช่องเลขภาษี) ยื่นหลักฐาน ภ.พ.20/หนังสือรับรอง
-    (`POST /api/companies/{id}/tax-id-verification` · สิทธิ์ตั้งค่าบริษัท · ไฟล์ PDF/รูปจากไบต์ ≤ 10 MB · SHA-256 · ไฟล์แนบชนิด `CompanyTaxIdEvidence`) · ชื่อเทียบทะเบียนตรงตัว
-    (`IDbdLookupService` · ไม่ fuzzy · ขัด = ยื่นไม่ได้ · ทะเบียนไม่ตอบ = ป้าย "ตรวจไม่ได้") → ผู้ดูแลแพลตฟอร์ม `/admin/taxid-verifications.html`
+    (`POST /api/companies/{id}/tax-id-verification` · สิทธิ์ตั้งค่าบริษัท · ไฟล์ PDF/รูปจากไบต์ ≤ 10 MB · SHA-256 · เก็บผ่าน `IFileStorage` โดยตรง ไม่ใช่ FileAttachments ·
+    เก็บ 5 ปี `EvidenceRetainUntil` · เปิดได้เฉพาะเจ้าของบริษัท `GET …/tax-id-verification/{id}/evidence` + ผู้ดูแลแพลตฟอร์ม · ทุกครั้งบันทึก `PdpaPiiAccessLogs`) · ชื่อเทียบทะเบียนตรงตัว
+    (`IDbdLookupService` · ไม่ fuzzy · ขัด = ยื่นได้ติดธง อนุมัติต้องมีเหตุ (285-11) · ทะเบียนไม่ตอบ = ป้าย "ตรวจไม่ได้" + LogWarning) · ยื่นแล้วกระดิ่ง/อีเมลถึงผู้ดูแลแพลตฟอร์ม ·
+    ตัดสินแล้วแจ้งผู้ยื่น+เจ้าของพร้อมเหตุ (285-8) · เลข+สาขาหนึ่งยืนยันได้บริษัทเดียว — มีเจ้าของเดิม ⇒ ธงบนคิว + ต้องถอนของเดิมก่อน (285-10) → ผู้ดูแลแพลตฟอร์ม `/admin/taxid-verifications.html`
     (`api/admin/tax-id-verifications` · SystemAdmin) อนุมัติ/ปฏิเสธ/ถอน (เหตุ · audit `CompanyTaxIdVerificationRequest`) · อนุมัติ ⇒ `Company.TaxIdVerifiedAt/For/RequestId`
     (ทางเดียว `CompanyTaxIdVerificationService.ApproveAsync` ใต้ `FOR UPDATE` แถวบริษัท) · **ยืนยันแล้ว ⇒ `MaterializeIncomingLinkRequestsAsync` เปิดทุกคำขอที่ยังไม่หมดอายุ
     รวมที่ส่งก่อนสมัคร** (`CompanyTaxIdVerification.IncomingRequestCutoff`) · ยังไม่ยืนยัน = หลัง `TaxIdSetAt` เหมือนเดิม · เปลี่ยนเลขทุกทางเข้า ⇒ หลุดสถานะ

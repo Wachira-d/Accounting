@@ -1550,7 +1550,7 @@ _Last verified against codebase: 2026-11-20 (รอบ 278 — `CompanyUser.Allo
 ## รอบ 285 — Company: สถานะ "ยืนยันเลขผู้เสียภาษีแล้ว" (คำตัดสิน 285-1…285-6)
 - `Company.TaxIdVerifiedAt` · `TaxIdVerifiedFor` (เลขที่ยืนยัน) · `TaxIdVerificationRequestId` — ตั้งทางเดียว `CompanyTaxIdVerificationService.ApproveAsync` (ผู้ดูแลแพลตฟอร์ม · SystemAdmin) ·
   ตัวตัดสินเดียว `Helpers/CompanyTaxIdVerification.IsVerified` (เลขที่ยืนยันต้องตรงเลขปัจจุบัน) · เปลี่ยน `TaxId` ทุกทางเข้า ⇒ ล้าง (`StampTaxIdSetAt`)
-- ตารางใหม่ `CompanyTaxIdVerificationRequests` (tenant = บริษัทผู้ยื่น · หลักฐาน ภ.พ.20/หนังสือรับรองเป็นไฟล์แนบชนิด `CompanyTaxIdEvidence` · SHA-256 · ผลเทียบทะเบียน · สถานะ Pending/Approved/Rejected/Revoked · ไม่ลบ)
+- ตารางใหม่ `CompanyTaxIdVerificationRequests` (tenant = บริษัทผู้ยื่น · หลักฐาน ภ.พ.20/หนังสือรับรองเก็บผ่าน `IFileStorage` โฟลเดอร์ `CompanyTaxIdEvidence` (ไม่ใช่ FileAttachments · เก็บ 5 ปี · เปิดได้เฉพาะเจ้าของ+ผู้ดูแลแพลตฟอร์ม + PiiAccessLog) · เลข+สาขาหนึ่งยืนยันได้บริษัทเดียว · SHA-256 · ผลเทียบทะเบียน · สถานะ Pending/Approved/Rejected/Revoked · ไม่ลบ)
 - ผลที่ใช้: เปิดคำขอเชื่อมคู่ค้าที่ส่งก่อนสมัคร (285-3) · ป้ายบนการ์ดคำขอ (285-5) · บริษัทเดิม = ยังไม่ยืนยัน (`Round285Migration`)
 
 _Last verified against codebase: 2026-11-21 (รอบ 285 — `Company.TaxIdVerified*` + ตาราง `CompanyTaxIdVerificationRequests` · ผู้ดูแลแพลตฟอร์มอนุมัติ · เปลี่ยนเลข = หลุดสถานะ — commit ae317b36)_

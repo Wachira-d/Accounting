@@ -22625,10 +22625,13 @@ RULES += [
          before=[("CompanyTaxIdVerification.CompareRegistryName(", "_storage.WriteAsync("), ("await _db.SaveChangesAsync(ct);", "NotifyAdminsAboutAsync(")],
          why=_R285_WHY + "285-1/285-2: ด่านยื่น · ชนิดไฟล์จากไบต์ · ชื่อขัดทะเบียน (ตรงตัว ไม่ fuzzy) ก่อนเก็บไฟล์ · hash หลักฐาน · audit"),
     dict(file=_R285_SVC, method="ApproveAsync",
-         must=["_db.Database.ExecuteSqlRawAsync(", "CompanyTaxIdVerification.ApproveProblem(r.Status, r.TaxId, company.TaxId, r.RegistryResult, r.EvidenceLocation != null)", "await NotifyCompanyAsync(requestId, ct);",
+         must=["_db.Database.ExecuteSqlRawAsync(", "CompanyTaxIdVerification.ApproveProblem(r.Status, r.TaxId, company.TaxId, r.RegistryResult, r.EvidenceLocation != null,", "note, other?.Name)",
+               "await VerifiedByOtherAsync(r.TaxId, r.BranchCode, r.CompanyId, ct)", "CompanyTaxIdVerification.SlotKey(r.TaxId, r.BranchCode)", "await NotifyCompanyAsync(requestId, ct);",
                "company.TaxIdVerifiedFor = r.TaxId", "Audit("],
          before=[("CompanyTaxIdVerification.ApproveProblem(", "company.TaxIdVerifiedAt = nowUtc")],
-         why=_R285_WHY + "อนุมัติใต้ล็อกแถวบริษัท · เลขในคำขอต้องตรงเลขปัจจุบัน · audit"),
+         why=_R285_WHY + "อนุมัติใต้ล็อกแถวบริษัท · เลขในคำขอต้องตรงเลขปัจจุบัน · ฝ่ายค้าน MED-B1 เลข+สาขาหนึ่งยืนยันได้บริษัทเดียว (ใต้ล็อกต่อช่อง) · MED-B2 เหตุผลเมื่อชื่อขัด · audit · แจ้งบริษัท"),
+    dict(file=_R285_SVC, method="VerifiedByOtherAsync", must=["c.Id != companyId", "CompanyTaxIdVerification.IsVerified(c)", "CompanyTaxIdVerification.SlotKey(c.TaxId, c.BranchCode) == slot"],
+         why=_R285_WHY + "ฝ่ายค้าน MED-B1: ตัวหาเจ้าของเดิมตัวเดียว (คิว + ด่านอนุมัติ)"),
     dict(file=_R285_SVC, method="RevokeAsync", must=["CompanyTaxIdVerification.ReasonProblem(reason)", "CompanyTaxIdVerification.ClearOnTaxIdChange(company)", "Audit("],
          why=_R285_WHY + "ถอนต้องมีเหตุ · ล้างสถานะบริษัท · audit"),
     dict(file=_R285_SVC, method="ReadEvidenceAsync", must=["CompanyTaxIdVerification.CanViewEvidence(isAdmin, isOwner)", "cu.Role == UserRole.Owner", "_storage.ReadAllBytesAsync(loc, ct)", "r.EvidenceSha256",
@@ -22650,6 +22653,7 @@ RULES += [
 REVIEWER_CASES += [
     ("R285-1", "MaterializeIncomingLinkRequestsAsync", "IncomingRequestCutoff(verified, me.TaxIdSetAt)", "IncomingRequestCutoff(true, me.TaxIdSetAt)", True),
     ("R285-2", "ApproveAsync", "company.TaxIdVerifiedFor = r.TaxId", "company.TaxIdVerifiedFor = company.TaxId", True),
+    ("R285-4", "ApproveAsync", "note, other?.Name)", "note, null)", True),
     ("R285-3", "ReadEvidenceAsync", "CompanyTaxIdVerification.CanViewEvidence(isAdmin, isOwner)", "true", True),
 ]
 

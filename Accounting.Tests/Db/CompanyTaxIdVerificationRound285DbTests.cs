@@ -252,7 +252,8 @@ public class CompanyTaxIdVerificationRound285DbTests
             await Svc(adb, files).ApproveAsync(r.RequestId, admin, "ตรวจ ภ.พ.20 แล้ว ชื่อในระบบเป็นชื่อการค้า", DateTime.UtcNow);
         using var check = DbTestDatabase.TryCreateContext()!;
         Assert.True(CompanyTaxIdVerification.IsVerified(await check.Companies.AsNoTracking().SingleAsync(x => x.Id == b.Co.Id)));
-        Assert.True(await check.AuditLogs.AnyAsync(l => l.EntityId == r.RequestId.ToString() && l.NewValues!.Contains("ชื่อการค้า")));
+        var noteJson = JsonSerializer.Serialize("ชื่อการค้า")[1..^1];
+        Assert.True(await check.AuditLogs.AnyAsync(l => l.EntityId == r.RequestId.ToString() && l.NewValues!.Contains(noteJson) && l.NewValues.Contains(CompanyTaxIdVerification.StatusApproved)));
         // บริษัทที่เลขยังเป็น "-" (สมัคร/SSO) ยื่นไม่ได้ + หน้าบอกเหตุ
         var dash = await CompanyAsync(db, "บริษัท ยังไม่ตั้งเลข285", taxId: "-");
         var st = JsonSerializer.Serialize(await Svc(db, files).GetStatusAsync(dash.Co.Id), Json);

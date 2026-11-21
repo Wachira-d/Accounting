@@ -86,7 +86,7 @@ public class CompanyTaxIdVerificationRound285Tests
         const string pending = CompanyTaxIdVerification.StatusPending;
         Assert.Null(CompanyTaxIdVerification.ApproveProblem(pending, Tax, Tax, CompanyTaxIdVerification.RegistryMatch, true, null, null));
         Assert.Null(CompanyTaxIdVerification.ApproveProblem(pending, Tax, Tax, CompanyTaxIdVerification.RegistryUnknown, true, null, null));
-        Assert.Contains("เปลี่ยนเลข", CompanyTaxIdVerification.ApproveProblem(pending, Tax, ValidTax("010555600025"), CompanyTaxIdVerification.RegistryMatch, true) ?? "");
+        Assert.Contains("เปลี่ยนเลข", CompanyTaxIdVerification.ApproveProblem(pending, Tax, ValidTax("010555600025"), CompanyTaxIdVerification.RegistryMatch, true, null, null) ?? "");
         Assert.NotNull(CompanyTaxIdVerification.ApproveProblem(CompanyTaxIdVerification.StatusApproved, Tax, Tax, CompanyTaxIdVerification.RegistryMatch, true, null, null));
         Assert.NotNull(CompanyTaxIdVerification.ApproveProblem(CompanyTaxIdVerification.StatusRejected, Tax, Tax, CompanyTaxIdVerification.RegistryMatch, true, null, null));
         Assert.NotNull(CompanyTaxIdVerification.ApproveProblem(pending, Tax, Tax, CompanyTaxIdVerification.RegistryMismatch, true, null, null));

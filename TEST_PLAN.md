@@ -1505,7 +1505,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **980 ไฟล์ · 10,640 `[Fact]` + 1,440 `[Theory]` (6,842 `InlineData`)** ณ 2026-11-21 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`) | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)**, **ReceiptFormRule (รูปแบบกระดาษหลักฐานรับเงิน · รอบ 203)** |
+| เทสต์ที่มี | **981 ไฟล์ · 10,643 `[Fact]` + 1,440 `[Theory]` (6,842 `InlineData`)** ณ 2026-11-21 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`) | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)**, **ReceiptFormRule (รูปแบบกระดาษหลักฐานรับเงิน · รอบ 203)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
 | CI | ✅ `.github/workflows/ci.yml` — static check → restore → build → test; รันบน PR/push เข้า main/master + `workflow_dispatch` (branch `claude/**` ปิดไว้ กัน mail spam ระหว่างพัฒนา) |
@@ -9325,3 +9325,8 @@ H2 (OCR ไม่พร้อม ⇒ แถวเข้าคิว) ล็อ�
 | T285-04 | Db `ชื่อขัดทะเบียน_ยื่นไม่ได้พร้อมชื่อทะเบียน_*` | ชื่อขัด = บอกชื่อทะเบียน · ไฟล์ HTML ปลอมเป็น .pdf ถูกปัด · ไม่มีแถว/ไฟล์ค้าง · เลข "-" ยื่นไม่ได้พร้อมเหตุ |
 | T285-05 | Db `คอนโทรลเลอร์ผู้ดูแล_*` | รายการของผู้ดูแล · ปฏิเสธต้องมีเหตุ · ถูกปฏิเสธแล้วยื่นใหม่ได้ |
 | T285-06 | กติกา `_R285_*` (+8 · เคสฝ่ายค้าน R285-1/2) | ถอดตัวตัดสินจุดตัด / ตั้งเลขที่ยืนยันจากเลขปัจจุบันแทนเลขในคำขอ ⇒ checker ฟ้อง |
+| T285-07 | Db `ตั้งเลขทีหลัง_*` (ขยาย) | ข้อเพิ่ม: ไฟล์อยู่ในที่เก็บไฟล์กลาง ไม่อยู่ใน FileAttachments · มีระยะเก็บ · ผู้ดูแล/เจ้าของเปิดได้ ผู้อื่น 403 · บริษัทอื่นไม่เห็นแถว · PiiAccessLog ทุกครั้ง · บริษัทได้รับแจ้งผลอนุมัติ |
+| T285-08 | Db `ฝ่ายค้านB2_ชื่อขัดทะเบียน_ยื่นได้ติดธง_*` | ยื่นได้ · ธงบนคิว · อนุมัติไม่มีเหตุ = ไม่ได้ · มีเหตุ = ได้ + audit · ไฟล์ HTML ปลอมถูกปัดไม่มีไฟล์ค้าง |
+| T285-09 | Db `ฝ่ายค้านB1_เลขเดียวยืนยันได้บริษัทเดียวต่อสาขา_*` | ธง "ยืนยันแล้วโดยบริษัท X" + id ให้ถอน · อนุมัติ 409 · สาขาอื่นได้ · ถอนของเดิม (แจ้งพร้อมเหตุ) แล้วอนุมัติได้ |
+| T285-10 | Db `CompanyTaxIdVerificationAdminNotifyRound285DbTests` | ยื่นแล้วผู้ดูแลแพลตฟอร์มได้กระดิ่ง · เจ้าของบริษัทผู้ให้บริการ/ผู้ยื่นไม่ได้ |
+| T285-11 | pure `ฝ่ายค้านB1B2_*` + กติกา `_R285_*` ข้อเพิ่ม (R285-3) | ด่านอนุมัติ (บริษัทอื่นยืนยันแล้ว · เหตุผลเมื่อชื่อขัด) · ช่องสาขา · ถอดด่านสิทธิ์เปิดไฟล์ ⇒ checker ฟ้อง |
