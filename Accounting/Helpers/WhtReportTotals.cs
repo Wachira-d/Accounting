@@ -65,7 +65,7 @@ public static class WhtReportTotals
     }
 
     /// <summary>คีย์สาขาของแถว [สรุป] (ว่าง/00000 = สำนักงานใหญ่) — ตัวเดียวของตอนสร้างแถวสรุปและตอนคำนวณยอด</summary>
-    public static string SummaryBranchKey(string? branch) => TaxReportDraftFreshness.NormalizeBranch(branch);
+    private static string SummaryBranchKey(string? branch) => TaxReportDraftFreshness.NormalizeBranch(branch);
 
     /// <summary>รอบ 284 (T2 L2 ส่วนที่ค้างจาก 275-B): แถว [สรุป] ต้องตรงกับบรรทัดที่นับอยู่ตอนนี้ — ผู้ถูกหัก (เลข + สาขา) ที่มี ≥ 2 บรรทัดที่นับต้องมีแถวสรุปหนึ่งแถว ·
     /// แถวสรุปที่รายนั้นเหลือ &lt; 2 บรรทัด (ติ๊กออก) หรือซ้ำ ⇒ ลบ · ตัวเดียวของตอนสร้างรายงานและตอนติ๊ก/แก้บรรทัด · แสดงผลอย่างเดียว (ยอดหัวไม่นับแถวสรุป) ·

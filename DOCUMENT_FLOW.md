@@ -9239,7 +9239,21 @@ retention ช่วงนี้เทียบช่วงก่อน + เส�
   .SettlementReceiptLine/SettlementUnitItem` — ตัวเดียวกับใบเสร็จที่ระบบออกเอง) · หน้าเว็บไม่มีสำเนาข้อความ · อยู่ในรายการอนุญาตของผู้ "เห็นเฉพาะของตัวเอง" (ตัวกรองแถว)
 - **URL ของระบบ** — ช่องจริง = `/admin/system-email.html` ช่อง "App Base URL" (`SystemBaseUrl.AdminPagePath/AdminPageHint` ตัวตั้งเดียว) · ข้อความ/ลิงก์ที่ชี้ "ตั้งค่าเว็บไซต์ (แท็บทั่วไป)"
   หรือ "ตั้งค่าระบบ" แก้ทุกจุด (admin 3 หน้า · sso.js · ข้อความเซิร์ฟเวอร์ 9 จุด · ปุ่มแก้ของ Autopilot/หน้าพร้อมใช้งาน) · ป้ายช่องบอกว่า `https://app.nextacc.com` คือค่าเริ่มต้นที่ไม่ใช่โดเมนของเรา
-- ไม่เปลี่ยนเงิน/JE/สถานะเอกสาร · ไม่มี migration (ไม่มีค่าที่ persist ผิด — ดู dev-284 §ข้อ 10) · เทสต์ `PackFRound284Tests` (pure 8) + Db `PackFRound284DbTests` (2) · กติกา `_R284_` ·
+- **ด่านรายงานการเงิน (Q1 · 284-7)** — `Helpers/FinancialReportAccess` + `Filters/RequireReportAccessAttribute` (คีย์ใดคีย์หนึ่ง · สมาชิก**ไม่ผูกบทบาทกำหนดเอง**ผ่านตามเดิม ·
+  ไม่ใช่สมาชิก/รอสิทธิ์ไม่ผ่าน): `accounting/reports/` งบทดลอง·งบดุล·งบกำไรขาดทุน (+เทียบ/เจาะ)·กระแสเงินสด = `Reports.Financial` · บัญชีแยกประเภท/gl-debug = `Accounting.View`|`Reports.Financial` ·
+  `aging/*` · `arap-analysis/*` = `Reports.Operational` · `cash-forecast/*` = `Reports.Financial`|`Reports.Executive` · `Budget/{id}/vs-actual|scenarios` · `reports/{id}/execute|export` (ตัวสร้างรายงาน) ·
+  `tax-filing-export` แบบภาษีที่ไม่ใช่เงินเดือน (+พรีวิว) = `Tax.Export`|`Tax.File` (แบบเงินเดือน/สปส. คงด่าน `Payroll.View`) · `reports/month-snapshot` ไม่ผ่าน ⇒ 200 `{hidden, notice}` ไม่มีตัวเลข
+  (หน้าหลักโหมดง่ายแสดงป้ายแทนการ์ด) · สมุดรายวัน (`journals`) คงเดิม (อ่านผ่าน `ForUser` · หน้าเอกสารใช้ดู JE ของใบ) · ด่านเข้มเดิม (แดชบอร์ด/FP&A/ผู้บริหาร/งบรวม/ส่งออกบัญชี) ไม่เปลี่ยน ·
+  เมนู `MenuPermissionMap.LegacyKeys` (reports · general-ledger · aging · arap-analysis · cash-forecast) ตัดด้วยกติกาเดียว · `Round284Migration` (ครั้งเดียว · marker `r284-report-keys-from-menus`)
+  บทบาทเดิมที่ติ๊กเมนูรายงานได้คีย์ของหน้า (ไม่ทับค่าที่เจ้าของตั้ง) · ค่าตั้งต้นบทบาทระบบ (`SeedDefaultRolesAsync`) ได้คีย์ตามเมนู · ผู้ "เห็นเฉพาะของตัวเอง" (276) ถูกกันที่รายการอนุญาตเหมือนเดิม
+- **ใบเสร็จรับชำระ + ค่าธรรมเนียมฝั่งผู้รับ (Q2 · 284-8)** — `SettlementReceiptTotals.ReceiptPaperAmount` = เงินเข้า + ค่าธรรมเนียม ⇒ หัว/บรรทัด/ยอดรับชำระ = ยอดที่ลูกค้าจ่ายเต็ม
+  (749,000 ไม่ใช่ 748,970) · ใบเสร็จรับชำระไม่ลงบัญชี ⇒ GL ไม่เปลี่ยน · ใบที่ออกแล้วไม่แก้ย้อนหลัง · บรรทัดปรับไม่รวม
+- **หักมัดจำในตัวไล่ยอด (Q3 · 284-9)** — `SettlementReceiptTotals.Walk` ⇒ `PriorOther` = ยอดไล่ได้ − ยอดค้างจริง (การหักมัดจำบวก `PaidAmount` โดยไม่มีแถว) นับเป็นการตัดยอดก่อนการรับครั้งนี้ ⇒
+  "คงค้างก่อนรับ" คงที่ทั้งก่อน/หลังมีงวดถัดไป · บรรทัด "ตัดยอดด้วยเงินมัดจำที่รับแล้ว" (renderer ×2 ผ่าน `DocumentLabels.SettlementTotalsLines`) เฉพาะใบต้นทางที่ `DepositAppliedAmount > 0` ·
+  VAT ไม่นับซ้ำ (งวดปิดอ่านภาษีที่ยังพัก 21913 ซึ่งการหักมัดจำย้ายแล้ว)
+- **ชื่อใบต้นทาง (T3 LOW-2)** — บรรทัดอ้างอิง/บรรทัดรายการของใบเสร็จรับชำระ + ค่าตั้งต้นฟอร์ม ใช้หัวที่ใบต้นทางพิมพ์จริง (`ResolveDocumentHeadingAsync` · ภาษาตรงกัน) ผ่าน `DocumentLabels.SourceHeadingLabel` · ไม่พบ/คนละภาษา ⇒ ชื่อชนิดเดิม
+- **แถว [สรุป] ภ.ง.ด.2/3/53/54 (T2 L2)** — `WhtReportTotals.SyncSummaryRows` ตัวเดียวของตอนสร้างและตอนติ๊ก/แก้บรรทัด: ผู้ถูกหัก (เลข+สาขา) ≥ 2 บรรทัดที่นับ ⇒ มีแถวสรุป · เหลือ < 2 ⇒ ลบ · แสดงผลอย่างเดียว
+- ไม่เปลี่ยน JE/สถานะเอกสาร · migration `Round284Migration` (สิทธิ์บทบาท) · เทสต์ `PackFRound284Tests` + Db `PackFRound284DbTests` · ปรับ Db `SettlementReceiptTotalsDbTests` (749,000) + `WhtPreCheckDoubleCountDbTests` (แถวสรุป) · กติกา `_R284_` ·
   Last verified commit 6e5036e6
 
 ## 7. Validation gates (compliance — กฎเหล็ก #2)

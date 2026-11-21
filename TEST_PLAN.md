@@ -1505,7 +1505,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **976 ไฟล์ · 10,614 `[Fact]` + 1,437 `[Theory]` (6,829 `InlineData`)** ณ 2026-11-21 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`) | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)**, **ReceiptFormRule (รูปแบบกระดาษหลักฐานรับเงิน · รอบ 203)** |
+| เทสต์ที่มี | **976 ไฟล์ · 10,624 `[Fact]` + 1,437 `[Theory]` (6,829 `InlineData`)** ณ 2026-11-21 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`) | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)**, **ReceiptFormRule (รูปแบบกระดาษหลักฐานรับเงิน · รอบ 203)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
 | CI | ✅ `.github/workflows/ci.yml` — static check → restore → build → test; รันบน PR/push เข้า main/master + `workflow_dispatch` (branch `claude/**` ปิดไว้ กัน mail spam ระหว่างพัฒนา) |
@@ -9301,3 +9301,8 @@ H2 (OCR ไม่พร้อม ⇒ แถวเข้าคิว) ล็อ�
 | T284-05 | pure `R284_MED5_ฟอร์มใบเสร็จไม่มีสำเนาข้อความไทย_…` | T3 MED-5: ไม่มีสำเนาข้อความใน JS · endpoint ใช้ `DocumentLabels` ตามภาษาใบต้นทาง + tenant · อยู่ในรายการอนุญาต 276 |
 | T284-06 | pure `R284_URLของระบบ_ทุกข้อความชี้หน้าที่มีช่องจริง` + ปรับ `Round250Wp02Tests` (FixUrl) | ข้อความชี้ผิดเดิมเหลือ 0 จุด · ป้ายช่องบอกค่าเริ่มต้นไม่ใช่โดเมนเรา |
 | T284-07 | กติกา `_R284_*` (+5 · เคสฝ่ายค้าน R284-1…3) + ปรับกติกา G2-06 ของ `DetectEmployeeAsync` | จุดเรียกตัวตัดสิน L-1 / สรุปไฟล์โอน / ค่าตั้งต้นบรรทัดใบเสร็จ ถอดแล้วฟ้อง |
+| T284-08 | pure `R284_Q1_*` (4) + Db `R284_Q1_ด่านรายงาน_*` | Q1: ไม่ผูกบทบาทผ่าน · บทบาทไม่มีคีย์ไม่ผ่าน · มีคีย์ผ่าน · ไม่ใช่สมาชิก/รอสิทธิ์/บริษัทอื่นไม่ผ่าน · เมนู LegacyKeys ตัดด้วยกติกาเดียว · attribute ทุกรายงานตรงทะเบียนเมนู · ไฟล์ สปส. ไม่ติดด่านภาษี · migration ครั้งเดียวไม่ทับค่าเจ้าของ |
+| T284-09 | pure `R284_Q2_*` + ปรับ Db `SettlementReceiptTotalsDbTests.ฝ่ายค้านMED1_*` | Q2: ใบเสร็จ 749,000 (เงินเข้า 748,970 + ค่าธรรมเนียม 30) · ไม่มีค่าธรรมเนียม = เดิม |
+| T284-10 | pure `R284_Q3_*` (2) | Q3: คงค้างก่อนรับ 700 ทั้งตอนออกและหลังงวดถัดไป (เดิม 1,000) · ไม่มีมัดจำ = ไล่เดิม · ป้ายมัดจำเฉพาะใบที่หักจริง · ภาษาอังกฤษไม่มีไทย |
+| T284-11 | pure `R284_LOW2_*` | หัวที่พิมพ์จริงเมื่อภาษาตรง · ไม่มี/คนละภาษา = ชื่อชนิดเดิม |
+| T284-12 | pure `R284_L2_*` + ปรับ Db `WhtPreCheckDoubleCountDbTests.R273_ฝ่ายค้าน1และ3_*` | แถวสรุปเพิ่ม 1→2 · ลบ 2→1 · แยกสาขา · ยอดหัวไม่นับแถวสรุป |
