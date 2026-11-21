@@ -83,6 +83,10 @@ public static class PartnerConsent
 
     /// <summary>รอบ 264 P3 — วันที่ท่อบันทึกจ่ายอัตโนมัติเริ่มอ่านขอบเขต <see cref="Scope.AutoRecordPayment"/> (UTC · go-live ของแพ็ก P3) · <b>ประกาศก่อน <see cref="Scopes"/></b> (ตัวเริ่มค่า static เรียงตามบรรทัด)</summary>
     public static readonly DateTime AutoRecordPaymentWiredSince = new(2026, 11, 12, 0, 0, 0, DateTimeKind.Utc);
+    /// <summary>รอบ 288 — วันที่ท่ออนุมัติใบซื้อเองเริ่มอ่านขอบเขต <see cref="Scope.AutoApprovePurchase"/> (UTC) · แถวที่ให้ไว้ล่วงหน้าก่อนวันนี้ต้องยืนยันใหม่ (L4)</summary>
+    public static readonly DateTime AutoApprovePurchaseWiredSince = new(2026, 11, 21, 0, 0, 0, DateTimeKind.Utc);
+    /// <summary>รอบ 288 — วันที่ท่อรับสำเนาสลิปจากผู้ขายเริ่มอ่านขอบเขต <see cref="Scope.ReceiveSlipCopy"/> (UTC) · แถวที่ให้ไว้ล่วงหน้าก่อนวันนี้ต้องยืนยันใหม่ (L4)</summary>
+    public static readonly DateTime ReceiveSlipCopyWiredSince = new(2026, 11, 21, 0, 0, 0, DateTimeKind.Utc);
 
     public static IReadOnlyList<ScopeDef> Scopes { get; } = new List<ScopeDef>
     {
@@ -91,15 +95,17 @@ public static class PartnerConsent
             CompanyWideToggle: true, ReaderWired: true),
         new(Scope.AutoApprovePurchase, "อนุมัติใบซื้อจากคู่ค้าเองภายใต้เพดาน",
             new[] { Need.CompanySettingsEdit, Need.PurchaseApprove }, RequiresCap: true, AllowsPayAccount: false, NeedsTypedConfirm: true,
-            CompanyWideToggle: false, ReaderWired: false),
+            // รอบ 288: ผู้อ่าน = PartnerPayablePipeline.AutoApproveDraftsAsync (ตัวตัดสิน PartnerAutoApprovePolicy) · แถวล่วงหน้ายืนยันใหม่ (L4)
+            CompanyWideToggle: false, ReaderWired: true, WiredSince: AutoApprovePurchaseWiredSince),
         // รอบ 264 P3: ผู้อ่าน = PartnerPayablePipeline (ขั้น PartnerPayable ของ AutopilotJob) — แถวที่ให้ไว้ล่วงหน้าก่อนวันต่อสายต้องยืนยันใหม่ (GrantedBeforeWired · L4)
         new(Scope.AutoRecordPayment, "บันทึกจ่ายใบซื้อเองเมื่อคู่ค้ารับเงินแล้ว",
             new[] { Need.CompanySettingsEdit, Need.PurchaseApprove }, RequiresCap: true, AllowsPayAccount: true, NeedsTypedConfirm: true,
             CompanyWideToggle: false, ReaderWired: true, WiredSince: AutoRecordPaymentWiredSince),
-        // ฝ่ายค้าน 264-P4 H2: ขอบเขตของผู้ซื้อตาม design §4.4(ข) — ยังไม่มีผู้อ่าน (P4 รอบแรกอ่านผิดฝ่าย ⇒ ถอดกลับ · ฝั่งผู้ขายใช้ AcceptPayerSlipCopy)
+        // ฝ่ายค้าน 264-P4 H2: ขอบเขตของผู้ซื้อตาม design §4.4(ข) · รอบ 288: ผู้อ่าน = PartnerPayablePipeline.CopySlipsAsync (สลิปที่ผู้ขายได้รับ/ยืนยัน
+        // สำหรับใบของเรา ⇒ สำเนาแนบใบซื้อของเรา · ทำในงานเบื้องหลังของฝั่งเรา ไม่ใช่ในคำขอของผู้ขาย) · แถวล่วงหน้ายืนยันใหม่ (L4)
         new(Scope.ReceiveSlipCopy, "รับสำเนาสลิปการโอนจากคู่ค้าเป็นหลักฐาน",
             new[] { Need.CompanySettingsEdit, Need.PurchaseView }, RequiresCap: false, AllowsPayAccount: false, NeedsTypedConfirm: false,
-            CompanyWideToggle: false, ReaderWired: false),
+            CompanyWideToggle: false, ReaderWired: true, WiredSince: ReceiveSlipCopyWiredSince),
         new(Scope.ReturnWhtCerts, "ส่ง 50 ทวิ ที่เราออกเข้าระบบของคู่ค้า",
             new[] { Need.CompanySettingsEdit, Need.TaxFile }, RequiresCap: false, AllowsPayAccount: false, NeedsTypedConfirm: false,
             CompanyWideToggle: true, ReaderWired: true),
@@ -300,7 +306,7 @@ public static class PartnerConsent
         if (partnership == null || (partnership.CompanyAId != companyId && partnership.CompanyBId != companyId))
             return No(Codes.NoPartner, "ไม่พบการเชื่อมกับคู่ค้ารายนี้");
         if (partnership.Status != TradingPartnershipStatus.Accepted)
-            return No(Codes.PartnerNotActive, "การเชื่อมกับคู่ค้าไม่ได้ใช้งานอยู่ (" + partnership.Status + ") — งานอัตโนมัติทุกขอบเขตหยุด");
+            return No(Codes.PartnerNotActive, "การเชื่อมกับคู่ค้าไม่ได้ใช้งานอยู่ (" + PartnershipStatusLabel(partnership.Status) + ") — งานอัตโนมัติทุกขอบเขตหยุด");
         if (!partnerCompanyActive)
             return No(Codes.PartnerNotActive, "บริษัทคู่ค้าถูกลบหรือระงับการใช้งาน — งานอัตโนมัติทุกขอบเขตหยุด");
         if (row == null)
@@ -310,7 +316,7 @@ public static class PartnerConsent
         if (row.WithdrawnAt != null || row.IsDeleted)
             return No(Codes.Withdrawn, "ถอนความยินยอมแล้ว");
         if (!HashMatches(row))
-            return No(Codes.Tampered, "หลักฐานความยินยอมไม่ตรงกับเนื้อแถว (hash) — ให้ความยินยอมใหม่");
+            return No(Codes.Tampered, "บันทึกความยินยอมถูกแก้ไขหลังให้ไว้ (ตรวจกับต้นฉบับไม่ตรง) — ให้ความยินยอมใหม่");
         if (row.TextVersion < d.MinTextVersion)
             return No(Codes.TextOutdated, "ข้อความยินยอมที่ให้ไว้เป็นเวอร์ชันเก่า (ขอบเขตงานเปลี่ยน) — อ่านข้อความใหม่แล้วยืนยันอีกครั้ง");
         if ((partnership.SuspendedAt is DateTime s && s >= row.GrantedAt) || (partnership.AcceptedAt is DateTime acc && TruncateToSecond(acc) > row.GrantedAt))
@@ -333,7 +339,7 @@ public static class PartnerConsent
         if (partnership == null || (partnership.CompanyAId != companyId && partnership.CompanyBId != companyId))
             return No(Codes.NoPartner, "ไม่พบการเชื่อมกับคู่ค้ารายนี้");
         if (partnership.Status != TradingPartnershipStatus.Accepted)
-            return No(Codes.PartnerNotActive, "การเชื่อมกับคู่ค้าไม่ได้ใช้งานอยู่ (" + partnership.Status + ") — งานอัตโนมัติทุกขอบเขตหยุด");
+            return No(Codes.PartnerNotActive, "การเชื่อมกับคู่ค้าไม่ได้ใช้งานอยู่ (" + PartnershipStatusLabel(partnership.Status) + ") — งานอัตโนมัติทุกขอบเขตหยุด");
         if (!toggleOn)
             return No(Codes.CompanyWideOff, "ค่าตั้งของทั้งบริษัท “" + Def(scope).Label + "” ปิดอยู่");
         return new Verdict(true, Codes.Ok, "ใช้ได้ — ค่าตั้งของทั้งบริษัทเปิดอยู่ (ทุกคู่ค้า)");
@@ -349,10 +355,73 @@ public static class PartnerConsent
 
     /// <summary>ป้ายผลจริงของขอบเขต (server computes · หน้าแสดง) — ขอบเขตที่ยังไม่มีท่ออ่านต้องบอกตรง ๆ ว่ายังไม่มีผล (ห้าม silent no-op)</summary>
     public static string? EffectNote(ScopeDef d)
-        => d.CompanyWideToggle ? "ตัดสินด้วยค่าตั้งของทั้งบริษัท (ทุกคู่ค้า) ที่หน้า \u201cคู่ค้าที่ใช้ NextAcc\u201d — แยกต่อคู่ค้ายังไม่เปิด (คำตัดสิน 264-2-1)"
+        => d.CompanyWideToggle ? "เรื่องนี้เปิด/ปิดด้วยค่าตั้งของทั้งบริษัท (ทุกคู่ค้าพร้อมกัน) ที่หน้า \u201cคู่ค้าที่ใช้ NextAcc\u201d — ยังแยกเปิดทีละคู่ค้าไม่ได้"
          : d.Scope == Scope.AutoRecordPayment && !PartnerPaySourceAccount.ConsentDefaultAutoEnabled ? PartnerPaySourceAccount.ConsentDefaultNotAutoNote
-         : !d.ReaderWired ? "ให้ไว้ล่วงหน้าได้ — ยังไม่มีงานอัตโนมัติที่ใช้ขอบเขตนี้ (เปิดใช้ในรอบ 264 แพ็กถัดไป) · ตอนนี้ระบบยังไม่ทำอะไรเองจากขอบเขตนี้"
+         : !d.ReaderWired ? "ให้ไว้ล่วงหน้าได้ — ตอนนี้ระบบยังไม่ทำงานนี้เอง"
          : null;
+
+    /// <summary>รอบ 288 (คำสั่งเจ้าของ "ข้อความทั้งหน้าเป็นภาษาผู้ใช้"): ยินยอมแล้วระบบทำอะไร · ทำเมื่อไร · หยุดเมื่อไร — ข้อความตัวเดียวที่หน้าแสดง
+    /// (server computes · page displays · ห้ามมีเลขรอบ/คำตัดสินบนจอ)</summary>
+    public sealed record ScopeExplain(string What, string When, string Stops);
+
+    private const string StopsCommon = "ถอนความยินยอม · ระงับการเชื่อมกับคู่ค้า · ผู้ให้ความยินยอมหมดสิทธิ์หรือถูกตั้งให้ทำได้เฉพาะร่าง";
+
+    public static ScopeExplain ExplainOf(Scope s) => s switch
+    {
+        Scope.PurchaseDrafts => new(
+            "สร้าง “ใบซื้อร่าง” จากใบแจ้งหนี้/ใบกำกับที่คู่ค้าส่งมา (ไม่อนุมัติ ไม่ลงภาษีซื้อ ไม่บันทึกจ่าย)",
+            "ทันทีที่คู่ค้าส่งเอกสารถึงเรา",
+            "ปิดค่าตั้งของทั้งบริษัท หรือระงับการเชื่อมกับคู่ค้า"),
+        Scope.AutoApprovePurchase => new(
+            "อนุมัติใบซื้อร่างที่มาจากเอกสารของคู่ค้ารายนี้แทนผู้ให้ความยินยอม (ออกเลขตามลำดับปกติ) — การอนุมัติไม่ใช่การเคลมภาษีซื้อ ยังรอต้นฉบับใบกำกับตามเดิม",
+            "ทุกไม่กี่นาทีหลังใบร่างเข้ามา เฉพาะใบที่ยอดรวมไม่เกินเพดาน · ใบกำกับของผู้ขายครบรายการ · ผังบัญชีทุกบรรทัดมั่นใจ "
+                + "(เคยยืนยันกับผู้ขายรายนี้ หรือระบบในบ้านมั่นใจสูง) · ภาษีหัก ณ ที่จ่ายชัดเจน · ไม่มีข้อสังเกตก่อนอนุมัติ (รายจ่ายต้องห้าม/ภาษีซื้อต้องห้าม ฯลฯ) — "
+                + "ใบที่ไม่ผ่านยังเป็นร่างพร้อมเหตุ และแจ้งเตือนให้คนกด",
+            StopsCommon + " · ใบที่อนุมัติไปแล้วไม่ถูกย้อน (ยกเลิกเองได้)"),
+        Scope.AutoRecordPayment => new(
+            "บันทึกจ่ายใบซื้อ (ใบสำคัญจ่าย + ภาษีหัก ณ ที่จ่ายตามกติกาของเรา + 50 ทวิ ตามค่าตั้ง) เมื่อคู่ค้าแจ้งว่ารับเงินแล้ว",
+            "เมื่อรู้บัญชีที่จ่ายจากรายการเดินบัญชีของเรา หรือผู้ซื้อเลือกบัญชีตอนจ่ายจากระบบ และยอดไม่เกินเพดาน · บัญชีตั้งต้นที่ตั้งไว้ที่นี่เป็นค่าเลือกไว้ให้ในปุ่ม “บันทึกจ่าย” "
+                + "(กดครั้งเดียว) ไม่ใช่เหตุให้ระบบบันทึกเอง",
+            StopsCommon + " · การจ่ายที่บันทึกไปแล้วไม่ถูกย้อน"),
+        Scope.ReceiveSlipCopy => new(
+            "รับสำเนาสลิปที่เราส่งให้คู่ค้าตอนชำระ (เฉพาะรูปสลิปของรายการนั้น) มาแนบที่ใบซื้อของเรา เป็นหลักฐานการจ่าย",
+            "หลังคู่ค้ายืนยันว่าได้รับเงินจากสลิปนั้นแล้ว — เฉพาะการชำระที่เกิดหลังให้ความยินยอม · สลิปช่วยเลือกบัญชีที่จ่ายไว้ให้ แต่ไม่พอให้ระบบบันทึกจ่ายเอง",
+            StopsCommon + " · สลิปที่รับมาแล้วยังอยู่กับใบซื้อตามระยะเก็บเอกสารบัญชี"),
+        Scope.ReturnWhtCerts => new(
+            "ส่งหนังสือรับรองการหักภาษี ณ ที่จ่าย (50 ทวิ) ที่เราออกให้คู่ค้า เข้ากล่องรับในระบบของคู่ค้า",
+            "ทันทีที่ออก 50 ทวิ หลังเปิดค่าตั้ง",
+            "ปิดค่าตั้งของทั้งบริษัท หรือระงับการเชื่อมกับคู่ค้า"),
+        Scope.AcceptPayerSlipCopy => new(
+            "รับสลิปที่คู่ค้า (ผู้ซื้อของเรา) แนบตอนแจ้งโอนจากระบบของเขา เข้าคิว “รายการรอยืนยันรับเงิน” — ยังไม่ใช่การรับเงิน",
+            "ทันทีที่คู่ค้าแจ้งโอน",
+            StopsCommon),
+        _ => new("", "", StopsCommon),
+    };
+
+    /// <summary>ป้ายสถานะบนหน้า (ตัวเดียว · server computes) — ไม่มีความยินยอม = “ยังไม่ได้ยินยอม” (ไม่ใช่ “ไม่ทำงาน”)</summary>
+    public static string StatusLabel(ScopeDef d, Verdict v)
+    {
+        if (v.Ok) return d.CompanyWideToggle ? "เปิดอยู่ (ทั้งบริษัท)" : "ใช้อยู่";
+        return v.Code switch
+        {
+            Codes.NoConsent or Codes.Withdrawn => "ยังไม่ได้ยินยอม",
+            Codes.CompanyWideOff => "ปิดอยู่ (ทั้งบริษัท)",
+            Codes.GrantedBeforeWired or Codes.TextOutdated or Codes.StaleAfterSuspend or Codes.Tampered => "ต้องยืนยันใหม่",
+            Codes.GrantorLostPermission => "หยุดอยู่ — ผู้ให้หมดสิทธิ์",
+            Codes.PartnerNotActive or Codes.NoPartner => "หยุดอยู่ — การเชื่อมไม่ได้ใช้งาน",
+            _ => "หยุดอยู่",
+        };
+    }
+
+    /// <summary>สถานะการเชื่อมเป็นภาษาผู้ใช้ (ไม่ส่งชื่อ enum ขึ้นจอ)</summary>
+    private static string PartnershipStatusLabel(TradingPartnershipStatus s) => s switch
+    {
+        TradingPartnershipStatus.Pending => "รอตอบรับ",
+        TradingPartnershipStatus.Accepted => "เชื่อมอยู่",
+        TradingPartnershipStatus.Suspended => "ระงับอยู่",
+        TradingPartnershipStatus.Rejected => "ปฏิเสธ/ยกเลิกแล้ว",
+        _ => "ไม่ทราบ",
+    };
 
     // ═══════════ audit ของค่าตั้งเดิมระดับบริษัท (C-06) ═══════════
 

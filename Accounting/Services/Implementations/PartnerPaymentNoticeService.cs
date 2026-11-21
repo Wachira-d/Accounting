@@ -18,7 +18,9 @@ public sealed record PartnerPaymentNoticeDto(Guid Id, string SellerName, string 
     IReadOnlyList<PartnerPaymentOptionDto>? Accounts = null, IReadOnlyList<PartnerPaymentOptionDto>? Methods = null,
     // รอบ 264 P3 (C-01 · คำตัดสิน 264-3-1): ที่มาของบัญชีที่ preselect (ชื่อ Origin + ป้าย ⚙️) · คำแนะนำที่ไม่ preselect · เหตุที่ระบบไม่บันทึกเอง · ลิงก์หน้าความยินยอม
     string? SourceOrigin = null, string? SourceLabel = null, string? HintLabel = null, string? AutoState = null, string? ConsentPageUrl = null,
-    bool OfferDirectorAdvance = false, bool SellerVoided = false);
+    bool OfferDirectorAdvance = false, bool SellerVoided = false,
+    // รอบ 288b: สถานะสำเนาสลิปจากผู้ขาย (ตัวคำนวณเดียว PartnerSlipCopyRule.StatusLabel) — ได้สำเนา / จบโดยไม่ได้พร้อมเหตุ · null = ไม่เกี่ยว/ยังไม่จบ
+    string? SlipCopyLabel = null);
 
 /// <summary>ตัวเลือกในกล่องยืนยัน (ค่า + ป้าย) — <see cref="PartnerPaymentNoticeService.CashChoice"/> = เงินสด (ต้องเลือกเอง · ไม่ใช่ค่าตั้งต้น)</summary>
 public sealed record PartnerPaymentOptionDto(string Value, string Label);
@@ -442,7 +444,8 @@ public class PartnerPaymentNoticeService
                 Accounts: accounts, Methods: methods,
                 SourceOrigin: source?.Origin.ToString(), SourceLabel: source == null ? null : (source.BankAccountId != null ? "⚙️ " + source.Label : source.Reason),
                 HintLabel: source?.HintLabel, AutoState: autoState, ConsentPageUrl: PartnerConsent.PageUrl(n.TradingPartnershipId),
-                OfferDirectorAdvance: source?.OfferDirectorAdvance ?? false, SellerVoided: n.SellerVoidedAt != null));
+                OfferDirectorAdvance: source?.OfferDirectorAdvance ?? false, SellerVoided: n.SellerVoidedAt != null,
+                SlipCopyLabel: PartnerSlipCopyRule.StatusLabel(n.SlipCopyAttachmentId, n.SlipCopyCheckedAt, n.SlipCopyNote)));
         }
         return list;
     }

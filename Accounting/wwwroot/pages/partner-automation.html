@@ -73,13 +73,18 @@ const Page = {
   scopeHtml(card, s) {
     const accepted = card.status === 'Accepted';
     const a = s.active;
-    const badge = s.ok ? `<span class="pa-badge pa-ok">ใช้อยู่</span>` : `<span class="pa-badge pa-warn">ไม่ทำงาน</span>`;
+    // รอบ 288: ป้ายสถานะ + ทำอะไร/ทำเมื่อไร/หยุดเมื่อไร มาจากเซิร์ฟเวอร์ (PartnerConsent.StatusLabel/ExplainOf) — หน้าไม่ตั้งคำเอง
+    const badge = `<span class="pa-badge ${s.ok ? 'pa-ok' : 'pa-warn'}">${Layout.esc(s.statusLabel || '')}</span>`;
+    const explain = (s.what || s.when || s.stops) ? `<ul class="pa-muted" style="margin:4px 0 0 18px;padding:0">`
+        + (s.what ? `<li><strong>ยินยอมแล้วระบบทำ:</strong> ${Layout.esc(s.what)}</li>` : '')
+        + (s.when ? `<li><strong>ทำเมื่อ:</strong> ${Layout.esc(s.when)}</li>` : '')
+        + (s.stops ? `<li><strong>หยุดเมื่อ:</strong> ${Layout.esc(s.stops)}</li>` : '') + `</ul>` : '';
     const detail = a ? `<div class="pa-muted">ยินยอมโดย ${Layout.esc(a.grantedByName)} · ${Layout.esc(Layout.dateTime ? Layout.dateTime(a.grantedAt) : a.grantedAt)}`
         + (a.maxAmount != null ? ` · เพดาน ${Layout.esc(Layout.money(a.maxAmount))} บาท/ใบ` : ' · ไม่จำกัดยอด')
         + (a.payAccountLabel ? ` · จ่ายจาก ${Layout.esc(a.payAccountLabel)}` : (s.allowsPayAccount ? ' · ไม่ตั้งบัญชีจ่าย (ใช้หลักฐานเท่านั้น)' : ''))
         + ` · ข้อความเวอร์ชัน ${Layout.esc(a.textVersion)}</div>` : '';
     const left = `<div><strong>${Layout.esc(s.label)}</strong> ${badge}
-      <div class="pa-muted">${Layout.esc(s.verdictReason)}</div>${detail}
+      <div class="pa-muted">${Layout.esc(s.verdictReason)}</div>${detail}${explain}
       ${s.effectNote ? `<div class="pa-muted" style="color:#92400e">ⓘ ${Layout.esc(s.effectNote)}</div>` : ''}</div>`;
     if (s.companyWide) {
       return `<div class="pa-scope">${left}<div class="pa-ctl"><a class="btn btn-secondary btn-sm" href="/pages/partners.html">ตั้งที่ค่าตั้งของทั้งบริษัท</a></div></div>`;

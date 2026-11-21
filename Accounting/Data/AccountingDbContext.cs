@@ -1247,6 +1247,9 @@ public class AccountingDbContext : DbContext
         modelBuilder.Entity<PartnerPaymentNotice>().Property(x => x.SlipPayerBankCode).HasMaxLength(3);   // รอบ 264 P2
         modelBuilder.Entity<PartnerPaymentNotice>().Property(x => x.SlipPayerAccountMask).HasMaxLength(32);   // รอบ 264 P2
         modelBuilder.Entity<PartnerPaymentNotice>().Property(x => x.SlipPayerMatch).HasMaxLength(16);   // รอบ 264 P4 (L3)
+        modelBuilder.Entity<CrossTenantDocumentLink>().Property(x => x.AutoApproveCode).HasMaxLength(32);   // รอบ 288 (Round288Migration)
+        modelBuilder.Entity<PartnerPaymentNotice>().Property(x => x.SlipCopyNote).HasMaxLength(300);   // รอบ 288b (Round288Migration)
+        modelBuilder.Entity<CrossTenantDocumentLink>().Property(x => x.AutoApproveReason).HasMaxLength(500);   // รอบ 288
         modelBuilder.Entity<PdpaConsentRecord>().Property(x => x.UserAgent).HasMaxLength(500);   // ฝ่ายค้านรอบ 230 S2
         modelBuilder.Entity<PlatformAutoChargeSettings>(e =>
         {

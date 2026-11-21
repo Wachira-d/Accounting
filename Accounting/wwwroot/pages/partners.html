@@ -348,6 +348,7 @@ const Page = {
         <td class="text-right">${Layout.esc(planned)}</td>
         <td><span class="pt-badge">${Layout.esc(n.statusLabel || n.status)}</span>${n.note ? `<div class="pt-muted">${Layout.esc(n.note)}</div>` : ''}
           ${n.sellerVoided && n.status === 'Recorded' ? `<div class="pt-muted" style="color:#b91c1c">${Layout.esc('ผู้ขายยกเลิกการรับเงินนี้แล้ว — ตรวจรายการเดินบัญชี แล้วยกเลิกการจ่ายที่ใบซื้อเอง (ระบบไม่ยกเลิกแทน)')}</div>` : ''}
+          ${n.slipCopyLabel ? `<div class="pt-muted">${Layout.esc(n.slipCopyLabel)}</div>` : ''}
           ${open && n.autoState ? `<div class="pt-muted">${Layout.esc(n.autoState)}${n.consentPageUrl ? ` · <a href="${Layout.esc(n.consentPageUrl)}">งานอัตโนมัติกับคู่ค้า</a>` : ''}</div>` : ''}</td>
         <td>${open && !n.problem ? `<div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:4px">
             <select class="form-select" data-acct="${Layout.esc(n.id)}" aria-label="บัญชีที่จ่าย"></select>

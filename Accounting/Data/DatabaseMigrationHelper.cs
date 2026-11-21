@@ -321,6 +321,7 @@ public static class DatabaseMigrationHelper
         list.AddRange(Accounting.Helpers.Round285Migration.Statements());   // รอบ 285 — ยืนยันเลขผู้เสียภาษีของบริษัท (หลักฐาน + ผู้ดูแลแพลตฟอร์มอนุมัติ)
         list.AddRange(Accounting.Helpers.Round286Migration.Statements());   // รอบ 286 — ผู้จ่ายที่ไว้ใจได้ (เรียนจากรายการเดินบัญชี · บันทึกล่วงหน้า + ตรวจย้อน)
         list.AddRange(Accounting.Helpers.Round287Migration.Statements());   // รอบ 287 — ส่งเอกสารหลังรับเงินทันทีสำหรับผู้จ่ายที่ไว้ใจได้ (ค่าตั้งต้นเปิด)
+        list.AddRange(Accounting.Helpers.Round288Migration.Statements());   // รอบ 288 — งานอัตโนมัติกับคู่ค้า: อนุมัติใบซื้อเอง (watermark บนลิงก์) + สำเนาสลิปจากผู้ขาย
         return list;
     }
 

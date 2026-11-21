@@ -39,9 +39,12 @@ public class PartnerConsentService
         Need.CompanySettingsEdit => await _perms.HasPermissionAsync(companyId, userId, PermissionKeys.CompanySettingsEdit),
         Need.PurchaseView => (await DocumentPermissionHelper.VisibleDirectionsAsync(_perms, companyId, userId)).Purchase,
         Need.PurchaseCreate => await DocumentPermissionHelper.CanCreateAsync(_perms, companyId, userId, DocumentType.PurchaseInvoice),
-        Need.PurchaseApprove => await DocumentPermissionHelper.CanApproveAsync(_perms, companyId, userId, DocumentType.PurchaseInvoice),
+        // รอบ 288: ผู้ใช้ "ทำได้เฉพาะร่าง" (รอบ 276) อนุมัติ/ออกเลขไม่ได้ ⇒ ให้/ใช้ความยินยอมที่อนุมัติแทนไม่ได้ (ด่านเดียวกับเส้นอนุมัติ)
+        Need.PurchaseApprove => await DocumentPermissionHelper.CanApproveAsync(_perms, companyId, userId, DocumentType.PurchaseInvoice)
+            && !await DocumentRestrictionGuard.UserIsDraftOnlyAsync(_db, companyId, userId),
         Need.TaxFile => await _perms.HasPermissionAsync(companyId, userId, PermissionKeys.TaxFile),
-        Need.SalesApprove => await DocumentPermissionHelper.CanApproveAsync(_perms, companyId, userId, DocumentType.Invoice),
+        Need.SalesApprove => await DocumentPermissionHelper.CanApproveAsync(_perms, companyId, userId, DocumentType.Invoice)
+            && !await DocumentRestrictionGuard.UserIsDraftOnlyAsync(_db, companyId, userId),
         _ => false,
         };
     }
@@ -114,7 +117,8 @@ public class PartnerConsentService
     public sealed record Option(string Value, string Label);
     public sealed record ActiveView(Guid Id, decimal? MaxAmount, Guid? DefaultPayBankAccountId, string? PayAccountLabel, string GrantedByName, DateTime GrantedAt, int TextVersion);
     public sealed record ScopeView(string Scope, string Label, bool RequiresCap, bool AllowsPayAccount, bool NeedsTypedConfirm, bool CompanyWide, bool ReaderWired,
-        string? EffectNote, ActiveView? Active, bool Ok, string VerdictCode, string VerdictReason, string? CallerCannotGrantReason, decimal? SuggestedCap);
+        string? EffectNote, ActiveView? Active, bool Ok, string VerdictCode, string VerdictReason, string? CallerCannotGrantReason, decimal? SuggestedCap,
+        string StatusLabel = "", string What = "", string When = "", string Stops = "");
     public sealed record HistoryRow(Guid Id, string Scope, string ScopeLabel, decimal? MaxAmount, string GrantedByName, DateTime GrantedAt,
         string? WithdrawnByName, DateTime? WithdrawnAt, string? WithdrawReason, bool HashOk);
     public sealed record PartnerCard(Guid PartnershipId, string PartnerName, string? PartnerTaxId, string Status, string StatusLabel,
@@ -180,9 +184,12 @@ public class PartnerConsentService
                     // ตัวแทนยอด: แสดงสถานะ "ถ้ายอดอยู่ในเพดาน" — ยอดจริงตรวจตอนท่อใช้
                     v = PartnerConsent.Allows(d.Scope, active, p, companyId, PartnerConsent.CapAmount.Thb(active?.MaxAmount ?? 0m), ok);
                 }
+                // รอบ 288: ป้ายสถานะ + "ทำอะไร · ทำเมื่อไร · หยุดเมื่อไร" จากตัวตั้งเดียว (PartnerConsent) — หน้าแสดงอย่างเดียว
+                var explain = PartnerConsent.ExplainOf(d.Scope);
                 scopes.Add(new ScopeView(d.Scope.ToString(), d.Label, d.RequiresCap, d.AllowsPayAccount, d.NeedsTypedConfirm, d.CompanyWideToggle, d.ReaderWired,
                     PartnerConsent.EffectNote(d), av, v.Ok, v.Code, v.Reason, callerProblem[d.Scope],
-                    d.RequiresCap ? PartnerExchangeRules.ReceiverLimit(companyId, p.CompanyAId, p.PurchaseDraftLimitA, p.PurchaseDraftLimitB) : null));
+                    d.RequiresCap ? PartnerExchangeRules.ReceiverLimit(companyId, p.CompanyAId, p.PurchaseDraftLimitA, p.PurchaseDraftLimitB) : null,
+                    PartnerConsent.StatusLabel(d, v), explain.What, explain.When, explain.Stops));
             }
             var history = mine.Take(50).Select(r => new HistoryRow(r.Id, r.Scope,
                 PartnerConsent.TryParse(r.Scope, out var sc) ? PartnerConsent.Def(sc).Label : r.Scope, r.MaxAmount, NameOf(r.GrantedByUserId), r.GrantedAt,

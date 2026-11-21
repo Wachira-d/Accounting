@@ -188,7 +188,9 @@ public class PartnerConsentTests
     [Fact]
     public void Allows_ขอบเขตที่ไม่ใช้ยอด_ไม่ต้องรู้ยอด_เพดานว่าง_ไม่จำกัด()
     {
-        var r = Row(Scope.ReceiveSlipCopy, max: null);
+        // รอบ 288: ReceiveSlipCopy ต่อสายแล้ว (WiredSince 2026-11-21) ⇒ แถวของเทสต์ให้หลังวันนั้น · แถวที่ให้ล่วงหน้าก่อนวันต่อสายต้องยืนยันใหม่ (L4 ทิศตรงข้าม)
+        var r = Row(Scope.ReceiveSlipCopy, max: null, grantedAt: new DateTime(2026, 11, 21, 1, 0, 0, DateTimeKind.Utc));
+        Assert.Equal(PartnerConsent.Codes.GrantedBeforeWired, PartnerConsent.Allows(Scope.ReceiveSlipCopy, Row(Scope.ReceiveSlipCopy, max: null), Partner(), B, null, true).Code);
         // ฝ่ายค้าน 264-P4 M7: ขอบเขตที่เกิดพร้อมผู้อ่าน ไม่มีวันต่อสาย ⇒ แถวใดก็ไม่ติด GrantedBeforeWired (ยืนยันใหม่ใช้ MinTextVersion)
         Assert.True(PartnerConsent.Allows(Scope.AcceptPayerSlipCopy, Row(Scope.AcceptPayerSlipCopy, max: null, grantedAt: new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc)), Partner(), B, null, true).Ok);
         Assert.True(PartnerConsent.Allows(Scope.ReceiveSlipCopy, r, Partner(), B, null, true).Ok);
@@ -224,7 +226,9 @@ public class PartnerConsentTests
     [Fact]
     public void ป้ายผล_ขอบเขตที่ยังไม่มีท่ออ่าน_บอกว่ายังไม่มีผล_ขอบเขตทั้งบริษัท_บอกที่ตั้ง()
     {
-        Assert.Contains("ยังไม่มีงานอัตโนมัติ", PartnerConsent.EffectNote(PartnerConsent.Def(Scope.AutoApprovePurchase)));
+        // รอบ 288: AutoApprovePurchase ต่อสายแล้ว ⇒ ไม่มีป้าย "ยังไม่มีผล" · ขอบเขตที่ยังไม่ต่อสาย (จำลอง) ยังบอกตรง ๆ
+        Assert.Null(PartnerConsent.EffectNote(PartnerConsent.Def(Scope.AutoApprovePurchase)));
+        Assert.Contains("ยังไม่ทำงานนี้เอง", PartnerConsent.EffectNote(PartnerConsent.Def(Scope.AutoApprovePurchase) with { ReaderWired = false }));
         // รอบ 264 P3: ท่อบันทึกจ่ายอ่านขอบเขตนี้แล้ว · 268-1-1: ชั้นบัญชีตั้งต้นไม่บันทึกเอง ⇒ ป้ายบอกผลจริง
         Assert.Equal(PartnerPaySourceAccount.ConsentDefaultNotAutoNote, PartnerConsent.EffectNote(PartnerConsent.Def(Scope.AutoRecordPayment)));
         Assert.Contains("ทั้งบริษัท", PartnerConsent.EffectNote(PartnerConsent.Def(Scope.PurchaseDrafts)));
@@ -271,7 +275,7 @@ public class PartnerConsentTests
             PartnerConsent.Allows(Scope.AutoRecordPayment, Row(), Partner(), B, new PartnerConsent.CapAmount(100m, "USD"), true).Code);
         Assert.Equal(PartnerConsent.Codes.AmountUnknown, PartnerConsent.Allows(Scope.AutoRecordPayment, Row(), Partner(), B, T(-1m), true).Code);
         Assert.True(PartnerConsent.Allows(Scope.AutoRecordPayment, Row(), Partner(), B, new PartnerConsent.CapAmount(100m, " thb "), true).Ok);
-        var wired = new DateTime(2026, 11, 13, 1, 0, 0, DateTimeKind.Utc);   // รอบ 264 P4: ขอบเขตนี้ต่อสายแล้ว (WiredSince 2026-11-13)
+        var wired = new DateTime(2026, 11, 21, 1, 0, 0, DateTimeKind.Utc);   // รอบ 288: ReceiveSlipCopy ต่อสายแล้ว (WiredSince 2026-11-21)
         var slipCapped = Row(Scope.ReceiveSlipCopy, max: 1_000m, grantedAt: wired);
         Assert.Equal(PartnerConsent.Codes.AmountUnknown, PartnerConsent.Allows(Scope.ReceiveSlipCopy, slipCapped, Partner(), B, null, true).Code);
         Assert.Equal(PartnerConsent.Codes.OverCap, PartnerConsent.Allows(Scope.ReceiveSlipCopy, slipCapped, Partner(), B, T(1_000.01m), true).Code);

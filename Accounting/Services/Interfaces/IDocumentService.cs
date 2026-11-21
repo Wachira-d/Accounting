@@ -135,9 +135,11 @@ public interface IDocumentService
     /// ห้ามประทับว่า "ผู้ใช้รับทราบ" แทนคน · <paramref name="withAiHints"/> = false ⇒ ไม่เรียก AI เสริมคำเตือน</summary>
     /// <param name="passedWarnings">รอบ 201 รอบสาม P2-2: ที่รับคำเตือนที่ผ่านในการอนุมัติครั้งนี้ (คืนให้คนที่กดเห็น) · null = ไม่เก็บ</param>
     /// <param name="autoApprovePolicy">รอบ 248: นโยบายอนุมัติข้ามคำเตือน (มีผลเฉพาะแหล่ง UnattendedWithPolicy) · null = ไม่มี</param>
+    /// <param name="expectedContentStamp">รอบ 288b: ตราเนื้อหา (<c>Helpers/ApprovalContentStamp.Of</c>) ที่ผู้เรียกตรวจไว้ — ใต้ล็อกแถวใบ ใบสดต้องตรงตรานี้ ไม่งั้นโยน
+    /// <see cref="BusinessRuleException"/> 409 (ใบคงเป็นร่าง) · null = ไม่ตรวจ (ทางเข้าของคน)</param>
     Task<DocumentResponse> ApproveDocumentAsync(Guid companyId, Guid documentId, string approvedBy,
         Accounting.Helpers.ApprovalAckSource ackSource, bool withAiHints, ICollection<string>? passedWarnings = null,
-        Accounting.Helpers.AutoApprovePolicy? autoApprovePolicy = null);
+        Accounting.Helpers.AutoApprovePolicy? autoApprovePolicy = null, string? expectedContentStamp = null);
     /// <summary>คำเตือนก่อนอนุมัติของเอกสาร — ไม่อนุมัติ ไม่บันทึก ไม่เรียก AI</summary>
     Task<IReadOnlyList<string>> PreviewApprovalWarningsAsync(Guid companyId, Guid documentId);
     /// <summary>รอบ 248: คำเตือนก่อนอนุมัติของใบจำลองที่ไม่ได้บันทึก (ทดลองรันรายการประจำ) — ไม่บันทึก ไม่เรียก AI</summary>

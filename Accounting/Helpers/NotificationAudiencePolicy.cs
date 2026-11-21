@@ -193,6 +193,9 @@ public static class NotificationAudiencePolicy
         Accounting.Models.Constants.NotificationEvents.AutopilotSlipAutoRecorded,
         Accounting.Models.Constants.NotificationEvents.AutopilotSlipNeedsConfirm,
         Accounting.Models.Constants.NotificationEvents.PartnerPaySourceNeedsConfirm,
+        // รอบ 288: อนุมัติใบซื้อจากคู่ค้าเอง / ยังไม่อนุมัติเอง (ค่าตั้งต้นเดียวกับคีย์คู่ค้ารอบ 281)
+        Accounting.Models.Constants.NotificationEvents.PartnerPurchaseAutoApproved,
+        Accounting.Models.Constants.NotificationEvents.PartnerPurchaseAutoApproveHeld,
         // รอบ 286: รับเงินล่วงหน้าจากผู้จ่ายที่ไว้ใจได้ · ไม่พบเงินเข้า (ต้องถึงเจ้าของแม้ยังไม่ตั้งตาราง)
         Accounting.Models.Constants.NotificationEvents.AutopilotSlipTrustedProvisional,
         Accounting.Models.Constants.NotificationEvents.AutopilotSlipTrustedUnverified,

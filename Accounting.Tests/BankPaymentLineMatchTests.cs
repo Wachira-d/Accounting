@@ -334,7 +334,8 @@ public class BankPaymentLineMatchTests
         Assert.True(seller.ReaderWired);
         Assert.True(seller.WiredFromStart);
         Assert.Contains("รายการรอยืนยันรับเงิน", PartnerConsent.TextFor(PartnerConsent.Scope.AcceptPayerSlipCopy, 1));
-        Assert.False(PartnerConsent.Def(PartnerConsent.Scope.ReceiveSlipCopy).ReaderWired);   // ของผู้ซื้อ (design §4.4ข) ยังไม่มีผู้อ่าน
+        Assert.True(PartnerConsent.Def(PartnerConsent.Scope.ReceiveSlipCopy).ReaderWired);   // รอบ 288: ของผู้ซื้อ (design §4.4ข) ผู้อ่าน = PartnerPayablePipeline.CopySlipsAsync
+        Assert.NotNull(PartnerConsent.Def(PartnerConsent.Scope.ReceiveSlipCopy).WiredSince);   // แถวล่วงหน้ายืนยันใหม่ (L4)
         Assert.NotNull(PartnerConsent.GrantProblem(PartnerConsent.Scope.AcceptPayerSlipCopy,
             new HashSet<PartnerConsent.Need> { PartnerConsent.Need.CompanySettingsEdit, PartnerConsent.Need.PurchaseView }.Contains));
     }
