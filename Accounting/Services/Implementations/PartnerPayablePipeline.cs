@@ -236,7 +236,7 @@ public class PartnerPayablePipeline
             var reference = PartnerPaymentNoticeRule.PaymentReferenceFor(n.SellerPaymentId, n.PaymentIntentId, n.SellerAllocationId)!;
             var grantorName = await _db.Users.AsNoTracking().Where(u => u.Id == grantor).Select(u => u.FullName).FirstOrDefaultAsync(ct) ?? "ผู้ให้ความยินยอม";
             // ฝ่ายค้าน M3/M5: หมายเหตุของการจ่ายบอกตรง ๆ ว่าระบบบันทึกเอง · ตามความยินยอมของใคร · ด้วยหลักฐานอะไร (ผู้บันทึก = ผู้ให้ความยินยอม ไม่ใช่ผู้กด)
-            var notes = $"⚙️ ระบบบันทึกเอง (ไม่มีผู้กด) ตามความยินยอมของ {grantorName} — {source.Label} · {PartnerPaymentNoticeRule.ChannelLabel(n.SourceChannel)} · "
+            var notes = $"{SettlementPaymentVoucher.PartnerAutoPaymentNotePrefix} ตามความยินยอมของ {grantorName} — {source.Label} · {PartnerPaymentNoticeRule.ChannelLabel(n.SourceChannel)} · "
                 + $"{n.SourceDocumentNumber} · ความยินยอม {consent.ConsentId:N}";
             Models.DTOs.Document.PaymentResponse pay;
             try
@@ -244,7 +244,9 @@ public class PartnerPayablePipeline
                 pay = await _docs.CreatePaymentAsync(companyId, new Models.DTOs.Document.CreatePaymentRequest(
                     DocumentId: n.TargetDocumentId, PaymentDate: paymentDate, Amount: amount, PaymentMethod: PartnerPaymentNoticeRule.DefaultMethod(n.SourceChannel),
                     Reference: reference, BankAccount: null, Notes: notes,
-                    OverrideBankAccountId: bank, WithholdingTaxAmount: plan.Wht), grantor.ToString(), PaymentEntrySource.PartnerAuto);
+                    OverrideBankAccountId: bank, WithholdingTaxAmount: plan.Wht,
+                    // รอบ 283 (คำสั่งเจ้าของ · 283-1): ใบสำคัญจ่ายเป็นเอกสาร (หลักฐานคู่การจ่าย · ไม่ลง JE ซ้ำ · อ้าง 50 ทวิ ใบเดียวกัน) ในธุรกรรมเดียวกับการจ่าย
+                    IssuePaymentVoucherDocument: true), grantor.ToString(), PaymentEntrySource.PartnerAuto);
             }
             catch (Exception ex) when (ex is InvalidOperationException or ArgumentException or KeyNotFoundException or BusinessRuleException or DbUpdateException)
             {
@@ -258,7 +260,10 @@ public class PartnerPayablePipeline
             await lockTx.CommitAsync(ct);
             // ฝ่ายค้าน 264-P4 M1: ผูกบรรทัดเกิดใน MarkRecordedAsync (ทุกทางที่ปิดการแจ้งด้วย PV — ตัวเขียนเดียว BindAsync)
             await MarkRecordedAsync(companyId, noticeId, pay.Id, consent, source, plan, nowUtc, ct);
-            await NotifyAutoRecordedAsync(companyId, n, amount, plan.Wht ?? 0m, source, grantorName, ct);
+            var pvNumber = await _db.Documents.AsNoTracking()
+                .Where(d => d.CompanyId == companyId && d.DocumentType == DocumentType.PaymentVoucher && d.SettlementPaymentId == pay.Id && !d.IsDeleted)
+                .Select(d => d.DocumentNumber).FirstOrDefaultAsync(ct);
+            await NotifyAutoRecordedAsync(companyId, n, amount, plan.Wht ?? 0m, source, grantorName, pvNumber, ct);
             return true;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -280,7 +285,7 @@ public class PartnerPayablePipeline
     /// <summary>ฝ่ายค้าน M5: ระบบบันทึกจ่ายเองสำเร็จ ⇒ แจ้งผู้ซื้อหนึ่งครั้งต่อการบันทึก (ยอด · บัญชี · ภาษีหัก · ลิงก์ใบซื้อเพื่อตรวจ/ยกเลิก) — เครื่องแจ้งเตือนกลาง
     /// (ตารางของบริษัท/ผู้ใช้รวมเป็นสรุปได้ตามค่าตั้งของเขา) · ล้ม = LogError (การจ่ายบันทึกแล้ว + audit มีแล้ว)</summary>
     private async Task NotifyAutoRecordedAsync(Guid companyId, PartnerPaymentNotice n, decimal amount, decimal wht, PartnerPaySourceAccount.Decision source, string grantorName,
-        CancellationToken ct)
+        string? voucherNumber, CancellationToken ct)
     {
         if (_notify == null) return;
         try
@@ -289,7 +294,8 @@ public class PartnerPayablePipeline
             await _notify.DispatchAsync(companyId, NotificationEvents.PartnerPaymentAutoRecorded, new NotificationContext
             {
                 Title = $"⚙️ ระบบบันทึกจ่าย {amount:N2} บาท ของ {n.SourceDocumentNumber} เองแล้ว (ตามความยินยอมของ {grantorName})",
-                Message = $"จ่าย {amount:N2} บาท + ภาษีหัก ณ ที่จ่าย {wht:N2} บาท · {source.Label} · ลงวันที่ผู้ขายรับเงิน {n.PaidAt.AddHours(7):dd/MM/yyyy} — "
+                Message = $"จ่าย {amount:N2} บาท + ภาษีหัก ณ ที่จ่าย {wht:N2} บาท · {source.Label} · ลงวันที่ผู้ขายรับเงิน {n.PaidAt.AddHours(7):dd/MM/yyyy}"
+                    + (voucherNumber == null ? "" : voucherNumber.StartsWith("DRAFT-") ? " · ใบสำคัญจ่ายร่าง (รอผู้มีสิทธิ์อนุมัติ)" : $" · ใบสำคัญจ่าย {voucherNumber}") + " — "
                     + "ตรวจกับรายการเดินบัญชีของเรา · ไม่ถูกต้องให้ยกเลิกการจ่ายที่ใบซื้อ · หยุดการบันทึกเองได้ที่ “งานอัตโนมัติกับคู่ค้า”",
                 ActionUrl = $"/pages/documents.html?id={n.TargetDocumentId}",
                 EntityType = nameof(PartnerPaymentNotice), EntityId = n.Id,
@@ -619,7 +625,8 @@ public class PartnerPayablePipeline
         var r = SlipAccountMatch.Match(party, accounts);
         return r.Kind switch
         {
-            SlipAccountMatch.Kind.Unique => new PartnerPaySourceAccount.Slip(PartnerPaySourceAccount.SlipKind.Unique, r.AccountId),
+            // ฝ่ายค้าน MED-2 (รอบ 282): ชื่อผู้โอนไม่ถูกเก็บบนการแจ้ง (PDPA · 264-P2) ⇒ PayerNameMatches = false ⇒ สลิปผู้โอนเสนอค่าได้ แต่ไม่บันทึกเอง (แจ้งยืนยัน)
+            SlipAccountMatch.Kind.Unique => new PartnerPaySourceAccount.Slip(PartnerPaySourceAccount.SlipKind.Unique, r.AccountId, party.VisibleDigits.Count, PayerNameMatches: false),
             SlipAccountMatch.Kind.Many => new PartnerPaySourceAccount.Slip(PartnerPaySourceAccount.SlipKind.Many),
             SlipAccountMatch.Kind.NotOurs => new PartnerPaySourceAccount.Slip(PartnerPaySourceAccount.SlipKind.NotOurs),
             SlipAccountMatch.Kind.Unreadable => new PartnerPaySourceAccount.Slip(PartnerPaySourceAccount.SlipKind.Unreadable),

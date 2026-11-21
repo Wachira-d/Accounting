@@ -163,6 +163,17 @@
         <div class="form-group"><label for="cBranchCode" class="form-label">รหัสสาขา</label><input type="text" id="cBranchCode" class="form-input" placeholder="00000" value="00000"></div>
         <div class="form-group"><label for="cBranchName" class="form-label">ชื่อสาขา</label><input type="text" id="cBranchName" class="form-input" placeholder="สำนักงานใหญ่"></div>
       </div>
+      <!-- รอบ 285: ยืนยันเลขผู้เสียภาษีด้วยเอกสาร (ภ.พ.20/หนังสือรับรอง) ให้ผู้ดูแลระบบ NextAcc อนุมัติ — ป้าย/เหตุ/สิทธิ์ยื่นมาจากเซิร์ฟเวอร์ทั้งหมด -->
+      <div id="taxIdVerifyBox" style="display:none;margin:-4px 0 12px;padding:10px 12px;border:1px solid #e2e8f0;border-radius:8px;background:#f8fafc;font-size:13px">
+        <div><b>สถานะยืนยันเลขผู้เสียภาษี:</b> <span id="tivStatus">-</span></div>
+        <div id="tivDetail" style="color:#64748b;font-size:12px;margin-top:4px"></div>
+        <div id="tivForm" style="display:none;margin-top:8px;gap:8px;flex-wrap:wrap;align-items:center">
+          <select id="tivKind" class="form-select" style="max-width:280px"></select>
+          <input type="file" id="tivFile" accept="application/pdf,image/png,image/jpeg,image/webp">
+          <button type="button" class="btn btn-secondary" id="tivSubmit" onclick="Page.submitTaxIdEvidence()">ยื่นหลักฐาน</button>
+        </div>
+        <div id="tivEffect" style="color:#64748b;font-size:12px;margin-top:6px"></div>
+      </div>
       <div class="form-row">
         <div class="form-group"><label for="cBizType" class="form-label">ประเภทนิติบุคคล <span style="font-weight:normal;color:#64748b;font-size:12px">(กำหนดโครงสร้างส่วนของเจ้าของในผังบัญชี)</span></label>
           <select id="cBizType" class="form-select" onchange="Page.onBizTypeChange()">
@@ -1173,9 +1184,9 @@
       <div class="form-group">
         <label style="display:flex;gap:8px;align-items:flex-start">
           <input type="checkbox" id="slipAutoRecord" />
-          <span>บันทึกรับเงินจากสลิปเองเมื่อมั่นใจ (แชต/กลุ่ม LINE · อีเมล)
-            <span class="text-gray-400" style="font-size:12px;display:block">เฉพาะสลิปที่ยอดตรงใบค้างใบเดียว · มี QR ตรวจสลิปของธนาคาร · วันที่อยู่ในช่วง · บัญชีผู้รับบนสลิปตรงบัญชีธนาคารของบริษัทบัญชีเดียว —
-            ไม่ครบ = รอยืนยันที่หน้ารายการรับชำระ + แจ้งเตือน (ระบบไม่เดาบัญชี)</span></span>
+          <span>บันทึกรับเงินจากสลิปเองเมื่อรายการเดินบัญชียืนยันเงินเข้า (แชต/กลุ่ม LINE · อีเมล)
+            <span class="text-gray-400" style="font-size:12px;display:block">QR ตรวจได้แค่ว่าเป็นรูปแบบสลิป ไม่ได้ยืนยันว่าเงินเข้า — ระบบจึงบันทึกเองเฉพาะเมื่อมีรายการเดินบัญชี (statement) ยอด/วัน/บัญชีตรงกับสลิป
+            และค่าตั้ง "ตัดชำระจากรายการเดินบัญชีอัตโนมัติ" เปิดอยู่ · สลิปอย่างเดียว = รอยืนยันที่หน้ารายการรับชำระ (ค่าที่ระบบเสนอครบ) + แจ้งเตือน</span></span>
         </label>
       </div>
       </details>
@@ -2610,6 +2621,49 @@
       _vatConfirmedSaved() {
         document.querySelectorAll('[data-vat-confirm]').forEach(b => b.classList.add('hidden'));
       },
+      // รอบ 285: สถานะยืนยันเลขผู้เสียภาษี — เซิร์ฟเวอร์ตัดสินทุกป้าย (ยื่นได้ไหม · เหตุ · ผลของการยืนยัน)
+      async loadTaxIdVerification() {
+        const cid = Layout.getCompanyId(); if (!cid) return;
+        const box = document.getElementById('taxIdVerifyBox'); if (!box) return;
+        let s = null;
+        try { const r = await API.get(`/api/companies/${cid}/tax-id-verification`); s = r && r.success ? r.data : null; } catch (e) { s = null; }
+        if (!s) { box.style.display = 'none'; return; }
+        box.style.display = '';
+        const st = document.getElementById('tivStatus');
+        st.textContent = s.statusLabel || '-';
+        st.style.color = s.verified === true ? '#047857' : s.status === 'Pending' ? '#92400e' : '#334155';
+        const lr = s.lastRequest;
+        const parts = [];
+        if (s.verified === true && s.verifiedAt) parts.push('อนุมัติเมื่อ ' + new Date(s.verifiedAt).toLocaleDateString('th-TH'));
+        if (lr) {
+          parts.push(`คำขอล่าสุด ${new Date(lr.submittedAt).toLocaleDateString('th-TH')} · ${lr.evidenceLabel || ''} · ${lr.statusLabel || ''}`);
+          if (lr.registryLabel) parts.push(lr.registryLabel);
+          if (lr.reviewNote) parts.push('หมายเหตุผู้ดูแล: ' + lr.reviewNote);
+          if (lr.forCurrentTaxId === false) parts.push('(คำขอนี้เป็นของเลขเดิม ' + (lr.taxId || '') + ')');
+        }
+        if (s.cannotSubmitReason) parts.push(s.cannotSubmitReason);
+        document.getElementById('tivDetail').textContent = parts.join(' · ');
+        document.getElementById('tivEffect').textContent = s.effect || '';
+        const form = document.getElementById('tivForm');
+        form.style.display = s.canSubmit === true ? 'flex' : 'none';
+        const sel = document.getElementById('tivKind');
+        sel.innerHTML = '';
+        (s.evidenceKinds || []).forEach(k => { const o = document.createElement('option'); o.value = k.value; o.textContent = k.label; sel.appendChild(o); });
+      },
+      async submitTaxIdEvidence() {
+        const cid = Layout.getCompanyId(); if (!cid) return;
+        const f = document.getElementById('tivFile').files[0];
+        if (!f) { Layout.toast('เลือกไฟล์หลักฐาน (PDF หรือรูปภาพ)', 'error'); return; }
+        const fd = new FormData();
+        fd.append('file', f);
+        fd.append('evidenceKind', document.getElementById('tivKind').value);
+        try {
+          const r = await API.upload(`/api/companies/${cid}/tax-id-verification`, fd);
+          Layout.toast((r && r.message) || 'ยื่นหลักฐานแล้ว');
+          document.getElementById('tivFile').value = '';
+        } catch (e) { Layout.toast(e.message, 'error'); }
+        this.loadTaxIdVerification();
+      },
       async loadCompanyProfile() {
         const cid = Layout.getCompanyId(); if (!cid) return;
         try {
@@ -2617,6 +2671,7 @@
           const c = res.data;
           if (!c) return;
           this._companyData = c;
+          this.loadTaxIdVerification();
           // โหลดข้อมูลบริษัทสำเร็จ — ปุ่มบันทึกส่งอัตรา VAT ได้ · ช่องจด VAT ส่งได้เมื่อมีค่าจริง (R2-C8/P-8: โหลดล้ม =
           // ฟอร์มเปล่า ห้ามเอาค่าบนฟอร์มเปล่าไปทับธงบริษัท)
           this._companyLoaded = true;

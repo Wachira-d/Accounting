@@ -22490,6 +22490,11 @@ RULES += [
                "ShowAmounts: binding.ShowAmounts && binding.ContactIds.Count == 1"],
          before=[("GovPaymentSlip.Identify(reading)", "_paymentSlips.HandleForwardedAsync("), ("agency.Kind == GovPaymentSlip.Kind.NotGovernment", "_paymentSlips.HandleForwardedAsync(")],
          why=_R282_WHY + "ตัวจัดเส้นเดียว: อ่านครั้งเดียว → จำแนกสลิปรัฐก่อน (เส้น 272) → ไม่ใช่สลิปรัฐเท่านั้นที่ส่งต่อเส้นจับคู่ใบแจ้งหนี้ · ผู้ส่งอีเมลยืนยันไม่ได้ ⇒ ไม่บันทึกเอง"),
+    dict(file=_R282_LCS, method="AutoAsync", must=["await _auto.RecordedAsync(row.CompanyId, intentId, CancellationToken.None)"],
+         before=[("_auto.RecordedAsync(", "SlipAutoRecordRule.Codes.ConfirmFailed")],
+         why=_R282_WHY + "ฝ่ายค้าน MED-1: ล้มหลังเงินลงแล้ว ⇒ ประทับตามความจริง ไม่ประทับ ConfirmFailed กลับทิศ"),
+    dict(file="Helpers/PartnerPaySourceAccount.cs", method="Decide", must=["SlipMoneySource.PayerSlipStrong("],
+         why=_R282_WHY + "ฝ่ายค้าน MED-2: สลิปผู้โอนบันทึกจ่ายเองได้เฉพาะเลขท้าย ≥4 + ชื่อผู้โอนตรงชื่อบริษัท"),
     dict(file=_R282_LCS, method="HandleImageAsync", must=["await CoreAsync(new Core("],
          why=_R282_WHY + "แชต/กลุ่ม OA บริษัทเดินแกนเดียวกับช่องทางที่ส่งต่อ"),
     dict(file=_R282_LCS, method="HandleForwardedAsync",
@@ -22502,11 +22507,13 @@ RULES += [
          forbid=["ApplyChargeAsync(", "CreatePaymentAsync("],
          why=_R282_WHY + "ใบเดียว: แจ้งโอนผ่านประตูเดิมก่อน แล้วจึงให้ตัวบันทึกเองตัดสิน · ห้ามบันทึกเงินตรงในตัวรับสลิป · ช่องทางไม่มีปุ่ม ⇒ คิวผู้ขาย"),
     dict(file=_R282_AUTO, method="TryAutoAsync",
-         must=["SlipReceivingAccount.ResolveAsync(", "SlipReceivingAccount.SlipPayeeMatch(", "SlipMoneySource.Decide(null, payee,", "SlipAutoRecordRule.Decide(",
-               "new SlipIntentConfirmService(_db, _intents).ConfirmAsync(", "PaymentEventSource.System", "if (verdict.Auto)", "dupStatuses.Contains(i.Status)"],
-         before=[("SlipAutoRecordRule.Decide(", "new SlipIntentConfirmService("), ("SlipMoneySource.Decide(", "SlipAutoRecordRule.Decide(")],
-         forbid=["CreatePaymentAsync(", "ApplyChargeAsync("],
-         why=_R282_WHY + "แหล่งเงินจากตัวตัดสินเดียว → ด่านครบ → เส้นยืนยันตัวเดียว (ไม่มีเส้นเงินที่สอง) · ไม่ผ่าน = เหตุ + แจ้ง ไม่ประทับชำระแล้ว"),
+         must=["SlipReceivingAccount.ResolveAsync(", "SlipReceivingAccount.SlipPayeeMatch(", "SlipMoneySource.Decide(null, payee,", "SlipAutoRecordRule.SlipReady(facts)",
+               "_bankSettle.EvaluateLineAsync(", "LineSettledDocumentAsync(", "facts with { BankLineConfirmed = recorded }", "if (verdict.Auto)",
+               "dupStatuses.Contains(i.Status)", "PeriodLockedAsync(", "t.ReconciliationStatus == ReconciliationStatus.Unmatched && t.MatchedPaymentId == null"],
+         before=[("SlipAutoRecordRule.SlipReady(facts)", "_bankSettle.EvaluateLineAsync("), ("LineSettledDocumentAsync(", "facts with { BankLineConfirmed = recorded }")],
+         forbid=["CreatePaymentAsync(", "ApplyChargeAsync(", "SlipIntentConfirmService(", "BankLineConfirmed = true"],
+         why=_R282_WHY + "282-8 (ฝ่ายค้าน HIGH-1): สลิปอย่างเดียวห้ามบันทึกเงิน — บันทึกได้เฉพาะเมื่อรายการเดินบัญชีที่ตรงถูกตัวตัดสินเงินเข้าเดียวตัดชำระจริง · "
+             + "ห้ามเรียกเส้นยืนยันเอง · ห้ามประทับรายการเดินบัญชีว่ายืนยันเองโดยไม่ดูผลจริง"),
     dict(file=_R282_AUTO, method="RemindPendingAsync",
          must=["SlipMoneySource.ReminderDue(", "i.ConfirmRemindCount == r.ConfirmRemindCount", "i.CompanyId == r.CompanyId"],
          why=_R282_WHY + "เตือนซ้ำตามตารางเดียว · compare-and-set กันส่งซ้ำข้าม instance · ผูกบริษัทของแถว"),
@@ -22530,8 +22537,48 @@ RULES += [
          why=_R282_WHY + "เตือนซ้ำสลิปรอยืนยันถูกต่อสายเข้างานเบื้องหลัง"),
 ]
 REVIEWER_CASES += [
-    ("R282-1", "TryAutoAsync", "if (verdict.Auto)", "if (true)", True),
+    ("R282-1", "TryAutoAsync", "facts with { BankLineConfirmed = recorded }", "facts with { BankLineConfirmed = true }", True),
+    ("R282-3", "TryAutoAsync", "_bankSettle.EvaluateLineAsync(", "_ = (", True),
     ("R282-2", "RemindPendingAsync", "i.ConfirmRemindCount == r.ConfirmRemindCount", "true", True),
+]
+
+# รอบ 283 — ท่ออัตโนมัติคู่ค้าออกใบสำคัญจ่ายเป็นเอกสาร (คำสั่งเจ้าของ · คำตัดสิน 283-1…283-6 · erp-review/2026-11-21/dev-283-partner-pv.md) ·
+# ใบหลักฐานคู่การจ่าย (ไม่ลง JE ซ้ำ · ไม่ถือ VAT/ภาษีหัก · อ้าง 50 ทวิ ของการจ่าย) · ตัวตัดสินเดียว Helpers/SettlementPaymentVoucher · ตัวสร้างเดียว CreateSettlementPaymentVoucherCoreAsync
+_R283_WHY = "รอบ 283 (ใบสำคัญจ่ายจากท่อคู่ค้า — คำตัดสิน 283-1…283-6 · commit 699edd9d · erp-review/2026-11-21/dev-283-partner-pv.md): "
+_R283_PV = "Services/Implementations/DocumentService.SettlementPaymentVoucher.cs"
+RULES += [
+    dict(file="Services/Implementations/PartnerPayablePipeline.cs", method="ProcessAsync",
+         must=["IssuePaymentVoucherDocument: true"], must_lit=["{SettlementPaymentVoucher.PartnerAutoPaymentNotePrefix} ตามความยินยอมของ"],
+         why=_R283_WHY + "283-1: ท่อของผู้ซื้อขอใบสำคัญจ่ายในธุรกรรมเดียวกับการจ่าย · หัวหมายเหตุตัวเดียวกับผู้คัดใบก่อนรอบ 283"),
+    dict(file="Services/Implementations/DocumentService.cs", method="CreatePaymentAsync",
+         must=["if (request.IssuePaymentVoucherDocument == true)", "await IssueSettlementPaymentVoucherInPaymentAsync(companyId, doc, payment, createdBy);"],
+         before=[("_whtService.TryAutoIssueForDocumentAsync(", "await IssueSettlementPaymentVoucherInPaymentAsync("),
+                 ("await IssueSettlementPaymentVoucherInPaymentAsync(", "await transaction.CommitAsync();")],
+         why=_R283_WHY + "283-1/283-3: ใบสำคัญจ่ายออกหลัง 50 ทวิ ของการจ่าย (อ้างเลขได้ · ไม่ออกใบใหม่) และก่อน commit (ล้ม = การจ่ายทั้งก้อน rollback)"),
+    dict(file=_R283_PV, method="CreateSettlementPaymentVoucherCoreAsync",
+         must=["IsSettlementReceipt = true", "SettlementPaymentId = payment.Id", "VatAmount = SettlementPaymentVoucher.VatAmount",
+               "WithholdingTaxAmount = SettlementPaymentVoucher.WithholdingTaxAmount", "DocumentNumberGenerator.NextAsync(_db, companyId, DocumentType.PaymentVoucher,",
+               "DocumentPermissionHelper.CanApproveAsync(", "_db.AddChainedAuditLog(", "labels.SettlementPaymentVoucherLine("],
+         forbid=["AutoPostToJournalAsync(", "TryAutoIssueForDocumentAsync(", "ApplySourceDocumentAdjustmentsAsync("],
+         why=_R283_WHY + "283-1/283-2: ใบหลักฐาน — ไม่ลง JE/ไม่ตัดหนี้/ไม่ออก 50 ทวิ · ไม่ถือภาษี (ผู้อ่าน ภ.ง.ด./ภ.พ.30 ไม่นับซ้ำ) · เลขจากเล่ม PV ตามสิทธิ์อนุมัติ · audit"),
+    dict(file=_R283_PV, method="IssueSettlementPaymentVoucherAsync",
+         must_lit=["FOR UPDATE"], must=["SettlementPaymentVoucher.Decide(", "CreateSettlementPaymentVoucherCoreAsync(companyId, source!, payment!, actor, backfilled: true)"],
+         why=_R283_WHY + "283-5: ออกย้อนหลังเฉพาะแถวที่เลือก · ล็อกการจ่าย · ตัวตัดสินเดียว (มีใบแล้ว = ไม่ออกซ้ำ)"),
+    dict(file="Services/Implementations/DocumentService.cs", method="ReversePaymentInternalAsync",
+         must=["await VoidSettlementPaymentVouchersOfPaymentAsync(companyId, payment);"],
+         why=_R283_WHY + "283-4: ยกเลิกการจ่าย ⇒ ใบสำคัญจ่ายหลักฐานยกเลิกตาม (คงแถว)"),
+    dict(file="Services/Implementations/DocumentService.cs", method="ReverseMultiDocPaymentInternalAsync",
+         must=["await VoidSettlementPaymentVouchersOfPaymentAsync(companyId, payment);"],
+         why=_R283_WHY + "283-4: เส้นหลายใบสมมาตร"),
+    dict(file="Services/Implementations/DocumentService.cs", method="VoidDocumentAsync",
+         must=["doc.IsSettlementReceipt && doc.DocumentType == DocumentType.PaymentVoucher && doc.SettlementPaymentId is Guid settledPayId",
+               "return await VoidPaymentAsync(companyId, lp);"],
+         before=[("return await VoidPaymentAsync(companyId, lp);", "if (doc.IsSettlementReceipt)\n            throw")],
+         why=_R283_WHY + "283-4: ยกเลิกใบสำคัญจ่ายหลักฐาน = ยกเลิกการจ่ายเส้นเดิม (กลับ JE · คืนหนี้ · 50 ทวิ ตามกติกาเดิม)"),
+]
+REVIEWER_CASES += [
+    ("R283-1", "ProcessAsync", "IssuePaymentVoucherDocument: true", "IssuePaymentVoucherDocument: false", True),
+    ("R283-2", "CreateSettlementPaymentVoucherCoreAsync", "WithholdingTaxAmount = SettlementPaymentVoucher.WithholdingTaxAmount", "WithholdingTaxAmount = payment.WithholdingTaxAmount", True),
 ]
 
 # รอบ 284 (แพ็ก F — งานคงค้างจากผลตรวจรายสัปดาห์ 2026-11-20): T4 L-1 · T4 L-6 · T3 MED-5 (สำเนา JS) — คำตัดสิน 284-1…
@@ -22584,6 +22631,44 @@ REVIEWER_CASES += [
     ("R284-3", "ExportBankTransfer", "PayrollExportSheets.BankTransferSummaryOf(rows)", "default!", True),
     ("R284-4", "GetMonthSnapshot", "FinancialReportAccess.MonthSnapshot))", "System.Array.Empty<string>()))", True),
     ("R284-5", "CreateSettlementReceiptAsync", "SettlementReceiptTotals.ReceiptPaperAmount(payment.Amount, payment.FeeAmount)", "payment.Amount", True),
+]
+
+# ── รอบ 285: ยืนยันเลขผู้เสียภาษีของบริษัท (คำตัดสิน 285-1…285-6 · ตัวตัดสินเดียว Helpers/CompanyTaxIdVerification) ──
+_R285_WHY = "รอบ 285 (ยืนยันเลขผู้เสียภาษีของบริษัทด้วยหลักฐาน + ผู้ดูแลแพลตฟอร์มอนุมัติ): "
+_R285_SVC = "Services/Implementations/CompanyTaxIdVerificationService.cs"
+RULES += [
+    dict(file="Services/Implementations/CrossTenantWorkflowService.LinkRequests.cs", method="MaterializeIncomingLinkRequestsAsync",
+         must=["CompanyTaxIdVerification.IsVerified(me.TaxId, me.TaxIdVerifiedAt, me.TaxIdVerifiedFor)",
+               "CompanyTaxIdVerification.IncomingRequestCutoff(verified, me.TaxIdSetAt) is not DateTime setAt", "r.CreatedAt >= setAt"],
+         why=_R285_WHY + "285-3: ยืนยันแล้วเปิดคำขอย้อนหลัง · ยังไม่ยืนยัน = หลังตั้งเลข (ตัวตัดสินเดียว ห้ามประกอบเอง)"),
+    dict(file="Data/AccountingDbContext.cs", method="StampTaxIdSetAt", must=["CompanyTaxIdVerification.ClearOnTaxIdChange(entry.Entity)"],
+         why=_R285_WHY + "285-4: เปลี่ยนเลขภาษี (ทุกทางเข้า SaveChanges) ⇒ หลุดสถานะยืนยัน"),
+    dict(file=_R285_SVC, method="SubmitAsync",
+         must=["CompanyTaxIdVerification.SubmitProblem(", "UploadFileType.SniffAttachment(", "CompanyTaxIdVerification.CompareRegistryName(company.Name, registryName)",
+               "SHA256.HashData(content)", "CompanyTaxIdVerification.AttachmentEntityType", "_db.AddChainedAuditLog("],
+         forbid=["FuzzyMatcher", "Similarity("],
+         before=[("CompanyTaxIdVerification.CompareRegistryName(", "_files.UploadBytesAsync(")],
+         why=_R285_WHY + "285-1/285-2: ด่านยื่น · ชนิดไฟล์จากไบต์ · ชื่อขัดทะเบียน (ตรงตัว ไม่ fuzzy) ก่อนเก็บไฟล์ · hash หลักฐาน · audit"),
+    dict(file=_R285_SVC, method="ApproveAsync",
+         must=["_db.Database.ExecuteSqlRawAsync(", "CompanyTaxIdVerification.ApproveProblem(r.Status, r.TaxId, company.TaxId, r.RegistryResult, r.AttachmentId != null)",
+               "company.TaxIdVerifiedFor = r.TaxId", "Audit("],
+         before=[("CompanyTaxIdVerification.ApproveProblem(", "company.TaxIdVerifiedAt = nowUtc")],
+         why=_R285_WHY + "อนุมัติใต้ล็อกแถวบริษัท · เลขในคำขอต้องตรงเลขปัจจุบัน · audit"),
+    dict(file=_R285_SVC, method="RevokeAsync", must=["CompanyTaxIdVerification.ReasonProblem(reason)", "CompanyTaxIdVerification.ClearOnTaxIdChange(company)", "Audit("],
+         why=_R285_WHY + "ถอนต้องมีเหตุ · ล้างสถานะบริษัท · audit"),
+    dict(file=_R285_SVC, method="ReadEvidenceAsync", must=["_files.ReadBytesAsync(r.CompanyId, attId, ct)", "r.EvidenceSha256"],
+         why=_R285_WHY + "ผู้ดูแลเปิดไฟล์ด้วย tenant ของคำขอ · ไฟล์ถูกสลับ = ล้มดัง"),
+    dict(file="Controllers/CompanyTaxIdVerificationController.cs", method="Submit",
+         must=["_service.SubmitAsync(companyId, userId,", "JwtHelper.GetUserIdFromClaims(User)"],
+         why=_R285_WHY + "ยื่นหลักฐานผ่านบริการตัวเดียว (สิทธิ์ตั้งค่าบริษัทที่ attribute — write_permission_gate_check)"),
+    dict(file="Services/Implementations/CrossTenantWorkflowService.LinkRequests.cs", method="GetIncomingLinkRequestAsync",
+         must=["CompanyTaxIdVerification.IsVerified(requester.TaxId, requester.TaxIdVerifiedAt, requester.TaxIdVerifiedFor)",
+               "CompanyTaxIdVerification.PartnerTaxIdLabel(requesterVerified)"],
+         why=_R285_WHY + "285-5: ผู้รับเห็นว่าเลขของผู้ขอยืนยันแล้วหรือยัง (ป้ายจากเซิร์ฟเวอร์)"),
+]
+REVIEWER_CASES += [
+    ("R285-1", "MaterializeIncomingLinkRequestsAsync", "IncomingRequestCutoff(verified, me.TaxIdSetAt)", "IncomingRequestCutoff(true, me.TaxIdSetAt)", True),
+    ("R285-2", "ApproveAsync", "company.TaxIdVerifiedFor = r.TaxId", "company.TaxIdVerifiedFor = company.TaxId", True),
 ]
 
 if __name__ == "__main__":

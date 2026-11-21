@@ -7502,6 +7502,18 @@ LOW-1 "ส่งได้บางส่วน" · LOW-2 การ์ด `#HeyNe
 - 282-7 (คำสั่งเจ้าของ): `pay-document.html` + session ผู้ซื้อคู่ค้า ⇒ `for-pay-link` ⇒ ช่อง "จ่ายจากบัญชี" + ปุ่ม "จ่ายจากระบบของเรา" เดิม (บัญชีเก็บฝั่งผู้ซื้อ)
 - migration `Round282Migration` · เทสต์ pure `SlipAutoRecordRound282Tests` · Db `SlipAutoRecordRound282DbTests` + `PartnerOutboundRound264P4DbTests` (หน้าชำระ) · คอมมิต 14abedf7
 
+### รอบ 282 ชุดแก้ฝ่ายค้าน (HIGH 1 · คำตัดสิน 282-8…282-11)
+- HIGH-1: สลิปอย่างเดียวไม่บันทึกรับเงิน — บันทึกเองเฉพาะเมื่อรายการเดินบัญชีตรงผ่านตัวตัดสินเงินเข้าเดียว (`EvaluateLineAsync`) · ไม่ผ่าน ⇒ หน้ายืนยัน + ป้าย QR · `SlipAutoRecordService` ไม่เรียกเส้นยืนยันเองแล้ว
+- MED-1 ประทับตามความจริงหลังล้ม (`RecordedAsync`) · MED-2 ฝั่ง B สลิปผู้โอนต้องเลขท้าย ≥ 4 + ชื่อตรง (`SlipMoneySource.PayerSlipStrong`) · LOW งวดปิด/ภ.พ.30 ยื่นแล้ว ⇒ `PeriodLocked`
+- คอมมิต 181fe606
+
+### รอบ 283 — ใบสำคัญจ่ายเป็นเอกสารจากท่ออัตโนมัติคู่ค้า (คำสั่งเจ้าของ · คำตัดสิน 283-1…283-6 · `erp-review/2026-11-21/dev-283-partner-pv.md`)
+- 283-1: ท่อของผู้ซื้อขอ `IssuePaymentVoucherDocument: true` ⇒ `CreatePaymentAsync` ออกใบสำคัญจ่ายหลักฐานคู่การจ่ายในธุรกรรมเดียวกัน (ไม่ลง JE · ไม่ตัดหนี้ · VAT/ภาษีหักบนใบ = 0 · เลข 50 ทวิ บนบรรทัด) · ล้ม = การจ่าย rollback
+- 283-2/3: เลขจากเล่ม PV ตามสิทธิ์อนุมัติ · 50 ทวิ ใบเดียวผูกด้วยกุญแจการจ่าย (ไม่ย้าย `DocumentId` · ไม่ออกใหม่)
+- 283-4: ยกเลิก PV = ยกเลิกการจ่าย · ยกเลิกการจ่าย (ใบเดียว/หลายใบ) ⇒ PV ยกเลิกตาม คงแถว + audit
+- 283-5: รายงาน + ออกย้อนหลังทีละรายการ (`partner-payments/without-voucher` · `partner-payments/{id}/payment-voucher`) · ป้าย `OriginLabel` บนรายการเอกสาร
+- เทสต์ pure `SettlementPaymentVoucherRound283Tests` · Db `PartnerSettlementVoucherRound283DbTests` (2) · กติกา `_R283_*` (+7) · คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว (ฐาน `accounting_test_r283`) · commit 699edd9d
+
 ## รอบ 284 (2026-11-21 · แพ็ก F งานคงค้างจากผลตรวจรายสัปดาห์ · `erp-review/2026-11-21/dev-284-pack-f.md`)
 
 - 284-1 (T4 L-1): `Helpers/EmployeeIdDuplicateScan` — ตัวจับซ้ำนำเข้าพนักงานข้ามเลขบัตรเดิมที่ถอดรหัสไม่ได้ + คำเตือน `employee-id-unreadable` ที่ศูนย์นำเข้า/ทางตรวจซ้ำเดิม
@@ -7511,3 +7523,9 @@ LOW-1 "ส่งได้บางส่วน" · LOW-2 การ์ด `#HeyNe
 - 284-6: ข้อความ "URL ของระบบ" ชี้หน้า `/admin/system-email.html` ช่อง App Base URL (`SystemBaseUrl.AdminPagePath/AdminPageHint`) + ป้าย app.nextacc.com ไม่ใช่โดเมนเรา
 - 284-5: ด่าน `reports/month-snapshot` — ไม่ทำแยก (รายงานทั้ง AccountingController ไม่มีคีย์สิทธิ์) ⇒ คำถามเจ้าของ · เทสต์ `PackFRound284Tests` + Db `PackFRound284DbTests` · commit 6e5036e6
 - 284-7…284-11 (ชุดสอง · ผู้ประสานงานตัดสินตามที่เจ้าของมอบอำนาจ): ด่านรายงานการเงิน `FinancialReportAccess` (ไม่ผูกบทบาท = เดิม) + `Round284Migration` · ใบเสร็จแสดงยอดชำระเต็มรวมค่าธรรมเนียม · หักมัดจำในตัวไล่ยอด · ชื่อใบต้นทางตามหัวจริง · แถว [สรุป] ตามการติ๊ก · commit f90fef74
+
+_รอบ 285 (2026-11-21): ยืนยันเลขผู้เสียภาษีของบริษัท + ตอบ 275-E-7 (คำตัดสิน 285-1…285-7 · `erp-review/2026-11-21/dev-285-taxid-verify-pnd1.md`)_
+- 285-1/2: บริษัทยื่น ภ.พ.20/หนังสือรับรอง (`settings.html` · `POST …/tax-id-verification`) · ชื่อเทียบทะเบียนตรงตัว (ไม่ fuzzy · ขัด = ยื่นไม่ได้) · ผู้ดูแลแพลตฟอร์มอนุมัติ/ปฏิเสธ/ถอนที่ `/admin/taxid-verifications.html` · audit ทุกครั้ง
+- 285-3: ยืนยันแล้ว ⇒ เปิดคำขอเชื่อมคู่ค้าที่ส่งก่อนสมัครได้ (ย้อนกลับข้อจำกัด 280-10 เฉพาะบริษัทที่ยืนยัน) · 285-4: เปลี่ยนเลข = หลุดสถานะ · 285-5: การ์ดคำขอบอกว่าเลขผู้ขอยืนยันหรือยัง
+- 285-7: ภ.ง.ด.1 ช่อง 5 ของผู้ไม่มีเลข 13 หลัก — คงเติม 0 + ป้ายเดิม (สเปก RD เปิดไม่ได้จาก session · บันทึกที่ค้นแล้ว)
+- migration `Round285Migration` · เทสต์ pure `CompanyTaxIdVerificationRound285Tests` · Db `CompanyTaxIdVerificationRound285DbTests` · กติกา `_R285_*` · คอมมิต ae317b36

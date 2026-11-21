@@ -318,6 +318,7 @@ public static class DatabaseMigrationHelper
         list.AddRange(Accounting.Helpers.Round280Migration.Statements());   // รอบ 280 — ช่องทางแจ้งคำขอเชื่อมคู่ค้า (กลุ่ม LINE/อีเมลของผู้ติดต่อ) + บันทึกผลการแจ้ง
         list.AddRange(Accounting.Helpers.Round282Migration.Statements());   // รอบ 282 — สลิปจากกลุ่ม/อีเมล ⇒ บันทึกรับเงินเอง/หน้ายืนยัน + เตือนยืนยันแหล่งเงินทั้งสองฝั่ง
         list.AddRange(Accounting.Helpers.Round284Migration.Statements());   // รอบ 284 — บทบาทเดิมที่ติ๊กเมนูรายงานได้คีย์ของหน้า (ครั้งเดียว · หลัง OneShotDataFixesTableSql)
+        list.AddRange(Accounting.Helpers.Round285Migration.Statements());   // รอบ 285 — ยืนยันเลขผู้เสียภาษีของบริษัท (หลักฐาน + ผู้ดูแลแพลตฟอร์มอนุมัติ)
         return list;
     }
 
