@@ -108,9 +108,14 @@ public class AccountingController : ControllerBase
         [FromQuery] string? status = null, [FromQuery] DateTime? fromDate = null, [FromQuery] DateTime? toDate = null,
         [FromQuery] string? journalType = null, [FromQuery] Guid? dimensionId = null, [FromQuery] Guid? branchId = null,
         [FromQuery] Guid? projectId = null, [FromQuery] string? tag = null,
-        [FromQuery] Guid? sourceDocumentId = null, [FromQuery] string? sourceDocumentNumber = null)
+        [FromQuery] Guid? sourceDocumentId = null, [FromQuery] string? sourceDocumentNumber = null,
+        [FromServices] Accounting.Data.AccountingDbContext? db = null, [FromServices] IPermissionService? permissions = null)
     {
         var userId = JwtHelper.GetUserIdFromClaims(User);
+        // รอบ 284 ฝ่ายค้าน MED-2 (คำตัดสิน 284-13): JE ของเอกสารใบหนึ่ง (หน้าเอกสาร) = เดิม · รายการทั้งบริษัท (ไม่ระบุเอกสาร) = ด่านเดียวกับบัญชีแยกประเภท
+        if (sourceDocumentId == null && string.IsNullOrWhiteSpace(sourceDocumentNumber)
+            && (db == null || permissions == null || !await FinancialReportAccess.AllowsAsync(db, permissions, companyId, userId, FinancialReportAccess.Ledger)))
+            return StatusCode(403, new ApiResponse<PagedResponse<JournalEntryResponse>>(false, null, FinancialReportAccess.DeniedMessage(FinancialReportAccess.Ledger)));
         var result = await _accountingService.GetJournalEntriesForUserAsync(companyId, userId, new PagedRequest(page, pageSize, search), status, fromDate, toDate, journalType, dimensionId, branchId, projectId, tag, sourceDocumentId, sourceDocumentNumber);
         return Ok(new ApiResponse<PagedResponse<JournalEntryResponse>>(true, result));
     }

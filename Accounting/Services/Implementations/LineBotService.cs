@@ -297,6 +297,9 @@ public class LineBotService : ILineBotService
         {
             if (DocumentRestrictionPolicy.LineCommandDenied(lineScope.Restriction, DocumentRestrictionPolicy.LineCommand.CompanySummary) is string noSummary)
                 return noSummary;
+            // รอบ 284 ฝ่ายค้าน HIGH-2: ยอดเงินเข้า/ออกของเดือน = ตัวเลขการเงินรวม ⇒ ด่านเดียวกับหน้าหลักโหมดง่าย/มือถือ (FinancialReportAccess)
+            if (!await FinancialReportAccess.AllowsAsync(_db, _perms, companyId, user.Id, FinancialReportAccess.MonthSnapshot))
+                return "🔒 " + FinancialReportAccess.NoFinancialAccessNotice;
             var now = DateTime.UtcNow;
             var from = new DateTime(now.Year, now.Month, 1);
             var lines = await Accounting.Helpers.ReportableJournal.WherePeriodActivity(_db.JournalEntryLines)

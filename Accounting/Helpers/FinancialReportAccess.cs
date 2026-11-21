@@ -22,6 +22,8 @@ public static class FinancialReportAccess
     /// <summary>คีย์ของยอดเดือน (หน้าหลักโหมดง่าย) — คีย์ของด่านอื่นเขียนเป็นค่าคงที่บน attribute <c>[RequireReportAccess(...)]</c> (C# ต้องเป็น const)
     /// และทะเบียนเมนู <see cref="MenuPermissionMap.LegacyKeys"/> · เทสต์ <c>PackFRound284Tests</c> เทียบทั้งสองฝั่ง</summary>
     public static readonly string[] MonthSnapshot = { PermissionKeys.ReportsFinancial, PermissionKeys.ReportsDashboard };
+    /// <summary>บัญชีแยกประเภท/สมุดรายวันทั้งบริษัท — ตัวเดียวกับ <c>[RequireReportAccess(AccountingView, ReportsFinancial)]</c> ของ reports/general-ledger</summary>
+    public static readonly string[] Ledger = { PermissionKeys.AccountingView, PermissionKeys.ReportsFinancial };
 
     /// <param name="keyGranted">ด่านจริงให้คีย์ใดคีย์หนึ่ง</param>
     /// <param name="member">สมาชิกที่ใช้งานได้ (ไม่ใช่ null = สมาชิก · <c>AccessPending</c> ถูกกันที่ middleware แล้ว)</param>
@@ -46,6 +48,10 @@ public static class FinancialReportAccess
     public static string DeniedMessage(IReadOnlyList<string> keys) => PermissionKeys.DeniedMessage(keys[0]);
 
     /// <summary>หน้าหลักโหมดง่าย: ป้ายแทนการ์ดยอดเดือน เมื่อบทบาทไม่มีสิทธิ์ดูตัวเลขการเงิน (หน้าหลักยังใช้ได้ — ปุ่มลัด/งานค้าง)</summary>
+    /// <summary>รอบ 284 ฝ่ายค้าน HIGH-1/2: เหตุสั้น (ไม่อ้างปุ่มบนหน้าเว็บ) — LINE "ดูยอด" · แดชบอร์ดมือถือ</summary>
+    public const string NoFinancialAccessNotice =
+        "บทบาทของคุณไม่มีสิทธิ์ดูตัวเลขการเงินของบริษัท (\u201cงบการเงิน\u201d หรือ \u201cดูแดชบอร์ดภาพรวม\u201d) — ขอสิทธิ์ได้จากเจ้าของบริษัท (หน้า \u201cบทบาทและสิทธิ์\u201d)";
+
     public const string SnapshotHiddenNotice =
         "ซ่อนยอดรายรับ-รายจ่ายของเดือน — บทบาทของคุณไม่มีสิทธิ์ “งบการเงิน” หรือ “ดูแดชบอร์ดภาพรวม” · ปุ่มลัดด้านล่างใช้ได้ตามปกติ · ขอสิทธิ์ได้จากเจ้าของบริษัท (หน้า “บทบาทและสิทธิ์”)";
 }

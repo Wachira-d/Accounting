@@ -26,4 +26,6 @@ public class ScheduledReport : TenantEntity
 
     /// <summary>Format ที่ส่ง: "PDF" | "EXCEL" | "CSV" | "INLINE" (inline body only).</summary>
     public string Format { get; set; } = "PDF";
+    /// <summary>รอบ 284 ฝ่ายค้าน HIGH-3: อีเมลภายนอก (ไม่ใช่สมาชิกบริษัท) ที่เจ้าของอนุมัติ — JSON array · ตัวตัดสิน <c>Helpers/ScheduledReportAccess</c></summary>
+    public string? ApprovedExternalRecipientsJson { get; set; }
 }

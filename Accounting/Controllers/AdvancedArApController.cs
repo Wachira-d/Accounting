@@ -1,3 +1,5 @@
+using Accounting.Models.Constants;
+using Accounting.Filters;
 using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.AdvancedArAp;
 using Accounting.Services.Interfaces;
@@ -9,6 +11,8 @@ namespace Accounting.Controllers;
 [ApiController]
 [Route("api/companies/{companyId:guid}/ar-ap")]
 [Authorize]
+// รอบ 284 ฝ่ายค้าน LOW: รายชื่อ + ยอดค้าง/พฤติกรรมชำระรายราย = ข้อมูลการเงิน — ด่าน FinancialReportAccess (ไม่ผูกบทบาท = เดิม)
+[RequireReportAccess(PermissionKeys.ReportsOperational, PermissionKeys.ReportsFinancial)]
 public class AdvancedArApController : ControllerBase
 {
     private readonly IAdvancedArApService _service;

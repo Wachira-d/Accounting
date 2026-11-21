@@ -16,7 +16,10 @@ public static class Round284Migration
     public static readonly IReadOnlyList<(string MenuId, string Key)> MenuGrants = new[]
     {
         ("reports", PermissionKeys.ReportsFinancial),
-        ("budget", PermissionKeys.ReportsFinancial),
+        ("budget", PermissionKeys.ReportsBudget),          // ฝ่ายค้าน MED-3: คีย์แคบ (ยังไม่ deploy ⇒ แก้ตารางตรง ไม่มีแถวต้องถอน)
+        ("journals", PermissionKeys.AccountingView),       // ฝ่ายค้าน MED-2: รายการ JE ทั้งบริษัท
+        ("tax", PermissionKeys.TaxExport),                 // ฝ่ายค้าน MED-1: หน้ารายงานภาษี (TaxController GET)
+        ("risk", PermissionKeys.ReportsOperational),       // ฝ่ายค้าน LOW: คะแนนความเสี่ยงลูกค้า/ผู้ขาย
         ("general-ledger", PermissionKeys.AccountingView),
         ("aging", PermissionKeys.ReportsOperational),
         ("arap-analysis", PermissionKeys.ReportsOperational),
@@ -30,6 +33,8 @@ public static class Round284Migration
         var values = string.Join(", ", MenuGrants.Select(g => $"('{g.MenuId}', '{g.Key}')"));
         return new[]
         {
+            // รอบ 284 ฝ่ายค้าน HIGH-3: รายชื่อผู้รับภายนอกที่เจ้าของอนุมัติ (null = ยังไม่มีการอนุมัติ ⇒ ส่งถึงสมาชิกบริษัทเท่านั้น)
+            """ALTER TABLE "ScheduledReports" ADD COLUMN IF NOT EXISTS "ApprovedExternalRecipientsJson" text NULL;""",
             $"""
             DO $$
             BEGIN

@@ -26,7 +26,7 @@ public static class BuiltInRolePermissions
         PermissionKeys.DocumentPurchaseView, PermissionKeys.DocumentPurchaseCreate,
         PermissionKeys.DocumentPurchaseApprove, PermissionKeys.DocumentPurchaseVoid,
         PermissionKeys.ReportsDashboard, PermissionKeys.ReportsExecutive,
-        PermissionKeys.ReportsFinancial, PermissionKeys.ReportsOperational, PermissionKeys.ReportsExport,
+        PermissionKeys.ReportsFinancial, PermissionKeys.ReportsOperational, PermissionKeys.ReportsExport, PermissionKeys.ReportsBudget,
         PermissionKeys.TaxFile, PermissionKeys.TaxExport,
         PermissionKeys.BankView, PermissionKeys.BankReconcile, PermissionKeys.BankPaymentInit,
         // settlement (รอบ 198 ทีม D) — งานกระทบยอดเงินจากแพลตฟอร์มคืองานนักบัญชีเหมือนธนาคาร

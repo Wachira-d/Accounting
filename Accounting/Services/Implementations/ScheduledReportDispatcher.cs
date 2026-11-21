@@ -157,6 +157,20 @@ public class ScheduledReportDispatcher : BackgroundService
             return ScheduledReportOutcome.Summarize(0, Array.Empty<(string, string?)>(),
                 "ยังไม่มีอีเมลผู้รับ — เปิดแก้รายงานนี้แล้วเพิ่มอีเมลผู้รับ");
 
+        // รอบ 284 ฝ่ายค้าน HIGH-3: ผู้รับผิดชอบยังมีสิทธิ์ ณ ตอนส่ง (ออกจากบริษัท/ถูกถอดสิทธิ์ ⇒ ไม่ส่ง + แจ้ง) · ผู้รับภายนอกที่ไม่ได้อนุมัติ ⇒ ไม่ส่งถึงคนนั้น
+        if (await ScheduledReportAccess.SendProblemAsync(db, sp.GetService<IPermissionService>(), s) is string refusal)
+        {
+            await NotifyRefusedAsync(db, s, refusal, ct);
+            return ScheduledReportOutcome.Summarize(0, Array.Empty<(string, string?)>(), refusal);
+        }
+        var members = await ScheduledReportAccess.MemberEmailsAsync(db, s.CompanyId, ct);
+        var blocked = ScheduledReportAccess.UnapprovedRecipients(recipients, members, ScheduledReportAccess.ParseList(s.ApprovedExternalRecipientsJson)).ToHashSet();
+        var blockedFailures = recipients.Where(r => blocked.Contains(r.Trim().ToLowerInvariant()))
+            .Select(r => (r, (string?)ScheduledReportAccess.UnapprovedRecipientError)).ToList();
+        recipients = recipients.Where(r => !blocked.Contains(r.Trim().ToLowerInvariant())).ToList();
+        if (recipients.Count == 0)
+            return ScheduledReportOutcome.Summarize(blockedFailures.Count, blockedFailures, null);
+
         // ช่องส่งอีเมลของบริษัท (ตั้งค่าเองหรือ SMTP กลาง) — คืนผลสำเร็จ/ล้มรายคน (เดิมใช้ IEmailService.SendAsync ที่กลืน error และ
         // "ข้ามเงียบ" เมื่อไม่ได้ตั้ง SMTP ⇒ ตัวส่งไม่มีทางรู้ว่าส่งไม่ถึง)
         var senders = sp.GetService<IEmailSenderFactory>();
@@ -194,7 +208,25 @@ public class ScheduledReportDispatcher : BackgroundService
                 failures.Add((to, ex.Message));
             }
         }
-        return ScheduledReportOutcome.Summarize(recipients.Count, failures, null);
+        failures.AddRange(blockedFailures);
+        return ScheduledReportOutcome.Summarize(recipients.Count + blockedFailures.Count, failures, null);
+    }
+
+    /// <summary>รอบ 284 ฝ่ายค้าน HIGH-3: แจ้งเจ้าของบริษัท (+ ผู้รับผิดชอบถ้ายังเป็นสมาชิก) ในกระดิ่ง ว่ารายงานไม่ถูกส่งเพราะสิทธิ์ — ไม่เงียบ</summary>
+    private static async Task NotifyRefusedAsync(AccountingDbContext db, ScheduledReport s, string reason, CancellationToken ct)
+    {
+        var responsible = Guid.TryParse(s.UpdatedBy ?? s.CreatedBy, out var r) ? r : (Guid?)null;
+        var to = await db.CompanyUsers.AsNoTracking()
+            .Where(cu => cu.CompanyId == s.CompanyId && !cu.AccessPending
+                && (cu.Role == Models.Enums.UserRole.Owner || (responsible != null && cu.UserId == responsible)))
+            .Select(cu => cu.UserId).Distinct().ToListAsync(ct);
+        foreach (var uid in to)
+            db.Notifications.Add(new Models.Entities.Notification
+            {
+                UserId = uid, CompanyId = s.CompanyId, Type = Models.Enums.NotificationType.System,
+                Title = $"ไม่ได้ส่งรายงานตั้งเวลา \u201c{s.Name}\u201d", Message = reason,
+                ActionUrl = "/pages/sme-config.html", EntityType = "ScheduledReport", EntityId = s.Id,
+            });
     }
 
     private static async Task<string> BuildReportBodyAsync(IServiceProvider sp, AccountingDbContext db,

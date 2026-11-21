@@ -61,7 +61,7 @@ public class BudgetController : ControllerBase
         return NoContent();
     }
 
-    [RequireReportAccess(PermissionKeys.ReportsFinancial)]   // รอบ 284: ยอดจริงจาก GL
+    [RequireReportAccess(PermissionKeys.ReportsBudget, PermissionKeys.ReportsFinancial)]   // รอบ 284 (ฝ่ายค้าน MED-3): คีย์งบประมาณแคบ · ผู้มีงบการเงินดูได้ด้วย
     [HttpGet("{budgetId:guid}/vs-actual")]
     public async Task<ActionResult<ApiResponse<BudgetVsActualResponse>>> GetBudgetVsActual(Guid companyId, Guid budgetId)
     {
@@ -72,7 +72,7 @@ public class BudgetController : ControllerBase
     /// <summary>Scenario modeling — best/base/worst case projection.
     /// upliftPercent (default 15%) → best case. downsidePercent (default 20%)
     /// → worst case. ใช้สำหรับ CFO planning + investor pitch</summary>
-    [RequireReportAccess(PermissionKeys.ReportsFinancial)]
+    [RequireReportAccess(PermissionKeys.ReportsBudget, PermissionKeys.ReportsFinancial)]
     [HttpGet("{budgetId:guid}/scenarios")]
     public async Task<ActionResult<ApiResponse<BudgetScenarioResponse>>> GetScenarios(
         Guid companyId, Guid budgetId,

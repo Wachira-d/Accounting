@@ -54,6 +54,9 @@ public static class MenuPermissionMap
         ["aging"] = new[] { PermissionKeys.ReportsOperational },                                        // AgingReportController
         ["arap-analysis"] = new[] { PermissionKeys.ReportsOperational },                                // ArApAnalysisController
         ["cash-forecast"] = new[] { PermissionKeys.ReportsFinancial, PermissionKeys.ReportsExecutive }, // CashForecastController
+        ["journals"] = new[] { PermissionKeys.AccountingView, PermissionKeys.ReportsFinancial },        // journals (ทั้งบริษัท · ฝ่ายค้าน MED-2)
+        ["tax"] = new[] { PermissionKeys.TaxExport, PermissionKeys.TaxFile },                           // TaxController GET (ฝ่ายค้าน MED-1)
+        ["risk"] = new[] { PermissionKeys.ReportsOperational, PermissionKeys.ReportsFinancial },        // RiskController (ฝ่ายค้าน LOW)
     };
 
     public enum Direction { Revenue, Purchase }
@@ -72,9 +75,9 @@ public static class MenuPermissionMap
         "getting-started", "accountant-workspace", "accountant", "documents", "recurring", "autopilot", "deposits", "mobile-receipt",
         "revenue-recognition", "customer-portal", "expense-docs", "payments", "vendor-portal-admin", "partners", "bank", "cash-management",
         "cheques", "petty-cash", "loans", "multi-currency", "fx-reval", "contacts", "products", "product-aliases", "warehouse",
-        "inventory-reports", "supplies", "production", "consignment", "tax", "vat-history", "undue-vat", "wht", "wht-credit", "tax-remittance",
-        "tax-calendar", "etax", "tax-export", "stamp-duty", "accounts", "journals", "fiscal", "fixed-assets",
-        "risk", "budget", "cost-report", "pos", "pos-packages", "course-credits", "pos-modifiers", "pos-reports", "cms-sites",
+        "inventory-reports", "supplies", "production", "consignment", "vat-history", "undue-vat", "wht", "wht-credit", "tax-remittance",
+        "tax-calendar", "etax", "tax-export", "stamp-duty", "accounts", "fiscal", "fixed-assets",
+        "budget", "cost-report", "pos", "pos-packages", "course-credits", "pos-modifiers", "pos-reports", "cms-sites",
         "cms-orders", "cms-bookings", "cms-booking-providers", "lodging-settings", "cms-leads", "organization", "employees", "payroll",
         "leave-types", "leave-calendar", "salary-advance", "commission", "project-time", "expense", "expense-no-receipt", "leave-my",
         "mobile-expense", "projects", "time-billing", "dimensions", "intercompany", "document-scan", "ocr-review-queue", "ai-tools", "assistant",

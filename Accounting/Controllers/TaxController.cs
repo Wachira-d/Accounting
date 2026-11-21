@@ -1,3 +1,4 @@
+using Accounting.Filters;
 using Accounting.Models.Constants;
 using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.Tax;
@@ -50,6 +51,7 @@ public class TaxController : ControllerBase
         return null;
     }
 
+    [RequireReportAccess(PermissionKeys.TaxExport, PermissionKeys.TaxFile)]   // รอบ 284 ฝ่ายค้าน MED-1: ยอดภาษีรวมของบริษัท = ด่านเดียวกับ tax-filing-export
     [HttpGet]
     public async Task<ActionResult<ApiResponse<List<TaxReportResponse>>>> GetTaxReports(
         Guid companyId, [FromQuery] TaxType? taxType = null, [FromQuery] int? year = null)
@@ -88,6 +90,7 @@ public class TaxController : ControllerBase
             result.Count == 0 ? "ไม่พบใบกำกับจากการสแกนที่ VAT 0% โดยกระดาษไม่บอกอัตราศูนย์" : $"พบ {result.Count} ใบที่ต้องตรวจกับกระดาษ"));
     }
 
+    [RequireReportAccess(PermissionKeys.TaxExport, PermissionKeys.TaxFile)]   // รอบ 284 ฝ่ายค้าน MED-1: ยอดภาษีรวมของบริษัท = ด่านเดียวกับ tax-filing-export
     [HttpGet("{reportId:guid}")]
     public async Task<ActionResult<ApiResponse<TaxReportResponse>>> GetTaxReport(Guid companyId, Guid reportId)
     {
@@ -205,6 +208,7 @@ public class TaxController : ControllerBase
     }
 
     /// <summary>ส่งออกรายงานภาษีเป็นไฟล์ Excel (.xlsx)</summary>
+    [RequireReportAccess(PermissionKeys.TaxExport, PermissionKeys.TaxFile)]   // รอบ 284 ฝ่ายค้าน MED-1: ยอดภาษีรวมของบริษัท = ด่านเดียวกับ tax-filing-export
     [HttpGet("{reportId:guid}/export-xlsx")]
     public async Task<IActionResult> ExportTaxReportXlsx(Guid companyId, Guid reportId)
     {
@@ -214,6 +218,7 @@ public class TaxController : ControllerBase
 
     /// <summary>PDF รายงานภาษี — kind: purchase (ภาษีซื้อ) · sales (ภาษีขาย) ·
     /// pp30 (แบบสรุป ภ.พ.30). แสดง inline (download=false) หรือแนบไฟล์.</summary>
+    [RequireReportAccess(PermissionKeys.TaxExport, PermissionKeys.TaxFile)]   // รอบ 284 ฝ่ายค้าน MED-1: ยอดภาษีรวมของบริษัท = ด่านเดียวกับ tax-filing-export
     [HttpGet("{reportId:guid}/export-pdf")]
     public async Task<IActionResult> ExportTaxReportPdf(Guid companyId, Guid reportId,
         [FromQuery] string kind = "purchase", [FromQuery] bool download = false)

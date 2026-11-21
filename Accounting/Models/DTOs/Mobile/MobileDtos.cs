@@ -13,7 +13,9 @@ public record SyncResponse(
 public record MobileDashboardResponse(
     decimal CashBalance, decimal TotalReceivables, decimal TotalPayables,
     int PendingApprovals, int OverdueInvoices, decimal TodayRevenue,
-    decimal MonthRevenue, List<MobileAlertResponse> Alerts);
+    decimal MonthRevenue, List<MobileAlertResponse> Alerts,
+    // รอบ 284 ฝ่ายค้าน HIGH-1: บทบาทไม่มีสิทธิ์ดูตัวเลขการเงิน (FinancialReportAccess) ⇒ ยอดเงินทุกช่อง = 0 ที่ "ไม่ได้คำนวณ" + ป้ายเหตุ (จำนวนงานยังส่ง)
+    bool FinancialsHidden = false, string? FinancialsHiddenNotice = null);
 
 public record MobileChartDataPoint(string Label, decimal Value);
 
