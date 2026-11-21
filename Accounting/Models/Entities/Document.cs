@@ -1218,6 +1218,11 @@ public class Contact : TenantEntity
     /// (ยังเสนอให้คนยืนยันได้) · ค่าตั้งต้น false · ผู้อ่าน: <c>BankReceiptSettleService</c> → <c>BankReceiptAutoSettle.Decide</c></summary>
     public bool BankAutoSettleDisabled { get; set; }
 
+    /// <summary>รอบ 286 (ฝ่ายค้าน HIGH-3): รายการรับเงินล่วงหน้าของผู้ติดต่อนี้ไม่พบเงินเข้าตามกำหนด ⇒ ถอนความไว้ใจทุกกุญแจของผู้ติดต่อ + ห้ามสร้างกุญแจใหม่
+    /// จนกว่าผู้ขายปลดล็อกเอง (ให้ความไว้ใจคืนที่หน้าตั้งค่า LINE) · null = ไม่ถูกล็อก · ผู้เขียน <c>TrustedSlipVerifyService.FailAsync</c> / <c>TrustedSlipPayerService.SetTrustAsync</c></summary>
+    public DateTime? SlipTrustBlockedAt { get; set; }
+    public string? SlipTrustBlockedReason { get; set; }
+
     /// <summary>ภาษาเอกสารเริ่มต้นของผู้ติดต่อรายนี้ ("th"/"en") — null = ตามค่า
     /// บริษัท. semantic = "ค่าตั้งต้นตอนสร้างใบ": ประทับลง Document.DocumentLanguage
     /// ณ ตอนสร้าง (ฟอร์ม + server fallback ใน CreateDocumentAsync) ไม่ใช่ตอนพิมพ์

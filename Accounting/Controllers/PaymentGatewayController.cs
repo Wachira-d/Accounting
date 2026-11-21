@@ -138,11 +138,14 @@ public class PaymentGatewayController : ControllerBase
     public async Task<ActionResult<ApiResponse<object>>> List(
         Guid companyId, [FromServices] IGatewayRefundService refunds,
         [FromQuery] string? status, [FromQuery] int limit = 100,
-        CancellationToken ct = default)
+        CancellationToken ct = default, [FromQuery] string? trust = null)
     {
         var q = _db.PaymentIntents.AsNoTracking().Where(i => i.CompanyId == companyId);
         if (Enum.TryParse<PaymentIntentStatus>(status, true, out var s))
             q = q.Where(i => i.Status == s);
+        // รอบ 286 (ฝ่ายค้าน LOW): ตัวกรอง "รับล่วงหน้าที่ยังไม่ยืนยัน" (ตัวตั้งเดียว TrustedSlipPayerRule.Unverified)
+        if (string.Equals(trust, "unverified", StringComparison.OrdinalIgnoreCase))
+            q = q.Where(i => i.TrustProvisionalAt != null && i.TrustVerifiedAt == null);
         var rows = await q.OrderByDescending(i => i.CreatedAt)
             .Take(Math.Clamp(limit, 1, 500))
             .Select(i => new
@@ -161,6 +164,7 @@ public class PaymentGatewayController : ControllerBase
                 i.DisputeState, i.DisputeAmount, i.DisputeReason, i.DisputeUpdatedAt, i.DisputeAcknowledgedAt,
                 i.ReceivingBankAccountId, i.ReceivingAccountOrigin,
                 i.AutoRecordReason,
+                i.TrustProvisionalAt, i.TrustVerifiedAt, i.TrustFailedAt,
             })
             .ToListAsync(ct);
         // รอบ 260-2: echo บัญชีที่เงินตามสลิปเข้า (ค่าที่ประทับตอนยืนยัน — กฎ #4 A) · ป้ายจากเซิร์ฟเวอร์
@@ -215,6 +219,9 @@ public class PaymentGatewayController : ControllerBase
                 canChooseReceivingAccount = SlipReceivingAccount.Applies(r.ProviderCode, r.MethodValue) && PaymentIntentPolicy.IsOpen(r.StatusValue),
                 // รอบ 282: เหตุที่ระบบไม่บันทึกรับเงินจากสลิปเอง (หน้ายืนยันแสดงตรงตัว · เฉพาะรายการที่ยังรอยืนยัน)
                 autoRecordReason = PaymentIntentPolicy.IsOpen(r.StatusValue) ? r.AutoRecordReason : null,
+                // รอบ 286 (ฝ่ายค้าน LOW): ป้ายรับล่วงหน้า (รอยืนยันจากธนาคาร/ยืนยันแล้ว/ไม่พบ) จากเซิร์ฟเวอร์ — หน้าไม่ประกอบเอง
+                trustLabel = TrustedSlipPayerRule.StatusLabel(r.TrustProvisionalAt, r.TrustVerifiedAt, r.TrustFailedAt),
+                trustUnverified = TrustedSlipPayerRule.Unverified(r.TrustProvisionalAt, r.TrustVerifiedAt),
                 canRestampReceivingAccount = SlipReceivingAccount.Applies(r.ProviderCode, r.MethodValue) && redispatchPending.Contains(r.Id),
                 receivingBankAccountId = r.ReceivingBankAccountId,
                 receivingAccountLabel = r.ReceivingBankAccountId is Guid rb && receivingLabels.TryGetValue(rb, out var rl) ? rl : null,

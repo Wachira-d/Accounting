@@ -1916,7 +1916,10 @@ public record PaymentResponse(
     IReadOnlyList<string>? Warnings = null,
     /// <summary>รอบ 258: ยอดของการรับชำระนี้ที่จัดสรรให้<b>เอกสารที่ถาม</b> (<c>GET payments?documentId=</c>) — มีค่าเมื่อการรับชำระจัดสรรหลายใบ/จัดสรรทีหลัง
     /// (<c>Amount</c> คือยอดเงินทั้งก้อน) · null = การชำระใบเดียว (ยอดของใบ = <c>Amount</c>)</summary>
-    decimal? AllocatedToDocument = null);
+    decimal? AllocatedToDocument = null,
+    /// <summary>รอบ 286 (ฝ่ายค้าน LOW): ป้าย "รับล่วงหน้า — รอยืนยันจากธนาคาร/ยืนยันแล้ว/ไม่พบ" ของการรับเงินจากผู้จ่ายที่ไว้ใจได้ (<c>TrustedSlipPayerRule.StatusLabel</c>) ·
+    /// null = ไม่ใช่การรับล่วงหน้า</summary>
+    string? ProvisionalLabel = null);
 
 /// <summary>
 /// ทีม A (2a · 2026-10-13): ภาษีหัก ณ ที่จ่ายที่ระบบแนะนำสำหรับการจ่ายงวดนี้ (<c>GET document/{id}/payment-wht-suggestion</c>) —

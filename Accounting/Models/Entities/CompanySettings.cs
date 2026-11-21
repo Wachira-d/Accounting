@@ -277,6 +277,9 @@ public class CompanySettings : TenantEntity
     public decimal SlipTrustedDailyCapPerKey { get; set; } = Accounting.Helpers.TrustedSlipPayerRule.DefaultDailyCapPerKey;
     /// <summary>รอบ 286: จำนวนวันทำการที่รอรายการเดินบัญชียืนยันรายการล่วงหน้า (ตั้งต้น 3) · ผู้อ่าน <c>TrustedSlipPayerService.TryProvisionalAsync</c> (ประทับกำหนดบนรายการ)</summary>
     public int SlipTrustedReviewBusinessDays { get; set; } = Accounting.Helpers.TrustedSlipPayerRule.DefaultReviewBusinessDays;
+    /// <summary>รอบ 286 (ฝ่ายค้าน HIGH-3): เพดานยอดรับเงินล่วงหน้าที่ยังไม่ยืนยันรวมทั้งบริษัท (บาท · ตั้งต้น 100,000 · = ความเสียหายสูงสุด ณ เวลาใดเวลาหนึ่ง) ·
+    /// ผู้อ่าน <c>TrustedSlipPayerService.TryProvisionalAsync</c></summary>
+    public decimal SlipTrustedCompanyOutstandingCap { get; set; } = Accounting.Helpers.TrustedSlipPayerRule.DefaultCompanyOutstandingCap;
     public DateTime? LineLastTestedAt { get; set; }
     public string? LineLastTestStatus { get; set; }
     /// <summary>รอบ 260-4 (team-A L8 · คำตัดสิน 260-4-1): ชั่วโมงเงียบของการ์ด LINE ถึงลูกค้า (เวลาไทย) — ตัวตัดสิน <c>Helpers/LineQuietHours</c> ·

@@ -25,6 +25,14 @@ public static class GatewayPaymentRecord
     /// (canonical function เดียว · เดิมอยู่ใน <c>DocumentPaymentHandler.PaymentReference</c>)</summary>
     public static string Reference(Guid intentId) => $"PAY-INTENT-{intentId:N}";
 
+    /// <summary>รอบ 286: ถอดกลับ (คู่ของ <see cref="Reference"/> — ตัวเดียว) · ไม่ใช่รูปนี้ ⇒ false</summary>
+    public static bool TryParseIntentId(string? reference, out Guid intentId)
+    {
+        intentId = Guid.Empty;
+        const string prefix = "PAY-INTENT-";
+        return reference is { Length: 43 } r && r.StartsWith(prefix, StringComparison.Ordinal) && Guid.TryParseExact(r[prefix.Length..], "N", out intentId);
+    }
+
     /// <summary>เลขอ้างอิงที่ประทับบนการจองที่พัก — เลขของผู้ให้บริการ (พนักงานใช้ค้นในแดชบอร์ด gateway) · ไม่มีเลข ⇒ <see cref="Reference"/>
     /// (เดิมส่ง null ⇒ ด่านกันซ้ำของ <c>ConfirmAsync</c> ไม่ทำงานเลย)</summary>
     public static string ReservationReference(Guid intentId, string? providerRef)

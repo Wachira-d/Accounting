@@ -1200,7 +1200,8 @@
         </label>
         <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:8px;font-size:13px">
           <label>เพดานต่อวันต่อผู้โอน (บาท) <input type="number" id="slipTrustedDailyCap" min="0" step="0.01" class="form-input" style="width:150px" /></label>
-          <label>รอรายการเดินบัญชี (วันทำการ) <input type="number" id="slipTrustedReviewDays" min="1" max="10" step="1" class="form-input" style="width:80px" /></label>
+          <label>รอรายการเดินบัญชี (วันทำการ · ไม่เกิน 5) <input type="number" id="slipTrustedReviewDays" min="1" max="5" step="1" class="form-input" style="width:80px" /></label>
+          <label>ยอดล่วงหน้าที่รอยืนยันรวมทั้งบริษัท (บาท) <input type="number" id="slipTrustedCompanyCap" min="0" step="0.01" class="form-input" style="width:150px" /></label>
         </div>
         <div style="margin-top:8px"><button type="button" class="btn btn-secondary btn-sm" onclick="Page._loadTrustedPayers(Layout.getCompanyId())">ดูรายชื่อผู้จ่ายที่ไว้ใจได้</button></div>
         <div id="trustedPayersList" style="font-size:12px;margin-top:8px"></div>
@@ -2260,6 +2261,7 @@
           { const ta = document.getElementById('slipTrustedAuto'); if (ta) ta.checked = c.slipTrustedAuto === true;
             const tc = document.getElementById('slipTrustedDailyCap'); if (tc) tc.value = c.slipTrustedDailyCap ?? '';
             const td = document.getElementById('slipTrustedReviewDays'); if (td) td.value = c.slipTrustedReviewDays ?? '';
+            const tcc = document.getElementById('slipTrustedCompanyCap'); if (tcc) tcc.value = c.slipTrustedCompanyCap ?? '';
             const tr = document.getElementById('slipTrustedRisk'); if (tr) tr.textContent = c.slipTrustedRiskNotice ? '⚠️ ' + c.slipTrustedRiskNotice : ''; }   // รอบ 282 — ค่าจากเซิร์ฟเวอร์ (ค่าตั้งต้นปิด)   // รอบ 260 — ค่าจากเซิร์ฟเวอร์ (ค่าตั้งต้นเปิด)
           this._renderLineCustomerChannel(c.customerChannel);
           this._renderLineRelinkInvite(c.relinkInvite, c.webhookProblem);
@@ -2393,6 +2395,7 @@
           slipTrustedAuto: !!(document.getElementById('slipTrustedAuto') || {}).checked,
           slipTrustedDailyCap: (v => v === '' ? null : Number(v))((document.getElementById('slipTrustedDailyCap') || { value: '' }).value.trim()),
           slipTrustedReviewDays: (v => v === '' ? null : Number(v))((document.getElementById('slipTrustedReviewDays') || { value: '' }).value.trim()),
+          slipTrustedCompanyCap: (v => v === '' ? null : Number(v))((document.getElementById('slipTrustedCompanyCap') || { value: '' }).value.trim()),
         };
         try {
           const j = await API.put(`/api/companies/${cid}/line-config`, body);

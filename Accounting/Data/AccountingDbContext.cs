@@ -1242,6 +1242,8 @@ public class AccountingDbContext : DbContext
         modelBuilder.Entity<PaymentIntent>().Property(x => x.TrustKeyHash).HasMaxLength(64);   // รอบ 286
         modelBuilder.Entity<PaymentIntent>().Property(x => x.TrustKeyLabel).HasMaxLength(120);   // รอบ 286
         modelBuilder.Entity<CompanySettings>().Property(x => x.SlipTrustedDailyCapPerKey).HasPrecision(18, 2);   // รอบ 286
+        modelBuilder.Entity<CompanySettings>().Property(x => x.SlipTrustedCompanyOutstandingCap).HasPrecision(18, 2);   // รอบ 286 ฝ่ายค้าน HIGH-3
+        modelBuilder.Entity<Contact>().Property(x => x.SlipTrustBlockedReason).HasMaxLength(500);   // รอบ 286 ฝ่ายค้าน HIGH-3
         modelBuilder.Entity<PartnerPaymentNotice>().Property(x => x.SlipPayerBankCode).HasMaxLength(3);   // รอบ 264 P2
         modelBuilder.Entity<PartnerPaymentNotice>().Property(x => x.SlipPayerAccountMask).HasMaxLength(32);   // รอบ 264 P2
         modelBuilder.Entity<PartnerPaymentNotice>().Property(x => x.SlipPayerMatch).HasMaxLength(16);   // รอบ 264 P4 (L3)
