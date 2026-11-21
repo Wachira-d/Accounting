@@ -1304,7 +1304,7 @@ public class AuthService : IAuthService, ILineSignerLoginVerifier
             throw new InvalidOperationException(
                 $"ยังไม่ได้ตั้ง \"URL ของระบบ\" (AppBaseUrl) — {provider} Login ต้องใช้ค่านี้สร้าง "
                 + "Callback URL ที่ต้องตรงกับที่ลงทะเบียนไว้ฝั่งผู้ให้บริการ. "
-                + "ตั้งที่หน้าแอดมิน → ตั้งค่าระบบ → URL ของระบบ แล้วลองใหม่");
+                + "ตั้งที่ " + Accounting.Helpers.SystemBaseUrl.AdminPageHint + " แล้วลองใหม่");
         return url;
     }
 

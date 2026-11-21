@@ -24,7 +24,7 @@ public sealed record PlatformGatewayReadinessItem(string Key, bool Ok, bool Bloc
 /// เซิร์ฟเวอร์ตัดสินทุกข้อ (หน้าเว็บแสดงอย่างเดียว)
 /// <para><b>ที่มา:</b> เงินผ่าน Omise ต้องลง <c>Dr 11340 ลูกหนี้ผู้ให้บริการรับชำระเงิน</c> (ผู้ให้บริการถือเงิน T+n แล้วหักค่าธรรมเนียม) แล้วล้างตอนบันทึกรอบโอน
 /// (<c>GatewaySettlementService</c> ในบริษัทผู้ให้บริการ) · ไม่มีผังนี้ ⇒ ระบบลงธนาคารทั้งที่เงินยังไม่เข้า (กระทบยอดพังเงียบ) · ผังรายได้/เงินสด/VAT ผู้ขาย
-/// ตั้งที่หน้าตั้งค่าเว็บไซต์ — หน้าช่องทางรับชำระเดิมไม่บอกเลยว่าข้อใดขาด</para>
+/// ตั้งที่หน้าอีเมลระบบ (ช่อง App Base URL — <see cref="SystemBaseUrl.AdminPagePath"/>) — หน้าช่องทางรับชำระเดิมไม่บอกเลยว่าข้อใดขาด</para>
 /// </summary>
 public static class PlatformGatewayReadiness
 {

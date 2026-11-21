@@ -7507,3 +7507,11 @@ LOW-1 "ส่งได้บางส่วน" · LOW-2 การ์ด `#HeyNe
 - MED-1 ประทับตามความจริงหลังล้ม (`RecordedAsync`) · MED-2 ฝั่ง B สลิปผู้โอนต้องเลขท้าย ≥ 4 + ชื่อตรง (`SlipMoneySource.PayerSlipStrong`) · LOW งวดปิด/ภ.พ.30 ยื่นแล้ว ⇒ `PeriodLocked`
 - คอมมิต 181fe606
 
+## รอบ 284 (2026-11-21 · แพ็ก F งานคงค้างจากผลตรวจรายสัปดาห์ · `erp-review/2026-11-21/dev-284-pack-f.md`)
+
+- 284-1 (T4 L-1): `Helpers/EmployeeIdDuplicateScan` — ตัวจับซ้ำนำเข้าพนักงานข้ามเลขบัตรเดิมที่ถอดรหัสไม่ได้ + คำเตือน `employee-id-unreadable` ที่ศูนย์นำเข้า/ทางตรวจซ้ำเดิม
+- 284-2 (T4 L-9): `Program.cs` เลือกคีย์คอลัมน์ PII ด้วย `EncryptionKeyResolver.Resolve` (env ว่างไม่ชนะ config) · runbook หมุนคีย์ระบุช่องว่างท้ายคีย์
+- 284-3 (T4 L-6): ไฟล์โอนเงินเดือน Excel มีแผ่น "สรุป" พร้อมโอน X จาก Y ราย + ยอด
+- 284-4 (T3 MED-5 ส่วนที่ค้าง): `GET document/{id}/receipt-line-default` — ฟอร์มใบเสร็จไม่มีสำเนาข้อความไทย
+- 284-6: ข้อความ "URL ของระบบ" ชี้หน้า `/admin/system-email.html` ช่อง App Base URL (`SystemBaseUrl.AdminPagePath/AdminPageHint`) + ป้าย app.nextacc.com ไม่ใช่โดเมนเรา
+- 284-5: ด่าน `reports/month-snapshot` — ไม่ทำแยก (รายงานทั้ง AccountingController ไม่มีคีย์สิทธิ์) ⇒ คำถามเจ้าของ · เทสต์ `PackFRound284Tests` + Db `PackFRound284DbTests` · commit 6e5036e6
