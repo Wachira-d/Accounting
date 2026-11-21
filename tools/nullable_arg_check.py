@@ -107,6 +107,10 @@ for f in cs_files:
             if not all(d.endswith('?') for d in decls): continue
             base = next(iter(decls)).rstrip('?')
             if base not in VALUE_TYPES: continue
+            # มี overload ชื่อเดียวกันที่รับ `base?` อยู่แล้ว ⇒ ไม่ฟ้อง — checker ไม่รู้ชนิดของ receiver
+            # (`TrustedSlipPayerRule.StatusLabel(DateTime?, …)` ถูกจับคู่กับ `CustomerDocPage.StatusLabel(bool, …)`
+            # ⇒ ฟ้องผิด 2 จุด · รอบ 286 · "checker ที่ฟ้องผิด = checker ที่พัง")
+            if any(plist and plist[0][0] == base + '?' for plist in overloads): continue
             # พารามิเตอร์ตัวแรกของ overload ใด ๆ รับ non-nullable value type ไหม
             for plist in overloads:
                 if not plist: continue
