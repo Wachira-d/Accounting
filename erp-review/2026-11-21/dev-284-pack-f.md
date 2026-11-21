@@ -34,7 +34,7 @@
 - L-6: ไฟล์โอนมีทางเดียว (`ExportBankTransfer`) · แผ่นรายการ/คอลัมน์ไม่เปลี่ยน (ผู้ใช้ที่คัดลอกเข้าแม่แบบธนาคารไม่ถูกแตะ)
 - MED-5: ใบเสร็จที่ระบบออกเอง (`IssueReceiptForPaymentCoreAsync`) ใช้ `DocumentLabels` อยู่แล้ว · ฟอร์มมือ = endpoint ใหม่ตัวเดียว · มือถือ/API ไม่มีค่าตั้งต้นบรรทัด (ผู้เรียกส่งเอง)
 
-## 2b. ชุดสอง (คำสั่งผู้ประสานงาน — ตัดสิน Q1–Q3 ตามที่เจ้าของมอบอำนาจ)
+## 2b. ชุดสอง (คำสั่งผู้ประสานงาน — ตัดสิน Q1–Q3 ตามที่เจ้าของมอบอำนาจ) · commit f90fef74
 - **Q1 → 284-7** ด่านรายงานการเงิน `Helpers/FinancialReportAccess` + `[RequireReportAccess]`: AccountingController (งบทดลอง · งบดุล · งบกำไรขาดทุน +เทียบ/เจาะ · กระแสเงินสด · บัญชีแยกประเภท · gl-debug · ยอดเดือน) ·
   AgingReport · ArApAnalysis · CashForecast · Budget vs-actual/scenarios · ตัวสร้างรายงาน execute/export · tax-filing-export แบบภาษีที่ไม่ใช่เงินเดือน (+พรีวิว) ·
   (ก) ไม่ผูกบทบาท = เดิม (ข) นักบัญชีในตัวได้คีย์ (ค) ยอดเดือน: ซ่อนการ์ดพร้อมป้าย · `Round284Migration` ครั้งเดียว: บทบาทที่ติ๊กเมนูรายงานได้คีย์ของหน้า (ไม่ถดถอย) · เมนู `MenuPermissionMap.LegacyKeys`

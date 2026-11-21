@@ -9254,7 +9254,7 @@ retention ช่วงนี้เทียบช่วงก่อน + เส�
 - **ชื่อใบต้นทาง (T3 LOW-2)** — บรรทัดอ้างอิง/บรรทัดรายการของใบเสร็จรับชำระ + ค่าตั้งต้นฟอร์ม ใช้หัวที่ใบต้นทางพิมพ์จริง (`ResolveDocumentHeadingAsync` · ภาษาตรงกัน) ผ่าน `DocumentLabels.SourceHeadingLabel` · ไม่พบ/คนละภาษา ⇒ ชื่อชนิดเดิม
 - **แถว [สรุป] ภ.ง.ด.2/3/53/54 (T2 L2)** — `WhtReportTotals.SyncSummaryRows` ตัวเดียวของตอนสร้างและตอนติ๊ก/แก้บรรทัด: ผู้ถูกหัก (เลข+สาขา) ≥ 2 บรรทัดที่นับ ⇒ มีแถวสรุป · เหลือ < 2 ⇒ ลบ · แสดงผลอย่างเดียว
 - ไม่เปลี่ยน JE/สถานะเอกสาร · migration `Round284Migration` (สิทธิ์บทบาท) · เทสต์ `PackFRound284Tests` + Db `PackFRound284DbTests` · ปรับ Db `SettlementReceiptTotalsDbTests` (749,000) + `WhtPreCheckDoubleCountDbTests` (แถวสรุป) · กติกา `_R284_` ·
-  Last verified commit 6e5036e6
+  Last verified commit 6e5036e6 · ชุดสอง commit f90fef74
 
 ## 7. Validation gates (compliance — กฎเหล็ก #2)
 
