@@ -692,6 +692,8 @@ builder.Services.AddScoped<Accounting.Services.Implementations.SlipEvidenceServi
 // รอบ 260 (คำตัดสิน 260-1-1): สลิปที่ลูกค้าส่งในแชต LINE OA ของบริษัท ⇒ จับคู่ยอดกับเอกสาร (อ่านรูปในเครื่อง · ไม่มี AI) · ผู้เรียก CustomerLineWebhookController + LineChatSlipController
 builder.Services.AddSingleton<Accounting.Services.Implementations.ISlipImageReader, Accounting.Services.Implementations.TesseractSlipImageReader>();
 builder.Services.AddScoped<Accounting.Services.Implementations.ILineChatSlipService, Accounting.Services.Implementations.LineChatSlipService>();
+builder.Services.AddScoped<Accounting.Services.Implementations.TrustedSlipVerifyService>();   // รอบ 286 — ผู้จ่ายที่ไว้ใจได้: เรียนจากรายการเดินบัญชี · ตรวจย้อนรายการล่วงหน้า · ถอนอัตโนมัติ
+builder.Services.AddScoped<Accounting.Services.Implementations.TrustedSlipPayerService>();   // รอบ 286 — บันทึกรับเงินล่วงหน้า · ผู้ขายดู/ถอน/ให้คืน
 builder.Services.AddScoped<Accounting.Services.Implementations.SlipAutoRecordService>();   // รอบ 282 — สลิปผูกใบเดียว ⇒ บันทึกรับเงินเอง (ด่านครบ) / หน้ายืนยัน + เตือนซ้ำ
 builder.Services.AddScoped<Accounting.Services.Implementations.PartnerWhtCertExchangeService>();   // รอบ 255 WP-12B ข้อ 8 — 50 ทวิ ผ่านคู่ค้า (AutopilotJob)   // รอบ 255 WP-12B ข้อ 1 — ประตูเดียวของการแจ้งโอน (พอร์ทัล + หน้าชำระของเอกสาร)
 

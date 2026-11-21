@@ -683,6 +683,8 @@ public partial class BankService
             .Where(d => d.CompanyId == companyId
                 && d.BankAccountId == account.Id
                 && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Draft
+                // รอบ 283 ฝ่ายค้าน LOW-A3: ใบหลักฐานคู่การชำระ (ใบเสร็จหลักฐาน · ใบสำคัญจ่ายหลักฐาน) — เงินนับที่แถว Payment ด้านล่างแล้ว ⇒ ไม่นับซ้ำ
+                && !d.IsSettlementReceipt
                 && (d.DocumentType == DocumentType.Receipt || d.DocumentType == DocumentType.ReceiptVoucher))
             .SumAsync(d => (decimal?)d.TotalAmount) ?? 0;
 
@@ -690,6 +692,8 @@ public partial class BankService
             .Where(d => d.CompanyId == companyId
                 && d.BankAccountId == account.Id
                 && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Draft
+                // รอบ 283 ฝ่ายค้าน LOW-A3: ใบหลักฐานคู่การชำระ (ใบเสร็จหลักฐาน · ใบสำคัญจ่ายหลักฐาน) — เงินนับที่แถว Payment ด้านล่างแล้ว ⇒ ไม่นับซ้ำ
+                && !d.IsSettlementReceipt
                 && (d.DocumentType == DocumentType.PaymentVoucher || d.DocumentType == DocumentType.Expense))
             // เงินออกจริง = ยอดจ่ายผู้รับเงิน (คำตัดสินข้อ 131 · รอบ PP36 ทีม F2) — ไม่รวม VAT ประเมินเอง ภ.พ.36
             .Select(ForeignServiceVat.PayeeAmountQuery)

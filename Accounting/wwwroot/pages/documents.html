@@ -11016,9 +11016,8 @@
         if (apTypes.includes(d.documentType)) {
           // Expense side awaiting our payment.
           return `<div style="background:#eff6ff;border:1px solid #3b82f640;color:#1e3a8a;padding:10px 14px;border-radius:8px;margin-bottom:8px;font-size:13px;line-height:1.6">
-            💡 <strong>ขั้นต่อไป:</strong> ถึงกำหนดจ่ายให้กด <strong>"💰 บันทึกชำระเงิน"</strong>
-            ด้านล่าง ระบบจะออกใบสำคัญจ่าย / Payment Voucher และล้างยอดเจ้าหนี้ให้อัตโนมัติ
-          </div>`;
+            💡 <strong>ขั้นต่อไป:</strong> ${Layout.esc(d.payNextStepHint || 'ถึงกำหนดจ่ายให้กด “💰 บันทึกชำระเงิน” ด้านล่าง')}
+          </div>`;   // รอบ 283: ข้อความจากเซิร์ฟเวอร์ (SettlementPaymentVoucher.PayNextStepHint) — ออกใบสำคัญจ่ายหรือไม่ตามความจริงของใบนี้
         }
         if (d.documentType === 'Quotation') {
           return `<div style="background:#eff6ff;border:1px solid #3b82f640;color:#1e3a8a;padding:10px 14px;border-radius:8px;margin-bottom:8px;font-size:13px;line-height:1.6">

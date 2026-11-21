@@ -319,6 +319,7 @@ public static class DatabaseMigrationHelper
         list.AddRange(Accounting.Helpers.Round282Migration.Statements());   // รอบ 282 — สลิปจากกลุ่ม/อีเมล ⇒ บันทึกรับเงินเอง/หน้ายืนยัน + เตือนยืนยันแหล่งเงินทั้งสองฝั่ง
         list.AddRange(Accounting.Helpers.Round284Migration.Statements());   // รอบ 284 — บทบาทเดิมที่ติ๊กเมนูรายงานได้คีย์ของหน้า (ครั้งเดียว · หลัง OneShotDataFixesTableSql)
         list.AddRange(Accounting.Helpers.Round285Migration.Statements());   // รอบ 285 — ยืนยันเลขผู้เสียภาษีของบริษัท (หลักฐาน + ผู้ดูแลแพลตฟอร์มอนุมัติ)
+        list.AddRange(Accounting.Helpers.Round286Migration.Statements());   // รอบ 286 — ผู้จ่ายที่ไว้ใจได้ (เรียนจากรายการเดินบัญชี · บันทึกล่วงหน้า + ตรวจย้อน)
         return list;
     }
 

@@ -2988,6 +2988,12 @@ public partial class DocumentService : IDocumentService
             .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
 
+        // รอบ 283 ฝ่ายค้าน MED-A1: ใบหลักฐานคู่การชำระ (ใบสำคัญจ่ายหลักฐาน · ใบเสร็จหลักฐานฝั่งขาย) แก้ได้เฉพาะหมายเหตุ — เดิมร่างแก้ยอด/ภาษีได้ ⇒ อนุมัติแล้ว 50 ทวิ
+        // ใบที่สอง + VAT เข้าแดชบอร์ด · ส่งค่าเดิมทั้งชุด (ฟอร์ม) ⇒ บันทึกหมายเหตุ · แตะยอด/บรรทัด/ผู้ติดต่อ/วันที่ ⇒ ปฏิเสธพร้อมทางไปต่อ (ไม่ silent no-op)
+        // (ขอเปลี่ยนใบต้นทาง = ด่าน RL-SOURCE เดิมด้านล่างปฏิเสธใบหลักฐานเอง — ไม่ดักที่นี่เพื่อให้รหัสกฎเดิม)
+        if (doc.IsSettlementReceipt && (request.RelatedDocumentId == null || request.RelatedDocumentId == doc.RelatedDocumentId))
+            return await UpdateSettlementEvidenceNotesAsync(companyId, doc, request);
+
         // ── Document revision: เอกสาร operational ที่อนุมัติ/ส่งแล้ว "แก้ได้" ──
         // เกณฑ์เดียว: เอกสารที่ **ไม่มี JE / ไม่ขยับสต๊อก / ไม่เข้ารายงานภาษี**
         // แก้หลังอนุมัติได้โดยไม่กระทบบัญชี ตามธรรมเนียมการค้า (เลขที่คงเดิม +
@@ -10261,7 +10267,22 @@ public partial class DocumentService : IDocumentService
             var orphanPayment = await _db.Payments.IgnoreQueryFilters()
                 .FirstOrDefaultAsync(p => p.Id == settledPayId && p.CompanyId == companyId);
             if (orphanPayment != null) await VoidSettlementPaymentVouchersOfPaymentAsync(companyId, orphanPayment);
-            else { doc.Status = DocumentStatus.Voided; doc.UpdatedAt = DateTime.UtcNow; }
+            else
+            {
+                // ฝ่ายค้าน LOW-A4: ไม่พบแถวการจ่ายเลย ⇒ ยกเลิกใบหลักฐานอย่างเดียว + audit (เดิมไม่มีร่องรอย)
+                var before = doc.Status;
+                doc.Status = DocumentStatus.Voided; doc.UpdatedAt = DateTime.UtcNow;
+                _db.AddChainedAuditLog(new AuditLog
+                {
+                    CompanyId = companyId, Action = AuditAction.Update, EntityType = "Document", EntityId = doc.Id.ToString(),
+                    NewValues = System.Text.Json.JsonSerializer.Serialize(new
+                    {
+                        @event = "SettlementPaymentVoucherVoidedNoPayment", documentNumber = doc.DocumentNumber, from = before.ToString(),
+                        settlementPaymentId = settledPayId, ruleCode = Accounting.Helpers.SettlementPaymentVoucher.RuleCode,
+                    }),
+                    Timestamp = DateTime.UtcNow,
+                });
+            }
             await _db.SaveChangesAsync();
             return PaymentVoidResult.None;
         }
@@ -16239,8 +16260,11 @@ public partial class DocumentService : IDocumentService
 
             // รอบ 283 (คำสั่งเจ้าของ · 283-1): ผู้ขอ (ท่ออัตโนมัติคู่ค้า) ต้องการใบสำคัญจ่ายเป็นเอกสาร ⇒ ใบหลักฐานคู่การจ่ายนี้ (ไม่ลง JE ซ้ำ · อ้าง 50 ทวิ ข้างบน) ·
             // ในธุรกรรมเดียวกัน — ออกไม่ได้ = โยน ⇒ การจ่ายทั้งก้อน rollback (ไม่มี "จ่ายแล้วไม่มีใบ" เงียบ ๆ)
-            if (request.IssuePaymentVoucherDocument == true)
-                await IssueSettlementPaymentVoucherInPaymentAsync(companyId, doc, payment, createdBy);
+            // ผู้ประสานงาน ข้อ 2: ใบซื้อจากคู่ค้า ⇒ ทุกทางเข้า (ปุ่มเดียว · แจ้งโอน P4 · บันทึกชำระมือ) ได้ PV เหมือนท่อ — ตัวตัดสินเดียว · ใบซื้อทั่วไปไม่แตะ
+            string? voucherSkipNote = null;
+            if (Accounting.Helpers.SettlementPaymentVoucher.IssueOnPayment(request.IssuePaymentVoucherDocument, doc.DocumentType, doc.PartnerSourceLinkId != null))
+                voucherSkipNote = await IssueSettlementPaymentVoucherInPaymentAsync(companyId, doc, payment, createdBy,
+                    Accounting.Helpers.SettlementPaymentVoucher.StrictOnPayment(request.IssuePaymentVoucherDocument));
 
             // tax point §78/1: รับชำระใบแจ้งหนี้บริการ (modal ชำระเงิน) → VAT ที่พัก
             // 21913 ถึงกำหนด → reclass Dr 21913 / Cr 21911 + stamp เข้า ภ.พ.30
@@ -16328,7 +16352,7 @@ public partial class DocumentService : IDocumentService
                 HasPayerSignature: !string.IsNullOrWhiteSpace(payment.PayerSignatureBase64),
                 PayerSignatureName: payment.PayerSignatureName,
                 WhtCertNotice: whtCertNotice,
-                Warnings: whtAboveNetWarning != null ? new[] { whtAboveNetWarning } : null);
+                Warnings: whtAboveNetWarning != null || voucherSkipNote != null ? new[] { whtAboveNetWarning, voucherSkipNote }.OfType<string>().ToArray() : null);
         }
         catch
         {
@@ -22244,6 +22268,7 @@ public partial class DocumentService : IDocumentService
         InternalNotes: d.InternalNotes,
         OriginModule: d.OriginModule,
         OriginLabel: Accounting.Helpers.SettlementPaymentVoucher.OriginLabel(d.OriginModule),
+        PayNextStepHint: Accounting.Helpers.SettlementPaymentVoucher.PayNextStepHint(d.DocumentType, d.PartnerSourceLinkId != null),
         EtaxAutoFailed: Accounting.Helpers.EtaxAutoFailedNote.Has(d.InternalNotes),
         PartnerRoutingFailed: Accounting.Helpers.PartnerRoutingFailedNote.Has(d.InternalNotes),
         ReplacedByDocumentId: d.ReplacedByDocumentId,

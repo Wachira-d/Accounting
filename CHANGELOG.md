@@ -7513,6 +7513,8 @@ LOW-1 "ส่งได้บางส่วน" · LOW-2 การ์ด `#HeyNe
 - 283-4: ยกเลิก PV = ยกเลิกการจ่าย · ยกเลิกการจ่าย (ใบเดียว/หลายใบ) ⇒ PV ยกเลิกตาม คงแถว + audit
 - 283-5: รายงาน + ออกย้อนหลังทีละรายการ (`partner-payments/without-voucher` · `partner-payments/{id}/payment-voucher`) · ป้าย `OriginLabel` บนรายการเอกสาร
 - เทสต์ pure `SettlementPaymentVoucherRound283Tests` · Db `PartnerSettlementVoucherRound283DbTests` (2) · กติกา `_R283_*` (+7) · คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว (ฐาน `accounting_test_r283`) · commit 699edd9d
+- ชุดสอง (ผู้ประสานงาน): ทุกการจ่ายของใบซื้อจากคู่ค้าได้ PV ผ่าน `SettlementPaymentVoucher.IssueOnPayment` (ปุ่มเดียว · แจ้งโอน P4 · บันทึกชำระมือ) · ใบซื้อทั่วไปไม่แตะ · `PayNextStepHint` · การ์ดออกย้อนหลังใน partners.html
+- ชุดสอง (ฝ่ายค้าน): MED-A1 ใบหลักฐานแก้ได้เฉพาะหมายเหตุ + 50 ทวิ ข้ามใบหลักฐาน + แดชบอร์ดไม่นับ VAT · MED-A2 ด่านเฉพาะร่าง ⇒ ร่าง · LOW-A3 กระทบยอดธนาคารไม่นับซ้ำ · LOW-A4 audit · commit c83fb6d1
 
 ## รอบ 284 (2026-11-21 · แพ็ก F งานคงค้างจากผลตรวจรายสัปดาห์ · `erp-review/2026-11-21/dev-284-pack-f.md`)
 
@@ -7529,3 +7531,10 @@ _รอบ 285 (2026-11-21): ยืนยันเลขผู้เสียภ
 - 285-3: ยืนยันแล้ว ⇒ เปิดคำขอเชื่อมคู่ค้าที่ส่งก่อนสมัครได้ (ย้อนกลับข้อจำกัด 280-10 เฉพาะบริษัทที่ยืนยัน) · 285-4: เปลี่ยนเลข = หลุดสถานะ · 285-5: การ์ดคำขอบอกว่าเลขผู้ขอยืนยันหรือยัง
 - 285-7: ภ.ง.ด.1 ช่อง 5 ของผู้ไม่มีเลข 13 หลัก — คงเติม 0 + ป้ายเดิม (สเปก RD เปิดไม่ได้จาก session · บันทึกที่ค้นแล้ว)
 - migration `Round285Migration` · เทสต์ pure `CompanyTaxIdVerificationRound285Tests` · Db `CompanyTaxIdVerificationRound285DbTests` · กติกา `_R285_*` · คอมมิต ae317b36
+
+## รอบ 286 (2026-11-21 · ผู้จ่ายที่ไว้ใจได้ · `erp-review/2026-11-21/dev-286-trusted-payer-slip.md`)
+
+- คำสั่งเจ้าของ: สลิปที่เคยยืนยัน + จับผู้โอน/เลขบัญชีได้ ⇒ ครั้งถัดไปที่เหมือนเดิม (ต่างแค่วันที่/ref) อนุมัติเอง — ทำพร้อมรั้ว: ความไว้ใจเกิดจากรายการเดินบัญชีจริงเท่านั้น ·
+  บันทึก**ล่วงหน้า** (ค่าตั้งต้นปิด · ≤ ยอดสูงสุด × 1.5 · เพดานต่อวัน) แล้วตรวจย้อนในงานตัดชำระเดิม · ไม่พบใน N วันทำการ ⇒ แจ้งแรง + ถอนอัตโนมัติ (ไม่ยกเลิกเงินเอง)
+- `Helpers/TrustedSlipPayerRule` · `TrustedSlipPayerService` · `TrustedSlipVerifyService` · ตาราง `TrustedSlipPayers` · `Round286Migration` · หน้าตั้งค่าแท็บ LINE + `line-config/trusted-payers`
+- เทสต์ `TrustedSlipPayerRound286Tests` + Db `TrustedSlipPayerRound286DbTests` · คำตัดสิน 286-1…286-9 · commit 19445ff6
