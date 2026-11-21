@@ -321,6 +321,14 @@ public static class PostPaymentAutomationPolicy
     /// <summary>คีย์กันซ้ำ — 1 แถวงานต่อการชำระ (unique ที่ฐาน) · webhook ซ้ำ/บันทึกซ้ำ/งานวนซ้ำ = แถวเดิม</summary>
     public static string IdempotencyKey(Guid paymentId) => $"postpay:{paymentId:N}";
 
+    /// <summary>รอบ 287 (287-3): งานนี้ส่งอีเมลถึงผู้ซื้อไปแล้วไหม — อ่านจาก <c>StepsDone</c> (ขั้น/ขั้นย่อย "{ขั้น}:{id}") ·
+    /// นับเฉพาะขั้นอีเมล (ส่งจริงตอนประทับ) · ฝ่ายค้าน 287 LOW-2: <see cref="Step.LineReceipt"/> = แค่เข้าคิว (0 ปลายทางก็ประทับ) ⇒ ไม่นับ —
+    /// LINE ตัดสินจากคิวที่ส่งถึงปลายทางแล้ว (<c>LineQueue.SentAt</c>) ใน <c>TrustedSlipVerifyService.DeliveredAsync</c></summary>
+    public static bool DeliveredToBuyer(string? stepsDone)
+        => (stepsDone ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(t => t.Split(':')[0])
+            .Any(t => t is nameof(Step.EmailReceipt) or nameof(Step.EmailSourceAsReceipt));
+
     // สถานะงาน (เก็บเป็นข้อความ · ป้ายไทยจาก StatusLabel — หน้าเว็บไม่มีตารางป้ายเอง)
     public const string StatusPending = "Pending";
     public const string StatusDone = "Done";

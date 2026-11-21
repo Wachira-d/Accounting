@@ -1505,7 +1505,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **983 ไฟล์ · 10,681 `[Fact]` + 1,440 `[Theory]` (6,842 `InlineData`)** ณ 2026-11-21 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`) | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)**, **ReceiptFormRule (รูปแบบกระดาษหลักฐานรับเงิน · รอบ 203)** |
+| เทสต์ที่มี | **985 ไฟล์ · 10,694 `[Fact]` + 1,441 `[Theory]` (6,850 `InlineData`)** ณ 2026-11-21 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`) | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)**, **ReceiptFormRule (รูปแบบกระดาษหลักฐานรับเงิน · รอบ 203)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
 | CI | ✅ `.github/workflows/ci.yml` — static check → restore → build → test; รันบน PR/push เข้า main/master + `workflow_dispatch` (branch `claude/**` ปิดไว้ กัน mail spam ระหว่างพัฒนา) |
@@ -9357,3 +9357,15 @@ H2 (OCR ไม่พร้อม ⇒ แถวเข้าคิว) ล็อ�
 | T286-11 | Db `T286_09_ฝ่ายค้านMED2_…` | สองบรรทัดแข่งกัน (สอง context พร้อมกัน) ⇒ ผูกได้บรรทัดเดียว |
 | T286-12 | Db `T286_10_ฝ่ายค้านHIGH3_…` + ปรับ T286_02/T286_04 | เพดานค้างยืนยันทั้งบริษัท/ต่อผู้ติดต่อ · ล้ม ⇒ ล็อกผู้ติดต่อ + ไม่เกิดกุญแจใหม่แม้รายการเดินบัญชียืนยัน |
 | T286-13 | pure `ฝ่ายค้านHIGH3_…` · `เลขอ้างอิงรายการชำระ_ถอดกลับ…` | ขอบเพดานค้าง · ล็อก · ป้ายสถานะ · ถอดเลขอ้างอิงคู่กับตัวเขียน · ค่าตั้ง ≤ 5 วัน |
+
+## รอบ 287 — ส่งเอกสารหลังรับเงินทันทีสำหรับผู้จ่ายที่ไว้ใจได้ (`erp-review/2026-11-21/dev-287-trusted-auto-send.md` · คำตัดสิน 287-1…287-5)
+
+| รหัส | เทสต์ | ล็อกอะไร |
+| --- | --- | --- |
+| T287-01 | Db `TrustedSlipSendImmediatelyRound287DbTests.T287_01_…` | ค่าตั้งเปิด ⇒ รับล่วงหน้าแล้วงานหลังรับชำระส่งใบเสร็จถึงอีเมลที่ผู้ซื้อตั้งรับใบเสร็จทันที · งาน Done ไม่มีป้ายกัก |
+| T287-02 | Db `T287_02_…` | ค่าตั้งปิด ⇒ ไม่ส่ง (งาน Pending + ป้ายกัก) · รายการเดินบัญชีตามมา ⇒ ยืนยัน + ปล่อยงาน ⇒ รอบถัดไปส่ง |
+| T287-03 | Db `T287_03_…` | ส่งไปแล้ว + ตรวจย้อนล้ม ⇒ แจ้งผู้ขาย "ส่งใบเสร็จ/ใบกำกับถึงผู้ซื้อไปแล้ว" + ใบลดหนี้/ยกเลิก + ไม่ยกเลิกเอง · การชำระยังอยู่ · กักต่อแม้ค่าตั้งเปิด |
+| T287-04 | Db `T287_04_…` | ทิศตรงข้าม: ยังไม่ส่ง + ล้ม ⇒ ข้อความ "ยังไม่ถูกส่งถึงผู้ซื้อ" (ไม่บอกว่าส่งแล้ว) |
+| T287-05 | pure `TrustedSlipSendImmediatelyRound287Tests` | ค่าตั้งต้นเปิด · `HoldDelivery` ทุกทิศ (เปิด/ปิด/ล้ม/ยืนยัน/ไม่ใช่ล่วงหน้า) · `FailedNextStep` · `DeliveredToBuyer` (ตัวเลขไม่ใช่ชื่อขั้น) · ประโยคความเสี่ยง |
+| T287-07 | Db `T287_05_…` + pure `ระยะตรวจซ้ำ…` · `migration_ปลุก…` | ฝ่ายค้าน MED: งานที่กักตรวจซ้ำ ≤ 1 ชม. · แถว +30 วันของ 286 ถูก migration ปลุก · เปิดค่าตั้งภายหลัง ⇒ ปลุก ⇒ ส่งรอบถัดไป · LOW-2 `LineReceipt` ไม่นับว่าส่ง |
+| T287-06 | กติกา `_R287_*` (+8 · เคส R287-1/2) | `DeliveryHeldAsync` อ่านค่าตั้ง + ตัวตัดสินเดียว · ข้อความล้มอ่านข้อเท็จจริงก่อนประกอบ · ผู้เขียนค่าตั้ง |

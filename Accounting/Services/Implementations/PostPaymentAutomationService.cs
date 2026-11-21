@@ -261,10 +261,11 @@ public class PostPaymentAutomationService : IPostPaymentAutomationService
             run.CompletedAt = DateTime.UtcNow;
             if (r.Status == PostPaymentAutomationPolicy.StatusPending)
             {
-                // รอบ 286 (ฝ่ายค้าน MED-1): กักการส่งของการรับล่วงหน้า — รอผู้ปล่อย (ไม่นับเป็นครั้งที่ล้ม · ไม่ปิดงาน)
+                // รอบ 286 (ฝ่ายค้าน MED-1): กักการส่งของการรับล่วงหน้า — รอผู้ปล่อย (ไม่นับเป็นครั้งที่ล้ม · ไม่ปิดงาน) ·
+                // ฝ่ายค้าน 287 MED: ตรวจตัวตัดสินซ้ำทุกรอบตามระยะ HoldRecheck (รอยืนยัน 1 ชม. · ล้มแล้ว 30 วัน) — เดิมค้าง 30 วันเสมอ ⇒ เปิดค่าตั้งภายหลังไม่ปล่อย
                 run.CompletedAt = null;
                 run.Attempts = Math.Max(0, run.Attempts - 1);
-                run.NextAttemptAt = DateTime.UtcNow.AddDays(30);
+                run.NextAttemptAt = DateTime.UtcNow.Add(r.HoldRetry ?? TrustedSlipPayerRule.HoldRecheck(failed: false));
             }
             run.UpdatedAt = DateTime.UtcNow;
             await _db.SaveChangesAsync(ct);
@@ -321,7 +322,8 @@ public class PostPaymentAutomationService : IPostPaymentAutomationService
         => _db.PostPaymentAutomationRuns.Local.FirstOrDefault(r => r.Id == runId)
            ?? await _db.PostPaymentAutomationRuns.FirstAsync(r => r.Id == runId, ct);
 
-    private sealed record RunResult(string Status, string? Message, string? DocNumber, Guid? ReceiptId);
+    /// <param name="HoldRetry">ฝ่ายค้าน 287 MED: งานถูกกักส่ง (รับล่วงหน้า) ⇒ ระยะตรวจซ้ำจาก <c>TrustedSlipPayerRule.HoldRecheck</c> · null = ไม่ได้กัก</param>
+    private sealed record RunResult(string Status, string? Message, string? DocNumber, Guid? ReceiptId, TimeSpan? HoldRetry = null);
 
     private async Task<RunResult> ExecuteAsync(PostPaymentAutomationRun run, CancellationToken ct)
     {
@@ -424,7 +426,8 @@ public class PostPaymentAutomationService : IPostPaymentAutomationService
         var halt = false;
         // รอบ 286 (ฝ่ายค้าน MED-1): การรับเงินล่วงหน้าจากผู้จ่ายที่ไว้ใจได้ที่ธนาคารยังไม่ยืนยัน ⇒ ออกใบในระบบได้ (ภ.พ.30 · คำตัดสิน 286-6) แต่ไม่ส่งถึงผู้ซื้อ —
         // งานกลับมารอ (ไม่นับครั้ง) จนตัวตรวจย้อนปล่อย (TrustedSlipVerifyService.ReleaseDeliveryAsync)
-        var deliveryHeld = await TrustedSlipVerifyService.DeliveryHeldAsync(_db, cid, payment.Id, ct);
+        var hold = await TrustedSlipVerifyService.DeliveryHoldAsync(_db, cid, payment.Id, ct);
+        var deliveryHeld = hold.Held;
         var deferred = false;
         foreach (var step in plan.Steps)
         {
@@ -518,7 +521,8 @@ public class PostPaymentAutomationService : IPostPaymentAutomationService
         }
         var msg = string.Join(" · ", done.Concat(blocked).Concat(plan.Notes));
         if (deferred && blocked.Count == 0)
-            return new RunResult(PostPaymentAutomationPolicy.StatusPending, string.Join(" · ", done.Append(TrustedSlipPayerRule.DeliveryHeldNote)), doc.DocumentNumber, receiptId);
+            return new RunResult(PostPaymentAutomationPolicy.StatusPending, string.Join(" · ", done.Append(TrustedSlipPayerRule.DeliveryHeldNote)), doc.DocumentNumber, receiptId,
+                TrustedSlipPayerRule.HoldRecheck(hold.Failed));
         return blocked.Count > 0
             ? new RunResult(PostPaymentAutomationPolicy.StatusBlocked, msg, doc.DocumentNumber, receiptId)
             : new RunResult(PostPaymentAutomationPolicy.StatusDone, msg.Length == 0 ? "ทำครบแล้ว" : msg, doc.DocumentNumber, receiptId);

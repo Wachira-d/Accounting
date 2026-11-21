@@ -131,6 +131,7 @@ public class ContactLineQueueService : IContactLineQueueService
             {
                 // รอบ 260-4: ชั่วโมงเงียบ ⇒ เลื่อน (กลับเป็นรอส่ง · ไม่นับความพยายาม) — ไม่ยิง LINE · ใบเสร็จหลังชำระ/ส่งเองจากหน้าเอกสารไม่ถูกเลื่อน
                 if (await DeferForQuietHoursAsync(item, quietCache, ct)) { }
+                else if (await DeferForTrustHoldAsync(item, ct)) { }   // ฝ่ายค้าน 287 LOW-1: ตัวตัดสินกักส่งของการรับล่วงหน้า (ตัวเดียวกับงานหลังรับชำระ)
                 else if (await SendOneAsync(item, ct)) sent++;
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
@@ -189,6 +190,22 @@ public class ContactLineQueueService : IContactLineQueueService
         item.ScheduledFor = at;
         item.ErrorMessage = Trunc(LineQuietHours.DeferNote(at, q.Start, q.End), 2000);
         item.RuleCode = LineQuietHours.RuleCode;
+        item.UpdatedAt = DateTime.UtcNow;
+        return true;
+    }
+
+    /// <summary>ฝ่ายค้าน 287 LOW-1: การ์ดใบเสร็จหลังรับชำระที่เข้าคิวไว้ก่อนตรวจย้อนล้ม (หรือก่อนผู้ขายปิด "ส่งเอกสารทันที") ⇒ ไม่ยิง —
+    /// กลับเป็นรอส่งตามระยะ <see cref="TrustedSlipPayerRule.HoldRecheck"/> (ไม่นับความพยายาม) · ตัวตัดสิน <c>TrustedSlipVerifyService.DeliveryHoldForDocumentAsync</c> ·
+    /// คืน true = เลื่อนแล้ว (ผู้เรียกบันทึก)</summary>
+    private async Task<bool> DeferForTrustHoldAsync(LineQueue item, CancellationToken ct)
+    {
+        if (item.Trigger != ContactLineChannel.ReceiptTrigger || item.EntityType != "Document") return false;
+        var hold = await TrustedSlipVerifyService.DeliveryHoldForDocumentAsync(_db, item.CompanyId, item.EntityId, ct);
+        if (!hold.Held) return false;
+        item.Status = ContactLineChannel.StatusPending;
+        item.ScheduledFor = DateTime.UtcNow.Add(TrustedSlipPayerRule.HoldRecheck(hold.Failed));
+        item.ErrorMessage = Trunc(TrustedSlipPayerRule.DeliveryHeldNote, 2000);
+        item.RuleCode = TrustedSlipPayerRule.RuleCode;
         item.UpdatedAt = DateTime.UtcNow;
         return true;
     }

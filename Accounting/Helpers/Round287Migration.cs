@@ -1,0 +1,17 @@
+namespace Accounting.Helpers;
+
+/// <summary>
+/// รอบ 287 — ส่งเอกสารหลังรับเงินทันทีสำหรับผู้จ่ายที่ไว้ใจได้ (คำสั่งเจ้าของ · คำตัดสิน 287-1 · <see cref="TrustedSlipPayerRule.HoldDelivery"/>) · idempotent (<c>IF NOT EXISTS</c>) ·
+/// <b>ค่าตั้งต้นเปิด</b> ตามคำสั่งเจ้าของ — บริษัทที่เปิดอนุมัติล่วงหน้าของ 286 อยู่แล้วจะเริ่มส่งเอกสารทันที (ปิดได้ที่แท็บ LINE) ·
+/// ไม่มีของเสียที่ persist ไว้ต้องซ่อม: งานส่งที่ถูกกักไว้ก่อน deploy ยังรอ <c>NextAttemptAt</c> เดิม ⇒ รอบถัดไปของงานหลังรับชำระอ่านค่าตั้งใหม่แล้วส่งตามปกติ · commit 0fdbd4f3
+/// </summary>
+public static class Round287Migration
+{
+    public static IReadOnlyList<string> Statements() => new[]
+    {
+        """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "SlipTrustedSendImmediately" boolean NOT NULL DEFAULT true;""",
+        // ฝ่ายค้าน 287 MED: งานที่ 286 กักไว้ถูกตั้ง NextAttemptAt = +30 วัน ⇒ ปลุกให้ประเมินตัวตัดสินใหม่รอบถัดไป (ค่าตั้งเปิด ⇒ ส่ง · ปิด/ล้ม ⇒ กักต่อตามระยะ HoldRecheck) ·
+        // รันซ้ำทุกครั้งที่เริ่มระบบได้ (แถวที่ล้มแล้วถูกตั้ง 30 วันอีกครั้งหลังประเมิน — ไม่ส่ง) · commit 7aee8ad4
+        $"""UPDATE "PostPaymentAutomationRuns" SET "NextAttemptAt" = (now() at time zone 'utc') WHERE NOT "IsDeleted" AND "Status" = 'Pending' AND "NextAttemptAt" > (now() at time zone 'utc') + interval '2 days' AND "Message" LIKE '%{TrustedSlipPayerRule.DeliveryHeldNote}%';""",
+    };
+}
