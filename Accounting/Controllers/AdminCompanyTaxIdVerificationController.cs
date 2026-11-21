@@ -33,7 +33,11 @@ public class AdminCompanyTaxIdVerificationController : ControllerBase
     [HttpGet("{requestId:guid}/evidence")]
     public async Task<IActionResult> Evidence(Guid requestId, CancellationToken ct)
     {
-        var f = await _service.ReadEvidenceAsync(requestId, ct);
+        var adminId = JwtHelper.GetUserIdFromClaims(User);
+        if (adminId == Guid.Empty) return Unauthorized();
+        // บันทึก PdpaPiiAccessLogs ในบริการ (ผู้เปิด · IP · เหตุผล) ก่อนคืนไบต์
+        var f = await _service.ReadEvidenceAsync(requestId, companyId: null, new CompanyTaxIdVerificationService.EvidenceViewer(adminId,
+            HttpContext.Connection.RemoteIpAddress?.ToString(), Request.Headers.UserAgent.ToString(), "ผู้ดูแลแพลตฟอร์มตรวจหลักฐานยืนยันเลขผู้เสียภาษี"), ct);
         if (f == null) return NotFound(new ApiResponse<object>(false, null, "ไม่พบไฟล์หลักฐาน"));
         return File(f.Value.Bytes, f.Value.ContentType, f.Value.FileName);
     }

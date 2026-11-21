@@ -16,11 +16,11 @@
 
 - ตัวตัดสินเดียว `Accounting/Helpers/CompanyTaxIdVerification.cs` (IsVerified · IncomingRequestCutoff · CompareRegistryName ตรงตัว · SubmitProblem · ApproveProblem · ReasonProblem · ป้าย)
 - `Company.TaxIdVerifiedAt/TaxIdVerifiedFor/TaxIdVerificationRequestId` + ตาราง `CompanyTaxIdVerificationRequests` (`Round285Migration`)
-- `CompanyTaxIdVerificationService`: ยื่น (ไฟล์ PDF/รูปจากไบต์ · SHA-256 · ไฟล์แนบชนิด `CompanyTaxIdEvidence` · เทียบทะเบียน · audit) · อนุมัติ (ใต้ `FOR UPDATE` แถวบริษัท · เลขในคำขอต้องตรงเลขปัจจุบัน) · ปฏิเสธ/ถอน (ต้องมีเหตุ) · ผู้ดูแลเปิดไฟล์ (ตรวจ SHA-256)
+- `CompanyTaxIdVerificationService`: ยื่น (ไฟล์ PDF/รูปจากไบต์ · SHA-256 · ไฟล์ผ่าน `IFileStorage` (ข้อเพิ่ม §8b) · เทียบทะเบียน · audit) · อนุมัติ (ใต้ `FOR UPDATE` แถวบริษัท · เลขในคำขอต้องตรงเลขปัจจุบัน) · ปฏิเสธ/ถอน (ต้องมีเหตุ) · ผู้ดูแลเปิดไฟล์ (ตรวจ SHA-256)
 - `CompanyTaxIdVerificationController` (`api/companies/{id}/tax-id-verification` · ยื่น = `CompanySettings.Edit` · ปฏิเสธ API key) · `AdminCompanyTaxIdVerificationController` (`api/admin/tax-id-verifications` · SystemAdmin)
 - `StampTaxIdSetAt` ⇒ เปลี่ยนเลขทุกทางเข้า = หลุดสถานะ · `MaterializeIncomingLinkRequestsAsync` ⇒ ยืนยันแล้วเปิดคำขอที่ส่งก่อนสมัคร · การ์ดคำขอฝั่งผู้รับแสดงสถานะเลขของผู้ขอ
 - หน้าจอ: `settings.html` กล่องใต้ช่องเลขภาษี (สถานะ/เหตุ/ฟอร์มยื่น — ป้ายจากเซิร์ฟเวอร์) · `/admin/taxid-verifications.html` (คิว · เปิดไฟล์ · อนุมัติ/ปฏิเสธ/ถอน · ปุ่มอนุมัติปิดพร้อมเหตุเมื่อ `ApproveProblem`) · `partners.html` ป้ายบนการ์ด
-- ตาราง `AttachmentPermissionScope` +1 ชนิด (ระบบแนบ · อ่าน/ลบ = ตั้งค่าบริษัท)
+- (ข้อเพิ่ม §8b) ถอดชนิดหลักฐานออกจาก `AttachmentPermissionScope` — หลักฐานไม่อยู่ใน FileAttachments แล้ว
 
 ## 3. สถานะทีละข้อ
 
@@ -63,6 +63,19 @@
 
 - แจ้งผู้ดูแลแพลตฟอร์มเมื่อมีคำขอใหม่ / แจ้งบริษัทเมื่ออนุมัติ-ปฏิเสธ (ตอนนี้ดูสถานะที่หน้าตั้งค่า)
 - ใช้สถานะยืนยันตัดสินกรณีสองบริษัทเลขเดียวกันใน `PartnerCompanyMatch` (ต้องออกแบบกับเจ้าของ)
+
+## 8b. ข้อเพิ่มจากผู้ประสาน + ผลฝ่ายค้าน (285-8…285-12)
+
+| ข้อ | สถานะ | ทางแก้ |
+| --- | --- | --- |
+| แจ้งผู้ดูแลแพลตฟอร์มเมื่อยื่น | ✅ | `PlatformPaymentAttention.NotifyAdminsAboutAsync` (กระดิ่ง + อีเมลตามค่าตั้งของผู้รับ · ผู้รับชุดเดียวกับเรื่องชำระ) · ไม่มีผู้รับ/ล้ม = `LogError` (คำขออยู่ในคิวแล้ว) |
+| แจ้งบริษัทเมื่ออนุมัติ/ปฏิเสธ/ถอน พร้อมเหตุ | ✅ | `NotifyCompanyAsync` → ผู้ยื่น + เจ้าของ (`CompanyReviewedNotice`) |
+| เก็บไฟล์ผ่าน storage abstraction + retention + ใครเปิดได้ + PiiAccessLog | ✅ | ย้ายจาก FileAttachments ไป `IFileStorage` โดยตรง (เส้นไฟล์แนบทั่วไปเปิด/ลบไม่ได้ · ถอดชนิดออกจาก `AttachmentPermissionScope`) · `EvidenceRetainUntil` = ยื่น + 5 ปี · เปิดได้เฉพาะ SystemAdmin (เส้น admin) + Owner (เส้นบริษัท) · `PdpaPiiAccessLogs` ก่อนคืนไบต์ · งานลบเมื่อครบ = เลื่อน |
+| MED-B1 เลขเดียวยืนยันได้หลายบริษัท | ✅ จริง | `SlotKey(เลข, สาขา)` + `VerifiedByOtherAsync` ใต้ advisory lock · ธงบนคิว + ปุ่มถอนของเดิม · สาขาอื่นได้ |
+| MED-B2 ชื่อการค้า/อังกฤษยื่นไม่ได้ | ✅ จริง | ยื่นได้ติดธง · อนุมัติต้องมีเหตุ (audit) |
+| LOW-B3 catch กว้าง | ✅ จริง | `when (ex is not OperationCanceledException)` + `LogWarning` |
+
+คอมมิตชุดนี้: baca6f2d + 6c0c61fd · คอลัมน์ `CompanyTaxIdVerificationRequests.AttachmentId` ของเวอร์ชันแรก (ถ้าฐานใดรันไปแล้ว) ไม่มีผู้อ่าน — ไม่มีแถวจริงก่อน deploy
 
 ## 9. หลักฐาน
 

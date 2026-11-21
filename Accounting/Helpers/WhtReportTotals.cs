@@ -65,7 +65,42 @@ public static class WhtReportTotals
     }
 
     /// <summary>คีย์สาขาของแถว [สรุป] (ว่าง/00000 = สำนักงานใหญ่) — ตัวเดียวของตอนสร้างแถวสรุปและตอนคำนวณยอด</summary>
-    public static string SummaryBranchKey(string? branch) => TaxReportDraftFreshness.NormalizeBranch(branch);
+    private static string SummaryBranchKey(string? branch) => TaxReportDraftFreshness.NormalizeBranch(branch);
+
+    /// <summary>รอบ 284 (T2 L2 ส่วนที่ค้างจาก 275-B): แถว [สรุป] ต้องตรงกับบรรทัดที่นับอยู่ตอนนี้ — ผู้ถูกหัก (เลข + สาขา) ที่มี ≥ 2 บรรทัดที่นับต้องมีแถวสรุปหนึ่งแถว ·
+    /// แถวสรุปที่รายนั้นเหลือ &lt; 2 บรรทัด (ติ๊กออก) หรือซ้ำ ⇒ ลบ · ตัวเดียวของตอนสร้างรายงานและตอนติ๊ก/แก้บรรทัด · แสดงผลอย่างเดียว (ยอดหัวไม่นับแถวสรุป) ·
+    /// แถวสรุปรุ่นเก่าที่ไม่มีสาขาจับคู่ด้วยเลขอย่างเดียว (เหมือน <see cref="PayeeSummaryOf"/>)</summary>
+    public static (List<TaxReportLine> Add, List<TaxReportLine> Remove) SyncSummaryRows(TaxReport report)
+    {
+        var groups = report.Lines.Where(l => IsCounted(l) && !string.IsNullOrWhiteSpace(l.TaxPayerId))
+            .GroupBy(l => (Id: l.TaxPayerId!.Trim(), Branch: SummaryBranchKey(l.TaxPayerBranchCode)))
+            .Where(g => g.Count() > 1)
+            .ToDictionary(g => g.Key, g => g.ToList());
+        var covered = new HashSet<(string Id, string Branch)>();
+        var remove = new List<TaxReportLine>();
+        foreach (var s in report.Lines.Where(IsSummary).OrderBy(l => l.LineOrder).ToList())
+        {
+            var id = (s.TaxPayerId ?? "").Trim();
+            var keys = groups.Keys.Where(k => k.Id == id
+                && (s.TaxPayerBranchCode == null || k.Branch == SummaryBranchKey(s.TaxPayerBranchCode))).ToList();
+            if (keys.Count == 0 || keys.All(covered.Contains)) { remove.Add(s); continue; }
+            foreach (var k in keys) covered.Add(k);
+        }
+        var order = report.Lines.Count == 0 ? 0 : report.Lines.Max(l => l.LineOrder);
+        var add = groups.Where(g => !covered.Contains(g.Key)).OrderBy(g => g.Key.Id).ThenBy(g => g.Key.Branch)
+            .Select(g => new TaxReportLine
+            {
+                TaxReportId = report.Id,
+                LineOrder = ++order,
+                TaxPayerId = g.Key.Id,
+                TaxPayerName = g.Value[0].TaxPayerName,
+                TaxPayerBranchCode = g.Key.Branch,
+                Description = $"[สรุป] {g.Value[0].TaxPayerName}",
+                TaxRate = 0,
+                IncomeTypeCode = VatReportLineKind.Summary,
+            }).ToList();
+        return (add, remove);
+    }
 
     /// <summary>เขียนยอดหัว <c>TotalIncome</c>/<c>TotalTaxWithheld</c> จากบรรทัด + คำนวณแถว [สรุป] ต่อผู้ถูกหักใหม่
     /// (รอบ 273 ฝ่ายค้านข้อ 3: ติ๊กออก/แก้ยอดบรรทัดแล้วแถวสรุปค้างค่าเดิม) — ทางที่ยอดหัวของรายงานที่คิดจากบรรทัดถูกตั้ง

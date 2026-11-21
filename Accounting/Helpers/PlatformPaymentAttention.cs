@@ -96,6 +96,23 @@ public static class PlatformPaymentAttention
         return n;
     }
 
+    /// <summary>รอบ 285: กระดิ่ง (+ อีเมลตามค่าตั้งของผู้รับ — <c>NotificationService.SendAsync</c>) ถึงผู้ดูแลระบบแพลตฟอร์มเรื่องทั่วไป (ไม่ใช่การชำระ) ·
+    /// ผู้รับชุดเดียวกับ <see cref="NotifyAdminsAsync"/> · คืนจำนวนที่ส่ง</summary>
+    public static async Task<int> NotifyAdminsAboutAsync(AccountingDbContext db, Services.Interfaces.INotificationService? notifications,
+        string title, string message, string url, string entityType, Guid entityId, CancellationToken ct = default)
+    {
+        if (notifications == null) return 0;
+        var platformId = await db.SiteSettings.AsNoTracking().OrderBy(s => s.CreatedAt).Select(s => s.PlatformCompanyId).FirstOrDefaultAsync(ct);
+        if (platformId is not Guid pid) return 0;
+        var n = 0;
+        foreach (var uid in await PlatformAdminUserIdsAsync(db, pid, ct))
+        {
+            await notifications.SendAsync(uid, pid, NotificationType.System, title, message, url, entityType, entityId);
+            n++;
+        }
+        return n;
+    }
+
     /// <summary>ผู้รับกระดิ่ง: ผู้ดูแลระบบแพลตฟอร์มที่เป็นสมาชิกบริษัทผู้ให้บริการ · ไม่มี = รายการว่าง (ยังมีหน้าแอดมิน + audit)</summary>
     private static async Task<List<Guid>> PlatformAdminUserIdsAsync(AccountingDbContext db, Guid platformCompanyId, CancellationToken ct = default)
         => await db.CompanyUsers.AsNoTracking()

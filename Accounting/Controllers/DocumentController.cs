@@ -2076,9 +2076,11 @@ public class DocumentController : ControllerBase
             .FirstOrDefaultAsync(ct);
         if (src == null) return NotFound(new ApiResponse<object>(false, null, "ไม่พบเอกสาร"));
         var labels = Accounting.Services.Implementations.Pdf.DocumentLabels.For(src.DocumentLanguage);
+        var h = await PdfGenerationService.ResolveDocumentHeadingAsync(db, companyId, documentId);   // T3 LOW-2: ชื่อที่ใบต้นทางพิมพ์จริง
+        var srcLabel = labels.SourceHeadingLabel(new SettlementReceiptTotals.Source(src.DocumentType, src.DocumentNumber, default, 0m, 0m, 0m, 0m, h.Title, h.Language));
         return Ok(new ApiResponse<object>(true, new
         {
-            description = labels.SettlementReceiptLine(src.DocumentType, src.DocumentNumber, installment: false),
+            description = labels.SettlementReceiptLine(srcLabel, src.DocumentNumber, installment: false),
             unit = labels.SettlementUnitItem,
         }, null));
     }

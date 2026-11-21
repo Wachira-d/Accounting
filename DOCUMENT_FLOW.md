@@ -4139,8 +4139,10 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
     `VoidIncomingRequestsForOldTaxIdAsync` ยกเลิกคำขอรอเรายอมรับของเลขเดิม (Rejected + เหตุ + audit · คู่ที่เชื่อมแล้วไม่แตะ) ·
     migration `Round280Migration` (คอลัมน์ `PartnerLinkRequests.ContactId` + ตาราง `PartnerLinkRequestNotices` + `Companies.TaxIdSetAt` = เวลาที่ deploy สำหรับบริษัทเดิม · ไม่แก้ TopicsJson)
   - **(รอบ 285 · คำตัดสิน 285-1…285-6) ยืนยันเลขผู้เสียภาษีของบริษัท**: หน้าตั้งค่าบริษัท (`settings.html` กล่องใต้ช่องเลขภาษี) ยื่นหลักฐาน ภ.พ.20/หนังสือรับรอง
-    (`POST /api/companies/{id}/tax-id-verification` · สิทธิ์ตั้งค่าบริษัท · ไฟล์ PDF/รูปจากไบต์ ≤ 10 MB · SHA-256 · ไฟล์แนบชนิด `CompanyTaxIdEvidence`) · ชื่อเทียบทะเบียนตรงตัว
-    (`IDbdLookupService` · ไม่ fuzzy · ขัด = ยื่นไม่ได้ · ทะเบียนไม่ตอบ = ป้าย "ตรวจไม่ได้") → ผู้ดูแลแพลตฟอร์ม `/admin/taxid-verifications.html`
+    (`POST /api/companies/{id}/tax-id-verification` · สิทธิ์ตั้งค่าบริษัท · ไฟล์ PDF/รูปจากไบต์ ≤ 10 MB · SHA-256 · เก็บผ่าน `IFileStorage` โดยตรง ไม่ใช่ FileAttachments ·
+    เก็บ 5 ปี `EvidenceRetainUntil` · เปิดได้เฉพาะเจ้าของบริษัท `GET …/tax-id-verification/{id}/evidence` + ผู้ดูแลแพลตฟอร์ม · ทุกครั้งบันทึก `PdpaPiiAccessLogs`) · ชื่อเทียบทะเบียนตรงตัว
+    (`IDbdLookupService` · ไม่ fuzzy · ขัด = ยื่นได้ติดธง อนุมัติต้องมีเหตุ (285-11) · ทะเบียนไม่ตอบ = ป้าย "ตรวจไม่ได้" + LogWarning) · ยื่นแล้วกระดิ่ง/อีเมลถึงผู้ดูแลแพลตฟอร์ม ·
+    ตัดสินแล้วแจ้งผู้ยื่น+เจ้าของพร้อมเหตุ (285-8) · เลข+สาขาหนึ่งยืนยันได้บริษัทเดียว — มีเจ้าของเดิม ⇒ ธงบนคิว + ต้องถอนของเดิมก่อน (285-10) → ผู้ดูแลแพลตฟอร์ม `/admin/taxid-verifications.html`
     (`api/admin/tax-id-verifications` · SystemAdmin) อนุมัติ/ปฏิเสธ/ถอน (เหตุ · audit `CompanyTaxIdVerificationRequest`) · อนุมัติ ⇒ `Company.TaxIdVerifiedAt/For/RequestId`
     (ทางเดียว `CompanyTaxIdVerificationService.ApproveAsync` ใต้ `FOR UPDATE` แถวบริษัท) · **ยืนยันแล้ว ⇒ `MaterializeIncomingLinkRequestsAsync` เปิดทุกคำขอที่ยังไม่หมดอายุ
     รวมที่ส่งก่อนสมัคร** (`CompanyTaxIdVerification.IncomingRequestCutoff`) · ยังไม่ยืนยัน = หลัง `TaxIdSetAt` เหมือนเดิม · เปลี่ยนเลขทุกทางเข้า ⇒ หลุดสถานะ
@@ -9312,8 +9314,22 @@ retention ช่วงนี้เทียบช่วงก่อน + เส�
   .SettlementReceiptLine/SettlementUnitItem` — ตัวเดียวกับใบเสร็จที่ระบบออกเอง) · หน้าเว็บไม่มีสำเนาข้อความ · อยู่ในรายการอนุญาตของผู้ "เห็นเฉพาะของตัวเอง" (ตัวกรองแถว)
 - **URL ของระบบ** — ช่องจริง = `/admin/system-email.html` ช่อง "App Base URL" (`SystemBaseUrl.AdminPagePath/AdminPageHint` ตัวตั้งเดียว) · ข้อความ/ลิงก์ที่ชี้ "ตั้งค่าเว็บไซต์ (แท็บทั่วไป)"
   หรือ "ตั้งค่าระบบ" แก้ทุกจุด (admin 3 หน้า · sso.js · ข้อความเซิร์ฟเวอร์ 9 จุด · ปุ่มแก้ของ Autopilot/หน้าพร้อมใช้งาน) · ป้ายช่องบอกว่า `https://app.nextacc.com` คือค่าเริ่มต้นที่ไม่ใช่โดเมนของเรา
-- ไม่เปลี่ยนเงิน/JE/สถานะเอกสาร · ไม่มี migration (ไม่มีค่าที่ persist ผิด — ดู dev-284 §ข้อ 10) · เทสต์ `PackFRound284Tests` (pure 8) + Db `PackFRound284DbTests` (2) · กติกา `_R284_` ·
-  Last verified commit 6e5036e6
+- **ด่านรายงานการเงิน (Q1 · 284-7)** — `Helpers/FinancialReportAccess` + `Filters/RequireReportAccessAttribute` (คีย์ใดคีย์หนึ่ง · สมาชิก**ไม่ผูกบทบาทกำหนดเอง**ผ่านตามเดิม ·
+  ไม่ใช่สมาชิก/รอสิทธิ์ไม่ผ่าน): `accounting/reports/` งบทดลอง·งบดุล·งบกำไรขาดทุน (+เทียบ/เจาะ)·กระแสเงินสด = `Reports.Financial` · บัญชีแยกประเภท/gl-debug = `Accounting.View`|`Reports.Financial` ·
+  `aging/*` · `arap-analysis/*` = `Reports.Operational` · `cash-forecast/*` = `Reports.Financial`|`Reports.Executive` · `Budget/{id}/vs-actual|scenarios` · `reports/{id}/execute|export` (ตัวสร้างรายงาน) ·
+  `tax-filing-export` แบบภาษีที่ไม่ใช่เงินเดือน (+พรีวิว) = `Tax.Export`|`Tax.File` (แบบเงินเดือน/สปส. คงด่าน `Payroll.View`) · `reports/month-snapshot` ไม่ผ่าน ⇒ 200 `{hidden, notice}` ไม่มีตัวเลข
+  (หน้าหลักโหมดง่ายแสดงป้ายแทนการ์ด) · สมุดรายวัน (`journals`) คงเดิม (อ่านผ่าน `ForUser` · หน้าเอกสารใช้ดู JE ของใบ) · ด่านเข้มเดิม (แดชบอร์ด/FP&A/ผู้บริหาร/งบรวม/ส่งออกบัญชี) ไม่เปลี่ยน ·
+  เมนู `MenuPermissionMap.LegacyKeys` (reports · general-ledger · aging · arap-analysis · cash-forecast) ตัดด้วยกติกาเดียว · `Round284Migration` (ครั้งเดียว · marker `r284-report-keys-from-menus`)
+  บทบาทเดิมที่ติ๊กเมนูรายงานได้คีย์ของหน้า (ไม่ทับค่าที่เจ้าของตั้ง) · ค่าตั้งต้นบทบาทระบบ (`SeedDefaultRolesAsync`) ได้คีย์ตามเมนู · ผู้ "เห็นเฉพาะของตัวเอง" (276) ถูกกันที่รายการอนุญาตเหมือนเดิม
+- **ใบเสร็จรับชำระ + ค่าธรรมเนียมฝั่งผู้รับ (Q2 · 284-8)** — `SettlementReceiptTotals.ReceiptPaperAmount` = เงินเข้า + ค่าธรรมเนียม ⇒ หัว/บรรทัด/ยอดรับชำระ = ยอดที่ลูกค้าจ่ายเต็ม
+  (749,000 ไม่ใช่ 748,970) · ใบเสร็จรับชำระไม่ลงบัญชี ⇒ GL ไม่เปลี่ยน · ใบที่ออกแล้วไม่แก้ย้อนหลัง · บรรทัดปรับไม่รวม
+- **หักมัดจำในตัวไล่ยอด (Q3 · 284-9)** — `SettlementReceiptTotals.Walk` ⇒ `PriorOther` = ยอดไล่ได้ − ยอดค้างจริง (การหักมัดจำบวก `PaidAmount` โดยไม่มีแถว) นับเป็นการตัดยอดก่อนการรับครั้งนี้ ⇒
+  "คงค้างก่อนรับ" คงที่ทั้งก่อน/หลังมีงวดถัดไป · บรรทัด "ตัดยอดด้วยเงินมัดจำที่รับแล้ว" (renderer ×2 ผ่าน `DocumentLabels.SettlementTotalsLines`) เฉพาะใบต้นทางที่ `DepositAppliedAmount > 0` ·
+  VAT ไม่นับซ้ำ (งวดปิดอ่านภาษีที่ยังพัก 21913 ซึ่งการหักมัดจำย้ายแล้ว)
+- **ชื่อใบต้นทาง (T3 LOW-2)** — บรรทัดอ้างอิง/บรรทัดรายการของใบเสร็จรับชำระ + ค่าตั้งต้นฟอร์ม ใช้หัวที่ใบต้นทางพิมพ์จริง (`ResolveDocumentHeadingAsync` · ภาษาตรงกัน) ผ่าน `DocumentLabels.SourceHeadingLabel` · ไม่พบ/คนละภาษา ⇒ ชื่อชนิดเดิม
+- **แถว [สรุป] ภ.ง.ด.2/3/53/54 (T2 L2)** — `WhtReportTotals.SyncSummaryRows` ตัวเดียวของตอนสร้างและตอนติ๊ก/แก้บรรทัด: ผู้ถูกหัก (เลข+สาขา) ≥ 2 บรรทัดที่นับ ⇒ มีแถวสรุป · เหลือ < 2 ⇒ ลบ · แสดงผลอย่างเดียว
+- ไม่เปลี่ยน JE/สถานะเอกสาร · migration `Round284Migration` (สิทธิ์บทบาท) · เทสต์ `PackFRound284Tests` + Db `PackFRound284DbTests` · ปรับ Db `SettlementReceiptTotalsDbTests` (749,000) + `WhtPreCheckDoubleCountDbTests` (แถวสรุป) · กติกา `_R284_` ·
+  Last verified commit 6e5036e6 · ชุดสอง commit f90fef74
 
 ## 7. Validation gates (compliance — กฎเหล็ก #2)
 

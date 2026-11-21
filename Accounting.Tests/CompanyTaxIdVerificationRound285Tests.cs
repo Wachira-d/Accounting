@@ -67,30 +67,42 @@ public class CompanyTaxIdVerificationRound285Tests
     public void ยื่นได้_เฉพาะเลขถูกต้อง_ชนิดหลักฐานถูก_มีไฟล์_ชื่อไม่ขัดทะเบียน()
     {
         const string pp20 = CompanyTaxIdVerification.EvidencePp20;
-        Assert.Null(CompanyTaxIdVerification.SubmitProblem(Tax, pp20, 100, false, false, CompanyTaxIdVerification.RegistryMatch, "x"));
-        Assert.Null(CompanyTaxIdVerification.SubmitProblem(Tax, CompanyTaxIdVerification.EvidenceCompanyCertificate, 100, false, false, CompanyTaxIdVerification.RegistryUnknown, null));
-        Assert.Contains("13 หลัก", CompanyTaxIdVerification.SubmitProblem("0105556000240", pp20, 100, false, false, CompanyTaxIdVerification.RegistryUnknown, null) ?? "");   // checksum ผิด
-        Assert.Contains("13 หลัก", CompanyTaxIdVerification.SubmitProblem("-", pp20, 100, false, false, CompanyTaxIdVerification.RegistryUnknown, null) ?? "");
-        Assert.NotNull(CompanyTaxIdVerification.SubmitProblem(Tax, "Selfie", 100, false, false, CompanyTaxIdVerification.RegistryUnknown, null));
-        Assert.NotNull(CompanyTaxIdVerification.SubmitProblem(Tax, pp20, 0, false, false, CompanyTaxIdVerification.RegistryUnknown, null));
-        Assert.NotNull(CompanyTaxIdVerification.SubmitProblem(Tax, pp20, CompanyTaxIdVerification.MaxEvidenceBytes + 1, false, false, CompanyTaxIdVerification.RegistryUnknown, null));
-        Assert.Contains("ยืนยันแล้ว", CompanyTaxIdVerification.SubmitProblem(Tax, pp20, 100, true, false, CompanyTaxIdVerification.RegistryMatch, "x") ?? "");
-        Assert.Contains("รอ", CompanyTaxIdVerification.SubmitProblem(Tax, pp20, 100, false, true, CompanyTaxIdVerification.RegistryMatch, "x") ?? "");
-        var mismatch = CompanyTaxIdVerification.SubmitProblem(Tax, pp20, 100, false, false, CompanyTaxIdVerification.RegistryMismatch, "บริษัท เจ้าของจริง จำกัด") ?? "";
-        Assert.Contains("บริษัท เจ้าของจริง จำกัด", mismatch);   // ทางไปต่อ: บอกชื่อทะเบียน
+        Assert.Null(CompanyTaxIdVerification.SubmitProblem(Tax, pp20, 100, false, false));
+        Assert.Null(CompanyTaxIdVerification.SubmitProblem(Tax, CompanyTaxIdVerification.EvidenceCompanyCertificate, 100, false, false));
+        Assert.Contains("13 หลัก", CompanyTaxIdVerification.SubmitProblem("0105556000240", pp20, 100, false, false) ?? "");   // checksum ผิด
+        Assert.Contains("13 หลัก", CompanyTaxIdVerification.SubmitProblem("-", pp20, 100, false, false) ?? "");
+        Assert.NotNull(CompanyTaxIdVerification.SubmitProblem(Tax, "Selfie", 100, false, false));
+        Assert.NotNull(CompanyTaxIdVerification.SubmitProblem(Tax, pp20, 0, false, false));
+        Assert.NotNull(CompanyTaxIdVerification.SubmitProblem(Tax, pp20, CompanyTaxIdVerification.MaxEvidenceBytes + 1, false, false));
+        Assert.Contains("ยืนยันแล้ว", CompanyTaxIdVerification.SubmitProblem(Tax, pp20, 100, true, false) ?? "");
+        Assert.Contains("รอ", CompanyTaxIdVerification.SubmitProblem(Tax, pp20, 100, false, true) ?? "");
+        // ฝ่ายค้าน MED-B2: ชื่อไม่ตรงทะเบียนไม่บล็อกการยื่น (ติดธงให้ผู้ดูแลแทน)
+        Assert.Contains("ชื่อไม่ตรงทะเบียน: บริษัท เจ้าของจริง จำกัด", CompanyTaxIdVerification.RegistryLabel(CompanyTaxIdVerification.RegistryMismatch, "บริษัท เจ้าของจริง จำกัด"));
     }
 
     [Fact]
     public void อนุมัติได้_เฉพาะรอตรวจ_เลขยังตรง_ชื่อไม่ขัด_มีไฟล์()
     {
         const string pending = CompanyTaxIdVerification.StatusPending;
-        Assert.Null(CompanyTaxIdVerification.ApproveProblem(pending, Tax, Tax, CompanyTaxIdVerification.RegistryMatch, true));
-        Assert.Null(CompanyTaxIdVerification.ApproveProblem(pending, Tax, Tax, CompanyTaxIdVerification.RegistryUnknown, true));
-        Assert.Contains("เปลี่ยนเลข", CompanyTaxIdVerification.ApproveProblem(pending, Tax, ValidTax("010555600025"), CompanyTaxIdVerification.RegistryMatch, true) ?? "");
-        Assert.NotNull(CompanyTaxIdVerification.ApproveProblem(CompanyTaxIdVerification.StatusApproved, Tax, Tax, CompanyTaxIdVerification.RegistryMatch, true));
-        Assert.NotNull(CompanyTaxIdVerification.ApproveProblem(CompanyTaxIdVerification.StatusRejected, Tax, Tax, CompanyTaxIdVerification.RegistryMatch, true));
-        Assert.NotNull(CompanyTaxIdVerification.ApproveProblem(pending, Tax, Tax, CompanyTaxIdVerification.RegistryMismatch, true));
-        Assert.NotNull(CompanyTaxIdVerification.ApproveProblem(pending, Tax, Tax, CompanyTaxIdVerification.RegistryMatch, false));
+        Assert.Null(CompanyTaxIdVerification.ApproveProblem(pending, Tax, Tax, CompanyTaxIdVerification.RegistryMatch, true, null, null));
+        Assert.Null(CompanyTaxIdVerification.ApproveProblem(pending, Tax, Tax, CompanyTaxIdVerification.RegistryUnknown, true, null, null));
+        Assert.Contains("เปลี่ยนเลข", CompanyTaxIdVerification.ApproveProblem(pending, Tax, ValidTax("010555600025"), CompanyTaxIdVerification.RegistryMatch, true, null, null) ?? "");
+        Assert.NotNull(CompanyTaxIdVerification.ApproveProblem(CompanyTaxIdVerification.StatusApproved, Tax, Tax, CompanyTaxIdVerification.RegistryMatch, true, null, null));
+        Assert.NotNull(CompanyTaxIdVerification.ApproveProblem(CompanyTaxIdVerification.StatusRejected, Tax, Tax, CompanyTaxIdVerification.RegistryMatch, true, null, null));
+        Assert.NotNull(CompanyTaxIdVerification.ApproveProblem(pending, Tax, Tax, CompanyTaxIdVerification.RegistryMismatch, true, null, null));
+        Assert.NotNull(CompanyTaxIdVerification.ApproveProblem(pending, Tax, Tax, CompanyTaxIdVerification.RegistryMatch, false, null, null));
+    }
+
+    [Fact]
+    public void ฝ่ายค้านB1B2_เลขยืนยันแล้วโดยบริษัทอื่น_อนุมัติไม่ได้_ชื่อขัดทะเบียนอนุมัติได้เมื่อมีเหตุ()
+    {
+        const string pending = CompanyTaxIdVerification.StatusPending;
+        Assert.Contains("ยืนยันแล้วโดยบริษัท เจ้าของเดิม", CompanyTaxIdVerification.ApproveProblem(pending, Tax, Tax, CompanyTaxIdVerification.RegistryMatch, true, "x", "เจ้าของเดิม") ?? "");
+        Assert.Contains("ระบุเหตุผล", CompanyTaxIdVerification.ApproveProblem(pending, Tax, Tax, CompanyTaxIdVerification.RegistryMismatch, true, " ", null) ?? "");
+        Assert.Null(CompanyTaxIdVerification.ApproveProblem(pending, Tax, Tax, CompanyTaxIdVerification.RegistryMismatch, true, "ตรวจแล้วเป็นชื่อการค้า", null));
+        // สาขา: ว่าง = สำนักงานใหญ่ · คนละสาขา = คนละช่อง
+        Assert.Equal(CompanyTaxIdVerification.SlotKey(Tax, null), CompanyTaxIdVerification.SlotKey(Tax, "00000"));
+        Assert.NotEqual(CompanyTaxIdVerification.SlotKey(Tax, "00000"), CompanyTaxIdVerification.SlotKey(Tax, "00001"));
     }
 
     [Fact]

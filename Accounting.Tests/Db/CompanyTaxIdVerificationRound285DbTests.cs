@@ -3,7 +3,7 @@ using System.Text.Json;
 using Accounting.Controllers;
 using Accounting.Data;
 using Accounting.Helpers;
-using Accounting.Models.DTOs.FileAttachment;
+using Accounting.Services.Storage;
 using Accounting.Models.Entities;
 using Accounting.Models.Enums;
 using Accounting.Services.Implementations;
@@ -38,31 +38,19 @@ public class CompanyTaxIdVerificationRound285DbTests
         return CompanyTaxIdVerificationRound285Tests.ValidTax(twelve);
     }
 
-    /// <summary>ที่เก็บไฟล์แนบจำลอง — เก็บไบต์ไว้ในหน่วยความจำ (เส้นจริงทดสอบแยกใน FileAttachmentService)</summary>
-    private sealed class FakeFiles
+    /// <summary>ที่เก็บไฟล์กลางจริง (ดิสก์ในโฟลเดอร์ชั่วคราว) + กระดิ่งจำลองที่บันทึกผู้รับ</summary>
+    internal sealed class FakeFiles
     {
-        public Dictionary<Guid, (Guid CompanyId, string EntityType, byte[] Bytes, string Ct, string Name)> Rows { get; } = new();
-        public IFileAttachmentService Service() => F4Proxy<IFileAttachmentService>.Create((m, a) =>
+        public string Root { get; } = Path.Combine(Path.GetTempPath(), "r285-" + Guid.NewGuid().ToString("N"));
+        public List<(Guid UserId, Guid? CompanyId, string Title, string Message)> Bells { get; } = new();
+        public IFileStorage Storage() => new LocalDiskFileStorage(new FileStorageLocator(Path.Combine(Root, "uploads"), Path.Combine(Root, "wwwroot"), Root, Root));
+        public INotificationService Notifier() => F4Proxy<INotificationService>.Create((m, a) =>
         {
-            switch (m)
-            {
-                case nameof(IFileAttachmentService.UploadBytesAsync):
-                {
-                    var id = Guid.NewGuid();
-                    Rows[id] = ((Guid)a[0]!, (string)a[1]!, (byte[])a[5]!, (string)a[4]!, (string)a[3]!);
-                    return Task.FromResult(new FileAttachmentResponse(id, "f", (string)a[3]!, (string)a[4]!, ((byte[])a[5]!).Length, "p", null,
-                        (string)a[1]!, (Guid)a[2]!, "u", DateTime.UtcNow));
-                }
-                case nameof(IFileAttachmentService.GetByIdAsync):
-                {
-                    var hit = Rows.TryGetValue((Guid)a[1]!, out var r) && r.CompanyId == (Guid)a[0]!;
-                    return Task.FromResult(hit ? new FileAttachmentResponse((Guid)a[1]!, "f", r.Name, r.Ct, r.Bytes.Length, "p", null, r.EntityType, Guid.Empty, "u", DateTime.UtcNow) : null);
-                }
-                case nameof(IFileAttachmentService.ReadBytesAsync):
-                    return Task.FromResult(Rows.TryGetValue((Guid)a[1]!, out var b) && b.CompanyId == (Guid)a[0]! ? b.Bytes : null);
-                default: return null;
-            }
+            if (m != nameof(INotificationService.SendAsync)) return null;
+            lock (Bells) Bells.Add(((Guid)a[0]!, (Guid?)a[1], (string)a[3]!, (string)a[4]!));
+            return Task.CompletedTask;
         });
+        public string[] StoredFiles() => Directory.Exists(Root) ? Directory.GetFiles(Root, "*", SearchOption.AllDirectories) : Array.Empty<string>();
     }
 
     private static IDbdLookupService Registry(Func<string, string?> nameFor) => F4Proxy<IDbdLookupService>.Create((m, a) =>
@@ -70,10 +58,12 @@ public class CompanyTaxIdVerificationRound285DbTests
             ? Task.FromResult(nameFor((string)a[0]!) is { } n ? new DbdCompanyResult((string)a[0]!, n, null, null, null, null, null, null, null) : null)
             : null);
 
-    private static CompanyTaxIdVerificationService Svc(AccountingDbContext db, FakeFiles f, IDbdLookupService? reg = null)
-        => new(db, f.Service(), reg);
+    internal static CompanyTaxIdVerificationService Svc(AccountingDbContext db, FakeFiles f, IDbdLookupService? reg = null)
+        => new(db, f.Storage(), reg, f.Notifier());
 
-    private static async Task<(Company Co, Guid Owner)> CompanyAsync(AccountingDbContext db, string name, string? taxId = null)
+    internal static CompanyTaxIdVerificationService.EvidenceViewer Viewer(Guid userId) => new(userId, "127.0.0.1", "test", "เทสต์รอบ 285");
+
+    internal static async Task<(Company Co, Guid Owner)> CompanyAsync(AccountingDbContext db, string name, string? taxId = null)
     {
         var c = new Company { Name = name + " " + Guid.NewGuid().ToString("N")[..6] + " จำกัด", TaxId = taxId ?? RandJuristicTax(), BranchCode = "00000" };
         db.Companies.Add(c);
@@ -85,9 +75,9 @@ public class CompanyTaxIdVerificationRound285DbTests
         return (c, u.Id);
     }
 
-    private static async Task<Guid> AdminAsync(AccountingDbContext db)
+    internal static async Task<Guid> AdminAsync(AccountingDbContext db)
     {
-        var u = new User { Email = $"r285-admin-{Guid.NewGuid():N}@test.local", PasswordHash = "x", FullName = "ผู้ดูแล 285" };
+        var u = new User { Email = $"r285-admin-{Guid.NewGuid():N}@test.local", PasswordHash = "x", FullName = "ผู้ดูแล 285", IsSystemAdmin = true };
         db.Users.Add(u);
         await db.SaveChangesAsync();
         return u.Id;
@@ -121,7 +111,11 @@ public class CompanyTaxIdVerificationRound285DbTests
         var reg = Registry(_ => b.Co.Name);
         var res = await Svc(db, files, reg).SubmitAsync(b.Co.Id, b.Owner, CompanyTaxIdVerification.EvidencePp20, Pdf, "pp20.pdf", DateTime.UtcNow);
         Assert.Equal(CompanyTaxIdVerification.RegistryMatch, res.RegistryResult);
-        Assert.Equal(CompanyTaxIdVerification.AttachmentEntityType, files.Rows.Values.Single().EntityType);
+        // ข้อเพิ่ม: ไฟล์อยู่ในที่เก็บไฟล์กลาง (ไม่ใช่ FileAttachments) · มีระยะเก็บ
+        var stored = Assert.Single(files.StoredFiles());
+        Assert.Contains(CompanyTaxIdVerification.EvidenceFolder, stored);
+        Assert.False(await db.FileAttachments.AnyAsync(f => f.CompanyId == b.Co.Id));
+        Assert.NotNull((await db.CompanyTaxIdVerificationRequests.AsNoTracking().SingleAsync(x => x.Id == res.RequestId)).EvidenceRetainUntil);
         // ยื่นแล้วยังไม่อนุมัติ = ยังไม่เปิด
         await Xt(db).MaterializeIncomingLinkRequestsAsync(b.Co.Id, DateTime.UtcNow);
         Assert.False(await PairAsync(a.Co.Id, b.Co.Id));
@@ -131,8 +125,16 @@ public class CompanyTaxIdVerificationRound285DbTests
         Assert.Equal(409, dup.StatusCode);
 
         var admin = await AdminAsync(db);
-        var ev = await Svc(db, files).ReadEvidenceAsync(res.RequestId);
+        var ev = await Svc(db, files).ReadEvidenceAsync(res.RequestId, null, Viewer(admin));
         Assert.Equal(Pdf, ev!.Value.Bytes);
+        // เจ้าของบริษัทเปิดของตัวเองได้ · ผู้ดูแลแพลตฟอร์มเปิดผ่านเส้นบริษัทไม่ได้ (ไม่ใช่เจ้าของ) · บริษัทอื่นไม่เห็นแถว · ทุกครั้งที่เปิดบันทึก PiiAccessLog
+        Assert.Equal(Pdf, (await Svc(db, files).ReadEvidenceAsync(res.RequestId, b.Co.Id, Viewer(b.Owner)))!.Value.Bytes);
+        Assert.Equal(403, (await Assert.ThrowsAsync<CompanyTaxIdVerificationService.VerificationException>(() =>
+            Svc(db, files).ReadEvidenceAsync(res.RequestId, b.Co.Id, Viewer(admin)))).StatusCode);
+        Assert.Equal(403, (await Assert.ThrowsAsync<CompanyTaxIdVerificationService.VerificationException>(() =>
+            Svc(db, files).ReadEvidenceAsync(res.RequestId, null, Viewer(b.Owner)))).StatusCode);   // เจ้าของไม่ใช่ผู้ดูแลแพลตฟอร์ม
+        Assert.Null(await Svc(db, files).ReadEvidenceAsync(res.RequestId, a.Co.Id, Viewer(a.Owner)));
+        Assert.Equal(2, await db.PdpaPiiAccessLogs.CountAsync(l => l.SubjectId == res.RequestId && l.SubjectType == CompanyTaxIdVerification.PiiSubjectType));
         using (var adb = DbTestDatabase.TryCreateContext()!)
             await Svc(adb, files).ApproveAsync(res.RequestId, admin, "ตรวจ ภ.พ.20 แล้ว", DateTime.UtcNow);
 
@@ -146,6 +148,8 @@ public class CompanyTaxIdVerificationRound285DbTests
             await Xt(u).MaterializeIncomingLinkRequestsAsync(b.Co.Id, DateTime.UtcNow);
         }
         Assert.True(await PairAsync(a.Co.Id, b.Co.Id));   // ยืนยันแล้ว ⇒ เห็นคำขอที่ส่งก่อนสมัคร
+        // ข้อเพิ่ม: บริษัทได้รับแจ้งผลอนุมัติ (ผู้ยื่น = เจ้าของ)
+        Assert.Contains(files.Bells, x => x.UserId == b.Owner && x.CompanyId == b.Co.Id && x.Title.Contains("ยืนยันเลขผู้เสียภาษี"));
 
         // การ์ดฝั่งผู้รับ: ผู้ขอ (a) ยังไม่ยืนยัน ⇒ ป้ายบอกตามจริง
         using var check = DbTestDatabase.TryCreateContext()!;
@@ -222,24 +226,87 @@ public class CompanyTaxIdVerificationRound285DbTests
     }
 
     [Fact]
-    public async Task ชื่อขัดทะเบียน_ยื่นไม่ได้พร้อมชื่อทะเบียน_ไฟล์ไม่ใช่PDFรูปก็ไม่ได้_ไม่มีแถว()
+    public async Task ฝ่ายค้านB2_ชื่อขัดทะเบียน_ยื่นได้ติดธง_อนุมัติต้องมีเหตุ_ไฟล์ไม่ใช่PDFรูปถูกปัด()
     {
         using var db = DbTestDatabase.TryCreateContext();
         if (db == null) { _out.WriteLine(Skip); return; }
-        var b = await CompanyAsync(db, "บริษัท แอบอ้าง285");
+        var b = await CompanyAsync(db, "บริษัท ชื่อการค้า285");
         var files = new FakeFiles();
-        var ex = await Assert.ThrowsAsync<CompanyTaxIdVerificationService.VerificationException>(() =>
-            Svc(db, files, Registry(_ => "บริษัท เจ้าของจริง285 จำกัด")).SubmitAsync(b.Co.Id, b.Owner, CompanyTaxIdVerification.EvidencePp20, Pdf, "pp20.pdf", DateTime.UtcNow));
-        Assert.Contains("เจ้าของจริง285", ex.Message);
+        var admin = await AdminAsync(db);
+        // ไฟล์ HTML ปลอมเป็น .pdf ⇒ ปัด ไม่มีแถว/ไฟล์ค้าง
         await Assert.ThrowsAsync<CompanyTaxIdVerificationService.VerificationException>(() =>
             Svc(db, files).SubmitAsync(b.Co.Id, b.Owner, CompanyTaxIdVerification.EvidencePp20, System.Text.Encoding.UTF8.GetBytes("<html><script>x</script></html>"), "pp20.pdf", DateTime.UtcNow));
-        Assert.Empty(files.Rows);
+        Assert.Empty(files.StoredFiles());
         Assert.False(await db.CompanyTaxIdVerificationRequests.AnyAsync(r => r.CompanyId == b.Co.Id));
+        // ชื่อไม่ตรงทะเบียน ⇒ ยื่นได้ ติดธง
+        var r = await Svc(db, files, Registry(_ => "บริษัท นิติบุคคลจริง285 จำกัด")).SubmitAsync(b.Co.Id, b.Owner, CompanyTaxIdVerification.EvidencePp20, Pdf, "pp20.pdf", DateTime.UtcNow);
+        Assert.Equal(CompanyTaxIdVerification.RegistryMismatch, r.RegistryResult);
+        var list = JsonSerializer.Serialize(await Svc(db, files).ListForAdminAsync("Pending"), Json);
+        Assert.Contains("ชื่อไม่ตรงทะเบียน: บริษัท นิติบุคคลจริง285 จำกัด", list);
+        using (var adb = DbTestDatabase.TryCreateContext()!)
+        {
+            var ex = await Assert.ThrowsAsync<CompanyTaxIdVerificationService.VerificationException>(() => Svc(adb, files).ApproveAsync(r.RequestId, admin, null, DateTime.UtcNow));
+            Assert.Contains("ระบุเหตุผล", ex.Message);
+        }
+        using (var adb = DbTestDatabase.TryCreateContext()!)
+            await Svc(adb, files).ApproveAsync(r.RequestId, admin, "ตรวจ ภ.พ.20 แล้ว ชื่อในระบบเป็นชื่อการค้า", DateTime.UtcNow);
+        using var check = DbTestDatabase.TryCreateContext()!;
+        Assert.True(CompanyTaxIdVerification.IsVerified(await check.Companies.AsNoTracking().SingleAsync(x => x.Id == b.Co.Id)));
+        var noteJson = JsonSerializer.Serialize("ชื่อการค้า")[1..^1];
+        Assert.True(await check.AuditLogs.AnyAsync(l => l.EntityId == r.RequestId.ToString() && l.NewValues!.Contains(noteJson) && l.NewValues.Contains(CompanyTaxIdVerification.StatusApproved)));
         // บริษัทที่เลขยังเป็น "-" (สมัคร/SSO) ยื่นไม่ได้ + หน้าบอกเหตุ
         var dash = await CompanyAsync(db, "บริษัท ยังไม่ตั้งเลข285", taxId: "-");
         var st = JsonSerializer.Serialize(await Svc(db, files).GetStatusAsync(dash.Co.Id), Json);
         Assert.Contains("\"canSubmit\":false", st);
         Assert.Contains("13 หลัก", st);
+    }
+
+    [Fact]
+    public async Task ฝ่ายค้านB1_เลขเดียวยืนยันได้บริษัทเดียวต่อสาขา_ต้องถอนของเดิมก่อน_สาขาอื่นได้()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var tax = RandJuristicTax();
+        var x = await CompanyAsync(db, "บริษัท เจ้าของเดิม285", taxId: tax);
+        var y = await CompanyAsync(db, "บริษัท ผู้มาใหม่285", taxId: tax);
+        var files = new FakeFiles();
+        var admin = await AdminAsync(db);
+        var rx = await Svc(db, files).SubmitAsync(x.Co.Id, x.Owner, CompanyTaxIdVerification.EvidencePp20, Pdf, "x.pdf", DateTime.UtcNow);
+        using (var adb = DbTestDatabase.TryCreateContext()!)
+            await Svc(adb, files).ApproveAsync(rx.RequestId, admin, null, DateTime.UtcNow);
+        var ry = await Svc(db, files).SubmitAsync(y.Co.Id, y.Owner, CompanyTaxIdVerification.EvidencePp20, Pdf, "y.pdf", DateTime.UtcNow);
+        // ธงเด่นบนคิว + อนุมัติไม่ได้
+        var list = JsonSerializer.Serialize(await Svc(db, files).ListForAdminAsync("Pending"), Json);
+        Assert.Contains(CompanyTaxIdVerification.ConflictLabel(x.Co.Name), list);
+        Assert.Contains(rx.RequestId.ToString(), list);   // ConflictRequestId ให้ถอนได้
+        using (var adb = DbTestDatabase.TryCreateContext()!)
+        {
+            var ex = await Assert.ThrowsAsync<CompanyTaxIdVerificationService.VerificationException>(() => Svc(adb, files).ApproveAsync(ry.RequestId, admin, null, DateTime.UtcNow));
+            Assert.Equal(409, ex.StatusCode);
+            Assert.Contains(x.Co.Name, ex.Message);
+        }
+        // สาขาอื่นของเลขเดียวกัน ยืนยันได้ (คนละช่อง)
+        var z = await CompanyAsync(db, "บริษัท สาขาหนึ่ง285", taxId: tax);
+        using (var u = DbTestDatabase.TryCreateContext()!)
+        {
+            var co = await u.Companies.SingleAsync(c => c.Id == z.Co.Id);
+            co.BranchCode = "00001";
+            await u.SaveChangesAsync();
+        }
+        CompanyTaxIdVerificationService.SubmitResult rz;
+        using (var sdb = DbTestDatabase.TryCreateContext()!)
+            rz = await Svc(sdb, files).SubmitAsync(z.Co.Id, z.Owner, CompanyTaxIdVerification.EvidencePp20, Pdf, "z.pdf", DateTime.UtcNow);
+        using (var adb = DbTestDatabase.TryCreateContext()!)
+            await Svc(adb, files).ApproveAsync(rz.RequestId, admin, null, DateTime.UtcNow);
+        // ถอนของเดิม (มีเหตุ · บริษัทเดิมได้รับแจ้งพร้อมเหตุ) แล้วอนุมัติผู้มาใหม่ได้
+        using (var adb = DbTestDatabase.TryCreateContext()!)
+            await Svc(adb, files).RevokeAsync(rx.RequestId, admin, "เอกสารของบริษัท Y ตรงทะเบียนกว่า", DateTime.UtcNow);
+        Assert.Contains(files.Bells, b => b.UserId == x.Owner && b.Message.Contains("เอกสารของบริษัท Y ตรงทะเบียนกว่า"));
+        using (var adb = DbTestDatabase.TryCreateContext()!)
+            await Svc(adb, files).ApproveAsync(ry.RequestId, admin, null, DateTime.UtcNow);
+        using var check = DbTestDatabase.TryCreateContext()!;
+        var verified = await check.Companies.AsNoTracking().Where(c => c.TaxId == tax).ToListAsync();
+        Assert.Equal(new[] { y.Co.Id, z.Co.Id }.OrderBy(g => g), verified.Where(CompanyTaxIdVerification.IsVerified).Select(c => c.Id).OrderBy(g => g));
     }
 
     [Fact]

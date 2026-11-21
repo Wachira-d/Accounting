@@ -165,9 +165,6 @@ public static class AttachmentPermissionScope
             // (ขึ้นกับชนิดข้อมูลของ batch) ⇒ WriteAnyOf/ReadAnyOf ว่าง แล้วด่าน (AttachmentAccessGate) ถาม ImportBatchKey(ชนิดของ batch)
             ["ImportBatch"] = Rule("ImportBatch", AttachmentOwnerKind.ImportBatch, None, None, false, "ไฟล์นำเข้าข้อมูล"),
             // รอบ 205 ทีม C: ไฟล์ statement ต้นทาง (ระบบแนบตอนนำเข้า · ผูกกับบัญชีธนาคาร) — หลักฐาน 5 ปี · มีชื่อ/บัญชีคู่โอน ⇒ อ่าน = ดูธนาคาร · ลบ = กระทบยอด
-            // รอบ 285: หลักฐานยืนยันเลขผู้เสียภาษีของบริษัท (ภ.พ.20/หนังสือรับรอง · ระบบแนบผ่านเส้นยื่นคำขอเท่านั้น) — อ่าน/ลบ = ผู้ตั้งค่าบริษัท ·
-            // ผู้ดูแลแพลตฟอร์มเปิดผ่าน AdminCompanyTaxIdVerificationController (ตรวจ SHA-256)
-            [CompanyTaxIdVerification.AttachmentEntityType] = Rule(CompanyTaxIdVerification.AttachmentEntityType, AttachmentOwnerKind.KeyGated, new[] { PermissionKeys.CompanySettingsEdit }, new[] { PermissionKeys.CompanySettingsEdit }, false, "หลักฐานยืนยันเลขผู้เสียภาษี"),
             ["BankStatement"] = Rule("BankStatement", AttachmentOwnerKind.KeyGated, new[] { PermissionKeys.BankReconcile }, new[] { PermissionKeys.BankView }, false, "statement ธนาคาร (ไฟล์ต้นทาง)"),
         };
         return t;

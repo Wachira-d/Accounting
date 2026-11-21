@@ -45,6 +45,17 @@ public static class MenuPermissionMap
             .Select(kv => new KeyValuePair<string, IReadOnlyList<string>>(kv.Key, new[] { kv.Value })))
         .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.Ordinal);
 
+    /// <summary>รอบ 284 (คำตัดสิน 284-7): เมนูรายงานการเงินรวมที่ API ตรวจด้วย <see cref="FinancialReportAccess"/> (คีย์ใดคีย์หนึ่ง ·
+    /// สมาชิกที่<b>ไม่ผูกบทบาทกำหนดเอง</b>ผ่านตามเดิม) — ค่าคงที่ตัวเดียวกับ <c>[RequireReportAccess(...)]</c> ของหน้า (เทสต์ <c>PackFRound284Tests</c>)</summary>
+    public static readonly IReadOnlyDictionary<string, IReadOnlyList<string>> LegacyKeys = new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal)
+    {
+        ["reports"] = new[] { PermissionKeys.ReportsFinancial },                                        // AccountingController reports/* (งบ)
+        ["general-ledger"] = new[] { PermissionKeys.AccountingView, PermissionKeys.ReportsFinancial },  // reports/general-ledger
+        ["aging"] = new[] { PermissionKeys.ReportsOperational },                                        // AgingReportController
+        ["arap-analysis"] = new[] { PermissionKeys.ReportsOperational },                                // ArApAnalysisController
+        ["cash-forecast"] = new[] { PermissionKeys.ReportsFinancial, PermissionKeys.ReportsExecutive }, // CashForecastController
+    };
+
     public enum Direction { Revenue, Purchase }
 
     /// <summary>เมนูที่ API หลักตรวจ "เห็นเอกสารฝั่งนี้" (<c>VisibleDirectionsAsync</c>) — PurchaseInboxController · CustomerCreditController</summary>
@@ -60,10 +71,10 @@ public static class MenuPermissionMap
     {
         "getting-started", "accountant-workspace", "accountant", "documents", "recurring", "autopilot", "deposits", "mobile-receipt",
         "revenue-recognition", "customer-portal", "expense-docs", "payments", "vendor-portal-admin", "partners", "bank", "cash-management",
-        "cheques", "petty-cash", "cash-forecast", "loans", "multi-currency", "fx-reval", "contacts", "products", "product-aliases", "warehouse",
+        "cheques", "petty-cash", "loans", "multi-currency", "fx-reval", "contacts", "products", "product-aliases", "warehouse",
         "inventory-reports", "supplies", "production", "consignment", "tax", "vat-history", "undue-vat", "wht", "wht-credit", "tax-remittance",
-        "tax-calendar", "etax", "tax-export", "stamp-duty", "accounts", "journals", "general-ledger", "fiscal", "fixed-assets", "reports", "aging",
-        "arap-analysis", "risk", "budget", "cost-report", "pos", "pos-packages", "course-credits", "pos-modifiers", "pos-reports", "cms-sites",
+        "tax-calendar", "etax", "tax-export", "stamp-duty", "accounts", "journals", "fiscal", "fixed-assets",
+        "risk", "budget", "cost-report", "pos", "pos-packages", "course-credits", "pos-modifiers", "pos-reports", "cms-sites",
         "cms-orders", "cms-bookings", "cms-booking-providers", "lodging-settings", "cms-leads", "organization", "employees", "payroll",
         "leave-types", "leave-calendar", "salary-advance", "commission", "project-time", "expense", "expense-no-receipt", "leave-my",
         "mobile-expense", "projects", "time-billing", "dimensions", "intercompany", "document-scan", "ocr-review-queue", "ai-tools", "assistant",
@@ -79,7 +90,9 @@ public static class MenuPermissionMap
 
     /// <summary>เมนูที่ไม่มีสิทธิ์ (เรียงตามชื่อเมนู) — <paramref name="has"/> = ด่านจริง (<c>IPermissionService.HasPermissionAsync</c>) ·
     /// <paramref name="visible"/> = ผล <c>DocumentPermissionHelper.VisibleDirectionsAsync</c> (null = ไม่ตรวจกลุ่มทิศเอกสาร) · ตรวจคีย์ละครั้ง · ว่าง = null</summary>
-    public static async Task<List<string>?> DeniedMenuIdsAsync(Func<string, Task<bool>> has, Func<Task<(bool Revenue, bool Purchase)>>? visible = null)
+    /// <param name="hasCustomRole">ผูกบทบาทกำหนดเอง — false (เมนู "*") ⇒ เมนูใน <see cref="LegacyKeys"/> ไม่ถูกตัด (กติกาเดียวกับ <see cref="FinancialReportAccess.Allows"/>)</param>
+    public static async Task<List<string>?> DeniedMenuIdsAsync(Func<string, Task<bool>> has, Func<Task<(bool Revenue, bool Purchase)>>? visible = null,
+        bool hasCustomRole = true)
     {
         var verdict = new Dictionary<string, bool>(StringComparer.Ordinal);
         async Task<bool> Has(string key)
@@ -93,6 +106,12 @@ public static class MenuPermissionMap
             var any = false;
             foreach (var k in keys) if (await Has(k)) { any = true; break; }
             if (!any) denied.Add(menuId);
+        }
+        foreach (var (menuId, keys) in LegacyKeys.OrderBy(k => k.Key, StringComparer.Ordinal))
+        {
+            var any = false;
+            foreach (var k in keys) if (await Has(k)) { any = true; break; }
+            if (!FinancialReportAccess.Allows(any, member: true, hasCustomRole)) denied.Add(menuId);
         }
         if (visible != null)
         {

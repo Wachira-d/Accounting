@@ -3,8 +3,8 @@ namespace Accounting.Models.Entities;
 /// <summary>
 /// รอบ 285 (คำตัดสิน 285-1…285-6 · ตัวตัดสินเดียว <c>Helpers/CompanyTaxIdVerification</c>) — คำขอ "ยืนยันเลขผู้เสียภาษีของบริษัท" หนึ่งครั้ง:
 /// บริษัทแนบหลักฐาน (ภ.พ.20 / หนังสือรับรองการจดทะเบียน) → ระบบเทียบชื่อกับทะเบียนแบบตรงตัวหลังตัดคำนำหน้า (ไม่ fuzzy) → ผู้ดูแลแพลตฟอร์ม
-/// (SystemAdmin) อนุมัติ/ปฏิเสธ · แถวไม่ถูกลบ (หลักฐานการยืนยันตัวตน) · ไฟล์หลักฐานเก็บผ่าน <c>FileAttachments</c> ชนิด
-/// <c>CompanyTaxIdVerification.AttachmentEntityType</c>
+/// (SystemAdmin) อนุมัติ/ปฏิเสธ · แถวไม่ถูกลบ (หลักฐานการยืนยันตัวตน) · ไฟล์หลักฐานเก็บผ่านที่เก็บไฟล์กลาง <c>IFileStorage</c> โดยตรง
+/// (ไม่ใช่ <c>FileAttachments</c> — กันเส้นไฟล์แนบทั่วไปเปิด/ลบได้ · รอบ 285 ข้อเพิ่ม) · เปิดดูได้เฉพาะเจ้าของบริษัท + ผู้ดูแลแพลตฟอร์ม และบันทึก <c>PdpaPiiAccessLogs</c> ทุกครั้ง
 /// </summary>
 public class CompanyTaxIdVerificationRequest : TenantEntity
 {
@@ -15,7 +15,13 @@ public class CompanyTaxIdVerificationRequest : TenantEntity
     public string CompanyName { get; set; } = "";
     /// <summary><c>CompanyTaxIdVerification.EvidencePp20</c> / <c>EvidenceCompanyCertificate</c></summary>
     public string EvidenceKind { get; set; } = "";
-    public Guid? AttachmentId { get; set; }
+    /// <summary>ตำแหน่งไฟล์ใน <c>IFileStorage</c> (ใต้ <c>AttachmentsRoot/{CompanyId}/CompanyTaxIdEvidence/</c>) · null = ไม่มีไฟล์</summary>
+    public string? EvidenceLocation { get; set; }
+    /// <summary>ชนิดไฟล์ที่ตัดสินจากไบต์ (ไม่ใช่ที่ client บอก)</summary>
+    public string? EvidenceContentType { get; set; }
+    public string? EvidenceFileName { get; set; }
+    /// <summary>ระยะเก็บหลักฐาน (<c>CompanyTaxIdVerification.EvidenceRetainUntil</c>) — ไม่มีทางลบไฟล์ก่อนวันนี้</summary>
+    public DateTime? EvidenceRetainUntil { get; set; }
     /// <summary>SHA-256 ของไฟล์หลักฐาน (hex) — กันไฟล์ถูกสลับหลังยื่น</summary>
     public string? EvidenceSha256 { get; set; }
     /// <summary>ชื่อในทะเบียน (DBD/กรมสรรพากร) ตอนยื่น · null = ทะเบียนไม่ตอบ/ไม่ใช่นิติบุคคล</summary>

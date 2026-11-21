@@ -214,9 +214,14 @@ public class WhtPreCheckDoubleCountDbTests
                 new UpdateTaxReportRequest(null, new List<UpdateTaxReportLineRequest> { new(transport.Id, null, null, null, null, Excluded: true) }));
         Assert.Equal(122.96m, upd.TotalTaxWithheld);
         Assert.Equal(122.96m, upd.LinesTaxTotal);
-        var summary = Assert.Single(upd.Lines, l => l.Side == "summary");
-        Assert.Equal(122.96m, summary.TaxAmount);   // เดิมค้าง 178.65
-        Assert.Equal(4_098.55m, summary.IncomeAmount);
+        // รอบ 284 (T2 L2): ติ๊กออกจนเหลือบรรทัดเดียว ⇒ แถว [สรุป] ถูกลบ (เดิมค้างแถวสรุปของรายที่เหลือหนึ่งบรรทัด) · ยอดหัว/ท้ายตารางเท่าเดิม
+        Assert.DoesNotContain(upd.Lines, l => l.Side == "summary");
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            upd = await new TaxService(req).UpdateTaxReportAsync(s.CompanyId, gen.Id,
+                new UpdateTaxReportRequest(null, new List<UpdateTaxReportLineRequest> { new(transport.Id, null, null, null, null, Excluded: false) }));
+        var summary = Assert.Single(upd.Lines, l => l.Side == "summary");   // ติ๊กกลับ (1 → 2) ⇒ แถวสรุปกลับมา ยอดตามบรรทัดที่นับ
+        Assert.Equal(178.65m, summary.TaxAmount);
+        Assert.Equal(178.65m, upd.TotalTaxWithheld);
         var check = await PreCheckAsync(s.CompanyId, gen.Id);
         Assert.DoesNotContain(check.Findings, f => f.Code == "RD-WHT-002");
     }
