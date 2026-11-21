@@ -180,6 +180,8 @@ public static class AdvisoryLockKey
     public const string RecurringRun = "recurring-run";
     /// <summary>รอบ 255 WP-12B (ฝ่ายค้าน LOW): รับสลิปแจ้งโอน (ตรวจซ้ำ + ยอดสลิปรอตรวจ + สร้างรายการ เป็นหนึ่งเดียว) — part = "submit" ต่อบริษัท</summary>
     public const string SlipEvidence = "slip-evidence";
+    /// <summary>รอบ 286: กันสองสลิปของกุญแจผู้จ่ายที่ไว้ใจได้เดียวกันพร้อมกันเกินเพดานต่อวัน (part = ลายนิ้วมือกุญแจ)</summary>
+    public const string TrustedSlipPayer = "trusted-slip-payer";
     /// <summary>รอบ 255 WP-12B (ฝ่ายค้าน M5): ยอมรับคู่ค้า/ตรวจเพดานจำนวนคู่ — part = "accept" ต่อบริษัท (ล็อกทั้งสองบริษัทเรียงตาม Guid)</summary>
     public const string TradingPartnerAccept = "partner-accept";
     /// <summary>รอบ 264 ฝ่ายค้าน M1: เปิด/สร้างแถวคู่จากคำขอเชื่อม — part = "invite:" + Guid ของอีกฝ่าย (คีย์ต่อคู่เรียง A &lt; B) · กันสองคำขอพร้อมกันชน unique</summary>

@@ -33,10 +33,15 @@ public sealed class SlipAutoRecordService
     private readonly INotificationEngine? _notify;
     /// <summary>282-8: ตัวตัดสินเงินเข้าจากรายการเดินบัญชีตัวเดียว (ผู้บันทึกเงินของเส้นนี้) · null = ไม่มีทางบันทึกเอง (ทุกใบเข้าหน้ายืนยัน)</summary>
     private readonly IBankReceiptSettleService? _bankSettle;
+    /// <summary>รอบ 286: ผู้จ่ายที่ไว้ใจได้ (ประทับกุญแจ · บันทึกล่วงหน้า) · null = พฤติกรรม 282 เดิม</summary>
+    private readonly TrustedSlipPayerService? _trusted;
+    /// <summary>รอบ 286: เรียนกุญแจทันทีเมื่อรายการเดินบัญชียืนยันสลิปนี้แล้ว (ไม่ต้องรอรอบงาน)</summary>
+    private readonly TrustedSlipVerifyService? _trustVerify;
 
     public SlipAutoRecordService(AccountingDbContext db, IPaymentIntentService intents, ILogger<SlipAutoRecordService> logger,
-        Accounting.Services.Storage.IFileStorage? storage = null, INotificationEngine? notify = null, IBankReceiptSettleService? bankSettle = null)
-    { _db = db; _intents = intents; _logger = logger; _storage = storage; _notify = notify; _bankSettle = bankSettle; }
+        Accounting.Services.Storage.IFileStorage? storage = null, INotificationEngine? notify = null, IBankReceiptSettleService? bankSettle = null,
+        TrustedSlipPayerService? trusted = null, TrustedSlipVerifyService? trustVerify = null)
+    { _db = db; _intents = intents; _logger = logger; _storage = storage; _notify = notify; _bankSettle = bankSettle; _trusted = trusted; _trustVerify = trustVerify; }
 
     public const string Actor = "slip-auto";
     public const string ConfirmPageHref = "/pages/payment-intents.html";
@@ -52,7 +57,7 @@ public sealed class SlipAutoRecordService
         var intent = await _db.PaymentIntents.AsNoTracking().FirstOrDefaultAsync(i => i.Id == intentId && i.CompanyId == companyId, ct);
         if (intent == null) return new(false, SlipAutoRecordRule.Codes.ConfirmFailed, "ไม่พบรายการชำระ");
         var doc = await _db.Documents.AsNoTracking().Where(d => d.Id == intent.SourceId && d.CompanyId == companyId && !d.IsDeleted)
-            .Select(d => new { d.DocumentNumber, d.DocumentDate }).FirstOrDefaultAsync(ct);
+            .Select(d => new { d.DocumentNumber, d.DocumentDate, d.ContactId }).FirstOrDefaultAsync(ct);
         var settings = await _db.CompanySettings.AsNoTracking().Where(s => s.CompanyId == companyId)
             .Select(s => new { s.SlipAutoRecordEnabled, s.BankAutoSettleEnabled }).FirstOrDefaultAsync(ct);
 
@@ -113,12 +118,28 @@ public sealed class SlipAutoRecordService
                     $"⚙️ ระบบบันทึกรับเงิน {intent.Amount:N2} บาท ของ {doc!.DocumentNumber} แล้ว (สลิปตรงรายการเดินบัญชี)",
                     $"{money.Reason} · ช่องทาง {SlipAutoRecordRule.ChannelLabel(sourceKind)} — ไม่ถูกต้องให้ยกเลิกการรับชำระที่เอกสาร",
                     "/pages/documents.html?openDoc=" + intent.SourceId, intent.SourceId, ct);
+                // รอบ 286 (คำตัดสิน 286-2 ก): รายการเดินบัญชียืนยันสลิปนี้แล้ว ⇒ ประทับกุญแจผู้โอน + เรียนทันที (ผลจริงจากการผูกบรรทัด ไม่ประทับเอง)
+                if (_trusted != null)
+                {
+                    await _trusted.StampKeyFromSlipAsync(companyId, intentId, doc.ContactId, reading, money, ct);
+                    if (_trustVerify != null) await _trustVerify.LearnAsync(companyId, intentId, DateTime.UtcNow, ct);
+                }
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 _logger.LogError(ex, "บันทึกรับเงินของรายการ {Intent} สำเร็จแล้ว แต่ประทับผล/แจ้งไม่สำเร็จ — สถานะจริง = บันทึกแล้ว", intentId);
             }
             return new(true, verdict.Code, verdict.Reason);
+        }
+        // รอบ 286 (คำสั่งเจ้าของ): ด่าน 282 ผ่านครบเหลือแต่ "ไม่มีรายการเดินบัญชี" ⇒ ผู้จ่ายที่ไว้ใจได้บันทึกล่วงหน้า (ตัวตัดสินเดียว TrustedSlipPayerRule · ตรวจย้อนภายหลัง) ·
+        // ทุกสลิปที่ผูกใบประทับกุญแจไว้ให้เรียนเมื่อรายการเดินบัญชีตามมา · ไม่ใช่ผู้จ่ายที่ไว้ใจได้/เกินเพดาน ⇒ หน้ายืนยันเหมือน 282 + เหตุ
+        if (_trusted != null && doc != null)
+        {
+            var trusted = await _trusted.TryProvisionalAsync(companyId, intentId, reading, verdict, money, sourceKind, ct);
+            if (trusted.Recorded) return new(true, trusted.Code, trusted.Reason);
+            if (verdict.Code == SlipAutoRecordRule.Codes.NoBankLine && trusted.Code is TrustedSlipPayerRule.Codes.Revoked or TrustedSlipPayerRule.Codes.OverMax
+                    or TrustedSlipPayerRule.Codes.OverDaily or TrustedSlipPayerRule.Codes.NoCap or SlipAutoRecordRule.Codes.ConfirmFailed)
+                lineNote = (lineNote == null ? "" : lineNote + " · ") + "ผู้จ่ายที่ไว้ใจได้: " + trusted.Reason;
         }
         var reason = verdict.Reason + (lineNote == null ? "" : " · " + lineNote);
         await StampAsync(companyId, intentId, verdict.Code, reason, "SlipAutoRecordBlocked", verdict, money, ct);

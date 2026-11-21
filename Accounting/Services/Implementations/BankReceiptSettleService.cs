@@ -44,9 +44,13 @@ public class BankReceiptSettleService : IBankReceiptSettleService
     /// <summary>ตรวจสิทธิ์อนุมัติของผู้นำเข้าบรรทัด (H1) — null = ไม่รู้ ⇒ แหล่งที่ต้องตรวจสิทธิ์ = เสนอเท่านั้น</summary>
     private readonly IPermissionService? _perms;
 
+    /// <summary>รอบ 286: ตรวจย้อนรายการรับเงินล่วงหน้าจากผู้จ่ายที่ไว้ใจได้ (ผูกบรรทัดกับการชำระเดิม — ไม่สร้างการชำระที่สอง) · null = ข้าม</summary>
+    private readonly TrustedSlipVerifyService? _trustVerify;
+
     public BankReceiptSettleService(AccountingDbContext db, IDocumentService docs, ILogger<BankReceiptSettleService> logger, INotificationEngine? notify = null,
-        IPermissionService? perms = null)
+        IPermissionService? perms = null, TrustedSlipVerifyService? trustVerify = null)
     {
+        _trustVerify = trustVerify;
         _db = db;
         _docs = docs;
         _logger = logger;
@@ -309,6 +313,10 @@ public class BankReceiptSettleService : IBankReceiptSettleService
             await StampAsync(companyId, line.Id, BankReceiptAutoSettle.Stamps.None, "บัญชีธนาคารนี้ไม่ใช่สกุลบาท — ระบบไม่จับคู่ใบค้างข้ามสกุล", null, nowUtc, ct);
             return;
         }
+
+        // รอบ 286 (คำตัดสิน 286-4): เงินเข้าที่ตรงรายการรับเงินล่วงหน้าจากผู้จ่ายที่ไว้ใจได้ ⇒ ยืนยันรายการนั้น (ผูกกับการชำระเดิม) ก่อนหาใบค้าง —
+        // ไม่ทำ ⇒ ใบถูกปิดแล้ว บรรทัดนี้ไม่มีผู้สมัคร/ไปตัดใบอื่นยอดเท่ากัน และรายการล่วงหน้าถูกแจ้งว่า "ไม่พบเงินเข้า" ผิด ๆ
+        if (_trustVerify != null && await _trustVerify.TryVerifyLineAsync(companyId, line, nowUtc, ct)) return;
 
         var (result, _) = await DecideAsync(companyId, line, companyEnabled, ct);
         if (result.Kind == BankReceiptAutoSettle.Verdict.AutoSettle && result.DocumentId is Guid docId)

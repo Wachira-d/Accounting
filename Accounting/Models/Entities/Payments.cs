@@ -242,6 +242,22 @@ public class PaymentIntent : TenantEntity
     public int ConfirmRemindCount { get; set; }
     public DateTime? ConfirmRemindedAt { get; set; }
 
+    /// <summary>รอบ 286 (คำสั่งเจ้าของ · <c>Helpers/TrustedSlipPayerRule</c>): ลายนิ้วมือ HMAC ของกุญแจผู้โอน (ผู้ติดต่อ + ธนาคาร + เลขบัญชีที่เห็น + ชื่อ + บัญชีผู้รับ) —
+    /// <b>ไม่มีชื่อดิบ</b> · null = สลิปไม่แสดงผู้โอนครบ · ผู้เขียนเดียว <c>TrustedSlipPayerService.StampKeyAsync</c> · ผู้อ่าน: การเรียนรู้/การใช้ความไว้ใจ</summary>
+    public string? TrustKeyHash { get; set; }
+    /// <summary>รอบ 286: ป้ายของกุญแจ (ธนาคาร + เลขปิดบาง · ไม่มีชื่อ) — แสดงที่รายการผู้จ่ายที่ไว้ใจได้</summary>
+    public string? TrustKeyLabel { get; set; }
+    /// <summary>รอบ 286: บัญชีผู้รับของเราในกุญแจ (ตรวจย้อนรายการเดินบัญชีของบัญชีนี้)</summary>
+    public Guid? TrustKeyAccountId { get; set; }
+    /// <summary>รอบ 286: เวลาที่ระบบเรียนกุญแจจากรายการนี้แล้ว (รายการเดินบัญชีจริงยืนยัน) — กันนับซ้ำ</summary>
+    public DateTime? TrustLearnedAt { get; set; }
+    /// <summary>รอบ 286: บันทึกรับเงิน<b>ล่วงหน้า</b>จากผู้จ่ายที่ไว้ใจได้ (ยังไม่มีรายการเดินบัญชี) · กำหนดตรวจย้อน · ผลตรวจ (พบ/ไม่พบ) — สถานะ "ยืนยันแล้ว"
+    /// ประทับได้เฉพาะเมื่อรายการเดินบัญชีผูกกับการชำระนี้จริง (F2 ข้อ 3)</summary>
+    public DateTime? TrustProvisionalAt { get; set; }
+    public DateTime? TrustReviewDueAt { get; set; }
+    public DateTime? TrustVerifiedAt { get; set; }
+    public DateTime? TrustFailedAt { get; set; }
+
     public int AttemptCount { get; set; }
     public DateTime? LastPolledAt { get; set; }
 
@@ -274,4 +290,29 @@ public class PaymentIntentEvent : TenantEntity
     /// <summary>ยอดที่คืนในเหตุการณ์นี้ — เฉพาะเหตุการณ์ที่เพิ่ม <c>PaymentIntent.RefundedAmount</c> (ฝ่ายค้าน R-E2: แยกยอดคืนก่อน/หลัง
     /// วันเงินเข้าของรอบโอน) · null = ไม่ใช่การคืนที่ลงยอดสะสม (หรือคืนก่อนมีคอลัมน์) · ผลรวมต่อรายการต้องเท่ายอดคืนสะสม</summary>
     public decimal? RefundAmount { get; set; }
+}
+
+/// <summary>
+/// รอบ 286 (คำสั่งเจ้าของ · คำตัดสิน 286-1…286-9 · <c>Helpers/TrustedSlipPayerRule</c>) — <b>ผู้จ่ายที่ไว้ใจได้</b> หนึ่งกุญแจต่อแถว
+/// (บริษัทผู้ขาย + ผู้ติดต่อ + ธนาคาร/เลขบัญชี/ชื่อผู้โอน + บัญชีผู้รับ) · เกิดเฉพาะเมื่อสลิปของกุญแจถูกยืนยันด้วยรายการเดินบัญชีจริง ·
+/// ไม่เก็บชื่อผู้โอน (เก็บ HMAC <see cref="KeyHash"/> + ป้ายธนาคาร/เลขปิดบาง) · ถอน/ให้คืนได้รายแถว (audit) · ผู้เขียน <c>TrustedSlipVerifyService</c> (เรียน/ถอนอัตโนมัติ) ·
+/// <c>TrustedSlipPayerService</c> (ผู้ขายถอน/ให้คืน)
+/// </summary>
+public class TrustedSlipPayer : TenantEntity
+{
+    public Guid ContactId { get; set; }
+    public string KeyHash { get; set; } = "";
+    /// <summary>ป้าย "ธนาคาร + เลขปิดบาง" (ไม่มีชื่อ)</summary>
+    public string Label { get; set; } = "";
+    public Guid ReceivingBankAccountId { get; set; }
+    /// <summary>ยอดสูงสุดที่เคยยืนยันด้วยรายการเดินบัญชี (ฐานของเพดานต่อครั้ง × 1.5)</summary>
+    public decimal MaxConfirmedAmount { get; set; }
+    public int ConfirmedCount { get; set; }
+    public DateTime FirstTrustedAt { get; set; }
+    public DateTime LastConfirmedAt { get; set; }
+    public Guid? LearnedFromIntentId { get; set; }
+    public DateTime? RevokedAt { get; set; }
+    /// <summary>ผู้ถอน: <c>user:{id}</c> · <c>system</c> (ตรวจย้อนไม่พบรายการเดินบัญชี)</summary>
+    public string? RevokedBy { get; set; }
+    public string? RevokeReason { get; set; }
 }

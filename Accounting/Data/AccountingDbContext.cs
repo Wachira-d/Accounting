@@ -480,6 +480,7 @@ public class AccountingDbContext : DbContext
     public DbSet<CrossTenantDocumentLink> CrossTenantDocumentLinks => Set<CrossTenantDocumentLink>();
     public DbSet<PartnerLinkRequest> PartnerLinkRequests => Set<PartnerLinkRequest>();   // รอบ 264 (Helpers/PartnerLinkRequestMigration)
     public DbSet<PartnerLinkRequestNotice> PartnerLinkRequestNotices => Set<PartnerLinkRequestNotice>();   // รอบ 280 (Helpers/Round280Migration)
+    public DbSet<TrustedSlipPayer> TrustedSlipPayers => Set<TrustedSlipPayer>();   // รอบ 286 (Helpers/Round286Migration) — ผู้จ่ายที่ไว้ใจได้
     public DbSet<PartnerPaymentPlan> PartnerPaymentPlans => Set<PartnerPaymentPlan>();   // รอบ 264 P4 (Helpers/PartnerPaymentPlanMigration)
     public DbSet<PartnerPaymentNotice> PartnerPaymentNotices => Set<PartnerPaymentNotice>();   // รอบ 258-3 F-H3 (Helpers/PartnerPaymentNoticeMigration)
     public DbSet<PartnerAutomationConsent> PartnerAutomationConsents => Set<PartnerAutomationConsent>();   // รอบ 264 P1 (Helpers/PartnerConsentMigration)
@@ -1237,6 +1238,9 @@ public class AccountingDbContext : DbContext
         modelBuilder.Entity<PaymentIntent>().Property(x => x.SavedCardRef).HasMaxLength(100);   // ฝ่ายค้านรอบ 230 B2
         modelBuilder.Entity<PaymentIntent>().Property(x => x.ReceivingAccountOrigin).HasMaxLength(32);   // รอบ 260-2
         modelBuilder.Entity<PaymentIntent>().Property(x => x.CustomerVisibleRejectReason).HasMaxLength(300);   // รอบ 267 P4
+        modelBuilder.Entity<PaymentIntent>().Property(x => x.TrustKeyHash).HasMaxLength(64);   // รอบ 286
+        modelBuilder.Entity<PaymentIntent>().Property(x => x.TrustKeyLabel).HasMaxLength(120);   // รอบ 286
+        modelBuilder.Entity<CompanySettings>().Property(x => x.SlipTrustedDailyCapPerKey).HasPrecision(18, 2);   // รอบ 286
         modelBuilder.Entity<PartnerPaymentNotice>().Property(x => x.SlipPayerBankCode).HasMaxLength(3);   // รอบ 264 P2
         modelBuilder.Entity<PartnerPaymentNotice>().Property(x => x.SlipPayerAccountMask).HasMaxLength(32);   // รอบ 264 P2
         modelBuilder.Entity<PartnerPaymentNotice>().Property(x => x.SlipPayerMatch).HasMaxLength(16);   // รอบ 264 P4 (L3)
@@ -3853,6 +3857,17 @@ public class AccountingDbContext : DbContext
             e.Property(x => x.Message).HasMaxLength(500);
             e.HasIndex(x => new { x.CompanyId, x.CreatedAt }).HasDatabaseName("IX_PartnerLinkRequests_Company_Created");
             e.HasIndex(x => x.PartnerTaxId).HasFilter("\"AcceptedAt\" IS NULL").HasDatabaseName("IX_PartnerLinkRequests_PartnerTax_Open");   // รอบ 280
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
+        // รอบ 286 — ชื่อ index/คอลัมน์ต้องตรงกับ Helpers/Round286Migration
+        modelBuilder.Entity<TrustedSlipPayer>(e =>
+        {
+            e.Property(x => x.KeyHash).HasMaxLength(64);
+            e.Property(x => x.Label).HasMaxLength(120);
+            e.Property(x => x.RevokedBy).HasMaxLength(64);
+            e.Property(x => x.RevokeReason).HasMaxLength(500);
+            e.Property(x => x.MaxConfirmedAmount).HasPrecision(18, 2);
+            e.HasIndex(x => new { x.CompanyId, x.KeyHash }).IsUnique().HasDatabaseName("IX_TrustedSlipPayers_Company_Key");
             e.HasQueryFilter(x => !x.IsDeleted);
         });
         // รอบ 280 — ชื่อ index/คอลัมน์ต้องตรงกับ Helpers/Round280Migration

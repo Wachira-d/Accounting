@@ -193,6 +193,9 @@ public static class NotificationAudiencePolicy
         Accounting.Models.Constants.NotificationEvents.AutopilotSlipAutoRecorded,
         Accounting.Models.Constants.NotificationEvents.AutopilotSlipNeedsConfirm,
         Accounting.Models.Constants.NotificationEvents.PartnerPaySourceNeedsConfirm,
+        // รอบ 286: รับเงินล่วงหน้าจากผู้จ่ายที่ไว้ใจได้ · ไม่พบเงินเข้า (ต้องถึงเจ้าของแม้ยังไม่ตั้งตาราง)
+        Accounting.Models.Constants.NotificationEvents.AutopilotSlipTrustedProvisional,
+        Accounting.Models.Constants.NotificationEvents.AutopilotSlipTrustedUnverified,
     };
 
     /// <summary>เส้นผู้รับที่ระบุ (บริษัทยังไม่ตั้งคีย์) ส่งอีเมลด้วยไหม — คีย์กระดิ่งเท่านั้น = ไม่ส่ง · อื่น ๆ = กระดิ่ง + อีเมลเหมือนเดิม</summary>

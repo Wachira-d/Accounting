@@ -29,6 +29,19 @@ public static class BusinessDayCalendar
         return x;
     }
 
+    /// <summary>วันทำการที่ <paramref name="n"/> <b>หลัง</b> <paramref name="from"/> (ไม่นับวันเริ่ม) · n ≤ 0 ⇒ <paramref name="from"/> · เพดาน 120 วันกันข้อมูลวันหยุดผิดรูป ·
+    /// รอบ 286: กำหนดตรวจย้อนรายการรับเงินล่วงหน้า (<c>TrustedSlipPayerRule.ReviewDueUtc</c>)</summary>
+    public static DateTime AddBusinessDays(DateTime from, int n, IReadOnlySet<DateTime>? holidays)
+    {
+        var x = from;
+        for (var guard = 0; n > 0 && guard < 120; guard++)
+        {
+            x = x.AddDays(1);
+            if (IsBusinessDay(x, holidays)) n--;
+        }
+        return x;
+    }
+
     /// <summary>จำนวนวันทำการ<b>หลัง</b> <paramref name="from"/> จนถึง <paramref name="to"/> (รวมวันปลาย) — ความหมายเดียวกับ
     /// <c>SettlementPosting.WeekdaysAfter</c> เมื่อชุดวันหยุดว่าง · to ≤ from ⇒ 0 ·
     /// 📋 ผู้อ่าน §87 (<c>SettlementPosting</c> — ไฟล์ทีม ST) ยังไม่ต่อสาย: ต้องส่งชุดวันหยุดผ่าน facts ของผู้ลงบัญชีรอบโอน (internal จนกว่าจะต่อสาย)</summary>
