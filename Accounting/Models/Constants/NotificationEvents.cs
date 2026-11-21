@@ -105,6 +105,10 @@ public static class NotificationEvents
     public const string AutopilotSlipAutoRecorded = "autopilot.slip_auto_recorded";
     /// <summary>รอบ 282 (คำสั่งเจ้าของ 282-6): สลิปผูกใบแล้วแต่ระบบไม่มั่นใจ ⇒ ให้ผู้ขายยืนยันที่หน้ารายการรับชำระ (ครั้งแรก + เตือนซ้ำมีเพดาน) — ผู้ส่งเดียว <c>SlipAutoRecordService</c></summary>
     public const string AutopilotSlipNeedsConfirm = "autopilot.slip_needs_confirm";
+    /// <summary>รอบ 286: บันทึกรับเงินล่วงหน้าจากผู้จ่ายที่ไว้ใจได้ (รอรายการเดินบัญชียืนยัน) / ยืนยันแล้ว — ผู้ส่ง <c>TrustedSlipPayerService</c>/<c>TrustedSlipVerifyService</c></summary>
+    public const string AutopilotSlipTrustedProvisional = "autopilot.slip_trusted_provisional";
+    /// <summary>รอบ 286: รายการรับเงินล่วงหน้าไม่พบรายการเดินบัญชีภายในกำหนด ⇒ ถอนความไว้ใจอัตโนมัติ + ให้ผู้ขายเลือกยกเลิกการรับเงิน (แจ้งแรง) — ผู้ส่งเดียว <c>TrustedSlipVerifyService</c></summary>
+    public const string AutopilotSlipTrustedUnverified = "autopilot.slip_trusted_unverified";
     /// <summary>E-14b: เงินโอนเข้าตรงใบค้างแต่บันทึกรับชำระอัตโนมัติไม่สำเร็จ (งวดปิด · ยอดเปลี่ยน ฯลฯ) — ทันที · รายการค้างในคิว "เงินเข้าที่รอยืนยัน"</summary>
     public const string AutopilotBankSettleFailed = "autopilot.bank_settle_failed";
     /// <summary>E-15: สรุป Autopilot ประจำวัน (ส่งแล้ว · รับเงิน · ใบเสร็จ · แปลงใบเสนอราคา · เงินโอนจับคู่ · เรื่องที่ระบบทำต่อไม่ได้) — วันละครั้งตามเวลาที่บริษัทตั้ง (ค่าตั้งต้น 08:40)</summary>
@@ -257,6 +261,8 @@ public static class NotificationEvents
         ("Accounting", AutopilotSlipSubmitted, "Autopilot: ลูกค้าแจ้งโอน/แนบสลิปผ่านพอร์ทัลหรือหน้าชำระ (รอตรวจ)"),
         ("Accounting", AutopilotSlipAutoRecorded, "Autopilot: ระบบบันทึกรับเงินจากสลิปเองแล้ว (ผ่านทุกด่าน)"),
         ("Accounting", AutopilotSlipNeedsConfirm, "Autopilot: สลิปรอผู้ขายยืนยัน (ระบบไม่มั่นใจพอจะบันทึกเอง — มีเหตุ)"),
+        ("Accounting", AutopilotSlipTrustedProvisional, "Autopilot: บันทึกรับเงินล่วงหน้าจากผู้จ่ายที่ไว้ใจได้ (รอ/ได้รายการเดินบัญชียืนยัน)"),
+        ("Accounting", AutopilotSlipTrustedUnverified, "Autopilot: รับเงินล่วงหน้าแล้วไม่พบเงินเข้าในรายการเดินบัญชี (ถอนความไว้ใจแล้ว — ตรวจ/ยกเลิกการรับเงิน)"),
         ("Accounting", AutopilotBankSettleFailed, "Autopilot: เงินโอนเข้าตรงใบค้างแต่บันทึกรับชำระอัตโนมัติไม่สำเร็จ"),
         ("Accounting", AutopilotDailyDigest, "Autopilot: สรุปประจำวัน (สำเร็จ · รอยืนยัน · เรื่องที่ระบบทำต่อไม่ได้)"),
         ("Accounting", AutopilotPartnerExchange, "Autopilot: คู่ค้า NextAcc ยกเลิกเอกสาร/การรับเงิน/50 ทวิ ที่ส่งเข้ามาแล้ว · คำขอความยินยอม (ตรวจก่อนใช้)"),

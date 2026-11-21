@@ -1505,7 +1505,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **981 ไฟล์ · 10,648 `[Fact]` + 1,440 `[Theory]` (6,842 `InlineData`)** ณ 2026-11-21 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`) | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)**, **ReceiptFormRule (รูปแบบกระดาษหลักฐานรับเงิน · รอบ 203)** |
+| เทสต์ที่มี | **983 ไฟล์ · 10,660 `[Fact]` + 1,440 `[Theory]` (6,842 `InlineData`)** ณ 2026-11-21 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`) | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)**, **ReceiptFormRule (รูปแบบกระดาษหลักฐานรับเงิน · รอบ 203)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
 | CI | ✅ `.github/workflows/ci.yml` — static check → restore → build → test; รันบน PR/push เข้า main/master + `workflow_dispatch` (branch `claude/**` ปิดไว้ กัน mail spam ระหว่างพัฒนา) |
@@ -9332,3 +9332,16 @@ H2 (OCR ไม่พร้อม ⇒ แถวเข้าคิว) ล็อ�
 | T285-09 | Db `ฝ่ายค้านB1_เลขเดียวยืนยันได้บริษัทเดียวต่อสาขา_*` | ธง "ยืนยันแล้วโดยบริษัท X" + id ให้ถอน · อนุมัติ 409 · สาขาอื่นได้ · ถอนของเดิม (แจ้งพร้อมเหตุ) แล้วอนุมัติได้ |
 | T285-10 | Db `CompanyTaxIdVerificationAdminNotifyRound285DbTests` | ยื่นแล้วผู้ดูแลแพลตฟอร์มได้กระดิ่ง · เจ้าของบริษัทผู้ให้บริการ/ผู้ยื่นไม่ได้ |
 | T285-11 | pure `ฝ่ายค้านB1B2_*` + กติกา `_R285_*` ข้อเพิ่ม (R285-3) | ด่านอนุมัติ (บริษัทอื่นยืนยันแล้ว · เหตุผลเมื่อชื่อขัด) · ช่องสาขา · ถอดด่านสิทธิ์เปิดไฟล์ ⇒ checker ฟ้อง |
+
+## รอบ 286 — ผู้จ่ายที่ไว้ใจได้ (`erp-review/2026-11-21/dev-286-trusted-payer-slip.md` · คำตัดสิน 286-1…286-9)
+
+| รหัส | เทสต์ | ล็อกอะไร |
+| --- | --- | --- |
+| T286-01 | Db `TrustedSlipPayerRound286DbTests.T286_01_…` | ยืนยันด้วยรายการเดินบัญชีครั้งแรก ⇒ แถวกุญแจ (ยอดสูงสุด · ไม่มีชื่อ) · สลิปถัดไปตรงกุญแจ ⇒ รับเงินล่วงหน้า (การชำระ ณ วันบนสลิป · audit) · รายการเดินบัญชีตามมา ⇒ ผูกการชำระเดิม (ไม่ซ้ำ) + ยืนยัน + นับเพิ่ม |
+| T286-02 | Db `T286_02_…` | ไม่ตามมาในกำหนด ⇒ ล้ม + ถอนโดยระบบ · ก่อนกำหนดไม่ล้ม · การชำระไม่ถูกยกเลิกเอง · สลิปถัดไปเข้าหน้ายืนยันพร้อมเหตุ "ถูกถอน" |
+| T286-03 | Db `T286_03_…` | ต่างชื่อ/ต่างเลขบัญชี ⇒ ไม่ใช้กุญแจ (ไม่มีการชำระ) · กุญแจใหม่ถูกประทับไว้เรียน |
+| T286-04 | Db `T286_04_…` | เกินเพดานต่อครั้ง (× 1.5) / ต่อวัน ⇒ หน้ายืนยันพร้อมเหตุ · ใบในเพดานผ่าน (ทิศตรงข้าม) |
+| T286-05 | Db `T286_05_…` | ค่าตั้งปิด ⇒ 282 เดิม (`NoBankLine`) แต่ยังเรียน · ผู้ขายถอน ⇒ ไม่ใช้ · ให้คืน ⇒ ใช้ · บริษัทอื่นแตะแถวไม่ได้ · audit · รายชื่อ |
+| T286-06 | Db `T286_06_…` | ผู้ขายกดยืนยันอย่างเดียวไม่เกิดความไว้ใจ · รายการเดินบัญชีจับคู่ภายหลัง ⇒ เกิด |
+| T286-07 | pure `TrustedSlipPayerRound286Tests` (6 เคส) | กุญแจต้องครบ · ลายนิ้วมือไม่ขึ้นกับช่องว่าง/ตัวพิมพ์ แต่ต่างทุกชิ้น + ผูกบริษัท · ไม่มีความลับ ⇒ โยน · ทุกทางของ Decide + ขอบเพดาน · วันทำการ + วันหยุด · ช่วงค่าตั้ง |
+| T286-08 | กติกา `_R286_*` (+8 · เคสฝ่ายค้าน R286-1…3) | ด่าน 282 ก่อนใช้ความไว้ใจ · เรียนเฉพาะเมื่อผูกรายการเดินบัญชี · ตรวจย้อนก่อนหาใบค้าง · ห้ามยกเลิกเงินเอง/ห้ามประทับยืนยันเอง |

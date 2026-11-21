@@ -7532,3 +7532,10 @@ _รอบ 285 (2026-11-21): ยืนยันเลขผู้เสียภ
 - migration `Round285Migration` · เทสต์ pure `CompanyTaxIdVerificationRound285Tests` · Db `CompanyTaxIdVerificationRound285DbTests` · กติกา `_R285_*` · คอมมิต ae317b36
 - ข้อเพิ่ม + ฝ่ายค้าน (285-8…285-12): แจ้งผู้ดูแลแพลตฟอร์มเมื่อยื่น · แจ้งบริษัทเมื่อตัดสินพร้อมเหตุ · หลักฐานผ่าน `IFileStorage` (ไม่ใช่ FileAttachments) เก็บ 5 ปี เปิดได้เฉพาะเจ้าของ+ผู้ดูแล + PiiAccessLog ·
   เลข+สาขาหนึ่งยืนยันได้บริษัทเดียว (ต้องถอนของเดิมก่อน) · ชื่อขัดทะเบียนยื่นได้ติดธง อนุมัติต้องมีเหตุ · ทะเบียนไม่ตอบ LogWarning · Db `CompanyTaxIdVerificationAdminNotifyRound285DbTests` · คอมมิต baca6f2d + 6c0c61fd
+
+## รอบ 286 (2026-11-21 · ผู้จ่ายที่ไว้ใจได้ · `erp-review/2026-11-21/dev-286-trusted-payer-slip.md`)
+
+- คำสั่งเจ้าของ: สลิปที่เคยยืนยัน + จับผู้โอน/เลขบัญชีได้ ⇒ ครั้งถัดไปที่เหมือนเดิม (ต่างแค่วันที่/ref) อนุมัติเอง — ทำพร้อมรั้ว: ความไว้ใจเกิดจากรายการเดินบัญชีจริงเท่านั้น ·
+  บันทึก**ล่วงหน้า** (ค่าตั้งต้นปิด · ≤ ยอดสูงสุด × 1.5 · เพดานต่อวัน) แล้วตรวจย้อนในงานตัดชำระเดิม · ไม่พบใน N วันทำการ ⇒ แจ้งแรง + ถอนอัตโนมัติ (ไม่ยกเลิกเงินเอง)
+- `Helpers/TrustedSlipPayerRule` · `TrustedSlipPayerService` · `TrustedSlipVerifyService` · ตาราง `TrustedSlipPayers` · `Round286Migration` · หน้าตั้งค่าแท็บ LINE + `line-config/trusted-payers`
+- เทสต์ `TrustedSlipPayerRound286Tests` + Db `TrustedSlipPayerRound286DbTests` · คำตัดสิน 286-1…286-9 · commit 19445ff6
