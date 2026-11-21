@@ -75,7 +75,7 @@
 ตรวจในเครื่อง: build ผ่าน · Round283 + Partner* + ReceiptLink + DocumentRestriction + Lodging + Dashboard/Reconcil/Settlement ผ่าน (ตัวที่ล้มมีแต่เทสต์ที่ต้องหา `Accounting.sln` — สภาพแวดล้อม) ·
 required_call_site_check (+6 กติกา · R283-3/4) · using · undeclared · html_escape · test_inventory · node --check
 
-## 8. ด่าน `approved_status_writer_check` (หลัง merge 284/285/286 · commit `SHA283C`)
+## 8. ด่าน `approved_status_writer_check` (หลัง merge 284/285/286 · commit `c463de2a`)
 
 ด่านนี้กัน "เอกสารที่เกิดมาในสถานะออกแล้วนอก `ApproveDocumentAsync` แต่ไม่รันผลข้างเคียงหลังออกเอกสาร" (`IIssuedDocumentHooks` — e-Tax อัตโนมัติ ฯลฯ · ต้องหลัง commit) ·
 ตัวสร้าง PV หลักฐาน (`CreateSettlementPaymentVoucherCoreAsync`) ประทับ `Paid` เอง ⇒ แก้ให้เดินแบบเดียวกับใบเสร็จหลักฐานฝั่งขาย: ตัวช่วยไม่ save เอง ·

@@ -3535,7 +3535,7 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
   (`DocumentRestrictionGuard.MayFinalizeAsync` เงื่อนไขเดียวกับ `EnsureMayFinalizeAsync`) ไม่ผ่าน ⇒ ร่างรออนุมัติ · (LOW-A3) สรุปกระทบยอดธนาคารไม่นับใบหลักฐานซ้ำกับแถวการจ่าย ·
   (LOW-A4) ยกเลิก PV ที่ไม่พบการจ่าย ⇒ audit · Last verified `commit c83fb6d1`
   · **ด่าน approved_status_writer_check**: PV หลักฐานเกิดมา "ออกแล้ว" นอก ApproveDocumentAsync ⇒ รันผลข้างเคียงหลังออกเอกสาร (`_issuedHooks.RunAsync`) **หลัง commit** ทั้งสองเส้น —
-  `CreatePaymentAsync` (ตัวแปร `issuedSettlementVoucher` คู่กับใบเสร็จหลักฐาน) และออกย้อนหลัง · ไม่เพิ่ม baseline · Last verified `commit SHA283C`
+  `CreatePaymentAsync` (ตัวแปร `issuedSettlementVoucher` คู่กับใบเสร็จหลักฐาน) และออกย้อนหลัง · ไม่เพิ่ม baseline · Last verified `commit c463de2a`
 
 ### 2.12g-270 รอบ 270 งานค้างจาก 266/268/269 (คำตัดสิน 270-1-1…5 ใน `erp-review/2026-09-29/DECISIONS.md`)
 
