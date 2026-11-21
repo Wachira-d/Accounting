@@ -344,6 +344,8 @@ public class PartnerAutomationRound288DbTests
             var docs = Docs(new List<ApproveCall>());
             // ยังไม่ยินยอม (การแจ้งเกิดก่อน) ⇒ ไม่มีงาน · ไม่มีรูปข้ามบริษัท
             var (early, _) = await SlipNoticeAsync(db, s, inv, purchase, link, root);
+            // เวลาให้ความยินยอมเก็บระดับวินาที ⇒ การแจ้งในวินาทีเดียวกับการให้นับเป็น "หลังให้" — การแจ้งก่อนให้ในเทสต์ย้อนไป 1 นาที (ไม่ขึ้นกับจังหวะนาฬิกา)
+            await db.PartnerPaymentNotices.Where(n => n.Id == early).ExecuteUpdateAsync(x => x.SetProperty(n => n.CreatedAt, DateTime.UtcNow.AddMinutes(-1)));
             using (var c0 = DbTestDatabase.TryCreateContext()!)
                 Assert.Equal(0, await Pipe(c0, docs, storage).CopySlipsAsync(s.Buyer.Id, DateTime.UtcNow));
             using (var c1 = DbTestDatabase.TryCreateContext()!)

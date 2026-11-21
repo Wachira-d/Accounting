@@ -1505,7 +1505,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **985 ไฟล์ · 10,694 `[Fact]` + 1,441 `[Theory]` (6,850 `InlineData`)** ณ 2026-11-21 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`) | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)**, **ReceiptFormRule (รูปแบบกระดาษหลักฐานรับเงิน · รอบ 203)** |
+| เทสต์ที่มี | **987 ไฟล์ · 10,709 `[Fact]` + 1,441 `[Theory]` (6,850 `InlineData`)** ณ 2026-11-21 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`) | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)**, **ReceiptFormRule (รูปแบบกระดาษหลักฐานรับเงิน · รอบ 203)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
 | CI | ✅ `.github/workflows/ci.yml` — static check → restore → build → test; รันบน PR/push เข้า main/master + `workflow_dispatch` (branch `claude/**` ปิดไว้ กัน mail spam ระหว่างพัฒนา) |
@@ -9369,3 +9369,15 @@ H2 (OCR ไม่พร้อม ⇒ แถวเข้าคิว) ล็อ�
 | T287-05 | pure `TrustedSlipSendImmediatelyRound287Tests` | ค่าตั้งต้นเปิด · `HoldDelivery` ทุกทิศ (เปิด/ปิด/ล้ม/ยืนยัน/ไม่ใช่ล่วงหน้า) · `FailedNextStep` · `DeliveredToBuyer` (ตัวเลขไม่ใช่ชื่อขั้น) · ประโยคความเสี่ยง |
 | T287-07 | Db `T287_05_…` + pure `ระยะตรวจซ้ำ…` · `migration_ปลุก…` | ฝ่ายค้าน MED: งานที่กักตรวจซ้ำ ≤ 1 ชม. · แถว +30 วันของ 286 ถูก migration ปลุก · เปิดค่าตั้งภายหลัง ⇒ ปลุก ⇒ ส่งรอบถัดไป · LOW-2 `LineReceipt` ไม่นับว่าส่ง |
 | T287-06 | กติกา `_R287_*` (+8 · เคส R287-1/2) | `DeliveryHeldAsync` อ่านค่าตั้ง + ตัวตัดสินเดียว · ข้อความล้มอ่านข้อเท็จจริงก่อนประกอบ · ผู้เขียนค่าตั้ง |
+
+## รอบ 288 — งานอัตโนมัติกับคู่ค้า ใช้งานได้ทั้งหมด (`erp-review/2026-11-21/dev-288-partner-consent-scopes.md` · DOCUMENT_FLOW §2.12g-288)
+
+| รหัส | เทสต์ | ล็อกอะไร |
+| --- | --- | --- |
+| T288-01 | Db `PartnerAutomationRound288DbTests.อนุมัติเองในเพดาน_…` | ยินยอม + ในเพดาน + ผังจากโมเดลในบ้าน ≥ 0.85 ⇒ อนุมัติผ่านเส้นเดียวด้วย GUID ผู้ให้ · Unattended · ไม่เรียก AI · audit/ป้าย · เกินเพดาน ⇒ ร่าง + เหตุ · รอบซ้ำเหตุเดิม ⇒ ไม่ลงหมายเหตุ/audit ซ้ำ · hash chain สมบูรณ์ |
+| T288-02 | Db `ผังไม่มั่นใจ_ใบกำกับไม่ครบ_มีคำเตือน_…` | ผังไม่มั่นใจ / ใบกำกับขาด ม.86/4 / มีข้อสังเกตก่อนอนุมัติ (ม.65 ตรี) ⇒ ร่าง + เหตุ · ทิศตรงข้าม: ใบที่คนอนุมัติของผู้ขายรายนี้ทำให้ผังมั่นใจ ⇒ อนุมัติได้ · ใบที่ระบบอนุมัติเองไม่นับ |
+| T288-03 | Db `ไม่ยินยอม_ไม่แตะใบ_ผู้ให้หมดสิทธิ์_…` | ไม่ยินยอม ⇒ ไม่ประเมิน · ผู้ให้ถูกลดสิทธิ์/เฉพาะร่าง ⇒ ไม่อนุมัติ · tenant: ความยินยอมของบริษัทหนึ่งไม่แตะใบบริษัทอื่น · คืนสิทธิ์ ⇒ อนุมัติได้ |
+| T288-04 | Db `สำเนาสลิป_ไม่ยินยอมไม่ส่ง_…` | ReceiveSlipCopy: ไม่ยินยอม ⇒ ไม่มีรูปข้ามบริษัท · ยินยอม ⇒ สำเนาไบต์ตรงแนบใบซื้อของผู้ซื้อครั้งเดียว · การชำระก่อนยินยอมไม่ส่งย้อน · ไฟล์ของบริษัทอื่นไม่ถูกหยิบ · ไม่มีไฟล์เกิดฝั่งผู้ขาย |
+| T288-05 | pure `PartnerAutomationRound288Tests` | `PartnerAutoApprovePolicy` ทุกเหตุ + ทิศตรงข้าม (ใบไม่ใช่ใบกำกับไม่ถูกกันด้วย ม.86/4) · ผังมั่นใจต้องตรงผังบนบรรทัด · ไม่นับข้อ "ยังไม่ได้ต้นฉบับ" · หัก ณ ที่จ่ายชัด/ไม่ชัด · แจ้งครั้งเดียวต่อเหตุ · `PartnerSlipCopyRule` ทุกผล · ทุกขอบเขตต่อสาย · ข้อความหน้าไม่มีเลขรอบ/คำตัดสิน/ชื่อ enum · ป้าย "ยังไม่ได้ยินยอม" |
+| T288-06 | ปรับ `PartnerConsentTests` (ป้ายผล · ReceiveSlipCopy ให้หลังวันต่อสาย + ทิศตรงข้าม GrantedBeforeWired) · `BankPaymentLineMatchTests.H2_…` (ReceiveSlipCopy ต่อสายแล้ว) | ธงต่อสาย/WiredSince ใหม่ไม่ทำให้ขอบเขตอื่นเปลี่ยน |
+| T288-07 | กติกา `_R288_*` (+10 · เคส R288-1…4) | ลำดับในรอบงาน · ความยินยอมตรวจเพื่อเขียนก่อนตัดสิน/อนุมัติ · อนุมัติแบบ Unattended ด้วย GUID ผู้ให้ · ไฟล์สลิปของบริษัทผู้ขายของการแจ้งเท่านั้น · แจ้งครั้งเดียวต่อเหตุ · ลิงก์ intent → ไฟล์ · ด่านเฉพาะร่างของผู้ให้ |

@@ -3374,6 +3374,43 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
   ค่าตั้งต้นตัวเดียว `TrustedSlipPayerRule.DefaultSendImmediately` (ไม่สร้าง `CompanySettings` นอก factory) · `SweepAsync(onlyCompanyId)` จำกัดบริษัทได้ (งานจริง = ทุกบริษัท)
 - เทสต์ pure `TrustedSlipSendImmediatelyRound287Tests` · Db `TrustedSlipSendImmediatelyRound287DbTests` (5) · กติกา `_R287_*` · Last verified commit 0fdbd4f3 · ชุดแก้ฝ่ายค้าน 7aee8ad4
 
+### 2.12g-288 รอบ 288 "งานอัตโนมัติกับคู่ค้า — ใช้งานได้ทั้งหมด" (คำสั่งเจ้าของ · คำตัดสิน 288-1…288-8 · `erp-review/2026-11-21/dev-288-partner-consent-scopes.md`)
+
+- **ขอบเขตทุกตัวของหน้าต่อสายแล้ว** — `PartnerConsent.Scopes` ไม่มี `ReaderWired: false` เหลือ (เทสต์ `ขอบเขตทุกตัวของหน้า_ต่อสายแล้ว_ไม่มีป้ายยังไม่มีผล`) ·
+  `AutoApprovePurchase` + `ReceiveSlipCopy` ได้ `WiredSince` = 2026-11-21 (`AutoApprovePurchaseWiredSince` · `ReceiveSlipCopyWiredSince`) ⇒ แถวที่ให้ไว้ล่วงหน้าก่อนวันนั้น = `GrantedBeforeWired` ต้องยืนยันใหม่ (กติกา L4 เดิม)
+- **อนุมัติใบซื้อจากคู่ค้าเอง (288-1…288-4)** — ผู้อ่าน `PartnerPayablePipeline.AutoApproveDraftsAsync` (ขั้น PartnerPayable ของ `AutopilotJob` — ไม่ทำในคำขอของผู้ขาย) ·
+  ลำดับในรอบ: ผังบัญชีใบร่าง (C-08) ⇒ **อนุมัติเอง** ⇒ สำเนาสลิป ⇒ บันทึกจ่าย (ใบต้องอนุมัติก่อนจ่าย · อนุมัติแล้วการแจ้ง "ผู้ขายรับเงินแล้ว" ของใบนั้นประเมินใหม่ทันที) ·
+  ใบที่ดู = ใบซื้อร่างของบริษัทที่มาจากเอกสารคู่ค้า (`Document.PartnerSourceLinkId` = ลิงก์) ของคู่ที่ยินยอม ภายใน 30 วัน · watermark บนลิงก์ (`CrossTenantDocumentLink.AutoApproveCode/Reason/EvaluatedAt` ·
+  ประเมินซ้ำทุก 15 นาที หรือเมื่อใบถูกแก้หลังประเมิน) · ตัวตัดสินเดียว `Helpers/PartnerAutoApprovePolicy.Decide` — ผ่าน**ครบทุกข้อ**:
+  ความยินยอมตรวจเพื่อเขียน `CheckForWriteAsync(…, AutoApprovePurchase, CapOf(doc))` ในธุรกรรมล็อกที่ถือจนอนุมัติเสร็จ (ยอดรวมบาทก่อนหัก ≤ เพดาน · ผู้ให้ยังมีสิทธิ์อนุมัติซื้อ) ·
+  ผู้ให้ไม่ติด "ทำได้เฉพาะร่าง" (`DocumentRestrictionGuard.UserIsDraftOnlyAsync` — ใหม่ · ใช้ทั้งในด่านนี้และใน `PartnerConsentService.HasNeedAsync` ของ PurchaseApprove/SalesApprove ⇒
+  ผู้ใช้เฉพาะร่างให้ความยินยอมที่อนุมัติแทนไม่ได้ด้วย) · ใบยังเป็นร่าง/ต้นทางไม่ถูกยกเลิก/สกุลบาท/มีบรรทัด · ใบกำกับของผู้ขายครบ ม.86/4 (`TaxInvoiceCompletenessChecker.Evaluate`
+  ตัวเดิม — ไม่นับข้อ "ยังไม่ได้ต้นฉบับ": อนุมัติ ≠ เคลม ภาษีซื้อยังรอต้นฉบับ `PaperRequired`) · ผังทุกบรรทัดมั่นใจ = โมเดลในบ้านตอบผังเดียวกันด้วยความมั่นใจ ≥ 0.85
+  (`AiSuggestionFeedback.LocalModelAnswer/Confidence` ของบรรทัด) **หรือ** ผู้ใช้เคยยืนยันผังนี้กับผู้ขายรายนี้ (`VendorConfirmedAccountsAsync` = ใบฝั่งซื้อที่คนอนุมัติ 24 เดือน ·
+  ไม่นับใบที่มีป้าย `[PARTNER-AUTO-APPROVED]` · หรือคนเลือกผังนี้เองในคำแนะนำ) — คำตอบ AI ภายนอกอย่างเดียวไม่พอ (kill-switch: AI ปิด ⇒ ใบรอคนกดเหมือนเดิม) ·
+  ไม่มีบรรทัดภาษีซื้อต้องห้าม (`IsVatClaimable=false` ที่มี VAT) · หัก ณ ที่จ่ายชัด (`WhtProblem`: ไม่ออกแทน · อัตราตามกฎหมาย ณ วันที่ใบ · หัวใบตรงผลรวมบรรทัด) ·
+  ไม่มีคำเตือนก่อนอนุมัติเลย (`IDocumentService.PreviewApprovalWarningsAsync` ตัวเดิม — รวม ม.65 ตรี · ม.82/5(4)(6) · หัก ณ ที่จ่าย · งวดยื่นแล้ว)
+- **อนุมัติ** — `IDocumentService.ApproveDocumentAsync(companyId, docId, grantor.ToString(), ApprovalAckSource.Unattended, withAiHints: false)` เส้นเดียว (เลข gap-free · ด่านเฉพาะร่าง/อนุมัติตัวเอง ·
+  ตรวจต้นทางสด · คำเตือนที่เกิดใหม่ระหว่างนี้ ⇒ โยน ⇒ ร่างตามเดิม) · ผู้อนุมัติ = GUID ผู้ให้ความยินยอม · หมายเหตุ `[PARTNER-AUTO-APPROVED]` · audit `PartnerPurchaseAutoApproved`
+  (consentId · ผู้ให้ · เพดาน · หลักฐานผังต่อบรรทัด · `XT-AUTO-APPROVE` · usedAi=false) · แจ้งเตือนคีย์ใหม่ `partner.purchase_auto_approved`
+- **ไม่ผ่าน** — ใบยังเป็นร่าง (ระบบไม่ประทับอะไรแทนคน) · เหตุบนลิงก์ทุกครั้ง · เหตุเปลี่ยน ⇒ หมายเหตุ `[PARTNER-AUTO-APPROVE-HOLD]` + audit `PartnerPurchaseAutoApproveHeld` + แจ้งเตือน
+  `partner.purchase_auto_approve_held` ครั้งเดียวต่อเหตุ · เส้นอนุมัติปฏิเสธ ⇒ ข้อความกติกาภาษาไทยส่งต่อ ข้อความภายในของ framework ไม่ขึ้นจอ (`ApproveErrorMessage`)
+- **รับสำเนาสลิปจากคู่ค้า (288-5…288-6)** — ผู้อ่าน `PartnerPayablePipeline.CopySlipsAsync` (งานเบื้องหลังของผู้ซื้อ) · ตัวตัดสิน `Helpers/PartnerSlipCopyRule.Decide`:
+  การแจ้ง "ผู้ขายรับเงินแล้ว" ที่มาจากรายการชำระแบบสลิปที่ผู้ขาย**ยืนยันแล้ว** (`PaymentIntent` ManualSlip · Succeeded · กุญแจ intent + บริษัทผู้ขาย + เอกสารต้นทาง) ⇒
+  ผู้ซื้อยินยอม (`CheckForWriteAsync(…, ReceiveSlipCopy)` ในธุรกรรมล็อก) ⇒ อ่านไฟล์**เฉพาะของรายการนั้น** (`PaymentIntent.SlipAttachmentId` — ใหม่ · ผู้เขียนเดียว `SlipEvidenceService.SubmitAsync`
+  ทุกช่องทาง: พอร์ทัล/หน้าชำระ/แชต/กลุ่ม OA/อีเมล) ⇒ สำเนาเข้าที่เก็บของผู้ซื้อ (`uploads/document-slips/` ไม่เสิร์ฟตรง) แนบที่ใบซื้อปลายทาง
+  (`FileAttachment.CreatedBy = partner-slip-copy`) · `PartnerPaymentNotice.SlipCopyAttachmentId/CheckedAt/Attempts` · audit `PartnerSlipCopyReceived` (ผู้ซื้อ) + `PartnerSlipCopySent` (ผู้ขาย) ·
+  **ไม่ยินยอม ⇒ ไม่อ่าน/ไม่ส่งรูป** (ไม่ประทับว่าตรวจแล้ว) · การชำระก่อนให้ความยินยอม ⇒ ไม่ส่งย้อน · สลิปที่ผู้ซื้อแจ้งโอนจากระบบตัวเอง (`partner-nextacc`) ไม่ส่งกลับ ·
+  รายการก่อนรอบนี้ (ไม่มีลิงก์ไฟล์) ⇒ ไม่เดาไฟล์จากเวลา · อ่านไฟล์ไม่ได้ ⇒ ลอง ≤ 3 ครั้งแล้วเลิก · บันทึกแถวล้ม ⇒ ลบรูปที่เพิ่งเขียน (ไม่ทิ้งข้อมูลกำพร้า)
+- **สลิปกับการบันทึกจ่าย (288-6)** — สำเนาเป็นหลักฐานประกอบ ไม่เปลี่ยนตัวตัดสินแหล่งเงิน: ชั้นสลิปของ `PartnerPaySourceAccount` ป้อนจากธนาคาร + เลขท้ายบนการแจ้งอยู่แล้ว (264-4-7) ·
+  282-10 ต้องเลขท้าย ≥ 4 + ชื่อผู้โอนตรงชื่อบริษัท — การแจ้งไม่เก็บชื่อผู้โอน ⇒ ยังเป็นค่าเลือกไว้ให้ + แจ้งยืนยัน (ไม่บันทึกเองจากสลิปอย่างเดียว)
+- **ข้อความหน้า "งานอัตโนมัติกับคู่ค้า" (288-7)** — เซิร์ฟเวอร์ส่ง `statusLabel` (`PartnerConsent.StatusLabel`: "ใช้อยู่" · "ยังไม่ได้ยินยอม" (เดิม "ไม่ทำงาน") · "ต้องยืนยันใหม่" · "หยุดอยู่ — …") +
+  `what/when/stops` (`PartnerConsent.ExplainOf`) · หน้าแสดงอย่างเดียว · ไม่มีเลขรอบ/คำตัดสิน/ชื่อแพ็ก/ชื่อ enum บนจอ (`EffectNote` · `ConsentDefaultNotAutoNote` · เหตุ `Allows`
+  ใช้ `PartnershipStatusLabel` · "hash" → "ตรวจกับต้นฉบับไม่ตรง" · เหตุ `PartnerAutoRecordPolicy` "การแจ้งรุ่นเก่า") · AutoRecordPayment: บันทึกเองเมื่อรู้บัญชีจากรายการเดินบัญชีหรือผู้ซื้อเลือกตอนจ่าย ·
+  บัญชีตั้งต้น = ค่าเลือกไว้ให้
+- migration `Round288Migration` (คอลัมน์ใหม่ล้วน — ไม่มีของเสียที่ persist) · เทสต์ pure `PartnerAutomationRound288Tests` · Db `PartnerAutomationRound288DbTests` (4) · กติกา `_R288_*` ·
+  Last verified commit f103e4a3
+
 ### 2.12g-264-P2 รอบ 264 แพ็ก P2 "อ่านบัญชีจากสลิป — QR ตรวจสลิป + ผู้โอน/ผู้รับ" (`erp-review/2026-11-12/team-264-a2b-design.md` §3.2/§4 · คำตัดสิน 264-4-1…8)
 
 - **QR (264-4-1)** — `TesseractSlipImageReader.ReadAsync` ถอด QR ในเครื่องก่อน OCR (`SlipQrImageDecoder` = SkiaSharp → ZXing.Net 0.16.9 · ไม่เรียกเครือข่าย · ล้ม = null) ⇒
@@ -3408,7 +3445,7 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
 - **ข้อมูล**: `PartnerAutomationConsents` (`CompanyId` = ผู้ให้ = ฝั่งที่ถูกลงบัญชี · `TradingPartnershipId` · `Scope` ชื่อ enum · `MaxAmount` · `DefaultPayBankAccountId` (เฉพาะ AutoRecord) ·
   `TextVersion` + `EvidenceHash` · ผู้ให้/เวลา · ผู้ถอน/เวลา/เหตุ) · append-only (trigger `TR_PartnerAutomationConsents_AppendOnly`) · unique บางส่วน `(CompanyId, TradingPartnershipId, Scope) WHERE WithdrawnAt IS NULL`
 - **ขอบเขต** (`Helpers/PartnerConsent.Scopes` ตัวเดียว): `PurchaseDrafts` · `ReturnWhtCerts` = **ค่าตั้งทั้งบริษัทเดิม** (`WorkflowAutomationConfig` — ผู้อ่านเดิมไม่แตะ · ต่อคู่ปิดรับ 409) ·
-  `AutoApprovePurchase` · `AutoRecordPayment` (ต้องมีเพดาน + พิมพ์ "ยินยอม") · `ReceiveSlipCopy` — สามตัวนี้ยังไม่มีท่ออ่าน (`ReaderWired=false` ⇒ หน้าแสดง "ยังไม่มีผล") จนแพ็ก P2–P4 ต่อสาย
+  `AutoApprovePurchase` · `AutoRecordPayment` (ต้องมีเพดาน + พิมพ์ "ยินยอม") · `ReceiveSlipCopy` — สามตัวนี้ยังไม่มีท่ออ่าน (`ReaderWired=false` ⇒ หน้าแสดง "ยังไม่มีผล") จนแพ็ก P2–P4 ต่อสาย _(สถานะปัจจุบัน: ต่อสายครบแล้ว — AutoRecordPayment รอบ 264 P3 · AutoApprovePurchase + ReceiveSlipCopy รอบ 288 §2.12g-288)_
 - **ให้ (สองขั้น)**: `POST api/companies/{cid}/partner-consents/preview` (ข้อความ + hash · ไม่เขียน) → `POST …/partner-consents` (hash เดิม + คำยืนยัน) ·
   ด่าน: `CompanySettings.Edit` + ไม่รับ API key · คู่ต้อง Accepted · `RequestProblem` (รูปคำขอ) · `GrantProblemForAsync` (สิทธิ์ของขอบเขตกับผู้กดจริง → 403) · บัญชีจ่ายต้องเป็นของบริษัท+ใช้งาน · `ConfirmProblem` ·
   มีแถวใช้อยู่ ⇒ ถอนแถวเดิม ("แทนที่") + แถวใหม่ในธุรกรรมเดียว · audit `PartnerConsentGranted` / `PartnerConsentWithdrawn` (ruleCode `XT-CONSENT`) ผ่าน `AddChainedAuditLog`
@@ -3496,7 +3533,7 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
   กระดิ่งถึงผู้ขาย (ครั้งเดียวต่อคู่ค้าต่อ 7 วัน · M7) · การแจ้งที่ตามมาปิดด้วย PV ของแผน (`PlanPaymentForNoticeAsync`: ผูกรายการชำระของผู้ขายเดียวกัน หรือ — เมื่อไม่มีรายการของผู้ขาย —
   ยอดเท่ากัน วันห่าง ≤ 3 วัน **ตัวเดียว** ที่ยังไม่ถูกการแจ้งอื่นอ้าง · M3) ⇒ ไม่มี PV ที่สอง (ท่อ · ปุ่มเดียว · ตาข่าย) · หน้าปิดปุ่มระหว่างส่ง + โหลดใหม่หลังสำเร็จ
 - **ความยินยอม (264-5-14 · H2/M7)**: ขอบเขตใหม่ของ**ผู้ขาย** `AcceptPayerSlipCopy` (Need = ตั้งค่าบริษัท + อนุมัติเอกสารขาย · ข้อความพูดถึงคิวรอยืนยันรับเงินและข้อมูลผู้โอน ·
-  `ReaderWired` ตั้งแต่เกิด `WiredFromStart` — ยืนยันใหม่ในอนาคตใช้ `MinTextVersion` ไม่ใช้นาฬิกา) · `ReceiveSlipCopy` กลับเป็นขอบเขตของผู้ซื้อตาม design §4.4(ข) (ยังไม่มีผู้อ่าน · `WiredSince` ของรอบแรกถูกถอด)
+  `ReaderWired` ตั้งแต่เกิด `WiredFromStart` — ยืนยันใหม่ในอนาคตใช้ `MinTextVersion` ไม่ใช้นาฬิกา) · `ReceiveSlipCopy` กลับเป็นขอบเขตของผู้ซื้อตาม design §4.4(ข) (ยังไม่มีผู้อ่าน · `WiredSince` ของรอบแรกถูกถอด) _(รอบ 288: ต่อสายแล้ว — `CopySlipsAsync` §2.12g-288)_
 - **L3 ล้างเลขผู้โอน (264-5-13)**: ตัวเขียนเดียว `ScrubSlipPayerAsync` — ไม่ใช่บัญชีของผู้ซื้อ · **อ่านไม่ได้** (L9ก) · หรือการแจ้งจบแล้ว ⇒ ล้างธนาคาร+เลข เหลือชนิด + audit ไม่มีเลข ·
   บัญชีของเรา (Unique/Many) และยังเปิด ⇒ คงไว้ · เส้นตัดสินอ่านอย่างเดียว
 - **migration** (`Helpers/PartnerPaymentPlanMigration`): ตาราง `PartnerPaymentPlans` (unique `(CompanyId, SellerIntentId)` · unique `(CompanyId, IdempotencyKey)` ในแถวไม่ถูกลบ) ·

@@ -7552,3 +7552,13 @@ _รอบ 285 (2026-11-21): ยืนยันเลขผู้เสียภ
 - `Round287Migration` · เทสต์ `TrustedSlipSendImmediatelyRound287Tests` + Db `TrustedSlipSendImmediatelyRound287DbTests` · กติกา `_R287_*` · คำตัดสิน 287-1…287-5 · commit 0fdbd4f3
 - ชุดแก้ฝ่ายค้าน 287 (คำตัดสิน 287-6/7 · commit 7aee8ad4): งานที่กักตรวจซ้ำตาม `HoldRecheck` แทน 30 วันเสมอ + ปลุกเมื่อเปิดค่าตั้ง/หลัง deploy · คิว LINE ตรวจตัวตัดสินก่อนยิง · LINE นับส่งจาก `SentAt` · `FailAsync` กรองการชำระที่ยกเลิก
 - แก้ CI 44895480747 (commit f65a7f4e): `DefaultSendImmediately` แทน `new CompanySettings()` · `SweepAsync(onlyCompanyId)` + เทสต์ Db 286/287 จำกัดบริษัทของตัวเอง (ฐานร่วมรันขนาน)
+
+## รอบ 288 (2026-11-21 · งานอัตโนมัติกับคู่ค้า ใช้งานได้ทั้งหมด · `erp-review/2026-11-21/dev-288-partner-consent-scopes.md`)
+
+- คำสั่งเจ้าของ "ทำให้ใช้งานได้ทั้งหมด": ขอบเขตที่ค้าง `ReaderWired: false` ต่อสายครบ — `AutoApprovePurchase` (อนุมัติใบซื้อร่างจากคู่ค้าเองภายใต้เพดาน ·
+  ตัวตัดสิน `PartnerAutoApprovePolicy` · `PartnerPayablePipeline.AutoApproveDraftsAsync` · อนุมัติผ่าน `ApproveDocumentAsync` ตัวเดียวด้วย GUID ผู้ให้) +
+  `ReceiveSlipCopy` (สำเนาสลิปที่ผู้ขายยืนยันแล้วแนบใบซื้อของผู้ซื้อ · `PartnerSlipCopyRule` · `CopySlipsAsync` · ลิงก์ `PaymentIntent.SlipAttachmentId`) ·
+  `WiredSince` 2026-11-21 ⇒ แถวล่วงหน้ายืนยันใหม่ · ผู้ใช้ "เฉพาะร่าง" ให้/ใช้ความยินยอมที่อนุมัติแทนไม่ได้ (`DocumentRestrictionGuard.UserIsDraftOnlyAsync`)
+- หน้า "งานอัตโนมัติกับคู่ค้า": ป้ายสถานะ + ทำอะไร/ทำเมื่อไร/หยุดเมื่อไรจากเซิร์ฟเวอร์ (`StatusLabel` · `ExplainOf`) · "ไม่ทำงาน" ⇒ "ยังไม่ได้ยินยอม" · ไม่มีเลขรอบ/คำตัดสิน/ชื่อ enum บนจอ
+- แจ้งเตือนคีย์ใหม่ `partner.purchase_auto_approved` · `partner.purchase_auto_approve_held` · `Round288Migration` · เทสต์ `PartnerAutomationRound288Tests` + Db `PartnerAutomationRound288DbTests` ·
+  กติกา `_R288_*` · คำตัดสิน 288-1…288-8 · commit f103e4a3
