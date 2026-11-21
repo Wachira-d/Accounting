@@ -314,9 +314,9 @@ public class BankReceiptSettleService : IBankReceiptSettleService
             return;
         }
 
-        // รอบ 286 (คำตัดสิน 286-4): เงินเข้าที่ตรงรายการรับเงินล่วงหน้าจากผู้จ่ายที่ไว้ใจได้ ⇒ ยืนยันรายการนั้น (ผูกกับการชำระเดิม) ก่อนหาใบค้าง —
-        // ไม่ทำ ⇒ ใบถูกปิดแล้ว บรรทัดนี้ไม่มีผู้สมัคร/ไปตัดใบอื่นยอดเท่ากัน และรายการล่วงหน้าถูกแจ้งว่า "ไม่พบเงินเข้า" ผิด ๆ
-        if (_trustVerify != null && await _trustVerify.TryVerifyLineAsync(companyId, line, nowUtc, ct)) return;
+        // รอบ 286 (คำตัดสิน 286-4 · ฝ่ายค้าน HIGH-2): เงินเข้าที่เลขอ้างอิงธนาคารตรงรายการรับเงินล่วงหน้า ⇒ ยืนยันรายการนั้น (ผูกกับการชำระเดิม) ก่อนหาใบค้าง ·
+        // ไม่มีเลขอ้างอิงตรง ⇒ ใบค้างที่ยอด/ผู้โอนตรงได้ก่อน (ข้างล่าง) — เหลือจึงลองผูกแบบไม่มีเลขอ้างอิง (มีด่านผู้อ้างสิทธิ์อื่น)
+        if (_trustVerify != null && await _trustVerify.TryVerifyLineAsync(companyId, line, nowUtc, ct, refOnly: true)) return;
 
         var (result, _) = await DecideAsync(companyId, line, companyEnabled, ct);
         if (result.Kind == BankReceiptAutoSettle.Verdict.AutoSettle && result.DocumentId is Guid docId)
@@ -327,6 +327,7 @@ public class BankReceiptSettleService : IBankReceiptSettleService
             if (!ok && error != null) await NotifyFailedAsync(companyId, line, docId, error, ct);
             return;
         }
+        if (_trustVerify != null && await _trustVerify.TryVerifyLineAsync(companyId, line, nowUtc, ct, refOnly: false)) return;
         var stamp = result.Kind == BankReceiptAutoSettle.Verdict.Suggest ? BankReceiptAutoSettle.Stamps.Suggest : BankReceiptAutoSettle.Stamps.None;
         await StampAsync(companyId, line.Id, stamp, result.Reason, result.DocumentId, nowUtc, ct);
     }

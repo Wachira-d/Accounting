@@ -27,7 +27,12 @@ public static class TrustedSlipPayerRule
     public static int MinVisibleDigits => SlipMoneySource.PayerAutoMinDigits;
     public const int DefaultReviewBusinessDays = 3;
     public const decimal DefaultDailyCapPerKey = 50_000m;
-    public const int MaxReviewBusinessDays = 10;
+    /// <summary>ฝ่ายค้าน HIGH-3: รอรายการเดินบัญชีได้นานสุด 5 วันทำการ (ช่วงที่เงินปลอมค้างในระบบ)</summary>
+    public const int MaxReviewBusinessDays = 5;
+    /// <summary>ฝ่ายค้าน HIGH-3: เพดานยอดล่วงหน้าที่ยังไม่ยืนยันรวมทั้งบริษัท (ตั้งต้น) — ความเสียหายสูงสุด ณ เวลาใดเวลาหนึ่งตามค่าตั้งต้น</summary>
+    public const decimal DefaultCompanyOutstandingCap = 100_000m;
+    /// <summary>ฝ่ายค้าน HIGH-3: เพดานยอดล่วงหน้าที่ยังไม่ยืนยันรวมต่อผู้ติดต่อ = ยอดสูงสุดที่เคยยืนยันจริงของผู้ติดต่อนั้น × ค่านี้</summary>
+    public const decimal ContactOutstandingFactor = 1m;
 
     public static class Codes
     {
@@ -40,6 +45,10 @@ public static class TrustedSlipPayerRule
         public const string OverMax = "TrustOverMax";
         public const string OverDaily = "TrustOverDaily";
         public const string NoCap = "TrustNoCap";
+        /// <summary>ฝ่ายค้าน HIGH-3: ยอดล่วงหน้าที่ยังไม่ยืนยันรวม (ต่อผู้ติดต่อ/ทั้งบริษัท) จะเกินเพดาน</summary>
+        public const string OverOutstanding = "TrustOverOutstanding";
+        /// <summary>ฝ่ายค้าน HIGH-3: ผู้ติดต่อถูกล็อกหลังรายการล่วงหน้าไม่พบเงินเข้า (ผู้ขายปลดเอง)</summary>
+        public const string ContactBlocked = "TrustContactBlocked";
         /// <summary>ครบกำหนดตรวจแล้วไม่พบรายการเดินบัญชี (หรือผู้ขายยกเลิกการรับเงิน) — ความไว้ใจของกุญแจถูกถอน</summary>
         public const string Unverified = "TrustUnverified";
     }
@@ -108,7 +117,14 @@ public static class TrustedSlipPayerRule
     /// <param name="SlipReady">ด่านอื่นของ 282 ผ่านครบ เหลือแต่ "ไม่มีรายการเดินบัญชี" (<c>SlipAutoRecordRule.Codes.NoBankLine</c>)</param>
     /// <param name="TodayForKey">ยอดที่บันทึกล่วงหน้าแล้ววันนี้ (วันไทย) ของกุญแจนี้ (ไม่นับที่ถูกถอน/ล้ม)</param>
     /// <param name="DailyCapPerKey">เพดานต่อวันต่อกุญแจที่บริษัทตั้ง · ≤ 0 = ยังไม่ตั้ง ⇒ ไม่ใช้ความไว้ใจ</param>
-    public sealed record Facts(bool SettingOn, bool SlipReady, PayerKey? Key, Trust? Trust, decimal Amount, decimal TodayForKey, decimal DailyCapPerKey);
+    /// <param name="ContactBlocked">ผู้ติดต่อถูกล็อกหลังรายการล่วงหน้าไม่พบเงินเข้า</param>
+    /// <param name="ContactOutstanding">ยอดล่วงหน้าที่ยังไม่ยืนยันของผู้ติดต่อ (ไม่นับรายการนี้)</param>
+    /// <param name="ContactMaxConfirmed">ยอดสูงสุดที่เคยยืนยันจริงในกุญแจที่ไม่ถูกถอนของผู้ติดต่อนี้</param>
+    /// <param name="CompanyOutstanding">ยอดล่วงหน้าที่ยังไม่ยืนยันของทั้งบริษัท (ไม่นับรายการนี้)</param>
+    /// <param name="CompanyOutstandingCap">ค่าตั้งของบริษัท · ≤ 0 = ไม่ใช้ความไว้ใจ</param>
+    public sealed record Facts(bool SettingOn, bool SlipReady, PayerKey? Key, Trust? Trust, decimal Amount, decimal TodayForKey, decimal DailyCapPerKey,
+        bool ContactBlocked = false, decimal ContactOutstanding = 0m, decimal ContactMaxConfirmed = decimal.MaxValue, decimal CompanyOutstanding = 0m,
+        decimal CompanyOutstandingCap = DefaultCompanyOutstandingCap);
 
     public sealed record Verdict(bool Provisional, string Code, string Reason)
     {
@@ -120,14 +136,21 @@ public static class TrustedSlipPayerRule
         if (!f.SettingOn) return No(Codes.SettingOff, "บริษัทยังไม่เปิด “อนุมัติอัตโนมัติจากผู้จ่ายที่ไว้ใจได้”");
         if (!f.SlipReady) return No(Codes.NoKey, "สลิปยังไม่ผ่านด่านพื้นฐาน (ยอด/QR/วันที่/บัญชีผู้รับ) — ไม่ใช้ความไว้ใจ");
         if (f.Key == null) return No(Codes.NoKey, $"สลิปไม่แสดงผู้โอนครบ (ธนาคาร · เลขบัญชีอย่างน้อย {MinVisibleDigits} หลัก · ชื่อ) — เทียบกับผู้จ่ายที่ไว้ใจได้ไม่ได้");
+        if (f.ContactBlocked) return No(Codes.ContactBlocked, "ผู้ติดต่อนี้ถูกล็อกความไว้ใจ (รายการรับเงินล่วงหน้าก่อนหน้าไม่พบเงินเข้า) — ตรวจแล้วกดยืนยันเอง · ปลดล็อกได้ที่หน้าตั้งค่า LINE");
         if (f.Trust == null) return No(Codes.NotTrusted, "ผู้โอนนี้ (ธนาคาร/เลขบัญชี/ชื่อ/บัญชีผู้รับ) ยังไม่เคยถูกยืนยันด้วยรายการเดินบัญชี — ยังไม่ใช่ผู้จ่ายที่ไว้ใจได้");
         if (f.Trust.Revoked) return No(Codes.Revoked, "ความไว้ใจของผู้โอนนี้ถูกถอนแล้ว — ตรวจแล้วกดยืนยันเอง (ให้ความไว้ใจอีกครั้งได้ที่หน้าตั้งค่า LINE)");
-        if (f.DailyCapPerKey <= 0m) return No(Codes.NoCap, "ยังไม่ได้ตั้งเพดานต่อวันของผู้จ่ายที่ไว้ใจได้ — ระบบไม่บันทึกล่วงหน้า");
+        if (f.DailyCapPerKey <= 0m || f.CompanyOutstandingCap <= 0m) return No(Codes.NoCap, "ยังไม่ได้ตั้งเพดานต่อวันของผู้จ่ายที่ไว้ใจได้ — ระบบไม่บันทึกล่วงหน้า");
         var ceiling = PerSlipCeiling(f.Trust.MaxConfirmedAmount);
         if (f.Amount > ceiling)
             return No(Codes.OverMax, $"ยอด {f.Amount:N2} บาท เกินเพดานต่อครั้งของผู้โอนนี้ ({ceiling:N2} = ยอดสูงสุดที่เคยยืนยัน {f.Trust.MaxConfirmedAmount:N2} × {GrowthFactor}) — ตรวจแล้วกดยืนยันเอง");
         if (f.TodayForKey + f.Amount > f.DailyCapPerKey)
             return No(Codes.OverDaily, $"ยอดรวมวันนี้ของผู้โอนนี้จะเกินเพดานต่อวัน {f.DailyCapPerKey:N2} บาท — ตรวจแล้วกดยืนยันเอง");
+        var contactCap = f.ContactMaxConfirmed == decimal.MaxValue ? decimal.MaxValue
+            : Math.Round(f.ContactMaxConfirmed * ContactOutstandingFactor, 2, MidpointRounding.AwayFromZero);
+        if (f.ContactOutstanding + f.Amount > contactCap)
+            return No(Codes.OverOutstanding, $"ยอดรับเงินล่วงหน้าที่ยังรอยืนยันของผู้ติดต่อนี้จะเกิน {contactCap:N2} บาท (ยอดสูงสุดที่เคยยืนยันจริง) — ตรวจแล้วกดยืนยันเอง");
+        if (f.CompanyOutstanding + f.Amount > f.CompanyOutstandingCap)
+            return No(Codes.OverOutstanding, $"ยอดรับเงินล่วงหน้าที่ยังรอยืนยันทั้งบริษัทจะเกินเพดาน {f.CompanyOutstandingCap:N2} บาท — ตรวจแล้วกดยืนยันเอง");
         return new Verdict(true, Codes.Provisional, $"ผู้จ่ายที่ไว้ใจได้ ({f.Key.Label}) · ยอดไม่เกิน {ceiling:N2} · " + ProvisionalLabel);
     }
 
@@ -142,16 +165,30 @@ public static class TrustedSlipPayerRule
     }
 
     /// <summary>ค่าตั้งที่หน้าตั้งค่าส่งมา ⇒ ปัญหา (ข้อความไทย) · null = ใช้ได้</summary>
-    public static string? SettingsProblem(decimal? dailyCap, int? reviewDays)
+    public static string? SettingsProblem(decimal? dailyCap, int? reviewDays, decimal? companyCap = null)
     {
+        if (companyCap is decimal cc && (cc < 0m || cc > 100_000_000m)) return "เพดานยอดล่วงหน้าที่รอยืนยันรวมทั้งบริษัทต้องอยู่ระหว่าง 0 – 100,000,000 บาท";
         if (dailyCap is decimal c && (c < 0m || c > 100_000_000m)) return "เพดานต่อวันของผู้จ่ายที่ไว้ใจได้ต้องอยู่ระหว่าง 0 – 100,000,000 บาท";
         if (reviewDays is int d && (d < 1 || d > MaxReviewBusinessDays)) return $"จำนวนวันทำการที่รอรายการเดินบัญชีต้องอยู่ระหว่าง 1 – {MaxReviewBusinessDays}";
         return null;
     }
 
+    /// <summary>ป้ายสถานะของรายการรับเงินล่วงหน้า (server computes · หน้ารายการรับชำระ/เอกสาร) · null = ไม่ใช่รายการล่วงหน้า</summary>
+    public static string? StatusLabel(DateTime? provisionalAt, DateTime? verifiedAt, DateTime? failedAt)
+        => provisionalAt == null ? null
+            : verifiedAt != null ? "รับล่วงหน้า — ธนาคารยืนยันแล้ว"
+            : failedAt != null ? "รับล่วงหน้า — ไม่พบเงินเข้าตามกำหนด (ตรวจ/ยกเลิกการรับเงิน)"
+            : "รับล่วงหน้า — รอยืนยันจากธนาคาร";
+
+    /// <summary>ล่วงหน้าที่ยังไม่ยืนยัน (ตัวตั้งเดียวของตัวกรอง "ล่วงหน้าที่ยังไม่ยืนยัน" + การกักการส่งเอกสารถึงผู้ซื้อ)</summary>
+    public static bool Unverified(DateTime? provisionalAt, DateTime? verifiedAt) => provisionalAt != null && verifiedAt == null;
+
+    public const string DeliveryHeldNote = "ออกใบเสร็จ/ใบกำกับในระบบแล้ว (ภ.พ.30) — ยังไม่ส่งถึงผู้ซื้อจนกว่ารายการเดินบัญชียืนยัน (รับเงินล่วงหน้า)";
+
     /// <summary>ประโยคความเสี่ยงบนหน้าตั้งค่า (server computes · ภาษาคน)</summary>
     public const string RiskNotice =
         "ความเสี่ยง: ผู้ที่เคยโอนจริงหนึ่งครั้งอาจแต่งรูปสลิปครั้งถัดไปให้เหมือนเดิมได้ (QR ไม่มียอดและเลขบัญชี) — ระบบจึงบันทึกรับเงินแบบ \"ล่วงหน้า\" เท่านั้น " +
-        "ไม่เกิน 1.5 เท่าของยอดสูงสุดที่เคยยืนยัน และไม่เกินเพดานต่อวัน แล้วตรวจย้อนกับรายการเดินบัญชี — ไม่พบในเวลาที่ตั้ง ⇒ แจ้งเตือนแรง ถอนความไว้ใจของผู้โอนนั้นอัตโนมัติ " +
-        "และให้คุณเลือกยกเลิกการรับเงิน (ใบเสร็จ/ใบกำกับที่ออกไปต้องออกใบยกเลิก) · ต้องนำเข้ารายการเดินบัญชีสม่ำเสมอ";
+        "ยอดที่รอยืนยันรวมต่อผู้ติดต่อไม่เกินยอดสูงสุดที่เคยยืนยันจริง และรวมทั้งบริษัทไม่เกินเพดานที่ตั้ง (= ความเสียหายสูงสุด ณ เวลาใดเวลาหนึ่ง) แล้วตรวจย้อนกับรายการเดินบัญชี " +
+        "(ความไว้ใจเกิดเฉพาะเมื่อเลขอ้างอิงบนรายการเดินบัญชีตรงสลิป) — ไม่พบในเวลาที่ตั้ง (สูงสุด 5 วันทำการ) ⇒ แจ้งเตือนแรง ถอนความไว้ใจทุกผู้โอนของผู้ติดต่อนั้นและล็อกจนคุณปลดเอง " +
+        "และให้คุณเลือกยกเลิกการรับเงิน · ใบเสร็จ/ใบกำกับออกในระบบทันที (ภ.พ.30) แต่ไม่ส่งถึงผู้ซื้อจนกว่าธนาคารยืนยัน · ต้องนำเข้ารายการเดินบัญชีสม่ำเสมอ";
 }

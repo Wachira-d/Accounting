@@ -15365,6 +15365,22 @@ public partial class DocumentService : IDocumentService
     /// ใบกำกับ) → VatAmount=0. สร้างตรงเป็น Status=Paid ไม่ผ่าน ApproveDocumentAsync
     /// จึงไม่ตัดหนี้ซ้ำผ่าน ApplySourceDocumentAdjustments. หัวพิมพ์ = "ใบเสร็จรับเงิน"
     /// (Receipt + VAT=0 ไม่ upgrade เป็นใบกำกับ).</summary>
+    /// <summary>ในธุรกรรมของ <see cref="CreatePaymentAsync"/>: ตัดสิน + สร้างใบสำคัญจ่ายหลักฐาน · <paramref name="strict"/> (ผู้เรียกขอเอง เช่น ท่ออัตโนมัติ) + ออกไม่ได้ ⇒ โยน
+    /// (การจ่ายทั้งก้อน rollback — ไม่มี "จ่ายแล้วไม่มีใบ" เงียบ ๆ) · ผู้เรียกรัน IssuedDocumentHooks ของใบนี้หลัง commit · ไม่ strict (ค่าตั้งต้นของใบจากคู่ค้า) + ออกไม่ได้ ⇒ คืนเหตุให้ผู้เรียกแสดงในคำตอบการจ่าย (null = ออกแล้ว/มีอยู่แล้ว)</summary>
+    private async Task<(Document? Voucher, string? SkipNote)> IssueSettlementPaymentVoucherInPaymentAsync(Guid companyId, Document source, Payment payment, string actor, bool strict)
+    {
+        var decision = Accounting.Helpers.SettlementPaymentVoucher.Decide(await SettlementVoucherFactsAsync(companyId, payment, source));
+        if (decision.Action == Accounting.Helpers.SettlementPaymentVoucher.IssueAction.AlreadyIssued) return (null, null);
+        if (decision.Action != Accounting.Helpers.SettlementPaymentVoucher.IssueAction.Issue)
+        {
+            if (strict) throw new Accounting.Helpers.BusinessRuleException(decision.Reason, Accounting.Helpers.SettlementPaymentVoucher.RuleCode, 409);
+            return (null, "ไม่ได้ออกใบสำคัญจ่ายของการจ่ายนี้: " + decision.Reason);
+        }
+        var pv = await CreateSettlementPaymentVoucherCoreAsync(companyId, source, payment, actor, backfilled: false);
+        await _db.SaveChangesAsync();
+        return (pv, null);
+    }
+
     private async Task<Document> CreateSettlementReceiptAsync(
         Guid companyId, Document invoice, Payment payment, string createdBy,
         bool issueApproved = true, bool carryVatFromSource = false,
@@ -15842,6 +15858,7 @@ public partial class DocumentService : IDocumentService
         // ใบเสร็จ settlement ที่ออกในรอบนี้ — ส่งให้ผลข้างเคียงหลังออกเอกสาร **หลัง commit** (C-3)
         // (reset ทุกรอบของ execution strategy — รอบที่ rollback ต้องไม่ค้างค่า)
         Document? issuedSettlementReceipt = null;
+        Document? issuedSettlementVoucher = null;   // รอบ 283: ใบสำคัญจ่ายหลักฐานของการจ่ายนี้ — ผลข้างเคียงหลังออกเอกสารหลัง commit
         string? receiptIssueFailure = null;   // รอบ 258-3 F-M2
         // Lock document row to prevent concurrent overpayment
         var doc = await _db.Documents
@@ -16263,7 +16280,7 @@ public partial class DocumentService : IDocumentService
             // ผู้ประสานงาน ข้อ 2: ใบซื้อจากคู่ค้า ⇒ ทุกทางเข้า (ปุ่มเดียว · แจ้งโอน P4 · บันทึกชำระมือ) ได้ PV เหมือนท่อ — ตัวตัดสินเดียว · ใบซื้อทั่วไปไม่แตะ
             string? voucherSkipNote = null;
             if (Accounting.Helpers.SettlementPaymentVoucher.IssueOnPayment(request.IssuePaymentVoucherDocument, doc.DocumentType, doc.PartnerSourceLinkId != null))
-                voucherSkipNote = await IssueSettlementPaymentVoucherInPaymentAsync(companyId, doc, payment, createdBy,
+                (issuedSettlementVoucher, voucherSkipNote) = await IssueSettlementPaymentVoucherInPaymentAsync(companyId, doc, payment, createdBy,
                     Accounting.Helpers.SettlementPaymentVoucher.StrictOnPayment(request.IssuePaymentVoucherDocument));
 
             // tax point §78/1: รับชำระใบแจ้งหนี้บริการ (modal ชำระเงิน) → VAT ที่พัก
@@ -16286,6 +16303,9 @@ public partial class DocumentService : IDocumentService
 
             // ★ รอบ 193 ฝ่ายค้าน C-3 — ใบเสร็จที่เป็นใบกำกับ ณ วันรับเงิน (§78/1) ได้ e-Tax อัตโนมัติเหมือนเส้นอนุมัติ
             // (hook ไม่ throw · ใบเสร็จเปล่า/ร่าง = ข้ามในตัว hook)
+            // รอบ 283 (approved_status_writer_check): ใบสำคัญจ่ายหลักฐานที่เกิดมาออกแล้ว ⇒ ผลข้างเคียงหลังออกเอกสารตัวเดียวกับเส้นอนุมัติ · หลัง commit · hook ไม่โยน
+            if (issuedSettlementVoucher != null)
+                await _issuedHooks.RunAsync(companyId, issuedSettlementVoucher);
             if (issuedSettlementReceipt != null)
             {
                 await _issuedHooks.RunAsync(companyId, issuedSettlementReceipt);
@@ -16316,7 +16336,9 @@ public partial class DocumentService : IDocumentService
             // SyncWhtCreditReceivedAsync (ในธุรกรรมข้างบน — แถวรอ 50 ทวิ มีก่อนงานตรวจ) · ทางเข้าที่มีเส้นใบเสร็จของตัวเอง = แถว Skipped พร้อมเหตุ ·
             // ไม่โยน (เงินบันทึกแล้ว — Error log)
             await PostPaymentAutomationService.EnqueueCoreAsync(_db, _logger, companyId, payment.Id, source, createdBy, CancellationToken.None);
-            await NotifyPartnerOfSellerPaymentAsync(companyId, payment.Id, source);   // รอบ 264 P3 (C-04): แจ้งผู้ซื้อคู่ค้าจากทุกทางเข้า · ไม่โยน
+            // รอบ 286 (ฝ่ายค้าน MED-1): การรับเงินล่วงหน้าที่ธนาคารยังไม่ยืนยันไม่แจ้งผู้ซื้อคู่ค้า — ตัวตรวจย้อนแจ้งเมื่อยืนยันแล้ว
+            if (!await TrustedSlipVerifyService.DeliveryHeldAsync(_db, companyId, payment.Id))
+                await NotifyPartnerOfSellerPaymentAsync(companyId, payment.Id, source);   // รอบ 264 P3 (C-04): แจ้งผู้ซื้อคู่ค้าจากทุกทางเข้า · ไม่โยน
 
             // Webhooks — payment.received (always) + document.paid
             // (when BalanceDue is now zero). Both fire outside the
@@ -16977,6 +16999,21 @@ public partial class DocumentService : IDocumentService
             return (null, null);
         }
 
+        // รอบ 286 (ฝ่ายค้าน LOW): ป้ายรับล่วงหน้าของการชำระที่มาจากรายการชำระ (PAY-INTENT-…) — ตัวตั้งเดียว TrustedSlipPayerRule.StatusLabel
+        var intentIdOf = new Dictionary<Guid, Guid>();
+        foreach (var p in payments)
+            if (GatewayPaymentRecord.TryParseIntentId(p.Reference, out var iid)) intentIdOf[p.Id] = iid;
+        var trustLabels = new Dictionary<Guid, string>();
+        if (intentIdOf.Count > 0)
+        {
+            var iids = intentIdOf.Values.Distinct().ToList();
+            var trustRows = await _db.PaymentIntents.AsNoTracking()
+                .Where(i => i.CompanyId == companyId && iids.Contains(i.Id) && i.TrustProvisionalAt != null)
+                .Select(i => new { i.Id, i.TrustProvisionalAt, i.TrustVerifiedAt, i.TrustFailedAt }).ToListAsync();
+            foreach (var t in trustRows)
+                if (TrustedSlipPayerRule.StatusLabel(t.TrustProvisionalAt, t.TrustVerifiedAt, t.TrustFailedAt) is string tl) trustLabels[t.Id] = tl;
+        }
+
         var rows = payments.Select(p =>
         {
             var rec = ReceiptOf(p);   // คำนวณครั้งเดียวต่อแถว
@@ -16996,7 +17033,8 @@ public partial class DocumentService : IDocumentService
                 // (หน้าเว็บไม่เสนอ "ออกใบเสร็จ" ของการชำระก้อนที่ผูกใบอื่นเป็นหลัก)
                 UnappliedCredit: p.UnappliedAmount,
                 Source: documentId.HasValue && PaymentEffectiveDocument.Of(p) != documentId.Value ? "allocation" : "payment",
-                AllocatedToDocument: allocatedToDoc.TryGetValue(p.Id, out var allocatedHere) ? allocatedHere : (decimal?)null);
+                AllocatedToDocument: allocatedToDoc.TryGetValue(p.Id, out var allocatedHere) ? allocatedHere : (decimal?)null,
+                ProvisionalLabel: intentIdOf.TryGetValue(p.Id, out var pi) && trustLabels.TryGetValue(pi, out var plabel) ? plabel : null);
         }).ToList();
 
         // ── รวมเอกสาร settle จากเส้น "แปลงเอกสาร" (ไม่มี Payment row) ──

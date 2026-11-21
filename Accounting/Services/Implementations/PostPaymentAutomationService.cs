@@ -259,6 +259,13 @@ public class PostPaymentAutomationService : IPostPaymentAutomationService
             run.Status = r.Status;
             run.Message = Trim(r.Message);
             run.CompletedAt = DateTime.UtcNow;
+            if (r.Status == PostPaymentAutomationPolicy.StatusPending)
+            {
+                // รอบ 286 (ฝ่ายค้าน MED-1): กักการส่งของการรับล่วงหน้า — รอผู้ปล่อย (ไม่นับเป็นครั้งที่ล้ม · ไม่ปิดงาน)
+                run.CompletedAt = null;
+                run.Attempts = Math.Max(0, run.Attempts - 1);
+                run.NextAttemptAt = DateTime.UtcNow.AddDays(30);
+            }
             run.UpdatedAt = DateTime.UtcNow;
             await _db.SaveChangesAsync(ct);
             if (r.Status == PostPaymentAutomationPolicy.StatusBlocked)
@@ -415,9 +422,14 @@ public class PostPaymentAutomationService : IPostPaymentAutomationService
         var blocked = new List<string>(plan.Blocked);
         var receiptId = receipt?.Id ?? run.ReceiptDocumentId;
         var halt = false;
+        // รอบ 286 (ฝ่ายค้าน MED-1): การรับเงินล่วงหน้าจากผู้จ่ายที่ไว้ใจได้ที่ธนาคารยังไม่ยืนยัน ⇒ ออกใบในระบบได้ (ภ.พ.30 · คำตัดสิน 286-6) แต่ไม่ส่งถึงผู้ซื้อ —
+        // งานกลับมารอ (ไม่นับครั้ง) จนตัวตรวจย้อนปล่อย (TrustedSlipVerifyService.ReleaseDeliveryAsync)
+        var deliveryHeld = await TrustedSlipVerifyService.DeliveryHeldAsync(_db, cid, payment.Id, ct);
+        var deferred = false;
         foreach (var step in plan.Steps)
         {
             if (halt) break;
+            if (deliveryHeld && step != PostPaymentAutomationPolicy.Step.IssueReceipt) { deferred = true; break; }
             if (Done(run, step)) continue;
             switch (step)
             {
@@ -505,6 +517,8 @@ public class PostPaymentAutomationService : IPostPaymentAutomationService
             }
         }
         var msg = string.Join(" · ", done.Concat(blocked).Concat(plan.Notes));
+        if (deferred && blocked.Count == 0)
+            return new RunResult(PostPaymentAutomationPolicy.StatusPending, string.Join(" · ", done.Append(TrustedSlipPayerRule.DeliveryHeldNote)), doc.DocumentNumber, receiptId);
         return blocked.Count > 0
             ? new RunResult(PostPaymentAutomationPolicy.StatusBlocked, msg, doc.DocumentNumber, receiptId)
             : new RunResult(PostPaymentAutomationPolicy.StatusDone, msg.Length == 0 ? "ทำครบแล้ว" : msg, doc.DocumentNumber, receiptId);

@@ -130,21 +130,6 @@ public partial class DocumentService
         return new(true, payment.IsDeleted, payment.Amount, source.DocumentType, source.Status, source.IsDeleted, existing, converted);
     }
 
-    /// <summary>ในธุรกรรมของ <see cref="CreatePaymentAsync"/>: ตัดสิน + สร้างใบสำคัญจ่ายหลักฐาน · <paramref name="strict"/> (ผู้เรียกขอเอง เช่น ท่ออัตโนมัติ) + ออกไม่ได้ ⇒ โยน
-    /// (การจ่ายทั้งก้อน rollback — ไม่มี "จ่ายแล้วไม่มีใบ" เงียบ ๆ) · ไม่ strict (ค่าตั้งต้นของใบจากคู่ค้า) + ออกไม่ได้ ⇒ คืนเหตุให้ผู้เรียกแสดงในคำตอบการจ่าย (null = ออกแล้ว/มีอยู่แล้ว)</summary>
-    private async Task<string?> IssueSettlementPaymentVoucherInPaymentAsync(Guid companyId, Document source, Payment payment, string actor, bool strict)
-    {
-        var decision = SettlementPaymentVoucher.Decide(await SettlementVoucherFactsAsync(companyId, payment, source));
-        if (decision.Action == SettlementPaymentVoucher.IssueAction.AlreadyIssued) return null;
-        if (decision.Action != SettlementPaymentVoucher.IssueAction.Issue)
-        {
-            if (strict) throw new BusinessRuleException(decision.Reason, SettlementPaymentVoucher.RuleCode, 409);
-            return "ไม่ได้ออกใบสำคัญจ่ายของการจ่ายนี้: " + decision.Reason;
-        }
-        await CreateSettlementPaymentVoucherCoreAsync(companyId, source, payment, actor, backfilled: false);
-        await _db.SaveChangesAsync();
-        return null;
-    }
 
     /// <summary>
     /// "ออกใบสำคัญจ่ายย้อนหลัง" ให้การจ่ายที่บันทึกไปแล้ว (เฉพาะแถวที่ผู้ใช้เลือก) — <b>ไม่ลง JE ซ้ำ</b> · ไม่แตะยอดหนี้ · ไม่ออก 50 ทวิ ·
@@ -173,6 +158,7 @@ public partial class DocumentService
             var pv = await CreateSettlementPaymentVoucherCoreAsync(companyId, source!, payment!, actor, backfilled: true);
             await _db.SaveChangesAsync();
             await tx.CommitAsync();
+            await _issuedHooks.RunAsync(companyId, pv);   // ผลข้างเคียงหลังออกเอกสาร (ตัวเดียวกับเส้นอนุมัติ) หลัง commit · ร่าง = hook ข้ามเอง
             return new SettlementVoucherResult(paymentId, decision.Action, pv.Id, pv.DocumentNumber, decision.Reason);
         });
     }

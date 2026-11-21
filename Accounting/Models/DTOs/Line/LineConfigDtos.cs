@@ -49,7 +49,9 @@ public record LineConfigResponse(
     bool SlipTrustedAuto = false,
     decimal SlipTrustedDailyCap = 50_000m,
     int SlipTrustedReviewDays = 3,
-    string? SlipTrustedRiskNotice = null);
+    string? SlipTrustedRiskNotice = null,
+    /// <summary>รอบ 286 (ฝ่ายค้าน HIGH-3): เพดานยอดล่วงหน้าที่รอยืนยันรวมทั้งบริษัท</summary>
+    decimal SlipTrustedCompanyCap = 100_000m);
 
 /// <summary>รอบ 259 (A-M6) · รอบ 260-4 (คำตัดสิน 260-4-3): ปลายทางทดสอบหนึ่งตัว — <paramref name="Key"/> = <c>LineOaHealth.TeamGroupTargetKey</c> หรือ
 /// <c>LineOaHealth.EndpointTargetKey</c> (เซิร์ฟเวอร์อ่าน id เอง · ไม่มี LINE id ใน DTO) · <paramref name="ReachesContact"/> = ข้อความทดสอบถึงผู้รับของผู้ติดต่อ (หน้าถามยืนยันก่อน)</summary>
@@ -93,7 +95,8 @@ public record UpdateLineConfigRequest(
     /// <summary>รอบ 286: ผู้จ่ายที่ไว้ใจได้ · null = คงเดิม</summary>
     bool? SlipTrustedAuto = null,
     decimal? SlipTrustedDailyCap = null,
-    int? SlipTrustedReviewDays = null);
+    int? SlipTrustedReviewDays = null,
+    decimal? SlipTrustedCompanyCap = null);
 
 /// <summary>รอบ 286: ผู้ขายถอนความไว้ใจรายกุญแจ (เหตุไม่บังคับ)</summary>
 public record TrustedSlipPayerRevokeRequest(string? Reason);

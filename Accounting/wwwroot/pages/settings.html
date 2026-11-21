@@ -167,6 +167,7 @@
       <div id="taxIdVerifyBox" style="display:none;margin:-4px 0 12px;padding:10px 12px;border:1px solid #e2e8f0;border-radius:8px;background:#f8fafc;font-size:13px">
         <div><b>สถานะยืนยันเลขผู้เสียภาษี:</b> <span id="tivStatus">-</span></div>
         <div id="tivDetail" style="color:#64748b;font-size:12px;margin-top:4px"></div>
+        <button type="button" class="btn btn-secondary" id="tivEvidence" style="display:none;margin-top:6px;font-size:12px">เปิดไฟล์หลักฐานที่ยื่น</button>
         <div id="tivForm" style="display:none;margin-top:8px;gap:8px;flex-wrap:wrap;align-items:center">
           <select id="tivKind" class="form-select" style="max-width:280px"></select>
           <input type="file" id="tivFile" accept="application/pdf,image/png,image/jpeg,image/webp">
@@ -1200,7 +1201,8 @@
         </label>
         <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:8px;font-size:13px">
           <label>เพดานต่อวันต่อผู้โอน (บาท) <input type="number" id="slipTrustedDailyCap" min="0" step="0.01" class="form-input" style="width:150px" /></label>
-          <label>รอรายการเดินบัญชี (วันทำการ) <input type="number" id="slipTrustedReviewDays" min="1" max="10" step="1" class="form-input" style="width:80px" /></label>
+          <label>รอรายการเดินบัญชี (วันทำการ · ไม่เกิน 5) <input type="number" id="slipTrustedReviewDays" min="1" max="5" step="1" class="form-input" style="width:80px" /></label>
+          <label>ยอดล่วงหน้าที่รอยืนยันรวมทั้งบริษัท (บาท) <input type="number" id="slipTrustedCompanyCap" min="0" step="0.01" class="form-input" style="width:150px" /></label>
         </div>
         <div style="margin-top:8px"><button type="button" class="btn btn-secondary btn-sm" onclick="Page._loadTrustedPayers(Layout.getCompanyId())">ดูรายชื่อผู้จ่ายที่ไว้ใจได้</button></div>
         <div id="trustedPayersList" style="font-size:12px;margin-top:8px"></div>
@@ -2260,6 +2262,7 @@
           { const ta = document.getElementById('slipTrustedAuto'); if (ta) ta.checked = c.slipTrustedAuto === true;
             const tc = document.getElementById('slipTrustedDailyCap'); if (tc) tc.value = c.slipTrustedDailyCap ?? '';
             const td = document.getElementById('slipTrustedReviewDays'); if (td) td.value = c.slipTrustedReviewDays ?? '';
+            const tcc = document.getElementById('slipTrustedCompanyCap'); if (tcc) tcc.value = c.slipTrustedCompanyCap ?? '';
             const tr = document.getElementById('slipTrustedRisk'); if (tr) tr.textContent = c.slipTrustedRiskNotice ? '⚠️ ' + c.slipTrustedRiskNotice : ''; }   // รอบ 282 — ค่าจากเซิร์ฟเวอร์ (ค่าตั้งต้นปิด)   // รอบ 260 — ค่าจากเซิร์ฟเวอร์ (ค่าตั้งต้นเปิด)
           this._renderLineCustomerChannel(c.customerChannel);
           this._renderLineRelinkInvite(c.relinkInvite, c.webhookProblem);
@@ -2393,6 +2396,7 @@
           slipTrustedAuto: !!(document.getElementById('slipTrustedAuto') || {}).checked,
           slipTrustedDailyCap: (v => v === '' ? null : Number(v))((document.getElementById('slipTrustedDailyCap') || { value: '' }).value.trim()),
           slipTrustedReviewDays: (v => v === '' ? null : Number(v))((document.getElementById('slipTrustedReviewDays') || { value: '' }).value.trim()),
+          slipTrustedCompanyCap: (v => v === '' ? null : Number(v))((document.getElementById('slipTrustedCompanyCap') || { value: '' }).value.trim()),
         };
         try {
           const j = await API.put(`/api/companies/${cid}/line-config`, body);
@@ -2692,6 +2696,10 @@
         }
         if (s.cannotSubmitReason) parts.push(s.cannotSubmitReason);
         document.getElementById('tivDetail').textContent = parts.join(' · ');
+        // ข้อเพิ่มรอบ 285: เจ้าของบริษัทเปิดไฟล์หลักฐานที่ยื่นได้ (เซิร์ฟเวอร์ตัดสิน canViewEvidence · ทุกครั้งที่เปิดถูกบันทึก PiiAccessLog)
+        const ev = document.getElementById('tivEvidence');
+        ev.style.display = lr && lr.canViewEvidence === true ? '' : 'none';
+        ev.onclick = () => API.download(`/api/companies/${cid}/tax-id-verification/${lr.id}/evidence`, 'taxid-evidence').catch(e => Layout.toast(e.message, 'error'));
         document.getElementById('tivEffect').textContent = s.effect || '';
         const form = document.getElementById('tivForm');
         form.style.display = s.canSubmit === true ? 'flex' : 'none';

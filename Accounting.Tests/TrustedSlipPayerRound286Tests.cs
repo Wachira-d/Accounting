@@ -79,6 +79,32 @@ public class TrustedSlipPayerRound286Tests
     }
 
     [Fact]
+    public void ฝ่ายค้านHIGH3_ยอดค้างยืนยันต่อผู้ติดต่อและทั้งบริษัท_ผู้ติดต่อถูกล็อก_เกินแล้วหน้ายืนยัน()
+    {
+        var baseF = F() with { ContactMaxConfirmed = 1_000m, CompanyOutstandingCap = 100_000m };
+        Assert.True(TrustedSlipPayerRule.Decide(baseF).Provisional);                                                    // 0 + 1,000 ≤ 1,000
+        Assert.Equal(TrustedSlipPayerRule.Codes.OverOutstanding, TrustedSlipPayerRule.Decide(baseF with { ContactOutstanding = 0.01m }).Code);
+        Assert.Equal(TrustedSlipPayerRule.Codes.OverOutstanding, TrustedSlipPayerRule.Decide(baseF with { CompanyOutstanding = 99_000.01m }).Code);
+        Assert.True(TrustedSlipPayerRule.Decide(baseF with { CompanyOutstanding = 99_000m }).Provisional);              // ขอบรวม
+        Assert.Equal(TrustedSlipPayerRule.Codes.ContactBlocked, TrustedSlipPayerRule.Decide(baseF with { ContactBlocked = true }).Code);
+        Assert.Equal(TrustedSlipPayerRule.Codes.NoCap, TrustedSlipPayerRule.Decide(baseF with { CompanyOutstandingCap = 0m }).Code);
+        Assert.Equal("รับล่วงหน้า — รอยืนยันจากธนาคาร", TrustedSlipPayerRule.StatusLabel(DateTime.UtcNow, null, null));
+        Assert.Null(TrustedSlipPayerRule.StatusLabel(null, null, null));
+        Assert.True(TrustedSlipPayerRule.Unverified(DateTime.UtcNow, null));
+        Assert.False(TrustedSlipPayerRule.Unverified(DateTime.UtcNow, DateTime.UtcNow));
+    }
+
+    [Fact]
+    public void เลขอ้างอิงรายการชำระ_ถอดกลับตรงตัวเดียวกับตัวเขียน()
+    {
+        var id = Guid.NewGuid();
+        Assert.True(GatewayPaymentRecord.TryParseIntentId(GatewayPaymentRecord.Reference(id), out var back));
+        Assert.Equal(id, back);
+        Assert.False(GatewayPaymentRecord.TryParseIntentId("BANK:" + id.ToString("N"), out _));
+        Assert.False(GatewayPaymentRecord.TryParseIntentId(null, out _));
+    }
+
+    [Fact]
     public void กำหนดตรวจย้อน_นับวันทำการ_ข้ามเสาร์อาทิตย์และวันหยุด_สิ้นวันไทย()
     {
         var fri = new DateTime(2026, 11, 20);   // ศุกร์
@@ -96,6 +122,8 @@ public class TrustedSlipPayerRound286Tests
         Assert.Null(TrustedSlipPayerRule.SettingsProblem(null, null));
         Assert.NotNull(TrustedSlipPayerRule.SettingsProblem(-1m, null));
         Assert.NotNull(TrustedSlipPayerRule.SettingsProblem(null, 0));
-        Assert.NotNull(TrustedSlipPayerRule.SettingsProblem(null, 11));
+        Assert.NotNull(TrustedSlipPayerRule.SettingsProblem(null, 6));   // ฝ่ายค้าน HIGH-3: สูงสุด 5 วันทำการ
+        Assert.Null(TrustedSlipPayerRule.SettingsProblem(null, 5));
+        Assert.NotNull(TrustedSlipPayerRule.SettingsProblem(null, null, -1m));
     }
 }

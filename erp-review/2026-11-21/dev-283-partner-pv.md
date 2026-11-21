@@ -74,3 +74,12 @@
 
 ตรวจในเครื่อง: build ผ่าน · Round283 + Partner* + ReceiptLink + DocumentRestriction + Lodging + Dashboard/Reconcil/Settlement ผ่าน (ตัวที่ล้มมีแต่เทสต์ที่ต้องหา `Accounting.sln` — สภาพแวดล้อม) ·
 required_call_site_check (+6 กติกา · R283-3/4) · using · undeclared · html_escape · test_inventory · node --check
+
+## 8. ด่าน `approved_status_writer_check` (หลัง merge 284/285/286 · commit `c463de2a`)
+
+ด่านนี้กัน "เอกสารที่เกิดมาในสถานะออกแล้วนอก `ApproveDocumentAsync` แต่ไม่รันผลข้างเคียงหลังออกเอกสาร" (`IIssuedDocumentHooks` — e-Tax อัตโนมัติ ฯลฯ · ต้องหลัง commit) ·
+ตัวสร้าง PV หลักฐาน (`CreateSettlementPaymentVoucherCoreAsync`) ประทับ `Paid` เอง ⇒ แก้ให้เดินแบบเดียวกับใบเสร็จหลักฐานฝั่งขาย: ตัวช่วยไม่ save เอง ·
+ผู้เรียกทุกตัวรัน hook หลัง commit (`CreatePaymentAsync` → `issuedSettlementVoucher` · `IssueSettlementPaymentVoucherAsync` → หลัง `tx.CommitAsync`) · ย้าย `IssueSettlementPaymentVoucherInPaymentAsync`
+ไปไว้ข้าง `CreateSettlementReceiptAsync` ใน DocumentService.cs (คืนใบให้ผู้เรียก) · **ไม่เพิ่ม baseline** (คงที่ 4) · ล็อกลำดับ commit → hook ด้วย `required_call_site_check` ·
+ตรวจในเครื่อง: `approved_status_writer_check` ผ่าน · build ผ่าน · Round283 + 281 + ReceiptLink + PartnerOutbound + IssuedDocumentHooks 106/106 (ฐานสร้างใหม่หลัง merge)
+

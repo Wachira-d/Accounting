@@ -1242,6 +1242,8 @@ public class AccountingDbContext : DbContext
         modelBuilder.Entity<PaymentIntent>().Property(x => x.TrustKeyHash).HasMaxLength(64);   // รอบ 286
         modelBuilder.Entity<PaymentIntent>().Property(x => x.TrustKeyLabel).HasMaxLength(120);   // รอบ 286
         modelBuilder.Entity<CompanySettings>().Property(x => x.SlipTrustedDailyCapPerKey).HasPrecision(18, 2);   // รอบ 286
+        modelBuilder.Entity<CompanySettings>().Property(x => x.SlipTrustedCompanyOutstandingCap).HasPrecision(18, 2);   // รอบ 286 ฝ่ายค้าน HIGH-3
+        modelBuilder.Entity<Contact>().Property(x => x.SlipTrustBlockedReason).HasMaxLength(500);   // รอบ 286 ฝ่ายค้าน HIGH-3
         modelBuilder.Entity<PartnerPaymentNotice>().Property(x => x.SlipPayerBankCode).HasMaxLength(3);   // รอบ 264 P2
         modelBuilder.Entity<PartnerPaymentNotice>().Property(x => x.SlipPayerAccountMask).HasMaxLength(32);   // รอบ 264 P2
         modelBuilder.Entity<PartnerPaymentNotice>().Property(x => x.SlipPayerMatch).HasMaxLength(16);   // รอบ 264 P4 (L3)
@@ -3868,6 +3870,9 @@ public class AccountingDbContext : DbContext
             e.Property(x => x.CompanyName).HasMaxLength(300);
             e.Property(x => x.EvidenceKind).HasMaxLength(32);
             e.Property(x => x.EvidenceSha256).HasMaxLength(64);
+            e.Property(x => x.EvidenceLocation).HasMaxLength(1000);
+            e.Property(x => x.EvidenceContentType).HasMaxLength(100);
+            e.Property(x => x.EvidenceFileName).HasMaxLength(300);
             e.Property(x => x.RegistryName).HasMaxLength(300);
             e.Property(x => x.RegistryResult).HasMaxLength(16);
             e.Property(x => x.Status).HasMaxLength(16);

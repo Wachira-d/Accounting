@@ -3344,7 +3344,14 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
   `GET line-config/trusted-payers` (ป้ายธนาคาร + เลขปิดบาง · ไม่มีชื่อ) · `POST …/{id}/revoke|reinstate` (สิทธิ์แก้ค่าตั้งบริษัท · ห้ามคีย์ API · audit)
 - ทุกทางเข้า (แชต/กลุ่ม OA บริษัท · กลุ่ม OA กลาง · อีเมล) เดินผ่าน `SlipAutoRecordService.TryAutoAsync` ตัวเดียว · ไม่มี AI (กติกาเชิงกุญแจ · kill-switch) ·
   เทสต์ pure `TrustedSlipPayerRound286Tests` · Db `TrustedSlipPayerRound286DbTests` · migration `Round286Migration` · กติกา `_R286_*`
-  Last verified commit 19445ff6
+- **ชุดแก้ฝ่ายค้าน 286 (คำตัดสิน 286-10…286-15)** — ตัวพิสูจน์เดียว `TrustedSlipVerifyService.ProvenAsync`: การชำระ**ของรายการเอง** (`PAY-INTENT-{id}` · รับเงินแล้ว)
+  หรือที่เส้น 282 ตัดให้สลิปนี้ + รายการเดินบัญชี**เลขอ้างอิงตรงสลิป** + หนึ่งการชำระหนึ่งรายการ (`TrustProofPaymentId`) · งานตัดชำระ: เลขอ้างอิงตรงก่อนหาใบค้าง (`refOnly: true`) ·
+  ไม่ตรง ⇒ ใบค้างได้ก่อน แล้วจึงผูกไม่มีเลขอ้างอิงเฉพาะเมื่อไม่มีใบค้าง/สลิปรอตรวจของผู้ติดต่ออื่นยอดเท่ากัน (`OtherClaimantsAsync` · ไม่เสริมกุญแจ) · เพดานยอดล่วงหน้าที่ยังไม่ยืนยัน
+  ต่อผู้ติดต่อ (= ยอดสูงสุดที่เคยยืนยันจริง) และทั้งบริษัท (`SlipTrustedCompanyOutstandingCap` ตั้งต้น 100,000) · รอ ≤ 5 วันทำการ · ล้ม ⇒ ถอนทุกกุญแจของผู้ติดต่อ + ล็อก
+  `Contact.SlipTrustBlockedAt` (ไม่เรียนใหม่จนผู้ขายให้คืน) · การรับล่วงหน้าที่ยังไม่ยืนยัน: ออกใบในระบบ แต่งานหลังรับชำระไม่ส่งอีเมล/LINE และไม่แจ้งผู้ซื้อคู่ค้า
+  (`DeliveryHeldAsync` ใน `PostPaymentAutomationService.ExecuteAsync` + `CreatePaymentAsync`) จน `ReleaseDeliveryAsync` · จอง `TrustVerifiedAt` ก่อนผูกบรรทัด (CAS) ·
+  ป้าย `trustLabel`/ตัวกรอง `?trust=unverified` (หน้ารายการรับชำระ) · `PaymentResponse.ProvisionalLabel` (ประวัติการชำระของเอกสาร)
+  Last verified commit 19445ff6 · ชุดแก้ฝ่ายค้าน afac9dcf
 
 ### 2.12g-264-P2 รอบ 264 แพ็ก P2 "อ่านบัญชีจากสลิป — QR ตรวจสลิป + ผู้โอน/ผู้รับ" (`erp-review/2026-11-12/team-264-a2b-design.md` §3.2/§4 · คำตัดสิน 264-4-1…8)
 
@@ -3534,6 +3541,8 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
   เปลี่ยนใบต้นทางคงด่าน RL-SOURCE) · `TryAutoIssueForDocumentAsync` ข้ามใบหลักฐานเสมอ · แดชบอร์ด VAT ไม่นับใบหลักฐาน · (MED-A2) ออกเลข PV ผ่านด่าน "เฉพาะร่าง" รอบ 276
   (`DocumentRestrictionGuard.MayFinalizeAsync` เงื่อนไขเดียวกับ `EnsureMayFinalizeAsync`) ไม่ผ่าน ⇒ ร่างรออนุมัติ · (LOW-A3) สรุปกระทบยอดธนาคารไม่นับใบหลักฐานซ้ำกับแถวการจ่าย ·
   (LOW-A4) ยกเลิก PV ที่ไม่พบการจ่าย ⇒ audit · Last verified `commit c83fb6d1`
+  · **ด่าน approved_status_writer_check**: PV หลักฐานเกิดมา "ออกแล้ว" นอก ApproveDocumentAsync ⇒ รันผลข้างเคียงหลังออกเอกสาร (`_issuedHooks.RunAsync`) **หลัง commit** ทั้งสองเส้น —
+  `CreatePaymentAsync` (ตัวแปร `issuedSettlementVoucher` คู่กับใบเสร็จหลักฐาน) และออกย้อนหลัง · ไม่เพิ่ม baseline · Last verified `commit c463de2a`
 
 ### 2.12g-270 รอบ 270 งานค้างจาก 266/268/269 (คำตัดสิน 270-1-1…5 ใน `erp-review/2026-09-29/DECISIONS.md`)
 
@@ -4132,8 +4141,10 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
     `VoidIncomingRequestsForOldTaxIdAsync` ยกเลิกคำขอรอเรายอมรับของเลขเดิม (Rejected + เหตุ + audit · คู่ที่เชื่อมแล้วไม่แตะ) ·
     migration `Round280Migration` (คอลัมน์ `PartnerLinkRequests.ContactId` + ตาราง `PartnerLinkRequestNotices` + `Companies.TaxIdSetAt` = เวลาที่ deploy สำหรับบริษัทเดิม · ไม่แก้ TopicsJson)
   - **(รอบ 285 · คำตัดสิน 285-1…285-6) ยืนยันเลขผู้เสียภาษีของบริษัท**: หน้าตั้งค่าบริษัท (`settings.html` กล่องใต้ช่องเลขภาษี) ยื่นหลักฐาน ภ.พ.20/หนังสือรับรอง
-    (`POST /api/companies/{id}/tax-id-verification` · สิทธิ์ตั้งค่าบริษัท · ไฟล์ PDF/รูปจากไบต์ ≤ 10 MB · SHA-256 · ไฟล์แนบชนิด `CompanyTaxIdEvidence`) · ชื่อเทียบทะเบียนตรงตัว
-    (`IDbdLookupService` · ไม่ fuzzy · ขัด = ยื่นไม่ได้ · ทะเบียนไม่ตอบ = ป้าย "ตรวจไม่ได้") → ผู้ดูแลแพลตฟอร์ม `/admin/taxid-verifications.html`
+    (`POST /api/companies/{id}/tax-id-verification` · สิทธิ์ตั้งค่าบริษัท · ไฟล์ PDF/รูปจากไบต์ ≤ 10 MB · SHA-256 · เก็บผ่าน `IFileStorage` โดยตรง ไม่ใช่ FileAttachments ·
+    เก็บ 5 ปี `EvidenceRetainUntil` · เปิดได้เฉพาะเจ้าของบริษัท `GET …/tax-id-verification/{id}/evidence` + ผู้ดูแลแพลตฟอร์ม · ทุกครั้งบันทึก `PdpaPiiAccessLogs`) · ชื่อเทียบทะเบียนตรงตัว
+    (`IDbdLookupService` · ไม่ fuzzy · ขัด = ยื่นได้ติดธง อนุมัติต้องมีเหตุ (285-11) · ทะเบียนไม่ตอบ = ป้าย "ตรวจไม่ได้" + LogWarning) · ยื่นแล้วกระดิ่ง/อีเมลถึงผู้ดูแลแพลตฟอร์ม ·
+    ตัดสินแล้วแจ้งผู้ยื่น+เจ้าของพร้อมเหตุ (285-8) · เลข+สาขาหนึ่งยืนยันได้บริษัทเดียว — มีเจ้าของเดิม ⇒ ธงบนคิว + ต้องถอนของเดิมก่อน (285-10) → ผู้ดูแลแพลตฟอร์ม `/admin/taxid-verifications.html`
     (`api/admin/tax-id-verifications` · SystemAdmin) อนุมัติ/ปฏิเสธ/ถอน (เหตุ · audit `CompanyTaxIdVerificationRequest`) · อนุมัติ ⇒ `Company.TaxIdVerifiedAt/For/RequestId`
     (ทางเดียว `CompanyTaxIdVerificationService.ApproveAsync` ใต้ `FOR UPDATE` แถวบริษัท) · **ยืนยันแล้ว ⇒ `MaterializeIncomingLinkRequestsAsync` เปิดทุกคำขอที่ยังไม่หมดอายุ
     รวมที่ส่งก่อนสมัคร** (`CompanyTaxIdVerification.IncomingRequestCutoff`) · ยังไม่ยืนยัน = หลัง `TaxIdSetAt` เหมือนเดิม · เปลี่ยนเลขทุกทางเข้า ⇒ หลุดสถานะ

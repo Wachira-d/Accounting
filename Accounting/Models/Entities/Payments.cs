@@ -257,6 +257,9 @@ public class PaymentIntent : TenantEntity
     public DateTime? TrustReviewDueAt { get; set; }
     public DateTime? TrustVerifiedAt { get; set; }
     public DateTime? TrustFailedAt { get; set; }
+    /// <summary>รอบ 286 (ฝ่ายค้าน HIGH-1): การชำระที่พิสูจน์กุญแจของรายการนี้ (หนึ่งการชำระพิสูจน์ได้หนึ่งรายการ) — การชำระของรายการเอง (<c>PAY-INTENT-…</c>) หรือการชำระที่เส้น 282
+    /// ตัดจากรายการเดินบัญชีให้สลิปนี้ตรง ๆ · ผู้เขียน <c>TrustedSlipVerifyService.LearnAsync</c></summary>
+    public Guid? TrustProofPaymentId { get; set; }
 
     public int AttemptCount { get; set; }
     public DateTime? LastPolledAt { get; set; }

@@ -110,11 +110,12 @@ public class LineConfigController : ControllerBase
         if (req.QuietStartHour is int qs) s.LineQuietStartHour = qs;
         if (req.QuietEndHour is int qe) s.LineQuietEndHour = qe;
         if (req.ChatSlipIntake is bool chatSlip) s.LineChatSlipIntakeEnabled = chatSlip;
-        if (TrustedSlipPayerRule.SettingsProblem(req.SlipTrustedDailyCap, req.SlipTrustedReviewDays) is string trustProblem)
+        if (TrustedSlipPayerRule.SettingsProblem(req.SlipTrustedDailyCap, req.SlipTrustedReviewDays, req.SlipTrustedCompanyCap) is string trustProblem)
             return BadRequest(new ApiResponse<LineConfigResponse>(false, null, trustProblem));
         if (req.SlipTrustedAuto is bool trustedAuto) s.SlipTrustedAutoEnabled = trustedAuto;   // รอบ 286 · ผู้อ่าน TrustedSlipPayerService.TryProvisionalAsync
         if (req.SlipTrustedDailyCap is decimal trustCap) s.SlipTrustedDailyCapPerKey = trustCap;
         if (req.SlipTrustedReviewDays is int trustDays) s.SlipTrustedReviewBusinessDays = trustDays;
+        if (req.SlipTrustedCompanyCap is decimal trustCompanyCap) s.SlipTrustedCompanyOutstandingCap = trustCompanyCap;   // ฝ่ายค้าน HIGH-3
         if (req.SlipAutoRecord is bool slipAuto) s.SlipAutoRecordEnabled = slipAuto;   // รอบ 282 · null = คงเดิม (ผู้อ่าน SlipAutoRecordService)   // รอบ 260 · null = คงเดิม (ปุ่มล้างรหัสไม่แตะ)
         // รอบ 257 C-M1: null = คงเดิม · "" = ล้าง · ค่า = ตั้งใหม่ (เดิม "" ถูกถือว่าคงเดิม ⇒ ล้างไม่ได้เงียบ ๆ)
         var tokenCleared = LineOwnOaGuard.Classify(req.ChannelAccessToken) == LineOwnOaGuard.InputKind.Clear;
@@ -354,7 +355,8 @@ public class LineConfigController : ControllerBase
         SlipTrustedAuto: s.SlipTrustedAutoEnabled,
         SlipTrustedDailyCap: s.SlipTrustedDailyCapPerKey,
         SlipTrustedReviewDays: s.SlipTrustedReviewBusinessDays,
-        SlipTrustedRiskNotice: TrustedSlipPayerRule.RiskNotice);
+        SlipTrustedRiskNotice: TrustedSlipPayerRule.RiskNotice,
+        SlipTrustedCompanyCap: s.SlipTrustedCompanyOutstandingCap);
 
     // ═══ รอบ 286: ผู้จ่ายที่ไว้ใจได้ — ผู้ขายดู/ถอน/ให้คืนรายกุญแจ (ด่านเดียวกับหน้าตั้งค่า LINE · ห้ามคีย์ API · ไม่มีชื่อผู้โอนใน DTO) ═══
 
