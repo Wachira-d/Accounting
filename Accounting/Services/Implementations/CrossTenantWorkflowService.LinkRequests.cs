@@ -95,15 +95,19 @@ public partial class CrossTenantWorkflowService
 
     /// <summary>
     /// รอบ 280 (คำตัดสิน 280-5 · แก้ตามฝ่ายค้าน MED-1 = 280-10) — คำขอที่ยังรอถึงเลขภาษีของ <paramref name="companyId"/> ซึ่งยังไม่มีแถวคู่ ⇒ เปิดแถว "รอเรายอมรับ"
-    /// (ตัวสร้างเดียว <see cref="OfferLinkRequestAsync"/>) · <b>เฉพาะคำขอที่ส่งหลัง <c>Company.TaxIdSetAt</c></b> — ระบบยังไม่มีขั้นยืนยันเลขภาษี ⇒ สมัคร/เปลี่ยนเลขเป็นของคนอื่น
-    /// แล้วเก็บคำขอย้อนหลังไม่ได้ (คำขอก่อนหน้า ⇒ ผู้ขอกด "ส่งแจ้งอีกครั้ง" = เสนอใหม่) · ผู้เรียก: <c>POST …/trading-partners/requests/incoming/refresh</c> (สิทธิ์ตั้งค่าบริษัท)
+    /// (ตัวสร้างเดียว <see cref="OfferLinkRequestAsync"/>) · บริษัทที่<b>ยังไม่ยืนยันเลขภาษี</b> (รอบ 285 <c>CompanyTaxIdVerification</c>) ⇒ เฉพาะคำขอที่ส่งหลัง
+    /// <c>Company.TaxIdSetAt</c> (สมัคร/เปลี่ยนเลขเป็นของคนอื่นแล้วเก็บคำขอย้อนหลังไม่ได้ · คำขอก่อนหน้า ⇒ ผู้ขอกด "ส่งแจ้งอีกครั้ง" = เสนอใหม่) ·
+    /// ยืนยันแล้ว ⇒ ทุกคำขอที่ยังไม่หมดอายุ (คำตัดสิน 285-3) · ผู้เรียก: <c>POST …/trading-partners/requests/incoming/refresh</c> (สิทธิ์ตั้งค่าบริษัท)
     /// </summary>
     public async Task<int> MaterializeIncomingLinkRequestsAsync(Guid companyId, DateTime nowUtc, CancellationToken ct = default)
     {
         var me = await _db.Companies.AsNoTracking().Where(c => c.Id == companyId && !c.IsDeleted)
-            .Select(c => new { c.TaxId, c.TaxIdSetAt }).FirstOrDefaultAsync(ct);
+            .Select(c => new { c.TaxId, c.TaxIdSetAt, c.TaxIdVerifiedAt, c.TaxIdVerifiedFor }).FirstOrDefaultAsync(ct);
         var tax = Accounting.Helpers.PartnerCompanyMatch.NormalizeTaxId(me?.TaxId);
-        if (tax == null || me!.TaxIdSetAt is not DateTime setAt) return 0;
+        if (tax == null || me == null) return 0;
+        // รอบ 285 (คำตัดสิน 285-3): ยืนยันเลขภาษีด้วยเอกสารแล้ว ⇒ เปิดคำขอที่ส่งถึงเลขนี้ก่อนตั้งเลขได้ (ย้อนกลับข้อจำกัด 280-10) · ยังไม่ยืนยัน = หลัง TaxIdSetAt
+        var verified = Accounting.Helpers.CompanyTaxIdVerification.IsVerified(me.TaxId, me.TaxIdVerifiedAt, me.TaxIdVerifiedFor);
+        if (Accounting.Helpers.CompanyTaxIdVerification.IncomingRequestCutoff(verified, me.TaxIdSetAt) is not DateTime setAt) return 0;
         var open = await _db.PartnerLinkRequests.AsNoTracking()
             .Where(r => r.PartnerTaxId == tax && r.AcceptedAt == null && r.ExpiresAt > nowUtc && r.CompanyId != companyId && r.CreatedAt >= setAt)
             .OrderByDescending(r => r.CreatedAt).Take(50)
@@ -208,7 +212,10 @@ public partial class CrossTenantWorkflowService
             .FirstOrDefaultAsync();
         if (p == null) return null;
         var requester = await _db.Companies.AsNoTracking().Where(c => c.Id == p.InvitedByCompanyId)
-            .Select(c => new { c.Name, c.TaxId, c.BranchCode }).FirstOrDefaultAsync();
+            .Select(c => new { c.Name, c.TaxId, c.BranchCode, c.TaxIdVerifiedAt, c.TaxIdVerifiedFor }).FirstOrDefaultAsync();
+        // รอบ 285 (คำตัดสิน 285-5): ผู้รับเห็นว่าเลขภาษีของผู้ขอผ่านการยืนยันเอกสารแล้วหรือยัง (ตัวตัดสินเดียว · ป้ายจากเซิร์ฟเวอร์)
+        var requesterVerified = requester != null
+            && Accounting.Helpers.CompanyTaxIdVerification.IsVerified(requester.TaxId, requester.TaxIdVerifiedAt, requester.TaxIdVerifiedFor);
         var expired = PartnerLinkRequestRules.IsExpired(p.Status, p.InvitedAt, p.CreatedAt, nowUtc);
         // ทำไมกดตอบไม่ได้ (ทางไปต่ออยู่ในข้อความ) · ยอมรับแล้ว = ไม่ใช่ปัญหา
         var problem = p.Status == TradingPartnershipStatus.Accepted ? null
@@ -229,6 +236,7 @@ public partial class CrossTenantWorkflowService
             {
                 // ฝ่ายค้าน M2/L5: ชื่อ = ค่าที่ผู้ขอตั้งเอง (ไม่มีการยืนยันทะเบียน) — ป้ายจากเซิร์ฟเวอร์ แสดงคู่กับชื่อเสมอ
                 Name = requester?.Name, NameNote = PartnerLinkRequestRules.NameUnverifiedLabel, TaxId = requester?.TaxId,
+                TaxIdVerified = requesterVerified, TaxIdNote = Accounting.Helpers.CompanyTaxIdVerification.PartnerTaxIdLabel(requesterVerified),
                 BranchLabel = TaxBranchCode.Label(requester?.BranchCode),
             },
             ProblemMessage = problem,

@@ -10,6 +10,14 @@ public class Company : BaseEntity
     /// <summary>รอบ 280 (ฝ่ายค้าน MED-1): เวลาที่ตั้ง/เปลี่ยน <see cref="TaxId"/> ล่าสุด — ประทับโดย <c>AccountingDbContext.StampTaxIdSetAt</c> ทุกทางเข้า ·
     /// ระบบยังไม่มีขั้นยืนยันเลขภาษี ⇒ คำขอเชื่อมคู่ค้าที่ส่งถึงเลขนี้<b>ก่อน</b>เวลานี้ไม่ถูกเปิดให้บริษัทนี้ (<c>MaterializeIncomingLinkRequestsAsync</c>)</summary>
     public DateTime? TaxIdSetAt { get; set; }
+    /// <summary>รอบ 285 (คำตัดสิน 285-1…285-6 · <c>Helpers/CompanyTaxIdVerification</c>): เวลาที่ผู้ดูแลแพลตฟอร์มอนุมัติหลักฐานว่าบริษัทนี้เป็นเจ้าของเลข
+    /// <see cref="TaxIdVerifiedFor"/> · มีผลเฉพาะเมื่อ <see cref="TaxIdVerifiedFor"/> ตรงเลขปัจจุบัน (ตัวตัดสินเดียว <c>CompanyTaxIdVerification.IsVerified</c>) ·
+    /// เปลี่ยนเลข ⇒ ล้างทั้งสามช่องใน <c>AccountingDbContext.StampTaxIdSetAt</c> (ทุกทางเข้า) · ตั้งได้ทางเดียว <c>CompanyTaxIdVerificationService.ApproveAsync</c></summary>
+    public DateTime? TaxIdVerifiedAt { get; set; }
+    /// <summary>รอบ 285: เลข 13 หลัก (normalize แล้ว) ที่ได้รับการยืนยัน — กันสถานะค้างเมื่อเลขเปลี่ยนนอกเส้นที่รู้จัก</summary>
+    public string? TaxIdVerifiedFor { get; set; }
+    /// <summary>รอบ 285: คำขอยืนยันที่ได้รับอนุมัติ (<see cref="CompanyTaxIdVerificationRequest"/>)</summary>
+    public Guid? TaxIdVerificationRequestId { get; set; }
     public string? BranchCode { get; set; } = "00000";  // รหัสสาขา (00000 = สำนักงานใหญ่)
     public string? BranchName { get; set; }              // ชื่อสาขา
     /// <summary>รอบ 250 ฝ่ายค้าน H3 (คำตัดสิน AUTOPILOT ข้อ 3): บริษัทยินยอมให้คู่ค้าที่ใช้ NextAcc ส่งคำเชิญเชื่อมระบบถึง (ค้นเจอด้วยเลขภาษี+สาขา) ·

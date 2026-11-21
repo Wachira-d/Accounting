@@ -221,7 +221,8 @@ const Page = {
       <div class="pt-grid2">
         <div><div class="pt-muted">ผู้ขอ</div><div>${Layout.esc(req.name || '-')}</div>
           ${req.nameNote ? `<div class="pt-muted" style="color:#92400e">(${Layout.esc(req.nameNote)})</div>` : ''}
-          <div class="pt-muted">เลขผู้เสียภาษี ${Layout.esc(req.taxId || '-')} · ${Layout.esc(req.branchLabel || '')}</div></div>
+          <div class="pt-muted">เลขผู้เสียภาษี ${Layout.esc(req.taxId || '-')} · ${Layout.esc(req.branchLabel || '')}</div>
+          ${req.taxIdNote ? `<div class="pt-muted" style="color:${req.taxIdVerified === true ? '#047857' : '#92400e'}">${req.taxIdVerified === true ? '✅ ' : '⚠️ '}${Layout.esc(req.taxIdNote)}</div>` : ''}</div>
         <div><div class="pt-muted">สถานะ</div><div><span class="pt-badge ${r.canRespond ? 'pt-warn' : r.status === 'Accepted' ? 'pt-ok' : ''}">${Layout.esc(r.statusLabel || r.status)}</span></div>
           <div class="pt-muted">ส่งเมื่อ ${Layout.esc(new Date(r.requestedAt).toLocaleDateString('th-TH'))}${r.status === 'Pending' ? ' · หมดอายุ ' + Layout.esc(new Date(r.expiresAt).toLocaleDateString('th-TH')) : ''}</div></div>
       </div>

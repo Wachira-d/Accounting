@@ -1505,7 +1505,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **978 ไฟล์ · 10,635 `[Fact]` + 1,439 `[Theory]` (6,835 `InlineData`)** ณ 2026-11-21 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`) | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)**, **ReceiptFormRule (รูปแบบกระดาษหลักฐานรับเงิน · รอบ 203)** |
+| เทสต์ที่มี | **980 ไฟล์ · 10,645 `[Fact]` + 1,440 `[Theory]` (6,842 `InlineData`)** ณ 2026-11-21 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`) | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)**, **ReceiptFormRule (รูปแบบกระดาษหลักฐานรับเงิน · รอบ 203)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
 | CI | ✅ `.github/workflows/ci.yml` — static check → restore → build → test; รันบน PR/push เข้า main/master + `workflow_dispatch` (branch `claude/**` ปิดไว้ กัน mail spam ระหว่างพัฒนา) |
@@ -9316,3 +9316,14 @@ H2 (OCR ไม่พร้อม ⇒ แถวเข้าคิว) ล็อ�
 | T284-05 | pure `R284_MED5_ฟอร์มใบเสร็จไม่มีสำเนาข้อความไทย_…` | T3 MED-5: ไม่มีสำเนาข้อความใน JS · endpoint ใช้ `DocumentLabels` ตามภาษาใบต้นทาง + tenant · อยู่ในรายการอนุญาต 276 |
 | T284-06 | pure `R284_URLของระบบ_ทุกข้อความชี้หน้าที่มีช่องจริง` + ปรับ `Round250Wp02Tests` (FixUrl) | ข้อความชี้ผิดเดิมเหลือ 0 จุด · ป้ายช่องบอกค่าเริ่มต้นไม่ใช่โดเมนเรา |
 | T284-07 | กติกา `_R284_*` (+5 · เคสฝ่ายค้าน R284-1…3) + ปรับกติกา G2-06 ของ `DetectEmployeeAsync` | จุดเรียกตัวตัดสิน L-1 / สรุปไฟล์โอน / ค่าตั้งต้นบรรทัดใบเสร็จ ถอดแล้วฟ้อง |
+
+## รอบ 285 — ยืนยันเลขผู้เสียภาษีของบริษัท + ภ.ง.ด.1 ช่อง 5 (`erp-review/2026-11-21/dev-285-taxid-verify-pnd1.md` · คำตัดสิน 285-1…285-7)
+
+| รหัส | เทสต์ | ล็อกอะไร |
+| --- | --- | --- |
+| T285-01 | pure `CompanyTaxIdVerificationRound285Tests` (7 เมธอด · 13 เคส) | `IsVerified` ต้องเลขที่ยืนยันตรงเลขปัจจุบัน · `ClearOnTaxIdChange` · จุดตัดคำขอ (ยืนยัน = ทั้งหมด · ไม่ยืนยัน = `TaxIdSetAt` เดิม — ทิศตรงข้าม) · ชื่อทะเบียนตรงตัว (ชื่อคล้าย/เป็นส่วนหนึ่ง = ไม่ผ่าน) · ด่านยื่น/อนุมัติ/เหตุ |
+| T285-02 | Db `ตั้งเลขทีหลัง_ยังไม่ยืนยันไม่เห็นคำขอเก่า_ยืนยันเอกสารแล้วเห็น_*` | ปัญหาเดิม 280-10 · ยื่นแล้วยังไม่อนุมัติ = ไม่เปิด · ยื่นซ้ำ 409 · อนุมัติ + audit ⇒ เห็นคำขอที่ส่งก่อนสมัคร · การ์ดบอกผู้ขอยังไม่ยืนยัน |
+| T285-03 | Db `เปลี่ยนเลขหลังยืนยัน_หลุดสถานะ_*` | เปลี่ยนเลขผ่าน SaveChanges ⇒ ล้างสถานะ · คำขอของเลขเดิมอนุมัติไม่ได้ (409) · ถอนต้องมีเหตุ ⇒ ล้าง |
+| T285-04 | Db `ชื่อขัดทะเบียน_ยื่นไม่ได้พร้อมชื่อทะเบียน_*` | ชื่อขัด = บอกชื่อทะเบียน · ไฟล์ HTML ปลอมเป็น .pdf ถูกปัด · ไม่มีแถว/ไฟล์ค้าง · เลข "-" ยื่นไม่ได้พร้อมเหตุ |
+| T285-05 | Db `คอนโทรลเลอร์ผู้ดูแล_*` | รายการของผู้ดูแล · ปฏิเสธต้องมีเหตุ · ถูกปฏิเสธแล้วยื่นใหม่ได้ |
+| T285-06 | กติกา `_R285_*` (+8 · เคสฝ่ายค้าน R285-1/2) | ถอดตัวตัดสินจุดตัด / ตั้งเลขที่ยืนยันจากเลขปัจจุบันแทนเลขในคำขอ ⇒ checker ฟ้อง |

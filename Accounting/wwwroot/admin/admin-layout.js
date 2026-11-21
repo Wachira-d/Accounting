@@ -71,6 +71,8 @@ const AdminLayout = {
     { id: 'chat-kb', label: 'คลังความรู้ Chatbot', icon: '📚', href: '/admin/chat-kb.html' },
     { id: 'help-content', label: 'คู่มือ/วิดีโอสอนใช้งาน', icon: '🎓', href: '/admin/help-content.html' },
     { id: 'users', label: 'ผู้ใช้งาน', icon: '👥', href: '/admin/users.html' },
+    // รอบ 285 (คำตัดสิน 285-1): คิวตรวจหลักฐานเลขผู้เสียภาษีของบริษัท (ภ.พ.20/หนังสือรับรอง) — อนุมัติ/ปฏิเสธ/ถอน
+    { id: 'taxid-verifications', label: 'ยืนยันเลขผู้เสียภาษีบริษัท', icon: '🪪', href: '/admin/taxid-verifications.html' },
     // รอบ 232: หน้าแพ็กเกจ/โควตา/ราคา/License/บิล/gateway ที่เคยเป็น 9 เมนูซ้อนกัน ⇒ hub เดียว "แพ็กเกจ & บิลลิ่ง" (แถบแท็บจาก billingHub ข้างล่าง · inHub = ไม่โผล่ใน sidebar · URL เดิมคงไว้)
     { id: 'account-subs', inHub: true, label: 'License ลูกค้า (Account Plans)', icon: '🎫', href: '/admin/account-subscriptions.html' },
     { section: 'แพ็กเกจ & บิลลิ่ง' },

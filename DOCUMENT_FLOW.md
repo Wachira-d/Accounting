@@ -4104,6 +4104,13 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
     ⇒ เปิดเฉพาะคำขอที่ส่ง**หลัง** `Company.TaxIdSetAt` (ประทับโดย `AccountingDbContext.StampTaxIdSetAt` ทุกทางเข้า) · คำขอก่อนหน้า ⇒ ผู้ขอ "ส่งแจ้งอีกครั้ง" · เปลี่ยนเลขภาษี (`CompanyService.UpdateAsync`) ⇒
     `VoidIncomingRequestsForOldTaxIdAsync` ยกเลิกคำขอรอเรายอมรับของเลขเดิม (Rejected + เหตุ + audit · คู่ที่เชื่อมแล้วไม่แตะ) ·
     migration `Round280Migration` (คอลัมน์ `PartnerLinkRequests.ContactId` + ตาราง `PartnerLinkRequestNotices` + `Companies.TaxIdSetAt` = เวลาที่ deploy สำหรับบริษัทเดิม · ไม่แก้ TopicsJson)
+  - **(รอบ 285 · คำตัดสิน 285-1…285-6) ยืนยันเลขผู้เสียภาษีของบริษัท**: หน้าตั้งค่าบริษัท (`settings.html` กล่องใต้ช่องเลขภาษี) ยื่นหลักฐาน ภ.พ.20/หนังสือรับรอง
+    (`POST /api/companies/{id}/tax-id-verification` · สิทธิ์ตั้งค่าบริษัท · ไฟล์ PDF/รูปจากไบต์ ≤ 10 MB · SHA-256 · ไฟล์แนบชนิด `CompanyTaxIdEvidence`) · ชื่อเทียบทะเบียนตรงตัว
+    (`IDbdLookupService` · ไม่ fuzzy · ขัด = ยื่นไม่ได้ · ทะเบียนไม่ตอบ = ป้าย "ตรวจไม่ได้") → ผู้ดูแลแพลตฟอร์ม `/admin/taxid-verifications.html`
+    (`api/admin/tax-id-verifications` · SystemAdmin) อนุมัติ/ปฏิเสธ/ถอน (เหตุ · audit `CompanyTaxIdVerificationRequest`) · อนุมัติ ⇒ `Company.TaxIdVerifiedAt/For/RequestId`
+    (ทางเดียว `CompanyTaxIdVerificationService.ApproveAsync` ใต้ `FOR UPDATE` แถวบริษัท) · **ยืนยันแล้ว ⇒ `MaterializeIncomingLinkRequestsAsync` เปิดทุกคำขอที่ยังไม่หมดอายุ
+    รวมที่ส่งก่อนสมัคร** (`CompanyTaxIdVerification.IncomingRequestCutoff`) · ยังไม่ยืนยัน = หลัง `TaxIdSetAt` เหมือนเดิม · เปลี่ยนเลขทุกทางเข้า ⇒ หลุดสถานะ
+    (`StampTaxIdSetAt` → `ClearOnTaxIdChange`) · การ์ดคำขอฝั่งผู้รับแสดงว่าเลขของผู้ขอยืนยันแล้วหรือยัง · migration `Round285Migration` (บริษัทเดิม = ยังไม่ยืนยัน)
   - **(รอบ 280 ฝ่ายค้าน LOW-2 ของรอบ 279) การ์ดสถานะ `#HeyNextAcc`**: กลุ่มผูกผู้ติดต่อหลายราย ⇒ `Replies.StatusMulti` (บริษัท · จำนวนผู้ติดต่อ · เรื่องที่ส่งรวม · ดูรายละเอียดที่เว็บ — ไม่มีชื่อ/ความยินยอมรายผู้ติดต่อ) ·
     ลิงก์ที่โพสต์เข้ากลุ่ม = `ProviderConsent.GroupGrantLinkOrMenu` (ไม่มี id บริษัทลูกค้า) · ผูกรายเดียว = การ์ดเดิม
   - **(D-M2) ใบซื้อร่างตามต้นฉบับ**: คัดลอกส่วนลดรายบรรทัด/ท้ายบิล (`DiscountAmount` · `BillDiscountPercent/Amount`) · ผลต่างปัดเศษ · ภาษีหัก ณ ที่จ่ายหัวใบ + บรรทัด · หน่วย · % ส่วนลด ·
@@ -10193,5 +10200,8 @@ _Last verified against codebase: 2026-11-20 (รอบ 281 เส้นคู่
 _Last verified against codebase: 2026-11-20 (รอบ 281 ชุดแก้ฝ่ายค้าน MED-1/2 + LOW 1–6 — §2.12g-281: จ่ายเต็มเกินยอดค้างหลังหัก ⇒ หยุดพร้อมเหตุ · ผูกผู้ติดต่อไม่ซ้ำ/ไม่ผูกเลขขยะ · เส้นทางไม่เปิดยอดอีกฝั่ง · โหลดเป็นชุด · แจ้งหลัง commit · ธงคัดลอกค่าตั้ง — คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — commit 94c52138)_
 
 _Last verified against codebase: 2026-11-21 (รอบ 283 ใบสำคัญจ่ายเป็นเอกสารจากท่ออัตโนมัติคู่ค้า — §2.12g-281: ใบหลักฐานคู่การจ่าย (ไม่ลง JE ซ้ำ · ไม่ถือภาษี · อ้าง 50 ทวิ ของการจ่าย) · ยกเลิก PV = ยกเลิกการจ่าย · รายงาน + ออกย้อนหลัง — คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — commit 699edd9d)_
+
+_Last verified against codebase: 2026-11-21 (รอบ 285 — §2.12l ยืนยันเลขผู้เสียภาษีของบริษัทด้วย ภ.พ.20/หนังสือรับรอง + ผู้ดูแลแพลตฟอร์มอนุมัติ ·
+ยืนยันแล้วเห็นคำขอเชื่อมคู่ค้าที่ส่งก่อนสมัคร · เปลี่ยนเลข = หลุดสถานะ · ภ.ง.ด.1 ช่อง 5 คงเดิม (285-7: สเปก RD เปิดไม่ได้จาก session นี้) — commit ae317b36)_
 
 _Last verified against codebase: 2026-11-21 (รอบ 283 ชุดสอง — §2.12g-281: ทุกทางเข้าของใบซื้อจากคู่ค้าได้ใบสำคัญจ่ายหลักฐาน · ข้อความขั้นต่อไปจากเซิร์ฟเวอร์ · ปุ่มออกย้อนหลัง · ฝ่ายค้าน MED-A1/A2 LOW-A3/A4 — คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — commit c83fb6d1)_
