@@ -71,7 +71,7 @@ public sealed class TrustedSlipPayerService
             .Select(d => new { d.ContactId, d.DocumentNumber }).FirstOrDefaultAsync(ct);
         var (key, hash) = await StampKeyFromSlipAsync(companyId, intentId, doc?.ContactId, reading, money, ct);
         var settings = await _db.CompanySettings.AsNoTracking().Where(s => s.CompanyId == companyId)
-            .Select(s => new { s.SlipTrustedAutoEnabled, s.SlipAutoRecordEnabled, s.SlipTrustedDailyCapPerKey, s.SlipTrustedReviewBusinessDays })
+            .Select(s => new { s.SlipTrustedAutoEnabled, s.SlipAutoRecordEnabled, s.SlipTrustedDailyCapPerKey, s.SlipTrustedReviewBusinessDays, s.SlipTrustedCompanyOutstandingCap })
             .FirstOrDefaultAsync(ct);
         var slipReady = slipVerdict.Code == SlipAutoRecordRule.Codes.NoBankLine;
         var settingOn = settings is { SlipTrustedAutoEnabled: true, SlipAutoRecordEnabled: true };
@@ -89,19 +89,31 @@ public sealed class TrustedSlipPayerService
                     .Where(i => i.CompanyId == companyId && i.TrustKeyHash == hash && i.Id != intentId && i.TrustProvisionalAt >= dayStartUtc && i.TrustFailedAt == null)
                     .SumAsync(i => (decimal?)i.Amount, ct) ?? 0m;
             }
+            // ฝ่ายค้าน HIGH-3: ยอดล่วงหน้าที่ยังไม่ยืนยัน (ต่อผู้ติดต่อ · ทั้งบริษัท) + ผู้ติดต่อถูกล็อก + ยอดสูงสุดที่เคยยืนยันจริงของผู้ติดต่อ
+            var contactId = doc?.ContactId;
+            var blocked = contactId != null && await _db.Contacts.AsNoTracking().AnyAsync(c => c.Id == contactId && c.CompanyId == companyId && c.SlipTrustBlockedAt != null, ct);
+            var unverified = from i in _db.PaymentIntents.AsNoTracking()
+                             join d in _db.Documents.AsNoTracking() on i.SourceId equals d.Id
+                             where i.CompanyId == companyId && d.CompanyId == companyId && i.Id != intentId && i.TrustProvisionalAt != null && i.TrustVerifiedAt == null
+                             select new { i.Amount, d.ContactId };
+            var companyOut = await unverified.SumAsync(x => (decimal?)x.Amount, ct) ?? 0m;
+            var contactOut = contactId == null ? 0m : await unverified.Where(x => x.ContactId == contactId).SumAsync(x => (decimal?)x.Amount, ct) ?? 0m;
+            var contactMax = contactId == null ? 0m : await _db.TrustedSlipPayers.AsNoTracking()
+                .Where(t => t.CompanyId == companyId && t.ContactId == contactId && t.RevokedAt == null).MaxAsync(t => (decimal?)t.MaxConfirmedAmount, ct) ?? 0m;
             return TrustedSlipPayerRule.Decide(new TrustedSlipPayerRule.Facts(settingOn, slipReady, key, trust, intent.Amount, today,
-                settings?.SlipTrustedDailyCapPerKey ?? 0m));
+                settings?.SlipTrustedDailyCapPerKey ?? 0m, ContactBlocked: blocked, ContactOutstanding: contactOut, ContactMaxConfirmed: contactMax,
+                CompanyOutstanding: companyOut, CompanyOutstandingCap: settings?.SlipTrustedCompanyOutstandingCap ?? 0m));
         }
 
         var verdict = await DecideNowAsync();
         if (!verdict.Provisional) return new(false, verdict.Code, verdict.Reason);
 
-        // กันสองสลิปของกุญแจเดียวกันพร้อมกันเกินเพดานต่อวัน: ตัดสินซ้ำ + จองรายการใต้ล็อกต่อกุญแจ (ไม่ได้ล็อก ⇒ รอยืนยันตามปกติ — ทิศปลอดภัย)
+        // กันสองสลิปพร้อมกันเกินเพดาน (ต่อวัน · ค้างยืนยันต่อผู้ติดต่อ/บริษัท): ตัดสินซ้ำ + จองรายการใต้ล็อกต่อบริษัท (ไม่ได้ล็อก ⇒ รอยืนยันตามปกติ — ทิศปลอดภัย)
         var slipDay = reading.Date!.Value.Date;
         var holidays = await PlatformHolidayStore.LoadSetAsync(_db, slipDay.Year, slipDay.Year + 1, _logger, ct);
         var dueUtc = TrustedSlipPayerRule.ReviewDueUtc(slipDay, settings!.SlipTrustedReviewBusinessDays, holidays);
         var claimed = false;
-        var ran = await JobLock.RunExclusiveAsync(_db, AdvisoryLockKey.TrustedSlipPayer, hash!, async () =>
+        var ran = await JobLock.RunExclusiveAsync(_db, AdvisoryLockKey.TrustedSlipPayer, "outstanding", async () =>
         {
             verdict = await DecideNowAsync();
             if (!verdict.Provisional) return;
@@ -195,7 +207,13 @@ public sealed class TrustedSlipPayerService
         var row = await _db.TrustedSlipPayers.FirstOrDefaultAsync(t => t.Id == rowId && t.CompanyId == companyId, ct);
         if (row == null) return false;
         var before = new { revokedAt = row.RevokedAt, row.RevokedBy, row.RevokeReason };
-        if (trust) { row.RevokedAt = null; row.RevokedBy = null; row.RevokeReason = null; }
+        if (trust)
+        {
+            row.RevokedAt = null; row.RevokedBy = null; row.RevokeReason = null;
+            // ฝ่ายค้าน HIGH-3: ผู้ขายปลดล็อกผู้ติดต่อเอง (การให้ความไว้ใจคืน = ปลดล็อก · audit แถวเดียวกัน)
+            await _db.Contacts.Where(c => c.Id == row.ContactId && c.CompanyId == companyId && c.SlipTrustBlockedAt != null)
+                .ExecuteUpdateAsync(u => u.SetProperty(c => c.SlipTrustBlockedAt, (DateTime?)null).SetProperty(c => c.SlipTrustBlockedReason, (string?)null), ct);
+        }
         else
         {
             row.RevokedAt = now;

@@ -83,6 +83,7 @@ public sealed class SlipAutoRecordService
 
         string? lineNote = null;
         var recorded = false;
+        Guid? settledLine = null;
         if (SlipAutoRecordRule.SlipReady(facts) && _bankSettle != null && money.AccountId is Guid acc && reading.Date is DateTime slipDay)
         {
             var from = slipDay.Date;
@@ -99,6 +100,7 @@ public sealed class SlipAutoRecordService
             {
                 await _bankSettle.EvaluateLineAsync(companyId, lines[0], settings?.BankAutoSettleEnabled ?? false, DateTime.UtcNow, ct);
                 recorded = await LineSettledDocumentAsync(companyId, lines[0], intent.SourceId, ct);
+                if (recorded) settledLine = lines[0];
                 if (!recorded)
                     lineNote = "รายการเดินบัญชีที่ตรงยังไม่ผ่านเกณฑ์ตัดชำระเอง: " + (await _db.BankTransactions.AsNoTracking()
                         .Where(t => t.Id == lines[0] && t.CompanyId == companyId).Select(t => t.AutoSettleReason).FirstOrDefaultAsync(ct) ?? "ไม่ทราบเหตุ");
@@ -122,7 +124,12 @@ public sealed class SlipAutoRecordService
                 if (_trusted != null)
                 {
                     await _trusted.StampKeyFromSlipAsync(companyId, intentId, doc.ContactId, reading, money, ct);
-                    if (_trustVerify != null) await _trustVerify.LearnAsync(companyId, intentId, DateTime.UtcNow, ct);
+                    // ฝ่ายค้าน HIGH-1: การชำระที่ตัวตัดสินเงินเข้าเพิ่งสร้างจากรายการเดินบัญชีของสลิปนี้ (หนึ่งการชำระ = หนึ่งรายการ · ต้องเลขอ้างอิงตรง — ตรวจใน LearnAsync)
+                    if (_trustVerify != null && settledLine is Guid sl)
+                    {
+                        var boundPay = await _db.BankTransactions.AsNoTracking().Where(t => t.Id == sl && t.CompanyId == companyId).Select(t => t.MatchedPaymentId).FirstOrDefaultAsync(ct);
+                        await _trustVerify.LearnAsync(companyId, intentId, DateTime.UtcNow, ct, boundPaymentId: boundPay);
+                    }
                 }
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
@@ -133,15 +140,17 @@ public sealed class SlipAutoRecordService
         }
         // รอบ 286 (คำสั่งเจ้าของ): ด่าน 282 ผ่านครบเหลือแต่ "ไม่มีรายการเดินบัญชี" ⇒ ผู้จ่ายที่ไว้ใจได้บันทึกล่วงหน้า (ตัวตัดสินเดียว TrustedSlipPayerRule · ตรวจย้อนภายหลัง) ·
         // ทุกสลิปที่ผูกใบประทับกุญแจไว้ให้เรียนเมื่อรายการเดินบัญชีตามมา · ไม่ใช่ผู้จ่ายที่ไว้ใจได้/เกินเพดาน ⇒ หน้ายืนยันเหมือน 282 + เหตุ
+        var trustNote = "";
         if (_trusted != null && doc != null)
         {
             var trusted = await _trusted.TryProvisionalAsync(companyId, intentId, reading, verdict, money, sourceKind, ct);
             if (trusted.Recorded) return new(true, trusted.Code, trusted.Reason);
             if (verdict.Code == SlipAutoRecordRule.Codes.NoBankLine && trusted.Code is TrustedSlipPayerRule.Codes.Revoked or TrustedSlipPayerRule.Codes.OverMax
-                    or TrustedSlipPayerRule.Codes.OverDaily or TrustedSlipPayerRule.Codes.NoCap or SlipAutoRecordRule.Codes.ConfirmFailed)
-                lineNote = (lineNote == null ? "" : lineNote + " · ") + "ผู้จ่ายที่ไว้ใจได้: " + trusted.Reason;
+                    or TrustedSlipPayerRule.Codes.OverDaily or TrustedSlipPayerRule.Codes.NoCap or TrustedSlipPayerRule.Codes.OverOutstanding
+                    or TrustedSlipPayerRule.Codes.ContactBlocked or SlipAutoRecordRule.Codes.ConfirmFailed)
+                trustNote = "ผู้จ่ายที่ไว้ใจได้: " + trusted.Reason + " · ";   // ขึ้นก่อน (เหตุบนรายการตัดที่ 500 ตัวอักษร)
         }
-        var reason = verdict.Reason + (lineNote == null ? "" : " · " + lineNote);
+        var reason = trustNote + verdict.Reason + (lineNote == null ? "" : " · " + lineNote);
         await StampAsync(companyId, intentId, verdict.Code, reason, "SlipAutoRecordBlocked", verdict, money, ct);
         // ค่าตั้งปิด = พฤติกรรม 260 เดิม (ประตูแจ้งโอนแจ้งทีมแล้ว) · อื่น ๆ = วิธีสำรองของคำสั่งเจ้าของ: แจ้งให้ยืนยันพร้อมเหตุ + ลิงก์หน้ายืนยัน
         if (verdict.Code != SlipAutoRecordRule.Codes.SettingOff)

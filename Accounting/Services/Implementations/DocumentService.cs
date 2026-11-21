@@ -16336,7 +16336,9 @@ public partial class DocumentService : IDocumentService
             // SyncWhtCreditReceivedAsync (ในธุรกรรมข้างบน — แถวรอ 50 ทวิ มีก่อนงานตรวจ) · ทางเข้าที่มีเส้นใบเสร็จของตัวเอง = แถว Skipped พร้อมเหตุ ·
             // ไม่โยน (เงินบันทึกแล้ว — Error log)
             await PostPaymentAutomationService.EnqueueCoreAsync(_db, _logger, companyId, payment.Id, source, createdBy, CancellationToken.None);
-            await NotifyPartnerOfSellerPaymentAsync(companyId, payment.Id, source);   // รอบ 264 P3 (C-04): แจ้งผู้ซื้อคู่ค้าจากทุกทางเข้า · ไม่โยน
+            // รอบ 286 (ฝ่ายค้าน MED-1): การรับเงินล่วงหน้าที่ธนาคารยังไม่ยืนยันไม่แจ้งผู้ซื้อคู่ค้า — ตัวตรวจย้อนแจ้งเมื่อยืนยันแล้ว
+            if (!await TrustedSlipVerifyService.DeliveryHeldAsync(_db, companyId, payment.Id))
+                await NotifyPartnerOfSellerPaymentAsync(companyId, payment.Id, source);   // รอบ 264 P3 (C-04): แจ้งผู้ซื้อคู่ค้าจากทุกทางเข้า · ไม่โยน
 
             // Webhooks — payment.received (always) + document.paid
             // (when BalanceDue is now zero). Both fire outside the
@@ -16997,6 +16999,21 @@ public partial class DocumentService : IDocumentService
             return (null, null);
         }
 
+        // รอบ 286 (ฝ่ายค้าน LOW): ป้ายรับล่วงหน้าของการชำระที่มาจากรายการชำระ (PAY-INTENT-…) — ตัวตั้งเดียว TrustedSlipPayerRule.StatusLabel
+        var intentIdOf = new Dictionary<Guid, Guid>();
+        foreach (var p in payments)
+            if (GatewayPaymentRecord.TryParseIntentId(p.Reference, out var iid)) intentIdOf[p.Id] = iid;
+        var trustLabels = new Dictionary<Guid, string>();
+        if (intentIdOf.Count > 0)
+        {
+            var iids = intentIdOf.Values.Distinct().ToList();
+            var trustRows = await _db.PaymentIntents.AsNoTracking()
+                .Where(i => i.CompanyId == companyId && iids.Contains(i.Id) && i.TrustProvisionalAt != null)
+                .Select(i => new { i.Id, i.TrustProvisionalAt, i.TrustVerifiedAt, i.TrustFailedAt }).ToListAsync();
+            foreach (var t in trustRows)
+                if (TrustedSlipPayerRule.StatusLabel(t.TrustProvisionalAt, t.TrustVerifiedAt, t.TrustFailedAt) is string tl) trustLabels[t.Id] = tl;
+        }
+
         var rows = payments.Select(p =>
         {
             var rec = ReceiptOf(p);   // คำนวณครั้งเดียวต่อแถว
@@ -17016,7 +17033,8 @@ public partial class DocumentService : IDocumentService
                 // (หน้าเว็บไม่เสนอ "ออกใบเสร็จ" ของการชำระก้อนที่ผูกใบอื่นเป็นหลัก)
                 UnappliedCredit: p.UnappliedAmount,
                 Source: documentId.HasValue && PaymentEffectiveDocument.Of(p) != documentId.Value ? "allocation" : "payment",
-                AllocatedToDocument: allocatedToDoc.TryGetValue(p.Id, out var allocatedHere) ? allocatedHere : (decimal?)null);
+                AllocatedToDocument: allocatedToDoc.TryGetValue(p.Id, out var allocatedHere) ? allocatedHere : (decimal?)null,
+                ProvisionalLabel: intentIdOf.TryGetValue(p.Id, out var pi) && trustLabels.TryGetValue(pi, out var plabel) ? plabel : null);
         }).ToList();
 
         // ── รวมเอกสาร settle จากเส้น "แปลงเอกสาร" (ไม่มี Payment row) ──

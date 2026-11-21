@@ -11689,7 +11689,7 @@
               };
               extraSections += `<div style="margin-top:16px"><h4 style="font-size:14px;margin-bottom:8px">ประวัติการชำระเงิน (${payments.length})</h4>
                 <table class="table" style="font-size:12px"><thead><tr><th>เลขที่</th><th>วันที่</th><th class="text-right">จำนวน</th><th>วิธี</th><th>ใบเสร็จ</th></tr></thead>
-                <tbody>${payments.map(p => `<tr><td>${Layout.esc(p.paymentNumber)}</td><td>${Layout.date(p.paymentDate)}</td><td class="text-right">${p.allocatedToDocument != null ? `${Layout.money(p.allocatedToDocument)}<div class="text-xs text-gray-500">จากเงินรับ ${Layout.money(p.amount)}${p.unappliedCredit > 0 ? ` · รอจัดสรร ${Layout.money(p.unappliedCredit)}` : ''}</div>` : Layout.money(p.amount)}</td><td>${Layout.esc(p.paymentMethod||'-')}</td><td>${recCell(p)}</td></tr>`).join('')}</tbody></table></div>`;
+                <tbody>${payments.map(p => `<tr><td>${Layout.esc(p.paymentNumber)}</td><td>${Layout.date(p.paymentDate)}</td><td class="text-right">${p.allocatedToDocument != null ? `${Layout.money(p.allocatedToDocument)}<div class="text-xs text-gray-500">จากเงินรับ ${Layout.money(p.amount)}${p.unappliedCredit > 0 ? ` · รอจัดสรร ${Layout.money(p.unappliedCredit)}` : ''}</div>` : Layout.money(p.amount)}</td><td>${Layout.esc(p.paymentMethod||'-')}${p.provisionalLabel ? `<div class="text-xs" style="color:#b45309">⏳ ${Layout.esc(p.provisionalLabel)}</div>` : ''}</td><td>${recCell(p)}</td></tr>`).join('')}</tbody></table></div>`;
             }
             if (journals.length) {
               // host ว่างไว้ — เนื้อหาจริงมาจาก renderDocJournalSection() ที่อ่าน
