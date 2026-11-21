@@ -76,6 +76,7 @@
                 <td>${esc(r.evidenceLabel || '')}<div><button class="admin-btn admin-btn-outline admin-btn-sm" data-act="evidence" data-id="${esc(r.id)}">เปิดไฟล์</button></div></td>
                 <td class="${r.registryResult === 'Match' ? 'muted' : 'warn'}">${esc(r.registryLabel || '')}</td>
                 <td><span class="pill">${esc(r.statusLabel || r.status)}</span>${r.reviewNote ? `<div class="muted">${esc(r.reviewNote)}</div>` : ''}
+                  ${r.conflictLabel ? `<div style="color:#b91c1c;font-weight:700">⚠️ ${esc(r.conflictLabel)}</div>${r.conflictRequestId ? `<button class="admin-btn admin-btn-outline admin-btn-sm" data-act="revoke" data-id="${esc(r.conflictRequestId)}">ถอนของเดิม</button>` : ''}` : ''}
                   ${r.status === 'Pending' && r.approveProblem ? `<div class="warn">${esc(r.approveProblem)}</div>` : ''}</td>
                 <td><div class="actions">
                   ${r.status === 'Pending' ? `<button class="admin-btn admin-btn-primary admin-btn-sm" data-act="approve" data-id="${esc(r.id)}" ${r.approveProblem ? 'disabled' : ''}>อนุมัติ</button>
@@ -91,7 +92,11 @@
           let note = null;
           if (kind === 'approve') {
             if (!confirm('ยืนยันว่าเปิดไฟล์หลักฐานแล้ว และเลข/ชื่อบนเอกสารตรงกับคำขอ?')) return;
-            note = prompt('หมายเหตุ (ไม่บังคับ)') || null;
+            const row = this.rows.find(x => x.id === id) || {};
+            // ฝ่ายค้าน MED-B2: ชื่อไม่ตรงทะเบียน ⇒ เซิร์ฟเวอร์บังคับเหตุผล (needsApproveReason มาจากเซิร์ฟเวอร์)
+            note = prompt(row.needsApproveReason === true ? 'เหตุผลที่อนุมัติทั้งที่ชื่อไม่ตรงทะเบียน (บังคับ · บันทึกใน audit)' : 'หมายเหตุ (ไม่บังคับ)');
+            if (note === null) return;
+            note = note || null;
           } else {
             note = prompt(kind === 'reject' ? 'เหตุผลที่ปฏิเสธ (บริษัทจะเห็น)' : 'เหตุผลที่ถอนการยืนยัน (บริษัทจะเห็น)');
             if (note === null) return;

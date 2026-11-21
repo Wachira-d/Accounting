@@ -3864,6 +3864,9 @@ public class AccountingDbContext : DbContext
             e.Property(x => x.CompanyName).HasMaxLength(300);
             e.Property(x => x.EvidenceKind).HasMaxLength(32);
             e.Property(x => x.EvidenceSha256).HasMaxLength(64);
+            e.Property(x => x.EvidenceLocation).HasMaxLength(1000);
+            e.Property(x => x.EvidenceContentType).HasMaxLength(100);
+            e.Property(x => x.EvidenceFileName).HasMaxLength(300);
             e.Property(x => x.RegistryName).HasMaxLength(300);
             e.Property(x => x.RegistryResult).HasMaxLength(16);
             e.Property(x => x.Status).HasMaxLength(16);

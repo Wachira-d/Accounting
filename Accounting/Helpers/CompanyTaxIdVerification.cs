@@ -20,8 +20,14 @@ public static class CompanyTaxIdVerification
 {
     public const string RuleCode = "R285-TAXID-VERIFY";
     public const string LegalReference = "ภ.พ.20 (ใบทะเบียนภาษีมูลค่าเพิ่ม) / หนังสือรับรองการจดทะเบียนนิติบุคคล — หลักฐานเจ้าของเลขประจำตัวผู้เสียภาษี";
-    /// <summary>ชนิดไฟล์แนบของหลักฐาน (<c>FileAttachments.EntityType</c> · EntityId = id ของคำขอ)</summary>
-    public const string AttachmentEntityType = "CompanyTaxIdEvidence";
+    /// <summary>โฟลเดอร์ของไฟล์หลักฐานใต้ <c>AttachmentsRoot/{CompanyId}/</c> ในที่เก็บไฟล์กลาง (<c>IFileStorage</c>) — ไม่ใช่ <c>FileAttachments</c>
+    /// (เส้นไฟล์แนบทั่วไปจึงเปิด/ลบไม่ได้ · ข้อเพิ่มรอบ 285)</summary>
+    public const string EvidenceFolder = "CompanyTaxIdEvidence";
+    /// <summary>ชนิดข้อมูลใน <c>PdpaPiiAccessLogs.SubjectType</c> เมื่อเปิดไฟล์หลักฐาน</summary>
+    public const string PiiSubjectType = "CompanyTaxIdVerificationRequest";
+    /// <summary>ระยะเก็บหลักฐาน (ปี) นับจากวันยื่น — นโยบายแพลตฟอร์ม (คำตัดสิน 285-9): ภ.พ.20/หนังสือรับรองมีชื่อกรรมการ/ผู้มีอำนาจ = ข้อมูลส่วนบุคคล
+    /// เก็บเท่าที่ต้องใช้พิสูจน์การยืนยัน · ไม่มีทางลบก่อนครบ · งานลบเมื่อครบยังไม่มี (เลื่อน — ไฟล์ค้าง = ทิศปลอดภัย)</summary>
+    public const int EvidenceRetentionYears = 5;
 
     public const string EvidencePp20 = "Pp20";
     public const string EvidenceCompanyCertificate = "CompanyCertificate";
@@ -39,6 +45,33 @@ public static class CompanyTaxIdVerification
 
     public const int MaxEvidenceBytes = 10 * 1024 * 1024;
     public const int MaxNoteLength = 1000;
+
+    public static DateTime EvidenceRetainUntil(DateTime submittedAtUtc) => submittedAtUtc.AddYears(EvidenceRetentionYears);
+
+    /// <summary>ใครเปิดไฟล์หลักฐานได้ — ผู้ดูแลแพลตฟอร์ม (SystemAdmin) หรือ<b>เจ้าของ</b>บริษัทนั้น (ไม่ใช่ทุกคนที่มีสิทธิ์ตั้งค่าบริษัท)</summary>
+    public static bool CanViewEvidence(bool isPlatformAdmin, bool isCompanyOwner) => isPlatformAdmin || isCompanyOwner;
+
+    public const string EvidenceDeniedMessage = "ไฟล์หลักฐานยืนยันเลขผู้เสียภาษีเปิดได้เฉพาะเจ้าของบริษัทและผู้ดูแลระบบ NextAcc";
+
+    /// <summary>กระดิ่ง/อีเมลถึงผู้ดูแลแพลตฟอร์มเมื่อมีคำขอใหม่</summary>
+    public static (string Title, string Message) AdminNewRequestNotice(string companyName, string taxId, string registryResult, string? registryName)
+        => ($"คำขอยืนยันเลขผู้เสียภาษีใหม่: {companyName}",
+            $"เลข {taxId} · {RegistryLabel(registryResult, registryName)} · เปิดไฟล์หลักฐานก่อนอนุมัติที่หน้า ยืนยันเลขผู้เสียภาษีบริษัท");
+
+    /// <summary>กระดิ่ง/อีเมลถึงบริษัทเมื่อผู้ดูแลตัดสิน (พร้อมเหตุ)</summary>
+    public static (string Title, string Message) CompanyReviewedNotice(string status, string taxId, string? note) => status switch
+    {
+        StatusApproved => ($"ยืนยันเลขผู้เสียภาษี {taxId} แล้ว",
+            "ผู้ดูแลระบบ NextAcc อนุมัติหลักฐานแล้ว — คำขอเชื่อมคู่ค้าที่ส่งถึงเลขนี้ก่อนสมัครจะเปิดให้ตอบที่หน้าคู่ค้า" + (string.IsNullOrWhiteSpace(note) ? "" : $" · หมายเหตุ: {note}")),
+        StatusRejected => ($"คำขอยืนยันเลขผู้เสียภาษี {taxId} ถูกปฏิเสธ",
+            $"เหตุ: {note} · แก้ตามเหตุแล้วยื่นหลักฐานใหม่ได้ที่หน้าตั้งค่าบริษัท"),
+        StatusRevoked => ($"การยืนยันเลขผู้เสียภาษี {taxId} ถูกถอน",
+            $"เหตุ: {note} · ยื่นหลักฐานใหม่ได้ที่หน้าตั้งค่าบริษัท"),
+        _ => ("สถานะยืนยันเลขผู้เสียภาษีเปลี่ยน", note ?? ""),
+    };
+
+    public const string AdminPageUrl = "/admin/taxid-verifications.html";
+    public const string CompanyPageUrl = "/pages/settings.html";
 
     /// <summary>ป้ายชนิดหลักฐาน (หน้าแสดงตรงตัว)</summary>
     public static string EvidenceLabel(string? kind) => kind switch
@@ -60,7 +93,7 @@ public static class CompanyTaxIdVerification
     public static string RegistryLabel(string? result, string? registryName) => result switch
     {
         RegistryMatch => $"ชื่อตรงทะเบียน ({registryName})",
-        RegistryMismatch => $"ชื่อไม่ตรงทะเบียน — ทะเบียน: {registryName}",
+        RegistryMismatch => $"⚠️ ชื่อไม่ตรงทะเบียน: {registryName} — อนุมัติได้เมื่อระบุเหตุผล",
         _ => "ตรวจกับทะเบียนไม่ได้ (ทะเบียนไม่ตอบ/ไม่ใช่นิติบุคคล) — ผู้ดูแลตัดสินจากเอกสาร",
     };
 
@@ -97,8 +130,9 @@ public static class CompanyTaxIdVerification
     }
 
     /// <summary>ยื่นได้ไหม — null = ได้ · อื่น ๆ = เหตุ + ทางไปต่อ (ข้อความไทยถึงผู้ใช้)</summary>
-    public static string? SubmitProblem(string? taxId, string? evidenceKind, int fileBytes, bool alreadyVerified, bool hasPending,
-        string registryResult, string? registryName)
+    /// <remarks>ฝ่ายค้าน MED-B2: ชื่อไม่ตรงทะเบียน (ชื่อการค้า/ชื่ออังกฤษ) <b>ไม่</b>บล็อกการยื่นอีกต่อไป — ติดธงให้ผู้ดูแลเห็น ·
+    /// ผู้ดูแลอนุมัติได้เมื่อระบุเหตุผล (<see cref="ApproveProblem"/>)</remarks>
+    public static string? SubmitProblem(string? taxId, string? evidenceKind, int fileBytes, bool alreadyVerified, bool hasPending)
     {
         if (!ThaiTaxId.IsValid(taxId))
             return "เลขผู้เสียภาษีของบริษัทยังไม่ถูกต้อง (ต้องเป็นเลข 13 หลักที่ผ่าน checksum) — แก้ที่ช่องเลขผู้เสียภาษีแล้วบันทึกก่อนยื่นหลักฐาน";
@@ -108,21 +142,31 @@ public static class CompanyTaxIdVerification
         if (fileBytes > MaxEvidenceBytes) return "ไฟล์หลักฐานใหญ่เกิน 10 MB";
         if (alreadyVerified) return "เลขผู้เสียภาษีนี้ยืนยันแล้ว";
         if (hasPending) return "มีคำขอยืนยันที่รอผู้ดูแลระบบตรวจอยู่แล้ว — รอผลก่อนยื่นใหม่";
-        if (registryResult == RegistryMismatch)
-            return $"ชื่อบริษัทในระบบไม่ตรงกับทะเบียนของเลขนี้ (ทะเบียน: {registryName}) — ตรวจว่าเลขผู้เสียภาษีถูกต้อง แล้วแก้ชื่อบริษัทให้ตรงทะเบียนก่อนยื่น";
         return null;
     }
 
-    /// <summary>อนุมัติได้ไหม — คำขอต้องรอตรวจ · เลขในคำขอต้องตรงเลขปัจจุบันของบริษัท (บริษัทเปลี่ยนเลขหลังยื่น = อนุมัติไม่ได้) · ชื่อไม่ตรงทะเบียน = ไม่ได้</summary>
-    public static string? ApproveProblem(string? status, string? requestTaxId, string? currentTaxId, string? registryResult, bool hasEvidence)
+    /// <summary>อนุมัติได้ไหม — คำขอต้องรอตรวจ · เลขในคำขอต้องตรงเลขปัจจุบันของบริษัท (บริษัทเปลี่ยนเลขหลังยื่น = อนุมัติไม่ได้) ·
+    /// เลข+สาขานี้มีบริษัทอื่นยืนยันอยู่แล้ว = ไม่ได้จนกว่าจะถอนของเดิม (ฝ่ายค้าน MED-B1 — เลขหนึ่งยืนยันได้บริษัทเดียวต่อสาขา) ·
+    /// ชื่อไม่ตรงทะเบียน = ต้องระบุเหตุผล (MED-B2)</summary>
+    /// <param name="verifiedByOtherCompany">ชื่อบริษัทอื่นที่ยืนยันเลข+สาขาเดียวกันอยู่ (null = ไม่มี)</param>
+    public static string? ApproveProblem(string? status, string? requestTaxId, string? currentTaxId, string? registryResult, bool hasEvidence,
+        string? note, string? verifiedByOtherCompany)
     {
         if (status != StatusPending) return "คำขอนี้ไม่ได้อยู่ในสถานะรอตรวจ";
         if (!ThaiTaxId.IsValid(currentTaxId) || ThaiTaxId.Normalize(currentTaxId) != ThaiTaxId.Normalize(requestTaxId))
             return "บริษัทเปลี่ยนเลขผู้เสียภาษีหลังยื่นคำขอ — อนุมัติไม่ได้ (ให้บริษัทยื่นหลักฐานของเลขปัจจุบันใหม่)";
-        if (registryResult == RegistryMismatch) return "ชื่อบริษัทไม่ตรงทะเบียน — อนุมัติไม่ได้";
         if (!hasEvidence) return "ไม่พบไฟล์หลักฐาน — อนุมัติไม่ได้";
+        if (verifiedByOtherCompany != null) return ConflictLabel(verifiedByOtherCompany) + " — ถอนการยืนยันของเดิม (ระบุเหตุ) ก่อนอนุมัติคำขอนี้";
+        if (registryResult == RegistryMismatch && string.IsNullOrWhiteSpace(note))
+            return "ชื่อบริษัทไม่ตรงทะเบียน — ระบุเหตุผลที่อนุมัติ (เช่น ตรวจแล้วเป็นชื่อการค้า/ชื่อภาษาอังกฤษของนิติบุคคลเดียวกัน)";
         return null;
     }
+
+    /// <summary>ธงเด่นบนคิวของผู้ดูแล: เลข+สาขานี้ยืนยันแล้วโดยบริษัทอื่น</summary>
+    public static string ConflictLabel(string otherCompanyName) => $"เลขนี้ยืนยันแล้วโดยบริษัท {otherCompanyName}";
+
+    /// <summary>กุญแจ "เลขหนึ่งยืนยันได้บริษัทเดียวต่อสาขา" — สาขาว่าง = สำนักงานใหญ่ (<see cref="TaxBranchCode"/>)</summary>
+    public static string SlotKey(string? taxId, string? branchCode) => ThaiTaxId.Normalize(taxId) + ":" + TaxBranchCode.Normalize(branchCode);
 
     /// <summary>ปฏิเสธ/ถอน ต้องมีเหตุ (บริษัทเห็นเหตุนี้)</summary>
     public static string? ReasonProblem(string? reason)

@@ -167,6 +167,7 @@
       <div id="taxIdVerifyBox" style="display:none;margin:-4px 0 12px;padding:10px 12px;border:1px solid #e2e8f0;border-radius:8px;background:#f8fafc;font-size:13px">
         <div><b>สถานะยืนยันเลขผู้เสียภาษี:</b> <span id="tivStatus">-</span></div>
         <div id="tivDetail" style="color:#64748b;font-size:12px;margin-top:4px"></div>
+        <button type="button" class="btn btn-secondary" id="tivEvidence" style="display:none;margin-top:6px;font-size:12px">เปิดไฟล์หลักฐานที่ยื่น</button>
         <div id="tivForm" style="display:none;margin-top:8px;gap:8px;flex-wrap:wrap;align-items:center">
           <select id="tivKind" class="form-select" style="max-width:280px"></select>
           <input type="file" id="tivFile" accept="application/pdf,image/png,image/jpeg,image/webp">
@@ -2643,6 +2644,10 @@
         }
         if (s.cannotSubmitReason) parts.push(s.cannotSubmitReason);
         document.getElementById('tivDetail').textContent = parts.join(' · ');
+        // ข้อเพิ่มรอบ 285: เจ้าของบริษัทเปิดไฟล์หลักฐานที่ยื่นได้ (เซิร์ฟเวอร์ตัดสิน canViewEvidence · ทุกครั้งที่เปิดถูกบันทึก PiiAccessLog)
+        const ev = document.getElementById('tivEvidence');
+        ev.style.display = lr && lr.canViewEvidence === true ? '' : 'none';
+        ev.onclick = () => API.download(`/api/companies/${cid}/tax-id-verification/${lr.id}/evidence`, 'taxid-evidence').catch(e => Layout.toast(e.message, 'error'));
         document.getElementById('tivEffect').textContent = s.effect || '';
         const form = document.getElementById('tivForm');
         form.style.display = s.canSubmit === true ? 'flex' : 'none';

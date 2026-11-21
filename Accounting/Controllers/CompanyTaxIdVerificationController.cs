@@ -23,9 +23,22 @@ public class CompanyTaxIdVerificationController : ControllerBase
     [HttpGet]
     public async Task<ActionResult<ApiResponse<object>>> Get(Guid companyId, CancellationToken ct)
     {
-        var s = await _service.GetStatusAsync(companyId, ct);
+        var s = await _service.GetStatusAsync(companyId, ct, JwtHelper.GetUserIdFromClaims(User));
         if (s == null) return NotFound(new ApiResponse<object>(false, null, "ไม่พบบริษัท"));
         return Ok(new ApiResponse<object>(true, s));
+    }
+
+    /// <summary>ข้อเพิ่มรอบ 285: เจ้าของบริษัทเปิดไฟล์หลักฐานที่ตัวเองยื่น — เฉพาะบทบาท Owner (ตรวจในบริการ · อื่น ๆ 403) · บันทึก PdpaPiiAccessLogs</summary>
+    [HttpGet("{requestId:guid}/evidence")]
+    [Accounting.Filters.RejectApiKey("เปิดไฟล์หลักฐานยืนยันเลขผู้เสียภาษี")]
+    public async Task<IActionResult> Evidence(Guid companyId, Guid requestId, CancellationToken ct)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        if (userId == Guid.Empty) return Unauthorized();
+        var f = await _service.ReadEvidenceAsync(requestId, companyId, new CompanyTaxIdVerificationService.EvidenceViewer(userId,
+            HttpContext.Connection.RemoteIpAddress?.ToString(), Request.Headers.UserAgent.ToString(), "เจ้าของบริษัทเปิดหลักฐานที่ยื่นเอง"), ct);
+        if (f == null) return NotFound(new ApiResponse<object>(false, null, "ไม่พบไฟล์หลักฐาน"));
+        return File(f.Value.Bytes, f.Value.ContentType, f.Value.FileName);
     }
 
     /// <summary>ยื่นหลักฐาน (multipart: <c>file</c> + <c>evidenceKind</c>) — ข้อผิดพลาดที่ผู้ใช้แก้ได้ = 400/409 ข้อความไทย (ExceptionMiddleware)</summary>
