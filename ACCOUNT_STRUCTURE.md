@@ -1553,4 +1553,4 @@ _Last verified against codebase: 2026-11-20 (รอบ 278 — `CompanyUser.Allo
 - ตารางใหม่ `CompanyTaxIdVerificationRequests` (tenant = บริษัทผู้ยื่น · หลักฐาน ภ.พ.20/หนังสือรับรองเป็นไฟล์แนบชนิด `CompanyTaxIdEvidence` · SHA-256 · ผลเทียบทะเบียน · สถานะ Pending/Approved/Rejected/Revoked · ไม่ลบ)
 - ผลที่ใช้: เปิดคำขอเชื่อมคู่ค้าที่ส่งก่อนสมัคร (285-3) · ป้ายบนการ์ดคำขอ (285-5) · บริษัทเดิม = ยังไม่ยืนยัน (`Round285Migration`)
 
-_Last verified against codebase: 2026-11-21 (รอบ 285 — `Company.TaxIdVerified*` + ตาราง `CompanyTaxIdVerificationRequests` · ผู้ดูแลแพลตฟอร์มอนุมัติ · เปลี่ยนเลข = หลุดสถานะ — commit (เติมในคอมมิตตามหลัง))_
+_Last verified against codebase: 2026-11-21 (รอบ 285 — `Company.TaxIdVerified*` + ตาราง `CompanyTaxIdVerificationRequests` · ผู้ดูแลแพลตฟอร์มอนุมัติ · เปลี่ยนเลข = หลุดสถานะ — commit ae317b36)_

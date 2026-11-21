@@ -7506,4 +7506,4 @@ _รอบ 285 (2026-11-21): ยืนยันเลขผู้เสียภ
 - 285-1/2: บริษัทยื่น ภ.พ.20/หนังสือรับรอง (`settings.html` · `POST …/tax-id-verification`) · ชื่อเทียบทะเบียนตรงตัว (ไม่ fuzzy · ขัด = ยื่นไม่ได้) · ผู้ดูแลแพลตฟอร์มอนุมัติ/ปฏิเสธ/ถอนที่ `/admin/taxid-verifications.html` · audit ทุกครั้ง
 - 285-3: ยืนยันแล้ว ⇒ เปิดคำขอเชื่อมคู่ค้าที่ส่งก่อนสมัครได้ (ย้อนกลับข้อจำกัด 280-10 เฉพาะบริษัทที่ยืนยัน) · 285-4: เปลี่ยนเลข = หลุดสถานะ · 285-5: การ์ดคำขอบอกว่าเลขผู้ขอยืนยันหรือยัง
 - 285-7: ภ.ง.ด.1 ช่อง 5 ของผู้ไม่มีเลข 13 หลัก — คงเติม 0 + ป้ายเดิม (สเปก RD เปิดไม่ได้จาก session · บันทึกที่ค้นแล้ว)
-- migration `Round285Migration` · เทสต์ pure `CompanyTaxIdVerificationRound285Tests` · Db `CompanyTaxIdVerificationRound285DbTests` · กติกา `_R285_*` · คอมมิต (เติมในคอมมิตตามหลัง)
+- migration `Round285Migration` · เทสต์ pure `CompanyTaxIdVerificationRound285Tests` · Db `CompanyTaxIdVerificationRound285DbTests` · กติกา `_R285_*` · คอมมิต ae317b36

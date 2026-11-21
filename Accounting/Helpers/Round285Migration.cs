@@ -1,7 +1,7 @@
 namespace Accounting.Helpers;
 
 /// <summary>
-/// รอบ 285 — ยืนยันเลขผู้เสียภาษีของบริษัท (<see cref="CompanyTaxIdVerification"/>) · idempotent (<c>IF NOT EXISTS</c>) · ชื่อ index ตรง <c>AccountingDbContext</c> ·
+/// รอบ 285 (commit ae317b36) — ยืนยันเลขผู้เสียภาษีของบริษัท (<see cref="CompanyTaxIdVerification"/>) · idempotent (<c>IF NOT EXISTS</c>) · ชื่อ index ตรง <c>AccountingDbContext</c> ·
 /// บริษัทเดิมทั้งหมด = <b>ยังไม่ยืนยัน</b> (ช่องว่าง · ไม่ประทับเอง — สถานะ "ยืนยันแล้ว" ตั้งได้เฉพาะเมื่อผู้ดูแลแพลตฟอร์มอนุมัติหลักฐานจริง)
 /// </summary>
 public static class Round285Migration
