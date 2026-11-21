@@ -148,7 +148,7 @@ public static class AutopilotReadiness
 
     public const string PaymentSettingsUrl = "/pages/payment-settings.html";
     /// <summary>รอบ 250: หน้าตั้ง URL ของระบบ (ผู้ดูแลระบบเท่านั้น)</summary>
-    public const string SystemSettingsUrl = "/admin/site-settings.html";
+    public const string SystemSettingsUrl = SystemBaseUrl.AdminPagePath;   // รอบ 284: ช่อง App Base URL อยู่หน้าอีเมลระบบ (ไม่ใช่ตั้งค่าเว็บไซต์)
     public const string EmailScheduleUrl = "/pages/email-schedule.html";
     public const string SystemBaseUrlMissingTitle = "ยังไม่ได้ตั้ง URL ของระบบ — ลิงก์ชำระ/QR จะไม่ถูกแนบในอีเมล";
     public const string EmailSettingsUrl = "/pages/settings.html#email";
@@ -362,7 +362,7 @@ public static class AutopilotReadiness
         else if (f.SystemBaseUrlConfigured == false)
             // รอบ 250 (WP-02 §2.4 ข้อ 2 · Y7): ไม่เดาโดเมน — ลิงก์ไม่ถูกแนบ (อีเมลยังส่ง) · ทางไปต่อ = ผู้ดูแลระบบตั้ง URL
             Add("GATEWAY", "รับเงิน", Warn, SystemBaseUrlMissingTitle,
-                "ลิงก์ชำระสร้างจาก URL ของระบบ — ยังไม่ได้ตั้ง (หรือยังเป็นค่าที่มากับโปรแกรม) ⇒ อีเมลส่งได้แต่ไม่มีลิงก์/QR ชำระ · แจ้งผู้ดูแลระบบให้ตั้งที่หน้าแอดมิน → ตั้งค่าระบบ",
+                "ลิงก์ชำระสร้างจาก URL ของระบบ — ยังไม่ได้ตั้ง (หรือยังเป็นค่าที่มากับโปรแกรม) ⇒ อีเมลส่งได้แต่ไม่มีลิงก์/QR ชำระ · แจ้งผู้ดูแลระบบให้ตั้งที่ " + SystemBaseUrl.AdminPageHint,
                 SystemSettingsUrl, "ตั้ง URL ของระบบ (ผู้ดูแลระบบ)");
         else if (f.PayLinkUnavailableReason != null)
             Add("GATEWAY", "รับเงิน", Warn, PayLinkNoOnlineTitle, f.PayLinkUnavailableReason,

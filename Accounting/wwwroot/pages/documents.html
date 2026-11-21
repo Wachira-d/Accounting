@@ -7634,9 +7634,18 @@
         this.addLine();
         const row = document.getElementById('linesBody').lastElementChild;
         const descEl = row.querySelector('[data-f="desc"]');
-        if (descEl) { descEl.value = `รับชำระเงินตาม${Layout.docTypeLabel(d.documentType)}เลขที่ ${d.documentNumber}`; descEl.__grow?.(); }
+        // รอบ 284 (T3 MED-5): ข้อความ/หน่วยตั้งต้นมาจากเซิร์ฟเวอร์ตามภาษาของใบต้นทาง (DocumentLabels ตัวเดียวกับใบเสร็จที่ระบบออก) — หน้าเว็บไม่มีสำเนาข้อความ ·
+        // โหลดไม่สำเร็จ ⇒ เลขที่ใบต้นทาง (ผู้ใช้แก้ต่อได้) · ผู้ใช้เปลี่ยนใบระหว่างรอ ⇒ ไม่ทับ
+        if (descEl) { descEl.value = d.documentNumber || ''; descEl.__grow?.(); }
         const qtyEl = row.querySelector('[data-f="qty"]'); if (qtyEl) qtyEl.value = 1;
-        const unitEl = row.querySelector('[data-f="unit"]'); if (unitEl) unitEl.value = 'รายการ';
+        const unitEl = row.querySelector('[data-f="unit"]'); if (unitEl) unitEl.value = '';
+        const pickedId = id;
+        API.get(`/api/companies/${Layout.getCompanyId()}/document/${pickedId}/receipt-line-default`).then(res => {
+          if (this._receiptSourceId !== pickedId) return;
+          const v = res?.data || {};
+          if (descEl && v.description && descEl.value === (d.documentNumber || '')) { descEl.value = v.description; descEl.__grow?.(); }
+          if (unitEl && v.unit && !unitEl.value) unitEl.value = v.unit;
+        }).catch(() => { /* ค่าตั้งต้นเท่านั้น — ผู้ใช้กรอกเองได้ */ });
         const priceEl = row.querySelector('[data-f="price"]'); if (priceEl) priceEl.value = grossDue;
         const vatSel = row.querySelector('[data-f="vat"]'); Layout.setLineVat(vatSel, 0, 'doc');
         const whtEl = row.querySelector('[data-f="wht"]'); if (whtEl) whtEl.value = whtRate;

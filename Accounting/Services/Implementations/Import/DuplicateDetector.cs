@@ -45,6 +45,10 @@ public interface IDuplicateDetector
     /// <param name="entityType">"Contact" · "Product" · "Document" · "Employee" · "BankTransaction" · "FixedAsset" · "JournalEntry"</param>
     Task<List<DuplicateMatch?>> MatchBatchAsync(Guid companyId, string entityType,
         IReadOnlyList<IReadOnlyDictionary<string, string?>> rows, CancellationToken ct = default);
+
+    /// <summary>รอบ 284 (T4 L-1): จำนวนพนักงานเดิมที่เลขบัตร/เลขผู้เสียภาษีถอดรหัสไม่ได้ — ตรวจซ้ำด้วยเลขบัตรกับคนเหล่านี้ไม่ได้ ⇒ ผู้เรียกขึ้นคำเตือน
+    /// (<see cref="Accounting.Helpers.EmployeeIdDuplicateScan.Warning"/>) แทนการบอก "ไม่พบของซ้ำ" แบบเงียบ</summary>
+    Task<int> UnreadableEmployeeIdCountAsync(Guid companyId, CancellationToken ct = default);
 }
 
 /// <summary>ผลจับคู่หนึ่งแถว — <see cref="Kind"/>: "TaxBranch" · "Code" · "Barcode" · "ExactName" · "Key" (ตัวตรวจรายแถวของชนิดอื่น)</summary>
@@ -315,18 +319,10 @@ public class DuplicateDetector : IDuplicateDetector
         var empCode = Get(d, "EmployeeCode", "employeeCode", "รหัสพนักงาน");
         if (!string.IsNullOrWhiteSpace(idCard))
         {
-            // รอบ 200 (G2-06): คอลัมน์เข้ารหัสแบบ nonce สุ่ม ⇒ เทียบใน SQL ไม่มีวันเจอ — ถอดรหัสแล้วเทียบในหน่วยความจำ
-            if (!_employeeIds.TryGetValue(cid, out var ids))
-            {
-                ids = (await _db.Set<Employee>().AsNoTracking()
-                        .Where(e => e.CompanyId == cid && (e.CitizenId != null || e.TaxId != null))
-                        .Select(e => new { e.Id, e.CitizenId, e.TaxId })
-                        .ToListAsync(ct))
-                    .Select(e => (e.Id, e.CitizenId, e.TaxId)).ToList();
-                _employeeIds[cid] = ids;
-            }
-            var matchId = ids.FirstOrDefault(e => Accounting.Helpers.EncryptedIdMatch.Same(e.CitizenId, idCard)
-                || Accounting.Helpers.EncryptedIdMatch.Same(e.TaxId, idCard)).Id;
+            // รอบ 200 (G2-06): คอลัมน์เข้ารหัสแบบ nonce สุ่ม ⇒ เทียบใน SQL ไม่มีวันเจอ — ถอดรหัสแล้วเทียบในหน่วยความจำ ·
+            // รอบ 284 (T4 L-1): ข้ามค่าที่ถอดรหัสไม่ได้ผ่านตัวตัดสินเดียว EmployeeIdDuplicateScan (จำนวนคนที่ตรวจไม่ได้ ⇒ คำเตือนที่ MatchBatchAsync/ผู้เรียก)
+            var ids = await EmployeeIdsAsync(cid, ct);
+            var matchId = Accounting.Helpers.EmployeeIdDuplicateScan.Scan(ids, idCard).MatchId ?? Guid.Empty;
             if (matchId != Guid.Empty)
             {
                 var hit = await _db.Set<Employee>().AsNoTracking()
@@ -346,6 +342,22 @@ public class DuplicateDetector : IDuplicateDetector
         }
         return null;
     }
+
+    /// <summary>เลขบัตร/เลขผู้เสียภาษีของพนักงานเดิม (ถอดรหัสแล้ว) ต่อบริษัท — โหลดครั้งเดียวต่อคำขอ</summary>
+    private async Task<List<(Guid Id, string? CitizenId, string? TaxId)>> EmployeeIdsAsync(Guid cid, CancellationToken ct)
+    {
+        if (_employeeIds.TryGetValue(cid, out var ids)) return ids;
+        ids = (await _db.Set<Employee>().AsNoTracking()
+                .Where(e => e.CompanyId == cid && (e.CitizenId != null || e.TaxId != null))
+                .Select(e => new { e.Id, e.CitizenId, e.TaxId })
+                .ToListAsync(ct))
+            .Select(e => (e.Id, e.CitizenId, e.TaxId)).ToList();
+        _employeeIds[cid] = ids;
+        return ids;
+    }
+
+    public async Task<int> UnreadableEmployeeIdCountAsync(Guid companyId, CancellationToken ct = default)
+        => Accounting.Helpers.EmployeeIdDuplicateScan.Scan(await EmployeeIdsAsync(companyId, ct), null).UnreadableCount;
 
     private async Task<ImportDuplicateConflict?> DetectBankTxnAsync(Guid cid, Dictionary<string, object?> d,
         Guid? sid, string? sref, int rn, CancellationToken ct)

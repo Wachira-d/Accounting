@@ -65,7 +65,7 @@ public class TlsCertificateMonitorJob : BackgroundService
             settings.TlsCertHost = null;
             settings.TlsCertNotAfter = null;
             settings.TlsCertIssuer = null;
-            settings.TlsCertCheckError = "ยังไม่ได้ตั้ง URL ของระบบแบบ https (ตั้งค่าระบบ → URL ของระบบ) — จึงไม่มีใบรับรองให้ตรวจ";
+            settings.TlsCertCheckError = "ยังไม่ได้ตั้ง URL ของระบบแบบ https (" + Accounting.Helpers.SystemBaseUrl.AdminPageHint + ") — จึงไม่มีใบรับรองให้ตรวจ";
             await db.SaveChangesAsync(ct);
             return;
         }

@@ -1505,7 +1505,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **976 ไฟล์ · 10,617 `[Fact]` + 1,439 `[Theory]` (6,835 `InlineData`)** ณ 2026-11-21 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`) | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)**, **ReceiptFormRule (รูปแบบกระดาษหลักฐานรับเงิน · รอบ 203)** |
+| เทสต์ที่มี | **978 ไฟล์ · 10,627 `[Fact]` + 1,439 `[Theory]` (6,835 `InlineData`)** ณ 2026-11-21 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`) | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)**, **ReceiptFormRule (รูปแบบกระดาษหลักฐานรับเงิน · รอบ 203)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
 | CI | ✅ `.github/workflows/ci.yml` — static check → restore → build → test; รันบน PR/push เข้า main/master + `workflow_dispatch` (branch `claude/**` ปิดไว้ กัน mail spam ระหว่างพัฒนา) |
@@ -9298,3 +9298,15 @@ H2 (OCR ไม่พร้อม ⇒ แถวเข้าคิว) ล็อ�
 | T283-02 | Db `…ใบที่ท่อบันทึกก่อนรอบ283_ไม่มีPV_…` | รายงานเห็นการจ่ายของท่อที่ไม่มี PV · ออกย้อนหลังไม่ลง JE ซ้ำ/ไม่ออก 50 ทวิ ใหม่ · กดซ้ำ = AlreadyIssued · ทิศตรงข้าม: การจ่ายที่คนบันทึกไม่ขึ้นรายงาน |
 | T283-03 | pure `SettlementPaymentVoucherRound283Tests` (12 เคส) | ตัวตัดสิน (ใบซื้อ/ค่าใช้จ่ายเท่านั้น · มีใบแล้ว · ยกเลิก · PV แปลงที่ลงบัญชีแล้ว · ไม่มีเงินออก) · ใบไม่ถือภาษี · ป้ายที่มา · หัวหมายเหตุของท่อ · ข้อความบนใบ th/en (en ไม่ปนไทย) |
 | T283-04 | กติกา `_R283_*` (+7 · เคสฝ่ายค้าน R283-1 ถอดคำขอ PV · R283-2 ใบถือภาษีหัก) · mutation ในเครื่อง: ถอดคำขอ PV ⇒ T283-01 ล้ม · ถอดการยกเลิก PV ตามการจ่าย ⇒ T283-01 ล้ม | ด่านถูกต่อสายจริง |
+
+## รอบ 284 แพ็ก F — งานคงค้างจากผลตรวจรายสัปดาห์ (`erp-review/2026-11-21/dev-284-pack-f.md` · คำตัดสิน 284-1…284-6)
+
+| รหัส | เทสต์ | ล็อกอะไร |
+| --- | --- | --- |
+| T284-01 | pure `PackFRound284Tests.R284_L1_เลขเดิมถอดไม่ได้_…` + ทิศตรงข้าม `R284_L1_ทิศตรงข้าม_…` | T4 L-1: ciphertext ค้างไม่ถูกจับคู่ (ไม่เดา) + นับเป็นคำเตือน · เลขอ่านได้จับคู่ตามเดิม (รูปมีขีด/ช่อง TaxId) ไม่มีคำเตือน |
+| T284-02 | Db `PackFRound284DbTests` (2) — `ImportEntityResolver` + `DuplicateDetector` จริง | แถวนำเข้าได้ `employee-id-unreadable` (Warning) เมื่อคนเดิมถอดไม่ได้ · บริษัทที่อ่านได้ทุกคน: จับคู่คนเดิม/คนใหม่ไม่มีคำเตือน |
+| T284-03 | pure `R284_L9_envว่างไม่ชนะconfig_…` | T4 L-9: `Resolve("", cfg)` = cfg · ค่าดิบไม่ Trim · dev key อยู่ในห่วงโซ่ถอด · `Program.cs` เลือกคีย์ PII ผ่าน `Resolve` |
+| T284-04 | pure `R284_L6_สรุปไฟล์โอน_…` + `R284_L6_ทิศตรงข้าม_…` | T4 L-6: พร้อมโอน X จาก Y · ยอดพร้อม + ไม่พร้อม = ยอดรวม · แผ่นรายการไม่มีแถวรวม |
+| T284-05 | pure `R284_MED5_ฟอร์มใบเสร็จไม่มีสำเนาข้อความไทย_…` | T3 MED-5: ไม่มีสำเนาข้อความใน JS · endpoint ใช้ `DocumentLabels` ตามภาษาใบต้นทาง + tenant · อยู่ในรายการอนุญาต 276 |
+| T284-06 | pure `R284_URLของระบบ_ทุกข้อความชี้หน้าที่มีช่องจริง` + ปรับ `Round250Wp02Tests` (FixUrl) | ข้อความชี้ผิดเดิมเหลือ 0 จุด · ป้ายช่องบอกค่าเริ่มต้นไม่ใช่โดเมนเรา |
+| T284-07 | กติกา `_R284_*` (+5 · เคสฝ่ายค้าน R284-1…3) + ปรับกติกา G2-06 ของ `DetectEmployeeAsync` | จุดเรียกตัวตัดสิน L-1 / สรุปไฟล์โอน / ค่าตั้งต้นบรรทัดใบเสร็จ ถอดแล้วฟ้อง |

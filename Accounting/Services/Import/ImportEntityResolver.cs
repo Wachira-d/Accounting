@@ -272,10 +272,17 @@ public partial class ImportEntityResolver : IImportEntityResolver
         string detectorType, CancellationToken ct)
     {
         var keyed = await _duplicates.MatchBatchAsync(companyId, detectorType, rows.Select(r => r.Values).ToList(), ct);
+        // รอบ 284 (T4 L-1): พนักงาน — แถวที่มีเลขบัตรแต่ไม่พบคนเดิม ขณะที่พนักงานเดิมบางคนเลขถอดรหัสไม่ได้ ⇒ "ไม่พบ" ไม่ใช่ความจริง ⇒ คำเตือนที่ต้องรับทราบ
+        var unreadableWarning = detectorType == "Employee" && rows.Any(r => Value(r, "CitizenId") != null)
+            ? Accounting.Helpers.EmployeeIdDuplicateScan.Warning(await _duplicates.UnreadableEmployeeIdCountAsync(companyId, ct))
+            : null;
         return rows.Select((r, i) => keyed[i] is { } h
             ? new ImportEntityMatchResult(r.RowId, h.ExistingId, "Code", (decimal)h.Score, AutoApply: h.Score >= 1.0, UsedAi: false, null,
                 new[] { new ImportMatchCandidateDto(h.ExistingId, h.Label, (decimal)h.Score, "Code") }, Array.Empty<ImportIssueDto>())
-            : None(r.RowId)).ToList();
+            : unreadableWarning != null && Value(r, "CitizenId") != null
+                ? None(r.RowId) with { Issues = new[] { new ImportIssueDto("CitizenId", Accounting.Helpers.EmployeeIdDuplicateScan.IssueCode,
+                    ImportIssueSeverity.Warning, unreadableWarning, Source: ImportIssueSource.Match) } }
+                : None(r.RowId)).ToList();
     }
 
     private static ImportEntityMatchResult None(Guid rowId)
