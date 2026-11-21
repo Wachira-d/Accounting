@@ -225,11 +225,11 @@ public class TrustedSlipPayerRound286DbTests
             due = (await c.PaymentIntents.AsNoTracking().SingleAsync(i => i.CompanyId == s.CompanyId && i.SourceId == inv2.Id)).TrustReviewDueAt!.Value;
 
         // ก่อนกำหนด: ยังไม่ล้ม
-        await v.Verify.SweepAsync(due.AddHours(-1));
+        await v.Verify.SweepAsync(due.AddHours(-1), onlyCompanyId: s.CompanyId);
         using (var c = DbTestDatabase.TryCreateContext()!)
             Assert.Null((await c.PaymentIntents.AsNoTracking().SingleAsync(i => i.CompanyId == s.CompanyId && i.SourceId == inv2.Id)).TrustFailedAt);
 
-        await v.Verify.SweepAsync(due.AddHours(1));
+        await v.Verify.SweepAsync(due.AddHours(1), onlyCompanyId: s.CompanyId);
         using (var c = DbTestDatabase.TryCreateContext()!)
         {
             var intent = await c.PaymentIntents.AsNoTracking().SingleAsync(i => i.CompanyId == s.CompanyId && i.SourceId == inv2.Id);
@@ -258,7 +258,7 @@ public class TrustedSlipPayerRound286DbTests
         var invNew = await InvoiceAsync(db, s, 1_100m);
         await AddLineAsync(db, s, 1_177m, "286BLOCKEDNEW15");
         await v.Line.HandleForwardedAsync(Fwd(s, Slip(1_177m, "286BLOCKEDNEW15", payerName: "นาย ใหม่ ทดลอง")));
-        await v.Verify.SweepAsync(DateTime.UtcNow);
+        await v.Verify.SweepAsync(DateTime.UtcNow, onlyCompanyId: s.CompanyId);
         using (var c = DbTestDatabase.TryCreateContext()!)
         {
             Assert.True(await c.Payments.AnyAsync(p => p.CompanyId == s.CompanyId && p.DocumentId == invNew.Id));   // เงินจริงลงตามเส้น 282
@@ -368,7 +368,7 @@ public class TrustedSlipPayerRound286DbTests
         Assert.NotNull(intent.TrustKeyHash);
         var confirm = new SlipIntentConfirmService(db, v.Intents);
         Assert.True((await confirm.ConfirmAsync(s.CompanyId, intent, SlipDay, s.BankId, Guid.NewGuid(), "manual:test", "ผู้ขายยืนยัน", null)).Ok);
-        Assert.Equal(0, await v.Verify.SweepAsync(DateTime.UtcNow));
+        Assert.Equal(0, await v.Verify.SweepAsync(DateTime.UtcNow, onlyCompanyId: s.CompanyId));
         using (var c = DbTestDatabase.TryCreateContext()!)
             Assert.False(await c.TrustedSlipPayers.AnyAsync(t => t.CompanyId == s.CompanyId));   // การกดยืนยันอย่างเดียวไม่พอ
 
@@ -377,7 +377,7 @@ public class TrustedSlipPayerRound286DbTests
         var payId = await db.Payments.Where(p => p.CompanyId == s.CompanyId && p.DocumentId == inv.Id).Select(p => p.Id).SingleAsync();
         await db.BankTransactions.Where(t => t.Id == lineId).ExecuteUpdateAsync(u => u.SetProperty(t => t.MatchedPaymentId, (Guid?)payId)
             .SetProperty(t => t.ReconciliationStatus, ReconciliationStatus.Matched));
-        Assert.True(await v.Verify.SweepAsync(DateTime.UtcNow) >= 1);
+        Assert.True(await v.Verify.SweepAsync(DateTime.UtcNow, onlyCompanyId: s.CompanyId) >= 1);
         using var c3 = DbTestDatabase.TryCreateContext()!;
         var row = await c3.TrustedSlipPayers.AsNoTracking().SingleAsync(t => t.CompanyId == s.CompanyId);
         Assert.Equal(1_070m, row.MaxConfirmedAmount);
@@ -414,7 +414,7 @@ public class TrustedSlipPayerRound286DbTests
             Assert.Equal(3, await c0.PaymentIntents.CountAsync(i => i.CompanyId == s.CompanyId && i.TrustKeyHash != null));   // สลิปแต่งถูกประทับกุญแจไว้ (ผู้สมัคร)
         // สลิปจริงหนึ่งใบ + รายการเดินบัญชีเลขตรง (เส้น 282)
         await FirstTrustedAsync(db, s, v);
-        await v.Verify.SweepAsync(DateTime.UtcNow);
+        await v.Verify.SweepAsync(DateTime.UtcNow, onlyCompanyId: s.CompanyId);
         using var c = DbTestDatabase.TryCreateContext()!;
         var rows = await c.TrustedSlipPayers.AsNoTracking().Where(t => t.CompanyId == s.CompanyId).ToListAsync();
         Assert.Single(rows);
@@ -450,7 +450,7 @@ public class TrustedSlipPayerRound286DbTests
         await db.SaveChangesAsync();
         var lineId = await AddLineAsync(db, s, 1_070m, null);
         await v.Bank.EvaluateLineAsync(s.CompanyId, lineId, true, DateTime.UtcNow);
-        await v.Verify.SweepAsync(DateTime.UtcNow);
+        await v.Verify.SweepAsync(DateTime.UtcNow, onlyCompanyId: s.CompanyId);
         using var c = DbTestDatabase.TryCreateContext()!;
         var intent = await c.PaymentIntents.AsNoTracking().SingleAsync(i => i.CompanyId == s.CompanyId && i.SourceId == inv2.Id);
         Assert.Null(intent.TrustVerifiedAt);

@@ -35,6 +35,8 @@ Negative test: ให้ `DeliveryHeldAsync` ส่ง `false` แทนค่�
 | LOW-1 คิว LINE ส่งการ์ดที่เข้าคิวก่อนตรวจย้อนล้ม | แก้แล้ว — `ContactLineQueueService.DeferForTrustHoldAsync` → `DeliveryHoldForDocumentAsync` (ตัวตัดสินเดียว) ก่อนยิง |
 | LOW-2 `DeliveredToBuyer` นับ LineReceipt แม้ 0 ปลายทาง | แก้แล้ว — นับเฉพาะขั้นอีเมล · LINE ดูแถวคิวที่ `SentAt` ไม่ว่าง |
 | LOW-3 `FailAsync` ไม่กรอง `IsDeleted` | แก้แล้ว |
+| CI 44895480747 static: สร้าง `CompanySettings` นอก factory | แก้แล้ว — ค่าตั้งต้นตัวเดียว `TrustedSlipPayerRule.DefaultSendImmediately` (entity + ผู้อ่านเมื่อไม่มีแถว) |
+| CI 44895480747 db-test: T287_03 ไม่ได้รับการแจ้ง | ต้นเหตุ: เทสต์เดินงานแบบทุกบริษัท (`SweepAsync` · `ProcessDueAsync`) บนฐานที่ใช้ร่วมกับคลาสเทสต์ที่รันขนาน ⇒ คลาส 286 ทำให้รายการล่วงหน้าของเทสต์นี้ล้มก่อน ด้วยตัวแจ้งของคลาสนั้นเอง (และ batch 200 ไม่รับประกันว่าจะหยิบรายการของเทสต์นี้) · แก้แล้ว — `SweepAsync(…, onlyCompanyId)` + เทสต์ 286/287 จำกัดบริษัทของตัวเอง · ตัวช่วย `DrainCompanyRunsAsync` แทน `ProcessDueAsync` · ไม่ได้ลดความเข้มของ assert |
 
 ## ตรวจแล้วไม่ใช่บั๊ก / ข้อจำกัด
 

@@ -258,17 +258,20 @@ public sealed class TrustedSlipVerifyService
     }
 
     /// <summary>หนึ่งรอบ (ทุกบริษัท · ใต้ JobLock ของขั้น) — เรียนกุญแจที่พิสูจน์แล้ว · ตรวจย้อนรายการล่วงหน้า · คืนจำนวนงานที่ทำ</summary>
-    public async Task<int> SweepAsync(DateTime nowUtc, CancellationToken ct = default)
+    /// <param name="onlyCompanyId">null = ทุกบริษัท (งาน AutopilotJob) · ระบุ = เฉพาะบริษัทนั้น (เทสต์บนฐานร่วมรันขนานกันไม่แย่ง/ไม่ล้มรายการของบริษัทอื่น)</param>
+    public async Task<int> SweepAsync(DateTime nowUtc, CancellationToken ct = default, Guid? onlyCompanyId = null)
     {
         var n = 0;
         var since = nowUtc.AddDays(-LearnLookbackDays);
-        var learn = await LearnCandidates(_db.PaymentIntents.AsNoTracking().IgnoreQueryFilters().Where(i => i.CreatedAt >= since))
+        var learn = await LearnCandidates(_db.PaymentIntents.AsNoTracking().IgnoreQueryFilters()
+                .Where(i => i.CreatedAt >= since && (onlyCompanyId == null || i.CompanyId == onlyCompanyId)))
             .OrderBy(i => i.CreatedAt).Select(i => new { i.Id, i.CompanyId }).Take(Batch).ToListAsync(ct);
         foreach (var l in learn)
             if (await LearnAsync(l.CompanyId, l.Id, nowUtc, ct)) n++;
 
         var pending = await _db.PaymentIntents.AsNoTracking().IgnoreQueryFilters()
-            .Where(i => i.TrustProvisionalAt != null && i.TrustVerifiedAt == null && i.TrustFailedAt == null && i.TrustKeyAccountId != null)
+            .Where(i => i.TrustProvisionalAt != null && i.TrustVerifiedAt == null && i.TrustFailedAt == null && i.TrustKeyAccountId != null
+                && (onlyCompanyId == null || i.CompanyId == onlyCompanyId))
             .OrderBy(i => i.TrustReviewDueAt).Take(Batch)
             .Select(i => new { P = new ProvisionalRow(i.Id, i.CompanyId, i.SourceId, i.Amount, i.TrustKeyAccountId!.Value, i.PaidAt, i.TrustProvisionalAt!.Value, i.SlipBankRef,
                 i.TrustKeyHash, i.TrustFailedAt), i.TrustReviewDueAt })
@@ -398,9 +401,9 @@ public sealed class TrustedSlipVerifyService
         var i = await db.PaymentIntents.AsNoTracking().IgnoreQueryFilters().Where(x => x.Id == intentId && x.CompanyId == companyId)
             .Select(x => new { x.TrustProvisionalAt, x.TrustVerifiedAt, x.TrustFailedAt }).FirstOrDefaultAsync(ct);
         if (i == null || !TrustedSlipPayerRule.Unverified(i.TrustProvisionalAt, i.TrustVerifiedAt)) return default;
-        // ไม่มีแถวค่าตั้ง ⇒ ค่าตั้งต้นของ entity (เปิด) — ตัวเดียวกับคอลัมน์ DEFAULT true ของ Round287Migration
+        // ไม่มีแถวค่าตั้ง ⇒ ค่าตั้งต้นตัวเดียว (เปิด) — ตัวเดียวกับ entity + คอลัมน์ DEFAULT true ของ Round287Migration (ห้ามสร้าง CompanySettings นอก factory)
         var sendNow = await db.CompanySettings.AsNoTracking().IgnoreQueryFilters().Where(x => x.CompanyId == companyId)
-            .Select(x => (bool?)x.SlipTrustedSendImmediately).FirstOrDefaultAsync(ct) ?? new CompanySettings().SlipTrustedSendImmediately;
+            .Select(x => (bool?)x.SlipTrustedSendImmediately).FirstOrDefaultAsync(ct) ?? TrustedSlipPayerRule.DefaultSendImmediately;
         return new DeliveryHold(TrustedSlipPayerRule.HoldDelivery(i.TrustProvisionalAt, i.TrustVerifiedAt, i.TrustFailedAt, sendNow), i.TrustFailedAt != null);
     }
 

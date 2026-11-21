@@ -97,6 +97,21 @@ public class TrustedSlipSendImmediatelyRound287DbTests
         return pay;
     }
 
+    /// <summary>งานหลังรับชำระของบริษัทในเทสต์นี้เท่านั้น (ไม่ใช้ ProcessDueAsync ที่หยิบงานทุกบริษัท — ฐานร่วมกับเทสต์อื่นที่รันขนานกันใน CI)</summary>
+    private static async Task DrainCompanyRunsAsync(AccountingDbContext db, Guid companyId, FakeSender sender)
+    {
+        List<Guid> ids;
+        using (var c = DbTestDatabase.TryCreateContext()!)
+            ids = await c.PostPaymentAutomationRuns.AsNoTracking()
+                .Where(r => r.CompanyId == companyId && r.Status == PostPaymentAutomationPolicy.StatusPending).Select(r => r.Id).ToListAsync();
+        foreach (var id in ids)
+        {
+            db.ChangeTracker.Clear();
+            await PostPay(db, sender).ProcessRunAsync(id, default);
+        }
+        db.ChangeTracker.Clear();
+    }
+
     private static async Task<PostPaymentAutomationRun> RunOfAsync(AccountingDbContext db, Guid companyId, Guid paymentId)
     {
         using var c = DbTestDatabase.TryCreateContext()!;
@@ -113,7 +128,7 @@ public class TrustedSlipSendImmediatelyRound287DbTests
         await T286.FirstTrustedAsync(db, s, v);
         await BuyerReadyAsync(db, s);
         var sender = new FakeSender();
-        await PostPay(db, sender).ProcessDueAsync();   // งานของการชำระแรก (ยืนยันแล้ว) — ไม่ใช่เรื่องที่ทดสอบ
+        await DrainCompanyRunsAsync(db, s.CompanyId, sender);   // งานของการชำระแรก (ยืนยันแล้ว) — ไม่ใช่เรื่องที่ทดสอบ
         sender.Sent.Clear();
 
         var pay = await ProvisionalAsync(db, s, v, "287SENDNOWREF01");
@@ -139,7 +154,7 @@ public class TrustedSlipSendImmediatelyRound287DbTests
         await T286.FirstTrustedAsync(db, s, v);
         await BuyerReadyAsync(db, s);
         var sender = new FakeSender();
-        await PostPay(db, sender).ProcessDueAsync();
+        await DrainCompanyRunsAsync(db, s.CompanyId, sender);
         sender.Sent.Clear();
 
         var pay = await ProvisionalAsync(db, s, v, "287HOLDREF00002");
@@ -182,7 +197,7 @@ public class TrustedSlipSendImmediatelyRound287DbTests
         await T286.FirstTrustedAsync(db, s, v);
         await BuyerReadyAsync(db, s);
         var sender = new FakeSender();
-        await PostPay(db, sender).ProcessDueAsync();
+        await DrainCompanyRunsAsync(db, s.CompanyId, sender);
         sender.Sent.Clear();
 
         var pay = await ProvisionalAsync(db, s, v, "287FAILAFTER003");
@@ -194,7 +209,7 @@ public class TrustedSlipSendImmediatelyRound287DbTests
         using (var c = DbTestDatabase.TryCreateContext()!)
             due = (await c.PaymentIntents.AsNoTracking().SingleAsync(i => i.CompanyId == s.CompanyId && i.TrustProvisionalAt != null && i.TrustVerifiedAt == null))
                 .TrustReviewDueAt!.Value;
-        await v.Verify.SweepAsync(due.AddHours(1));
+        await v.Verify.SweepAsync(due.AddHours(1), onlyCompanyId: s.CompanyId);
 
         var fail = Assert.Single(sent, x => x.Company == s.CompanyId && x.Key == NotificationEvents.AutopilotSlipTrustedUnverified);
         Assert.Contains("ส่งใบเสร็จ/ใบกำกับถึงผู้ซื้อไปแล้ว", fail.Ctx.Message);
@@ -224,7 +239,7 @@ public class TrustedSlipSendImmediatelyRound287DbTests
         using (var c = DbTestDatabase.TryCreateContext()!)
             due = (await c.PaymentIntents.AsNoTracking().SingleAsync(i => i.CompanyId == s.CompanyId && i.TrustProvisionalAt != null && i.TrustVerifiedAt == null))
                 .TrustReviewDueAt!.Value;
-        await v.Verify.SweepAsync(due.AddHours(1));
+        await v.Verify.SweepAsync(due.AddHours(1), onlyCompanyId: s.CompanyId);
         var fail = Assert.Single(sent, x => x.Company == s.CompanyId && x.Key == NotificationEvents.AutopilotSlipTrustedUnverified);
         Assert.Contains("ยังไม่ถูกส่งถึงผู้ซื้อ", fail.Ctx.Message);
         Assert.DoesNotContain("ไปแล้ว", fail.Ctx.Message);
@@ -243,7 +258,7 @@ public class TrustedSlipSendImmediatelyRound287DbTests
         await T286.FirstTrustedAsync(db, s, v);
         await BuyerReadyAsync(db, s);
         var sender = new FakeSender();
-        await PostPay(db, sender).ProcessDueAsync();
+        await DrainCompanyRunsAsync(db, s.CompanyId, sender);
         sender.Sent.Clear();
 
         var pay = await ProvisionalAsync(db, s, v, "287WAKELATER005");
