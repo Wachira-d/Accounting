@@ -7562,3 +7562,9 @@ _รอบ 285 (2026-11-21): ยืนยันเลขผู้เสียภ
 - หน้า "งานอัตโนมัติกับคู่ค้า": ป้ายสถานะ + ทำอะไร/ทำเมื่อไร/หยุดเมื่อไรจากเซิร์ฟเวอร์ (`StatusLabel` · `ExplainOf`) · "ไม่ทำงาน" ⇒ "ยังไม่ได้ยินยอม" · ไม่มีเลขรอบ/คำตัดสิน/ชื่อ enum บนจอ
 - แจ้งเตือนคีย์ใหม่ `partner.purchase_auto_approved` · `partner.purchase_auto_approve_held` · `Round288Migration` · เทสต์ `PartnerAutomationRound288Tests` + Db `PartnerAutomationRound288DbTests` ·
   กติกา `_R288_*` · คำตัดสิน 288-1…288-8 · commit f11726e8 · f103e4a3 · b281ce5b · d454cde4
+
+## รอบ 288b (2026-11-21 · ผลฝ่ายค้านของรอบ 288 · `erp-review/2026-11-21/dev-288-partner-consent-scopes.md` §"ผลฝ่ายค้าน")
+- ตรวจ≠อนุมัติ: ตราเนื้อหาตัวเดียว `Helpers/ApprovalContentStamp` — ท่ออนุมัติใบซื้อจากคู่ค้าเองส่งตราของชุดที่ตรวจ · `ApproveDocumentAsync(expectedContentStamp)` เทียบใต้ `FOR UPDATE` · ไม่ตรง ⇒ ร่าง + `ContentChanged`
+- ใบกำกับอย่างย่อจากผู้ขาย ⇒ ไม่อนุมัติเอง (ม.82/5(2) · `PartnerExchangeRules.IsAbbreviatedTaxInvoice`) · อนุมัติแล้วร่องรอยล้ม ⇒ audit ก่อน + `EnsureApprovedTraceAsync` (ไม่ประทับ ApproveFailed)
+- คิวสำเนาสลิป: `SlipCopyNextCheckAt` (ผลรอไม่บังแถวใหม่) · ใบซื้อหาย/บริษัทต้นทางไม่ใช่คู่ ⇒ จบ + `SlipCopyNote` (ป้ายบนหน้า partners) · ผู้เห็นเฉพาะของตัวเอง = เฉพาะร่างอยู่แล้ว (ไม่ใช่บั๊ก · ล็อกเทสต์)
+- `Round288Migration` +2 คอลัมน์ · เทสต์ pure `PartnerAutomationRound288bTests` + Db `PartnerAutomationRound288DbTests.R288b_*` (6) · กติกา `_R288B_*` · คำตัดสิน 288-9…288-14 · commit bfded8a0

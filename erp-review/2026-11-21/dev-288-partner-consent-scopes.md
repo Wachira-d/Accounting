@@ -35,3 +35,21 @@
 
 ## ตรวจในเครื่อง
 - build ผ่าน (.NET 8 SDK ติดตั้งในเครื่องนี้) · เทสต์ที่เกี่ยว 912 ตัว (Partner/Slip/Notification/DocumentRestriction/CrossTenant · pure + Db บน `accounting_test_r288`) ผ่าน · `bash tools/check_all.sh --all --no-dotnet` EXIT 0 · commit สุดท้ายของโค้ด 8535cd5e · ไม่ได้รอ CI (คำสั่งรอบนี้)
+
+## ผลฝ่ายค้าน (รอบ 288b · คำตัดสิน 288-9…288-14)
+
+| # | ข้อ | ยืนยันกับโค้ด | สถานะ | หลักฐาน |
+| --- | --- | --- | --- | --- |
+| 1 | ตรวจ≠อนุมัติ (ใบถูกแก้ระหว่างนั้นอนุมัติเกินเพดาน) | จริง — ท่ออ่านใบ AsNoTracking ก่อนธุรกรรม · เส้นอนุมัติล็อกแถวแต่ไม่ตรวจเนื้อหาซ้ำ | ✅ bfded8a0 | `ApprovalContentStamp` ส่งเข้า `ApproveDocumentAsync` เทียบใต้ `FOR UPDATE` · Db T288-09 (เส้นจริง + ท่อ) · ไม่เลือก "ล็อกแถวในธุรกรรมของท่อ" เพราะเส้นอนุมัติเขียนบน connection อื่น ⇒ รอล็อกตัวเอง |
+| 2 | ผู้เห็นเฉพาะของตัวเองให้ความยินยอมอนุมัติแทน | **ไม่จริง** — `DocumentRestrictionPolicy.Effective` ถือ Own ⇒ DraftOnly (276-2) ⇒ `HasNeedAsync` false | ตรวจแล้วไม่ใช่บั๊ก · ล็อกเทสต์ | Db T288-11 (บทบาทกำหนดเองมีสิทธิ์ครบ ⇒ ผ่าน · ติ๊กเห็นเฉพาะของตัวเอง ⇒ GrantorLostPermission ทั้งสองขอบเขต) |
+| 3 | head-of-line คิวสลิป + ใบซื้อหายรอตลอดไป | จริง — ผล Wait ไม่ประทับ · `purchase == null` ⇒ ConsentOk=false ⇒ Wait | ✅ bfded8a0 | `SlipCopyNextCheckAt` + เรียงตามเวลาถึงกำหนด · ใบซื้อหาย ⇒ Done + `SlipCopyNote` · Db T288-13 (100 แถวรอ — เดิมสำเนา 0 ตลอดไป) |
+| 4 | ใบกำกับอย่างย่อ | จริงบางส่วน — ใบอย่างย่อไม่ตั้ง HasTaxInvoiceReference แต่บรรทัดยังเคลมได้ ⇒ ผ่านด่านเดิม | ✅ bfded8a0 | `IsAbbreviatedTaxInvoice` จาก `ReceiptForm` ของต้นทางในสาย · Db T288-10 |
+| 5 | อนุมัติแล้วแต่ประทับ ApproveFailed | จริง — `MarkAutoApprovedAsync` ล้ม ⇒ catch ชั้นนอกประทับ + แจ้ง "ใบยังเป็นร่าง" | ✅ bfded8a0 | audit ก่อน · `EnsureApprovedTraceAsync` · catch ชั้นนอกอ่านสถานะ · Db T288-12 · audit ไม่อยู่ในธุรกรรมของการอนุมัติ (เส้นอนุมัติ commit เอง) — เขียนซ้ำตามสถานะจริงแทน |
+| 6 | บริษัทต้นทางของการแจ้งไม่ตรงคู่ | จริง (ต่ำ) — ไม่เคยเทียบ | ✅ bfded8a0 | `pairOk` ก่อนอ่าน intent/ไฟล์ · Db T288-13 |
+
+- ทางเข้าอื่นที่แตะข้อมูลชุดเดียวกัน: อนุมัติของคน (เว็บ/มือถือ/LINE/API/workflow) เรียก `ApproveDocumentAsync` โดยไม่ส่งตรา ⇒ พฤติกรรมเดิม (คนเห็นใบตอนกด) · ผู้ส่งตรา = ท่อเท่านั้น (1 จุด) ·
+  รูปแบบ "อนุมัติเองโดยไม่ส่งตรา" เหลือ 0 จุด · ผู้เขียน `SlipCopyCheckedAt`/`SlipCopyNextCheckAt` = `CopySlipsAsync`/`CopySlipOneAsync` เท่านั้น
+- ผู้ใช้ที่ถูกกัน (ใบถูกแก้ / ใบอย่างย่อ): ใบยังเป็นร่าง กดอนุมัติเองได้ตามปกติ · เหตุบนใบ/แจ้งเตือน
+- ของที่ persist ไว้: แถวการแจ้งที่ค้างรอ (null) ถูกเลื่อนเองในรอบแรก · ใบซื้อหายที่ค้างอยู่จะจบพร้อมเหตุในรอบแรก — ไม่ต้องซ่อมมือ
+- ตรวจในเครื่อง: build ผ่าน · เทสต์ Partner/Slip/DocumentRestriction/CrossTenant/Approv 1036 ตัว (pure + Db บน `accounting_test_r288`) ผ่าน · negative: ถอดแต่ละการแก้ ⇒ เทสต์ที่ตรงกันล้มครบ ·
+  ไม่ได้รอ CI (คำสั่งรอบนี้)

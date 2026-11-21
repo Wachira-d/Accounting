@@ -3410,6 +3410,21 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
   บัญชีตั้งต้น = ค่าเลือกไว้ให้
 - migration `Round288Migration` (คอลัมน์ใหม่ล้วน — ไม่มีของเสียที่ persist) · เทสต์ pure `PartnerAutomationRound288Tests` · Db `PartnerAutomationRound288DbTests` (4) · กติกา `_R288_*` ·
   Last verified commit b281ce5b (โค้ด f11726e8 · f103e4a3 · d454cde4)
+- **รอบ 288b — ผลฝ่ายค้าน (คำตัดสิน 288-9…288-14 · `erp-review/2026-11-21/dev-288-partner-consent-scopes.md` §"ผลฝ่ายค้าน")**
+  · **ตรวจ ≠ อนุมัติ (288-9)**: ท่อคิดตรา `Helpers/ApprovalContentStamp.Of(doc)` (canonical ตัวเดียว · SHA-256 ของยอด/ผู้ติดต่อ/วันที่/สกุล/WHT/ใบกำกับผู้ขาย/หลักฐานภาษีซื้อ +
+  ทุกบรรทัด — ไม่รวมหมายเหตุภายใน/เวลาแก้) จากชุดที่ตรวจ ⇒ `ApproveDocumentAsync(…, expectedContentStamp: stamp)` ⇒ ใต้ `FOR UPDATE` ของการอนุมัติ อ่านใบสดแล้วเทียบ ·
+  ไม่ตรง ⇒ `BusinessRuleException` 409 `R288B-APPROVE-CONTENT-CHANGED` ⇒ ใบคงร่าง · เหตุ `ContentChanged` บนลิงก์ · watermark ว่าง (ประเมินชุดใหม่รอบถัดไป) ·
+  ทางเข้าของคน (null) ไม่ตรวจตรา — เดิม
+  · **ใบกำกับอย่างย่อ (288-12)**: ใบต้นทางใดในสายของใบซื้อนี้ (`CrossTenantDocumentLinks` ของใบ + ต้นทางของลิงก์) มี `ReceiptForm = ReceiptTaxInvoiceAbbreviated`
+  (ตัวตัดสินเดียว `PartnerExchangeRules.IsAbbreviatedTaxInvoice` — `IsTaxInvoiceCarrier` ใช้ตัวเดียวกัน) ⇒ เหตุ `AbbreviatedTaxInvoice` (ม.82/5(2)) ไม่พึ่ง `IsVatClaimable` บนบรรทัด
+  · **อนุมัติแล้วร่องรอยล้ม (288-13)**: `MarkAutoApprovedAsync` เขียน audit `PartnerPurchaseAutoApproved` ก่อนหมายเหตุ/ลิงก์ · ล้ม ⇒ `EnsureApprovedTraceAsync` อ่านสถานะจริง:
+  ออกแล้ว ⇒ audit (ถ้ายังไม่มี) + ลิงก์ `Approved` · ไม่ประทับ `ApproveFailed` · ไม่แจ้ง "ใบยังเป็นร่าง" · catch ชั้นนอกอ่านสถานะก่อนประทับเช่นกัน
+  · **คิวสำเนาสลิป (288-11)**: ผล Wait ⇒ `PartnerPaymentNotice.SlipCopyNextCheckAt = now + 30 นาที` (`PartnerSlipCopyRule.NextCheckAt`) · คิวกรองแถวที่ยังไม่ถึงเวลา +
+  เรียง `NextCheckAt ?? CreatedAt` ⇒ แถวรอไม่บังแถวใหม่ · ใบซื้อปลายทางหาย ⇒ Done + `SlipCopyNote` (เดิมรอตลอดไป) · ป้าย `PartnerSlipCopyRule.StatusLabel` บนรายการแจ้ง (หน้า partners)
+  · **บริษัทต้นทางของการแจ้ง (288-14)**: ต้องเป็นอีกฝ่ายของ `TradingPartnership` ของการแจ้ง (สถานะการเชื่อมตรวจโดยความยินยอม) ก่อนอ่าน intent/ไฟล์ของบริษัทนั้น · ไม่ใช่ ⇒ Done + เหตุ
+  · **ผู้ "เห็นเฉพาะใบของตัวเอง" (288-10)**: ตรวจแล้วไม่ใช่บั๊ก — `DocumentRestrictionPolicy.Effective` ถือเป็นเฉพาะร่างเสมอ (276-2) ⇒ `HasNeedAsync` PurchaseApprove = false ⇒
+  `AutoApprovePurchase`/`AutoRecordPayment` หยุด ป้าย "หยุดอยู่ — ผู้ให้หมดสิทธิ์" · ล็อกด้วย Db test
+  · migration `Round288Migration` +2 คอลัมน์ (`SlipCopyNextCheckAt` · `SlipCopyNote` — null = ตรวจได้เลย · ไม่มีของเสียต้องซ่อม) · กติกา `_R288B_*` · Last verified commit bfded8a0
 
 ### 2.12g-264-P2 รอบ 264 แพ็ก P2 "อ่านบัญชีจากสลิป — QR ตรวจสลิป + ผู้โอน/ผู้รับ" (`erp-review/2026-11-12/team-264-a2b-design.md` §3.2/§4 · คำตัดสิน 264-4-1…8)
 
