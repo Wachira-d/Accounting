@@ -73,14 +73,6 @@ public class SettlementPaymentVoucherRound283Tests
     }
 
     [Fact]
-    public void หมายเหตุการจ่ายของท่อ_จำแนกได้_การจ่ายมือไม่ใช่()
-    {
-        Assert.True(SettlementPaymentVoucher.IsPartnerAutoPaymentNote(SettlementPaymentVoucher.PartnerAutoPaymentNotePrefix + " ตามความยินยอมของ ก"));
-        Assert.False(SettlementPaymentVoucher.IsPartnerAutoPaymentNote("จ่ายตามใบแจ้งหนี้"));
-        Assert.False(SettlementPaymentVoucher.IsPartnerAutoPaymentNote(null));
-    }
-
-    [Fact]
     public void บรรทัดบนใบ_ไทย_มีภาษีหัก_และเลข50ทวิ()
     {
         var th = DocumentLabels.For(null).SettlementPaymentVoucherLine("PI-001", 10_400m, 300m, "WHT-2026-0001");

@@ -34,7 +34,7 @@
 | 1) ทางมือสร้าง PV อย่างไร + ผูก 50 ทวิ | ✅ ยืนยันแล้ว (§1) | — |
 | 2) ท่อสร้าง PV ผ่านเส้นเดียว · เลข gap-free · ผูก 50 ทวิ เดิม · JE ไม่ซ้ำ · ป้าย + audit | ✅ `699edd9d` | `CreatePaymentRequest.IssuePaymentVoucherDocument` · `DocumentService.SettlementPaymentVoucher.cs` · `Helpers/SettlementPaymentVoucher` |
 | 3) ใบเก่าไม่มี PV ⇒ รายงาน + ออกย้อนหลังเฉพาะแถวที่เลือก (ไม่ลง JE ซ้ำ) | ✅ `699edd9d` (API · ยังไม่มีปุ่มบนหน้า — §4) | `GET partner-payments/without-voucher` · `POST partner-payments/{id}/payment-voucher` |
-| 4) Db test 10,700/300 · PV 1 ใบ · 50 ทวิ ใบเดียว · เงินออกครั้งเดียว · ยกเลิกถอยถูก | ✅ | `PartnerSettlementVoucherRound283DbTests` (2) · pure 12 · mutation 2 จุดจับได้ |
+| 4) Db test 10,700/300 · PV 1 ใบ · 50 ทวิ ใบเดียว · เงินออกครั้งเดียว · ยกเลิกถอยถูก | ✅ | `PartnerSettlementVoucherRound283DbTests` (2) · pure 11 · mutation 2 จุดจับได้ |
 | 5) เอกสาร | ✅ | DOCUMENT_FLOW §2.12g-281 · TEST_PLAN · CHANGELOG · DECISIONS 283-1…6 |
 
 ตรวจการเชื่อมต่อ: ทางเข้าที่ "ระบบบันทึกจ่ายใบซื้อเองโดยไม่มีคน" มี 1 ทาง (ท่อ P3) — ส่งคำขอแล้ว 1/1 · ทางที่มีคนกด (ปุ่มเดียว · แจ้งโอน P4 · บันทึกชำระมือ) คงเดิมโดยตั้งใจ (283-6) ·

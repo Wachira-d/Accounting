@@ -1505,7 +1505,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **978 ไฟล์ · 10,627 `[Fact]` + 1,439 `[Theory]` (6,835 `InlineData`)** ณ 2026-11-21 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`) | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)**, **ReceiptFormRule (รูปแบบกระดาษหลักฐานรับเงิน · รอบ 203)** |
+| เทสต์ที่มี | **978 ไฟล์ · 10,626 `[Fact]` + 1,439 `[Theory]` (6,835 `InlineData`)** ณ 2026-11-21 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`) | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)**, **ReceiptFormRule (รูปแบบกระดาษหลักฐานรับเงิน · รอบ 203)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
 | CI | ✅ `.github/workflows/ci.yml` — static check → restore → build → test; รันบน PR/push เข้า main/master + `workflow_dispatch` (branch `claude/**` ปิดไว้ กัน mail spam ระหว่างพัฒนา) |
@@ -9296,7 +9296,7 @@ H2 (OCR ไม่พร้อม ⇒ แถวเข้าคิว) ล็อ�
 | --- | --- | --- |
 | T283-01 | Db `PartnerSettlementVoucherRound283DbTests.ท่อคู่ค้า_10700หัก300_ได้ใบสำคัญจ่าย1ใบอ้างใบซื้อ_…` | PV 1 ใบ อ้างใบซื้อ · เลขจริง · VAT/ภาษีหักบนใบ = 0 · 50 ทวิ 300 ใบเดียว (กุญแจการจ่ายเดียวกัน · เลขบนบรรทัด) · ไม่มี JE ของ PV · เงินออก 10,400 ครั้งเดียว · รันซ้ำไม่ได้ใบที่สอง · ยกเลิก PV ⇒ การจ่ายยกเลิก · ใบซื้อกลับค้าง 10,400 · ธนาคารสุทธิ 0 · PV คงแถว · ไม่มี 50 ทวิ ใหม่ · audit chain ครบ |
 | T283-02 | Db `…ใบที่ท่อบันทึกก่อนรอบ283_ไม่มีPV_…` | รายงานเห็นการจ่ายของท่อที่ไม่มี PV · ออกย้อนหลังไม่ลง JE ซ้ำ/ไม่ออก 50 ทวิ ใหม่ · กดซ้ำ = AlreadyIssued · ทิศตรงข้าม: การจ่ายที่คนบันทึกไม่ขึ้นรายงาน |
-| T283-03 | pure `SettlementPaymentVoucherRound283Tests` (12 เคส) | ตัวตัดสิน (ใบซื้อ/ค่าใช้จ่ายเท่านั้น · มีใบแล้ว · ยกเลิก · PV แปลงที่ลงบัญชีแล้ว · ไม่มีเงินออก) · ใบไม่ถือภาษี · ป้ายที่มา · หัวหมายเหตุของท่อ · ข้อความบนใบ th/en (en ไม่ปนไทย) |
+| T283-03 | pure `SettlementPaymentVoucherRound283Tests` (11 เคส) | ตัวตัดสิน (ใบซื้อ/ค่าใช้จ่ายเท่านั้น · มีใบแล้ว · ยกเลิก · PV แปลงที่ลงบัญชีแล้ว · ไม่มีเงินออก) · ใบไม่ถือภาษี · ป้ายที่มา · ข้อความบนใบ th/en (en ไม่ปนไทย) |
 | T283-04 | กติกา `_R283_*` (+7 · เคสฝ่ายค้าน R283-1 ถอดคำขอ PV · R283-2 ใบถือภาษีหัก) · mutation ในเครื่อง: ถอดคำขอ PV ⇒ T283-01 ล้ม · ถอดการยกเลิก PV ตามการจ่าย ⇒ T283-01 ล้ม | ด่านถูกต่อสายจริง |
 
 ## รอบ 284 แพ็ก F — งานคงค้างจากผลตรวจรายสัปดาห์ (`erp-review/2026-11-21/dev-284-pack-f.md` · คำตัดสิน 284-1…284-6)

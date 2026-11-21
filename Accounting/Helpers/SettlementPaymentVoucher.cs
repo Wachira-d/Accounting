@@ -27,14 +27,11 @@ public static class SettlementPaymentVoucher
     /// <summary>ค่า <c>Document.OriginModule</c> ของใบที่ท่อคู่ค้าสร้าง</summary>
     public const string PartnerOrigin = "PartnerAuto";
 
-    /// <summary>หัวหมายเหตุของการจ่ายที่ท่อบันทึกเอง — ตัวตั้งเดียวของผู้เขียน (<c>PartnerPayablePipeline</c>) และผู้คัด "ใบที่บันทึกก่อนรอบ 283" (<see cref="IsPartnerAutoPaymentNote"/>)</summary>
+    /// <summary>หัวหมายเหตุของการจ่ายที่ท่อบันทึกเอง — ตัวตั้งเดียวของผู้เขียน (<c>PartnerPayablePipeline</c>) และผู้คัด "ใบที่บันทึกก่อนรอบ 283" (<c>DocumentService.ListPartnerPaymentsWithoutVoucherAsync</c> — StartsWith ในคำค้น)</summary>
     public const string PartnerAutoPaymentNotePrefix = "⚙️ ระบบบันทึกเอง (ไม่มีผู้กด)";
 
     /// <summary>ป้ายบนใบ (server computes · page displays)</summary>
     public const string PartnerOriginLabel = "⚙️ ระบบสร้างจากคู่ค้า · หลักฐานการจ่าย (ไม่ลงบัญชีซ้ำ)";
-
-    public static bool IsPartnerAutoPaymentNote(string? paymentNotes)
-        => paymentNotes != null && paymentNotes.StartsWith(PartnerAutoPaymentNotePrefix, StringComparison.Ordinal);
 
     /// <summary>ป้ายของใบตามที่มา — null = ไม่ใช่ใบที่ระบบสร้างจากคู่ค้า</summary>
     public static string? OriginLabel(string? originModule)
