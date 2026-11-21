@@ -58,3 +58,19 @@
 1. ไม่มีค่าตั้งใหม่ — ท่อเดิม (ความยินยอม "บันทึกจ่ายเอง") ออกใบสำคัญจ่ายให้ทันที
 2. ใบที่ระบบบันทึกจ่ายเองก่อนรอบนี้: เรียก `GET api/companies/{companyId}/partner-payments/without-voucher` ดูรายการ แล้วออกย้อนหลังทีละรายการที่ต้องการ (`POST …/partner-payments/{paymentId}/payment-voucher`) — ไม่ลงบัญชีซ้ำ
 3. ผู้ให้ความยินยอมที่ไม่มีสิทธิ์อนุมัติใบสำคัญจ่าย ⇒ ใบออกเป็นร่าง ต้องมีผู้มีสิทธิ์อนุมัติ (อนุมัติไม่ลงบัญชีซ้ำ)
+
+## 7. ชุดสอง — ข้อสั่งผู้ประสานงาน + ชุดแก้ฝ่ายค้าน (commit `SHA283B`)
+
+| ข้อ | สถานะ | สิ่งที่ทำ |
+| --- | --- | --- |
+| ผู้ประสานงาน 1 ปุ่มออกย้อนหลังบนหน้าเว็บ | ✅ | การ์ด "การจ่ายที่ยังไม่มีใบสำคัญจ่าย" ใน `partners.html` (รายการจาก `partner-payments/without-voucher` · ปุ่มรายแถว · สิทธิ์ตรวจที่เซิร์ฟเวอร์) |
+| ผู้ประสานงาน 2 ทุกทางที่คนกดในเส้นคู่ค้าได้ PV | ✅ | `SettlementPaymentVoucher.IssueOnPayment` ใน `CreatePaymentAsync` — ใบจากคู่ค้า (`PartnerSourceLinkId`) ⇒ ปุ่มเดียว · แจ้งโอน P4 · บันทึกชำระมือ · ท่อ ได้ PV ตัวสร้างเดียวกัน · ใบซื้อทั่วไปไม่แตะ (คำตัดสิน 283-7 แทน 283-6) |
+| ผู้ประสานงาน 3 ข้อความ "ระบบจะออกใบสำคัญจ่าย" | ✅ | `DocumentResponse.PayNextStepHint` (server computes) — บอกตรงว่าออก/ไม่ออก |
+| ผู้ประสานงาน 4 เทสต์ | ✅ | T283-05 (ปุ่มเดียว ⇒ PV · มือ/P4 ⇒ PV · ใบซื้อทั่วไป ⇒ ไม่มี PV + ข้อความ) |
+| MED-A1 ร่างใบหลักฐานแก้ยอดได้ | ✅ | แก้ได้เฉพาะหมายเหตุ (PV + ใบเสร็จหลักฐาน) · 50 ทวิ ข้ามใบหลักฐาน · แดชบอร์ดไม่นับ VAT |
+| MED-A2 ข้ามด่านเฉพาะร่าง | ✅ | `DocumentRestrictionGuard.MayFinalizeAsync` ⇒ ไม่ผ่าน = ร่างรออนุมัติ (ท่อ + ออกย้อนหลัง ผ่านตัวสร้างเดียว) |
+| LOW-A3 กระทบยอดธนาคารนับซ้ำ | ✅ | ไม่นับใบหลักฐานทั้งสองฝั่ง (เทสต์ผู้ซื้อ −10,400 / ผู้ขาย +10,400) |
+| LOW-A4 ยกเลิกไม่พบการจ่ายไม่มี audit | ✅ | audit `SettlementPaymentVoucherVoidedNoPayment` |
+
+ตรวจในเครื่อง: build ผ่าน · Round283 + Partner* + ReceiptLink + DocumentRestriction + Lodging + Dashboard/Reconcil/Settlement ผ่าน (ตัวที่ล้มมีแต่เทสต์ที่ต้องหา `Accounting.sln` — สภาพแวดล้อม) ·
+required_call_site_check (+6 กติกา · R283-3/4) · using · undeclared · html_escape · test_inventory · node --check
