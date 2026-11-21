@@ -56,6 +56,20 @@ public class PartnerOutboundPaymentController : ControllerBase
         catch (KeyNotFoundException ex) { return NotFound(new ApiResponse<PartnerOutboundOptionsDto>(false, null, ex.Message)); }
     }
 
+    /// <summary>รอบ 282 (คำสั่งเจ้าของ 282-7): หน้าชำระของผู้ขายที่ผู้ใช้ของบริษัทเราเปิด ⇒ ใบซื้อของเราที่ผูกกับใบนั้น (ถ้ามี) — หน้าชำระแสดงช่อง "จ่ายจากบัญชี"
+    /// ด้วย <see cref="Options"/>/<see cref="Gateway"/> ตัวเดิม · ไม่ใช่คู่ค้า/ไม่ผูก/ไม่มีสิทธิ์ดูใบซื้อ ⇒ <c>eligible=false</c> (ไม่มีรายการบัญชี)</summary>
+    [HttpGet("for-pay-link")]
+    [Accounting.Filters.RejectApiKey("หาใบซื้อจากลิงก์ชำระของผู้ขาย")]
+    public async Task<ActionResult<ApiResponse<object>>> ForPayLink(Guid companyId, [FromQuery] Guid sellerCompanyId, [FromQuery] string? token, CancellationToken ct)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        if (userId == Guid.Empty) return Unauthorized();
+        var purchaseId = await _service.PurchaseForPayLinkAsync(companyId, sellerCompanyId, token ?? "", ct);
+        if (purchaseId is not Guid pid || await DenyAsync(companyId, userId, pid, false, ct) != null)
+            return Ok(new ApiResponse<object>(true, new { eligible = false }));
+        return Ok(new ApiResponse<object>(true, new { eligible = true, purchaseId = pid }));
+    }
+
     public record GatewayRequest(Guid? BankAccountId, string? Method, string? ReturnUrl);
 
     /// <summary>"จ่ายจากระบบของเรา" — เปิดรายการชำระของเอกสารผู้ขายผ่านช่องทางของผู้ขาย · ผลยังไม่ใช่ "ชำระแล้ว"</summary>

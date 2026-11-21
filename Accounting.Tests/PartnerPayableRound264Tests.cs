@@ -106,7 +106,7 @@ public class PartnerPayableRound264Tests
 
         var agree = D(new(Usable(), SlipMatch: new(PartnerPaySourceAccount.SlipKind.Unique, BankA), ConsentDefault: BankA));
         Assert.Equal(Origin.SlipUnique, agree.Origin);
-        Assert.False(agree.AllowsAuto);   // ฝ่ายค้าน 264-P2 M1: สลิป = preselect เท่านั้น จนกว่ารายการเดินบัญชียืนยัน
+        Assert.False(agree.AllowsAuto);   // รอบ 282 ฝ่ายค้าน MED-2: สลิปไม่มีชื่อผู้โอน/เลขท้าย ≥4 ⇒ ยังไม่บันทึกเอง
         Assert.Equal(BankA, agree.BankAccountId);
         Assert.Empty(agree.Losers);
     }
@@ -150,7 +150,8 @@ public class PartnerPayableRound264Tests
         var t = PartnerPaySourceAccount.Precedence;
         Assert.Equal(Enum.GetValues<Origin>().Length, t.Count);
         Assert.Equal(t.Select(r => r.Tier).OrderBy(x => x), t.Select(r => r.Tier));
-        Assert.All(t, r => Assert.Equal(r.Tier <= 2, r.AllowsAuto));   // ฝ่ายค้าน 264-P2 M1: ชั้นสลิป (3) preselect เท่านั้น
+        // รอบ 282 (คำสั่งเจ้าของ 282-6 แทน 264-P2 M1): ชั้น 1–3 (รายการเดินบัญชี · ผู้จ่ายเลือก · สลิปตรงบัญชีเดียว) บันทึกเองได้ · บัญชีตั้งต้น/ประวัติยังไม่ (268-1-1)
+        Assert.All(t, r => Assert.Equal(r.Tier <= 3, r.AllowsAuto));
         Assert.All(t.Where(r => r.AllowsAuto), r => Assert.True(r.Confidence >= PartnerPaySourceAccount.AutoThreshold));
         Assert.All(Enum.GetValues<Origin>(), o => Assert.False(string.IsNullOrWhiteSpace(PartnerPaySourceAccount.OriginLabel(o))));
     }

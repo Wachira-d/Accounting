@@ -2158,28 +2158,9 @@ public partial class TaxService : ITaxService
         // Group by vendor (เลขผู้เสียภาษี + สาขา) and add summary lines — ไม่รวมบรรทัดที่
         // ติ๊กออก (เช่น cert ร่าง) ไม่งั้นยอด [สรุป] โป่งเกินยอดที่นำส่งจริง
         // รอบ 275 แพ็ก B (T2 L2): สร้าง<b>หลัง</b>บรรทัด JE ล้วน (เดิมสร้างก่อน ⇒ ผู้ถูกหักที่มีใบ + JE ไม่มีแถวสรุป) · คีย์รวมสาขา (เดิมเลขอย่างเดียว ⇒ ต่างสาขารวมกัน)
-        var vendorGroups = report.Lines
-            .Where(l => !string.IsNullOrEmpty(l.TaxPayerId) && !l.IsExcluded)
-            .GroupBy(l => (TaxPayerId: l.TaxPayerId!, Branch: Accounting.Helpers.WhtReportTotals.SummaryBranchKey(l.TaxPayerBranchCode)))
-            .Where(g => g.Count() > 1)
-            .ToList();
-
-        foreach (var group in vendorGroups)
-        {
-            var vendorName = group.First().TaxPayerName;
-            report.Lines.Add(new TaxReportLine
-            {
-                TaxReportId = report.Id,
-                LineOrder = lineOrder++,
-                TaxPayerId = group.Key.TaxPayerId,
-                TaxPayerName = vendorName,
-                TaxPayerBranchCode = group.Key.Branch,
-                Description = $"[สรุป] {vendorName}",
-                // ยอดจาก Apply ท้ายเมธอด (PayeeSummaryOf — ตัวตั้งเดียวกับตอนติ๊ก/แก้บรรทัด)
-                TaxRate = 0,
-                IncomeTypeCode = Accounting.Helpers.VatReportLineKind.Summary
-            });
-        }
+        // รอบ 284 (T2 L2): ตัวเดียวกับตอนติ๊ก/แก้บรรทัด (WhtReportTotals.SyncSummaryRows) — ยังไม่มีแถวสรุป ⇒ ได้แต่รายการที่ต้องเพิ่ม
+        foreach (var summary in Accounting.Helpers.WhtReportTotals.SyncSummaryRows(report).Add)
+            report.Lines.Add(summary);
 
         // สูตรเดียวกับ RecalcPndTotals (ไม่นับ SUMMARY + บรรทัดที่ติ๊กออก) —
         // เดิมตรงนี้ไม่กรอง IsExcluded ⇒ ยอดหัวตอน generate กับตอน recalc หลัง
@@ -3454,6 +3435,14 @@ public partial class TaxService : ITaxService
             }
             else
             {
+                // รอบ 284 (T2 L2): ติ๊กข้าม 1↔2 บรรทัดของผู้ถูกหักรายหนึ่ง ⇒ เพิ่ม/ลบแถว [สรุป] ตาม (แสดงผล · ยอดหัวไม่นับแถวสรุป)
+                // เฉพาะแบบที่ตัวสร้างทำแถวสรุป (GenerateWhtReport: ภ.ง.ด.2/3/53/54) — ภ.ง.ด.1/91 ไม่มีแถวสรุป ไม่ถูกเพิ่ม
+                if (report.TaxType is TaxType.WithholdingTax2 or TaxType.WithholdingTax3 or TaxType.WithholdingTax53 or TaxType.WithholdingTax54)
+                {
+                    var (addSummary, removeSummary) = Accounting.Helpers.WhtReportTotals.SyncSummaryRows(report);
+                    foreach (var gone in removeSummary) { report.Lines.Remove(gone); _db.TaxReportLines.Remove(gone); }
+                    foreach (var fresh in addSummary) { report.Lines.Add(fresh); _db.TaxReportLines.Add(fresh); }
+                }
                 Accounting.Helpers.WhtReportTotals.Apply(report);   // รอบ 273: ตัวตั้งเดียวกับตัวตรวจก่อนยื่น
             }
         }

@@ -44,9 +44,13 @@ public class BankReceiptSettleService : IBankReceiptSettleService
     /// <summary>ตรวจสิทธิ์อนุมัติของผู้นำเข้าบรรทัด (H1) — null = ไม่รู้ ⇒ แหล่งที่ต้องตรวจสิทธิ์ = เสนอเท่านั้น</summary>
     private readonly IPermissionService? _perms;
 
+    /// <summary>รอบ 286: ตรวจย้อนรายการรับเงินล่วงหน้าจากผู้จ่ายที่ไว้ใจได้ (ผูกบรรทัดกับการชำระเดิม — ไม่สร้างการชำระที่สอง) · null = ข้าม</summary>
+    private readonly TrustedSlipVerifyService? _trustVerify;
+
     public BankReceiptSettleService(AccountingDbContext db, IDocumentService docs, ILogger<BankReceiptSettleService> logger, INotificationEngine? notify = null,
-        IPermissionService? perms = null)
+        IPermissionService? perms = null, TrustedSlipVerifyService? trustVerify = null)
     {
+        _trustVerify = trustVerify;
         _db = db;
         _docs = docs;
         _logger = logger;
@@ -310,6 +314,10 @@ public class BankReceiptSettleService : IBankReceiptSettleService
             return;
         }
 
+        // รอบ 286 (คำตัดสิน 286-4 · ฝ่ายค้าน HIGH-2): เงินเข้าที่เลขอ้างอิงธนาคารตรงรายการรับเงินล่วงหน้า ⇒ ยืนยันรายการนั้น (ผูกกับการชำระเดิม) ก่อนหาใบค้าง ·
+        // ไม่มีเลขอ้างอิงตรง ⇒ ใบค้างที่ยอด/ผู้โอนตรงได้ก่อน (ข้างล่าง) — เหลือจึงลองผูกแบบไม่มีเลขอ้างอิง (มีด่านผู้อ้างสิทธิ์อื่น)
+        if (_trustVerify != null && await _trustVerify.TryVerifyLineAsync(companyId, line, nowUtc, ct, refOnly: true)) return;
+
         var (result, _) = await DecideAsync(companyId, line, companyEnabled, ct);
         if (result.Kind == BankReceiptAutoSettle.Verdict.AutoSettle && result.DocumentId is Guid docId)
         {
@@ -319,6 +327,7 @@ public class BankReceiptSettleService : IBankReceiptSettleService
             if (!ok && error != null) await NotifyFailedAsync(companyId, line, docId, error, ct);
             return;
         }
+        if (_trustVerify != null && await _trustVerify.TryVerifyLineAsync(companyId, line, nowUtc, ct, refOnly: false)) return;
         var stamp = result.Kind == BankReceiptAutoSettle.Verdict.Suggest ? BankReceiptAutoSettle.Stamps.Suggest : BankReceiptAutoSettle.Stamps.None;
         await StampAsync(companyId, line.Id, stamp, result.Reason, result.DocumentId, nowUtc, ct);
     }

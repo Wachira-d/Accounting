@@ -46,6 +46,12 @@ public class AutopilotJob : BackgroundService
             // ฝ่ายค้าน 264-P4 M2 (คำตัดสิน 264-5-15): outbox สำเนาสลิปของ "แจ้งโอนให้ผู้ขาย" ที่ยังค้าง (ความยินยอมของผู้ขายตรวจใหม่ทุกครั้ง)
             await StepAsync("PartnerSlipCopies", async sp => await sp.GetRequiredService<PartnerOutboundPaymentService>().DeliverPendingSlipCopiesAsync(DateTime.UtcNow, stoppingToken),
                 n => $"ส่งสำเนาสลิปแจ้งโอนให้ผู้ขายคู่ค้า NextAcc {n} รายการ", stoppingToken);
+            // รอบ 282 (คำสั่งเจ้าของ 282-6): วิธีสำรอง — เตือนซ้ำสลิปที่รอผู้ขายยืนยัน (ไม่ถี่ · มีเพดาน · ตาราง SlipMoneySource.ReminderDue)
+            await StepAsync("SlipConfirmReminders", async sp => await sp.GetRequiredService<SlipAutoRecordService>().RemindPendingAsync(DateTime.UtcNow, stoppingToken),
+                n => $"เตือนยืนยันสลิปที่รอตรวจ {n} รายการ", stoppingToken);
+            // รอบ 286 (คำสั่งเจ้าของ): ผู้จ่ายที่ไว้ใจได้ — เรียนกุญแจที่รายการเดินบัญชียืนยันแล้ว · ตรวจย้อนรายการรับเงินล่วงหน้า · ครบกำหนดไม่พบ ⇒ แจ้งแรง + ถอนความไว้ใจ
+            await StepAsync("TrustedSlipPayers", async sp => await sp.GetRequiredService<TrustedSlipVerifyService>().SweepAsync(DateTime.UtcNow, stoppingToken),
+                n => $"ผู้จ่ายที่ไว้ใจได้: เรียน/ตรวจย้อน {n} รายการ", stoppingToken);
             try { await Task.Delay(Cycle, stoppingToken); } catch { return; }
         }
     }

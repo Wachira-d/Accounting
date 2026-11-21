@@ -99,6 +99,29 @@ public class PartnerOutboundPaymentService
         return new Ctx(purchase, link.Id, link.TradingPartnershipId, link.SourceCompanyId, link.SourceDocumentId, src?.DocumentNumber, seller, accepted, problem, cap);
     }
 
+    /// <summary>
+    /// รอบ 282 (คำสั่งเจ้าของ 282-7): ผู้ใช้ที่ล็อกอินของบริษัทผู้ซื้อเปิดหน้าชำระของผู้ขาย ⇒ ใบซื้อของ<b>บริษัทผู้ซื้อ</b>ที่ผูกกับใบนี้ (กุญแจ: โทเคนลิงก์ชำระที่ใช้อยู่ ⇒ ใบของผู้ขาย ·
+    /// ลิงก์ InvoiceFlow ที่ปลายทางเป็นบริษัทผู้ซื้อ · คู่ค้า Accepted) · ไม่ตรงข้อใด ⇒ null (หน้าเหมือนเดิม ไม่มีรายการบัญชี) · ผลไม่ออกจากบริษัทผู้ซื้อ
+    /// (ผู้ขายไม่เห็นบัญชีที่เลือก — แผนอยู่ที่ <c>PartnerPaymentPlans</c> ของผู้ซื้อ · ข้ามไปเฉพาะรายการชำระของผู้ขาย)
+    /// </summary>
+    public async Task<Guid?> PurchaseForPayLinkAsync(Guid companyId, Guid sellerCompanyId, string token, CancellationToken ct = default)
+    {
+        if (sellerCompanyId == companyId || _payLinks == null || string.IsNullOrWhiteSpace(token)) return null;
+        var sellerDoc = await _payLinks.DocumentIdForTokenAsync(sellerCompanyId, token, ct);
+        if (sellerDoc is not Guid sd) return null;
+        var link = await _db.CrossTenantDocumentLinks.AsNoTracking()
+            .Where(l => l.TargetCompanyId == companyId && l.SourceCompanyId == sellerCompanyId && l.SourceDocumentId == sd
+                && l.LinkType == CrossTenantLinkType.InvoiceFlow && !l.IsDeleted && l.TargetDocumentId != null)
+            .OrderByDescending(l => l.CreatedAt).Select(l => new { l.TargetDocumentId, l.TradingPartnershipId }).FirstOrDefaultAsync(ct);
+        if (link == null) return null;
+        var accepted = await _db.TradingPartnerships.AsNoTracking()
+            .AnyAsync(p => p.Id == link.TradingPartnershipId && p.Status == TradingPartnershipStatus.Accepted
+                && (p.CompanyAId == companyId || p.CompanyBId == companyId) && (p.CompanyAId == sellerCompanyId || p.CompanyBId == sellerCompanyId), ct);
+        if (!accepted) return null;
+        var purchase = link.TargetDocumentId!.Value;
+        return await _db.Documents.AsNoTracking().AnyAsync(d => d.Id == purchase && d.CompanyId == companyId && !d.IsDeleted, ct) ? purchase : null;
+    }
+
     /// <summary>ตัวเลือกของสองปุ่มบนใบซื้อ (อ่านอย่างเดียว · server computes ป้าย/ยอด/เหตุ) — ความยินยอมอ่านด้วยตัวตรวจอ่านอย่างเดียว (ป้ายเท่านั้น — ไม่ใช่ด่าน)</summary>
     public async Task<PartnerOutboundOptionsDto> OptionsAsync(Guid companyId, Guid purchaseId, CancellationToken ct = default)
     {

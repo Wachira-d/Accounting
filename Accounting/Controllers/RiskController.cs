@@ -1,3 +1,5 @@
+using Accounting.Models.Constants;
+using Accounting.Filters;
 using Accounting.Models.DTOs;
 using Accounting.Models.Enums;
 using Accounting.Services.Implementations.Risk;
@@ -15,6 +17,8 @@ namespace Accounting.Controllers;
 [ApiController]
 [Route("api/companies/{companyId:guid}/risk")]
 [Authorize]
+// รอบ 284 ฝ่ายค้าน LOW: รายชื่อ + ยอดค้าง/พฤติกรรมชำระรายราย = ข้อมูลการเงิน — ด่าน FinancialReportAccess (ไม่ผูกบทบาท = เดิม)
+[RequireReportAccess(PermissionKeys.ReportsOperational, PermissionKeys.ReportsFinancial)]
 public class RiskController : ControllerBase
 {
     private readonly ICustomerPaymentRiskService _customer;

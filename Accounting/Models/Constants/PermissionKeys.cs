@@ -153,6 +153,8 @@ public static class PermissionKeys
     public const string ReportsFinancial  = P + "Reports.Financial";   // P&L, Balance Sheet
     public const string ReportsOperational = P + "Reports.Operational"; // aging, AR/AP
     public const string ReportsExport     = P + "Reports.Export";
+    /// <summary>รอบ 284 ฝ่ายค้าน MED-3: งบประมาณเทียบจริง (คีย์แคบ — เดิม migration ให้เมนูงบประมาณได้ "งบการเงิน" ทั้งชุด = ขยายสิทธิ์เกินหน้าที่ใช้)</summary>
+    public const string ReportsBudget     = P + "Reports.Budget";
 
     // ───── Tax / RD filing ─────
     public const string TaxFile           = P + "Tax.File";            // submit PND / PP30
@@ -281,6 +283,7 @@ public static class PermissionKeys
         new(ReportsFinancial,  "รายงาน","งบการเงิน",                "งบดุล · งบกำไรขาดทุน · กระแสเงินสด"),
         new(ReportsOperational,"รายงาน","รายงานปฏิบัติการ",         "aging · AR/AP · stock report"),
         new(ReportsExport,     "รายงาน","ส่งออกรายงาน",             "Excel · PDF"),
+        new(ReportsBudget,     "รายงาน","งบประมาณเทียบจริง",        "budget vs actual · scenario (รอบ 284)"),
 
         // Tax
         new(TaxFile,          "ภาษี",    "ยื่นภาษี",                  "ยืนยันยื่น ภพ.30 · ภงด.1/3/53"),

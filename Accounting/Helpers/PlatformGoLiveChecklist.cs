@@ -75,7 +75,7 @@ public static class PlatformGoLiveChecklist
         Add("BASEURL", f.SystemBaseUrlConfigured ? Ok : Fail,
             f.SystemBaseUrlConfigured ? $"URL ของระบบ: {f.SystemBaseUrl}" : "URL ของระบบยังไม่ได้ตั้ง — ลิงก์ชำระ/QR/ลิงก์ใน LINE-อีเมลจะไม่ถูกแนบ",
             f.SystemBaseUrlConfigured ? null : "ระบบไม่เดาโดเมน (ค่าที่มากับโปรแกรมไม่นับว่าตั้งแล้ว) — ตั้ง AppBaseUrl = https://<โดเมนจริง> · URL นี้ใช้ส่งให้ Omise · returnUrl หลัง 3-D Secure · webhook",
-            "/admin/site-settings.html", "ตั้ง URL ของระบบ");
+            SystemBaseUrl.AdminPagePath, "ตั้ง URL ของระบบ (App Base URL)");
         Add("GATEWAY-TEST", f.PlatformGatewayConfigured && f.TestKeyPassed ? Ok : Fail,
             !f.PlatformGatewayConfigured ? "ยังไม่ได้ตั้งช่องทาง Omise ของแพลตฟอร์ม" : f.TestKeyPassed ? "ตั้งช่องทาง Omise แล้ว · ทดสอบคีย์ test ผ่าน" : "ตั้งช่องทาง Omise แล้ว แต่ยังไม่ได้ทดสอบคีย์ test ให้ผ่าน",
             null, "/admin/platform-gateway.html", "ตั้งช่องทาง Omise");

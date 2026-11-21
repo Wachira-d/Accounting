@@ -7634,9 +7634,18 @@
         this.addLine();
         const row = document.getElementById('linesBody').lastElementChild;
         const descEl = row.querySelector('[data-f="desc"]');
-        if (descEl) { descEl.value = `รับชำระเงินตาม${Layout.docTypeLabel(d.documentType)}เลขที่ ${d.documentNumber}`; descEl.__grow?.(); }
+        // รอบ 284 (T3 MED-5): ข้อความ/หน่วยตั้งต้นมาจากเซิร์ฟเวอร์ตามภาษาของใบต้นทาง (DocumentLabels ตัวเดียวกับใบเสร็จที่ระบบออก) — หน้าเว็บไม่มีสำเนาข้อความ ·
+        // โหลดไม่สำเร็จ ⇒ เลขที่ใบต้นทาง (ผู้ใช้แก้ต่อได้) · ผู้ใช้เปลี่ยนใบระหว่างรอ ⇒ ไม่ทับ
+        if (descEl) { descEl.value = d.documentNumber || ''; descEl.__grow?.(); }
         const qtyEl = row.querySelector('[data-f="qty"]'); if (qtyEl) qtyEl.value = 1;
-        const unitEl = row.querySelector('[data-f="unit"]'); if (unitEl) unitEl.value = 'รายการ';
+        const unitEl = row.querySelector('[data-f="unit"]'); if (unitEl) unitEl.value = '';
+        const pickedId = id;
+        API.get(`/api/companies/${Layout.getCompanyId()}/document/${pickedId}/receipt-line-default`).then(res => {
+          if (this._receiptSourceId !== pickedId) return;
+          const v = res?.data || {};
+          if (descEl && v.description && descEl.value === (d.documentNumber || '')) { descEl.value = v.description; descEl.__grow?.(); }
+          if (unitEl && v.unit && !unitEl.value) unitEl.value = v.unit;
+        }).catch(() => { /* ค่าตั้งต้นเท่านั้น — ผู้ใช้กรอกเองได้ */ });
         const priceEl = row.querySelector('[data-f="price"]'); if (priceEl) priceEl.value = grossDue;
         const vatSel = row.querySelector('[data-f="vat"]'); Layout.setLineVat(vatSel, 0, 'doc');
         const whtEl = row.querySelector('[data-f="wht"]'); if (whtEl) whtEl.value = whtRate;
@@ -8432,7 +8441,10 @@
             // info beyond status (e.g., "◐ จ่าย 50%" / "✓ แปลงครบ").
             // ใบเสร็จหลักฐานรับเงิน (auto คู่การชำระ) — ป้ายกันงง: ไม่ใช่ยอดขายซ้ำ
             // (JE/VAT อยู่ที่ Payment + ใบกำกับต้นทางแล้ว) ยกเลิกผ่าน "ยกเลิกการชำระเงิน"
-            const settlementBadge = d.isSettlementReceipt
+            // รอบ 283: ใบสำคัญจ่ายหลักฐานคู่การจ่ายที่ระบบสร้างจากคู่ค้า — ป้ายจากเซิร์ฟเวอร์ (originLabel) แทนป้าย "หลักฐานรับเงิน"
+            const settlementBadge = d.originLabel
+              ? `<span style="background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe;border-radius:4px;padding:1px 6px;font-size:10px;margin-left:6px;white-space:nowrap" title="${Layout.esc(d.originLabel)}${d.reference ? ' · ' + Layout.esc(d.reference) : ''} — ยกเลิกใบนี้ = ยกเลิกการจ่าย">${Layout.esc(d.originLabel)}${d.reference ? ' · ' + Layout.esc(d.reference) : ''}</span>`
+              : d.isSettlementReceipt
               ? `<span style="background:#f0fdf4;color:#15803d;border:1px solid #bbf7d0;border-radius:4px;padding:1px 6px;font-size:10px;margin-left:6px;white-space:nowrap" title="ใบเสร็จหลักฐานรับเงินของ ${Layout.esc(d.reference || 'ใบกำกับ/ใบแจ้งหนี้')} — ไม่ลงบัญชี/VAT ซ้ำ (ยอดขายอยู่ที่ใบกำกับต้นทาง)">🧾 หลักฐานรับเงิน${d.reference ? ' · ' + Layout.esc(d.reference) : ''}</span>`
               : '';
             // รอบ 196: ใบต้นทาง (ใบเสนอราคา/PR/PO/GRN/ใบส่งของ) — ป้ายบอกว่าออกเป็นอะไรแล้ว ("✓ ออกใบแจ้งหนี้ INV-… แล้ว")
@@ -11004,9 +11016,8 @@
         if (apTypes.includes(d.documentType)) {
           // Expense side awaiting our payment.
           return `<div style="background:#eff6ff;border:1px solid #3b82f640;color:#1e3a8a;padding:10px 14px;border-radius:8px;margin-bottom:8px;font-size:13px;line-height:1.6">
-            💡 <strong>ขั้นต่อไป:</strong> ถึงกำหนดจ่ายให้กด <strong>"💰 บันทึกชำระเงิน"</strong>
-            ด้านล่าง ระบบจะออกใบสำคัญจ่าย / Payment Voucher และล้างยอดเจ้าหนี้ให้อัตโนมัติ
-          </div>`;
+            💡 <strong>ขั้นต่อไป:</strong> ${Layout.esc(d.payNextStepHint || 'ถึงกำหนดจ่ายให้กด “💰 บันทึกชำระเงิน” ด้านล่าง')}
+          </div>`;   // รอบ 283: ข้อความจากเซิร์ฟเวอร์ (SettlementPaymentVoucher.PayNextStepHint) — ออกใบสำคัญจ่ายหรือไม่ตามความจริงของใบนี้
         }
         if (d.documentType === 'Quotation') {
           return `<div style="background:#eff6ff;border:1px solid #3b82f640;color:#1e3a8a;padding:10px 14px;border-radius:8px;margin-bottom:8px;font-size:13px;line-height:1.6">
@@ -11678,7 +11689,7 @@
               };
               extraSections += `<div style="margin-top:16px"><h4 style="font-size:14px;margin-bottom:8px">ประวัติการชำระเงิน (${payments.length})</h4>
                 <table class="table" style="font-size:12px"><thead><tr><th>เลขที่</th><th>วันที่</th><th class="text-right">จำนวน</th><th>วิธี</th><th>ใบเสร็จ</th></tr></thead>
-                <tbody>${payments.map(p => `<tr><td>${Layout.esc(p.paymentNumber)}</td><td>${Layout.date(p.paymentDate)}</td><td class="text-right">${p.allocatedToDocument != null ? `${Layout.money(p.allocatedToDocument)}<div class="text-xs text-gray-500">จากเงินรับ ${Layout.money(p.amount)}${p.unappliedCredit > 0 ? ` · รอจัดสรร ${Layout.money(p.unappliedCredit)}` : ''}</div>` : Layout.money(p.amount)}</td><td>${Layout.esc(p.paymentMethod||'-')}</td><td>${recCell(p)}</td></tr>`).join('')}</tbody></table></div>`;
+                <tbody>${payments.map(p => `<tr><td>${Layout.esc(p.paymentNumber)}</td><td>${Layout.date(p.paymentDate)}</td><td class="text-right">${p.allocatedToDocument != null ? `${Layout.money(p.allocatedToDocument)}<div class="text-xs text-gray-500">จากเงินรับ ${Layout.money(p.amount)}${p.unappliedCredit > 0 ? ` · รอจัดสรร ${Layout.money(p.unappliedCredit)}` : ''}</div>` : Layout.money(p.amount)}</td><td>${Layout.esc(p.paymentMethod||'-')}${p.provisionalLabel ? `<div class="text-xs" style="color:#b45309">⏳ ${Layout.esc(p.provisionalLabel)}</div>` : ''}</td><td>${recCell(p)}</td></tr>`).join('')}</tbody></table></div>`;
             }
             if (journals.length) {
               // host ว่างไว้ — เนื้อหาจริงมาจาก renderDocJournalSection() ที่อ่าน

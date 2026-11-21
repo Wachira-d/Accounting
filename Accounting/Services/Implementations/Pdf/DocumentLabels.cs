@@ -289,9 +289,18 @@ public sealed class DocumentLabels
         _ => this["settlement_src_invoice"],
     };
 
+    /// <summary>รอบ 284 (T3 LOW-2): ชื่อใบต้นทางบนบรรทัดอ้างอิง — หัวที่ใบนั้นพิมพ์จริงเมื่อภาษาตรงกับใบนี้ · นอกนั้น <see cref="SettlementSourceLabel"/></summary>
+    public string SourceHeadingLabel(Accounting.Helpers.SettlementReceiptTotals.Source s)
+        => !string.IsNullOrWhiteSpace(s.Heading) && string.Equals(s.HeadingLanguage, IsEnglish ? "en" : "th", StringComparison.OrdinalIgnoreCase)
+            ? s.Heading!.Trim() : SettlementSourceLabel(s.Type);
+
     /// <summary>บรรทัดรายการของใบเสร็จรับชำระ (รอบ 275 MED-5 — เดิม literal ไทยใน DocumentService) · <paramref name="installment"/> = ใบกำกับรายงวดของงานบริการ</summary>
     public string SettlementReceiptLine(Accounting.Models.Enums.DocumentType sourceType, string sourceNumber, bool installment)
-        => string.Format(this[installment ? "settlement_installment_line" : "settlement_receipt_line"], SettlementSourceLabel(sourceType), sourceNumber);
+        => SettlementReceiptLine(SettlementSourceLabel(sourceType), sourceNumber, installment);
+
+    /// <summary>รอบ 284 (T3 LOW-2): บรรทัดรายการด้วยชื่อใบต้นทางที่ส่งมา (<see cref="SourceHeadingLabel"/>)</summary>
+    public string SettlementReceiptLine(string sourceLabel, string sourceNumber, bool installment)
+        => string.Format(this[installment ? "settlement_installment_line" : "settlement_receipt_line"], sourceLabel, sourceNumber);
 
     /// <summary>หมายเหตุของใบเสร็จรับชำระ (พิมพ์บนกระดาษ) — วันที่รับ + วิธีรับ + บทบาทใบกำกับ ณ วันรับเงิน</summary>
     public string SettlementReceiptNote(Accounting.Models.Enums.DocumentType sourceType, string sourceNumber, DateTime receivedOn, string method,
@@ -303,6 +312,20 @@ public sealed class DocumentLabels
                Accounting.Helpers.SettlementTaxInvoiceRole.Mode.Installment => this["settlement_receipt_note_installment"],
                _ => "",
            };
+
+    /// <summary>รอบ 283: บรรทัดเดียวของใบสำคัญจ่ายหลักฐานคู่การจ่าย (Helpers/SettlementPaymentVoucher) — เงินออก · ภาษีหัก · เลข 50 ทวิ ของการจ่ายนี้</summary>
+    public string SettlementPaymentVoucherLine(string sourceNumber, decimal cash, decimal wht, string? whtCertNumber)
+    {
+        var s = string.Format(this["settlement_pv_line"], sourceNumber, cash.ToString("N2"));
+        if (wht > 0m)
+            s += string.Format(this["settlement_pv_line_wht"], wht.ToString("N2"), (cash + wht).ToString("N2"))
+                 + (string.IsNullOrWhiteSpace(whtCertNumber) ? this["settlement_pv_line_no_cert"] : string.Format(this["settlement_pv_line_cert"], whtCertNumber));
+        return s;
+    }
+
+    /// <summary>รอบ 283: หมายเหตุ (พิมพ์) ของใบสำคัญจ่ายหลักฐานคู่การจ่าย</summary>
+    public string SettlementPaymentVoucherNote(string sourceNumber, DateTime paidOn)
+        => string.Format(this["settlement_pv_note"], sourceNumber, Date(paidOn));
 
     /// <summary>หน่วยของบรรทัดเดียวบนใบเสร็จรับชำระ</summary>
     public string SettlementUnitItem => this["settlement_unit_item"];
@@ -318,7 +341,8 @@ public sealed class DocumentLabels
             lines.Add(string.Format(this["settlement_via_billing_note"], bn.Number, Date(bn.Date)));
         foreach (var s in v.References)
         {
-            var srcLabel = SettlementSourceLabel(s.Type);
+            // รอบ 284 (T3 LOW-2): ชื่อที่ใบต้นทางพิมพ์จริง (ภาษาเดียวกับใบเสร็จ) — ไม่ใช่ชื่อชนิดตายตัว · ไม่รู้/คนละภาษา ⇒ ชื่อชนิดเดิม
+            var srcLabel = SourceHeadingLabel(s);
             // L1: ภาษีหักทั้งใบไม่พิมพ์ที่นี่ (งวดผ่อนจะบวกไม่ลง) — พิมพ์ของการรับครั้งนี้ข้างล่าง
             lines.Add(string.Format(this["settlement_ref_line"], srcLabel, s.Number, Date(s.Date),
                 M(s.SubTotal), M(s.VatAmount), M(Accounting.Helpers.SettlementReceiptTotals.GrossOf(s))));
@@ -327,6 +351,8 @@ public sealed class DocumentLabels
         foreach (var cn in v.PriorCreditNotes ?? Array.Empty<Accounting.Helpers.SettlementReceiptTotals.LedgerEvent>())
             lines.Add(string.Format(this["settlement_cn_line"], cn.Number ?? "", Date(cn.Date), M(cn.Amount)));
         if (v.PriorSettled > 0.005m) lines.Add(string.Format(this["settlement_prior_paid"], M(v.PriorSettled)));
+        // รอบ 284 (284-9): หักเงินมัดจำที่รับแล้ว = การตัดยอด (ไม่ใช่ส่วนลด) — บอกที่มาให้ยอดคงค้างก่อนรับบวกลบลง
+        if (v.PriorOther > 0.005m) lines.Add(string.Format(this["settlement_prior_deposit"], M(v.PriorOther)));
         if (v.This is { } me)
         {
             if (Math.Abs(me.FeeAmount) >= 0.005m || Math.Abs(me.AdjustmentAmount) >= 0.005m)
@@ -423,6 +449,7 @@ public sealed class DocumentLabels
         ["settlement_via_billing_note"] = "(ตามใบวางบิลเลขที่ {0} ลงวันที่ {1})",
         ["settlement_cn_line"] = "หักใบลดหนี้เลขที่ {0} ลงวันที่ {1}: {2}",
         ["settlement_prior_paid"] = "รับชำระก่อนหน้า {0}",
+        ["settlement_prior_deposit"] = "ตัดยอดด้วยเงินมัดจำที่รับแล้ว {0}",
         ["settlement_this_breakdown"] = "ตัดชำระครั้งนี้ {0}: รับเงิน {1}{2}",
         ["settlement_this_fee"] = " · ค่าธรรมเนียมที่ถูกหัก {0}",
         ["settlement_this_adjust"] = " · รายการปรับยอด {0}",
@@ -442,6 +469,12 @@ public sealed class DocumentLabels
         ["settlement_receipt_note_tax_invoice"] = " — ทำหน้าที่ใบกำกับภาษี ณ วันรับเงิน (มาตรา 78/1)",
         ["settlement_receipt_note_installment"] = " — ทำหน้าที่ใบกำกับภาษี ณ วันรับเงินของงวดนี้ (มาตรา 78/1) · ภาษีมูลค่าเพิ่มตามส่วนของเงินที่รับ",
         ["settlement_unit_item"] = "รายการ",
+        // รอบ 283: ใบสำคัญจ่ายหลักฐานคู่การจ่ายที่ระบบสร้างจากคู่ค้า (Helpers/SettlementPaymentVoucher)
+        ["settlement_pv_line"] = "จ่ายชำระตามเอกสารเลขที่ {0} — เงินโอน {1} บาท",
+        ["settlement_pv_line_wht"] = " · หักภาษี ณ ที่จ่าย {0} บาท (ปิดหนี้รวม {1} บาท)",
+        ["settlement_pv_line_cert"] = " · หนังสือรับรองการหักภาษี ณ ที่จ่าย (50 ทวิ) เลขที่ {0}",
+        ["settlement_pv_line_no_cert"] = " · หนังสือรับรอง 50 ทวิ ดูที่เอกสารตั้งหนี้",
+        ["settlement_pv_note"] = "ใบสำคัญจ่ายประกอบการจ่ายชำระเอกสารเลขที่ {0} วันที่ {1} — ลงบัญชีที่การจ่ายแล้ว",
         ["total_deposit_applied"] = "หักเงินมัดจำ",
         ["total_deposit_tax_invoiced"] = "หักมูลค่ามัดจำ (ก่อน VAT) ตามใบกำกับภาษี",
         ["total_rounding"] = "ผลต่างจากการปัดเศษ",
@@ -610,6 +643,7 @@ public sealed class DocumentLabels
         ["settlement_via_billing_note"] = "(Per Billing Note No. {0} dated {1})",
         ["settlement_cn_line"] = "Less Credit Note No. {0} dated {1}: {2}",
         ["settlement_prior_paid"] = "Previously received {0}",
+        ["settlement_prior_deposit"] = "Settled by deposit received {0}",
         ["settlement_this_breakdown"] = "Settled by this payment {0}: cash received {1}{2}",
         ["settlement_this_fee"] = " · fee deducted {0}",
         ["settlement_this_adjust"] = " · adjustments {0}",
@@ -628,6 +662,11 @@ public sealed class DocumentLabels
         ["settlement_receipt_note_tax_invoice"] = " — serves as the tax invoice at the time of payment (Section 78/1)",
         ["settlement_receipt_note_installment"] = " — serves as the tax invoice for this instalment at the time of payment (Section 78/1) · VAT in proportion to the amount received",
         ["settlement_unit_item"] = "item",
+        ["settlement_pv_line"] = "Payment of document No. {0} — transferred {1} THB",
+        ["settlement_pv_line_wht"] = " · withholding tax {0} THB (total settled {1} THB)",
+        ["settlement_pv_line_cert"] = " · withholding tax certificate (50 Tawi) No. {0}",
+        ["settlement_pv_line_no_cert"] = " · see the withholding tax certificate on the source document",
+        ["settlement_pv_note"] = "Payment voucher supporting the payment of document No. {0} dated {1} — posted with the payment",
         ["total_deposit_applied"] = "Less deposit",
         ["total_deposit_tax_invoiced"] = "Less deposit already tax-invoiced (excl. VAT)",
         ["total_rounding"] = "Rounding adjustment",

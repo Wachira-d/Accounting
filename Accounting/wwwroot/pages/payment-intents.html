@@ -72,7 +72,7 @@
     const Page = {
       rows: [],
       summary: { refundedAwaitingCreditNote: 0, refundUntracked: 0 },
-      filter: { status: '', q: '' },
+      filter: { status: '', q: '', trust: false },
 
       async init() {
         await Layout.init();
@@ -89,7 +89,7 @@
       async load() {
         const api = Layout.api(); if (!api) return;
         try {
-          const q = this.filter.status ? `?status=${encodeURIComponent(this.filter.status)}&limit=300` : '?limit=300';
+          const q = (this.filter.status ? `?status=${encodeURIComponent(this.filter.status)}&limit=300` : '?limit=300') + (this.filter.trust ? '&trust=unverified' : '');
           const d = (await api.listPaymentIntents(q))?.data || {};
           this.rows = d.items || [];
           // ตัวนับมาจากเซิร์ฟเวอร์ (ตัดสินที่เดียว) — หน้าเว็บไม่นับเอง
@@ -162,6 +162,8 @@
               <div style="flex:1;min-width:200px"><label>ค้นหา (เลขอ้างอิง / ที่มา / ยอด)</label>
                 <input class="form-input" id="fQ" value="${Layout.esc(this.filter.q)}"
                   oninput="Page.setQuery(this.value)"></div>
+              <label style="display:flex;gap:6px;align-items:center;font-size:13px"><input type="checkbox" ${this.filter.trust ? 'checked' : ''}
+                onchange="Page.filter.trust = this.checked; Page.load()"> รับล่วงหน้าที่ยังไม่ยืนยัน</label>
               <button class="btn btn-secondary" onclick="Page.load()">🔄 โหลดใหม่</button>
             </div>
             <div class="scroll-x"><table class="tbl">
@@ -207,6 +209,8 @@
               ${r.dispute.amount != null ? `<div style="font-size:11px">ยอดโต้แย้ง ${Layout.money(r.dispute.amount)}${r.dispute.reason ? ' · ' + Layout.esc(r.dispute.reason) : ''}</div>` : ''}
               ${r.dispute.needsAttention && r.dispute.nextStep ? `<div style="color:#b45309;font-size:11px">${Layout.esc(r.dispute.nextStep)}</div>` : ''}</div>` : ''}</td>
           <td style="font-size:11.5px">${Layout.esc(r.confirmedBy || '—')}
+            ${r.autoRecordReason ? `<div style="color:#b45309;font-size:11px;margin-top:2px" title="QR ตรวจได้แค่ว่าเป็นรูปแบบสลิป ไม่ได้ยืนยันว่าเงินเข้า — ตรวจรายการเงินเข้าแล้วกดยืนยัน/ปฏิเสธ">⚠️ รอยืนยัน: ${Layout.esc(r.autoRecordReason)}</div>` : ''}
+            ${r.trustLabel ? `<div style="font-size:11px;margin-top:2px"><span class="pill ${r.trustUnverified ? 'cn-miss' : 'cn-ok'}">${Layout.esc(r.trustLabel)}</span></div>` : ''}
             ${r.receivingAccountOriginLabel ? `<div style="color:#475569;font-size:11px;margin-top:2px" title="บัญชีที่เงินตามสลิปเข้า (ตัดสินตอนยืนยัน)">🏦 ${Layout.esc(r.receivingAccountLabel || r.receivingAccountOriginLabel)}${r.receivingAccountLabel ? ' · ' + Layout.esc(r.receivingAccountOriginLabel) : ''}</div>` : ''}</td>
           <td style="white-space:nowrap">
             <button class="btn btn-sm btn-secondary" onclick="Page.events('${r.id}')">ประวัติ</button>

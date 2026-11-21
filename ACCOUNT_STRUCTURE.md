@@ -73,7 +73,7 @@ BillingAccount  ─ ใครจ่าย (สัญญา, บิล, โคว
 | `Subscription` (ต่อบริษัท) | `Models/Entities/Subscription.cs` | ชนะ AccountSubscription เมื่อบริษัทมีของตัวเอง (resolution order §6.3) |
 | `ConsolidationGroup/Member` | `DimensionalAccounting.cs:122` | งบรวม + %ถือหุ้น — **เรื่องการเงิน แยกจาก billing เด็ดขาด** |
 | `ExternalIntegration` + `ApiKeyMiddleware` | `Models/Entities/`, `Middleware/` | ต้นแบบของ ApiClient (TakeTime ใช้อยู่) · ✅ **รอบ 193 (คำตัดสิน #37)**: สิทธิ์แยก `CanRead/CanWrite/CanDelete` + `IsLegacyKey`/`LegacyDeprecatesAt` · ออก/แก้/ลบคีย์ + ผูกผู้ใช้เฉพาะ Owner — §3.1c |
-| `CompanyUser` | `Models/Entities/User.cs:75` | สิทธิ์ราย user รายบริษัท · รอบ 276: `OwnDocumentsOnly`/`DraftDocumentsOnly` (เจ้าของตั้งที่หน้าทีม · บทบาทกำหนดเองมีชุดเดียวกัน · ตัวตัดสิน `Helpers/DocumentRestrictionPolicy` · DOCUMENT_FLOW §3.2-276) |
+| `CompanyUser` | `Models/Entities/User.cs:75` | สิทธิ์ราย user รายบริษัท · รอบ 276: `OwnDocumentsOnly`/`DraftDocumentsOnly` (เจ้าของตั้งที่หน้าทีม · บทบาทกำหนดเองมีชุดเดียวกัน · ตัวตัดสิน `Helpers/DocumentRestrictionPolicy` · DOCUMENT_FLOW §3.2-276) · รอบ 284: ด่านรายงานการเงินรวม `Helpers/FinancialReportAccess` — `CompanyRoleId == null` (เมนู "*") ผ่านตามเดิม · บทบาทกำหนดเองต้องมีคีย์ (`Round284Migration` ครั้งเดียว: บทบาทที่ติ๊กเมนูรายงานได้คีย์ของหน้า · คีย์ใหม่ `Reports.Budget` · DOCUMENT_FLOW §6.284) |
 | **`BillingAccount`** | `Models/Entities/BillingAccount.cs` | ✅ องค์กรผู้จ่ายเงิน — Name/TaxId/BillingMode/PaymentModel/CreditBalance/PostpaidCreditLimit/GracePeriodDays/IsSandbox/Status |
 | **`BillingAccountAdmin`** | `Models/Entities/BillingAccount.cs` | ✅ M:N account↔user + `IsPrimary`; unique ต่อ (account,user) |
 | **`Company.BillingAccountId`** | `Models/Entities/Company.cs` | ✅ nullable FK (`ON DELETE SET NULL` — ลบกลุ่มแล้วบริษัทต้องไม่หาย) |
@@ -1546,3 +1546,11 @@ _Last verified against codebase: 2026-11-11 (รอบ 258 ฝ่ายค้า
 _Last verified against codebase: 2026-11-11 (รอบ 259 แพ็ก A — ตาราง `PaymentCreditMovements` (ขาออกของเงินรอจัดสรร) · `CompanySettings.CustomerCreditWriteOffCap` (เพดานตัดเศษ ตั้งต้น 1.00) · ผังไม่เพิ่ม (ใช้ 21630 · 54960 เดิม)) · commit 5a3b7fa1_
 _Last verified against codebase: 2026-11-12 (รอบ 262 — §6.2c: ใบ/ทวง/ใบเสร็จค่าบริการทาง LINE ของผู้ติดต่อผู้เช่าผ่าน OA กลาง (บริษัทผู้ให้บริการเท่านั้น) · `ContactLineInvites.OaScope` · ศูนย์บิลผูก LINE — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 81af94ae)_
 _Last verified against codebase: 2026-11-20 (รอบ 278 — `CompanyUser.AllowExternalPreparerBinding` + ตาราง `SignerAliases` ต่อบริษัท (เจ้าของอนุมัติ) — commit b8960a48)_
+
+## รอบ 285 — Company: สถานะ "ยืนยันเลขผู้เสียภาษีแล้ว" (คำตัดสิน 285-1…285-6)
+- `Company.TaxIdVerifiedAt` · `TaxIdVerifiedFor` (เลขที่ยืนยัน) · `TaxIdVerificationRequestId` — ตั้งทางเดียว `CompanyTaxIdVerificationService.ApproveAsync` (ผู้ดูแลแพลตฟอร์ม · SystemAdmin) ·
+  ตัวตัดสินเดียว `Helpers/CompanyTaxIdVerification.IsVerified` (เลขที่ยืนยันต้องตรงเลขปัจจุบัน) · เปลี่ยน `TaxId` ทุกทางเข้า ⇒ ล้าง (`StampTaxIdSetAt`)
+- ตารางใหม่ `CompanyTaxIdVerificationRequests` (tenant = บริษัทผู้ยื่น · หลักฐาน ภ.พ.20/หนังสือรับรองเก็บผ่าน `IFileStorage` โฟลเดอร์ `CompanyTaxIdEvidence` (ไม่ใช่ FileAttachments · เก็บ 5 ปี · เปิดได้เฉพาะเจ้าของ+ผู้ดูแลแพลตฟอร์ม + PiiAccessLog) · เลข+สาขาหนึ่งยืนยันได้บริษัทเดียว · SHA-256 · ผลเทียบทะเบียน · สถานะ Pending/Approved/Rejected/Revoked · ไม่ลบ)
+- ผลที่ใช้: เปิดคำขอเชื่อมคู่ค้าที่ส่งก่อนสมัคร (285-3) · ป้ายบนการ์ดคำขอ (285-5) · บริษัทเดิม = ยังไม่ยืนยัน (`Round285Migration`)
+
+_Last verified against codebase: 2026-11-21 (รอบ 285 — `Company.TaxIdVerified*` + ตาราง `CompanyTaxIdVerificationRequests` · ผู้ดูแลแพลตฟอร์มอนุมัติ · เปลี่ยนเลข = หลุดสถานะ — commit ae317b36)_

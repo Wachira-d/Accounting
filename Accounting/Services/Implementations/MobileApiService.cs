@@ -210,8 +210,29 @@ public class MobileApiService : IMobileApiService
 
     // ==================== Mobile-Optimized Endpoints ====================
 
-    public async Task<MobileDashboardResponse> GetMobileDashboardAsync(Guid companyId)
+    private Task<int> PendingApprovalCountAsync(Guid companyId)
+        => _db.ApprovalRequests.CountAsync(ar => ar.CompanyId == companyId && ar.OverallStatus == ApprovalStatus.Pending && !ar.IsDeleted);
+
+    private Task<int> OverdueInvoiceCountAsync(Guid companyId)
+        => _db.Documents.CountAsync(d => d.CompanyId == companyId
+            && (d.DocumentType == DocumentType.Invoice || d.DocumentType == DocumentType.TaxInvoice)
+            && d.Status == DocumentStatus.Overdue && !d.IsDeleted);
+
+    /// <summary>Alerts: recent important notifications for the company</summary>
+    private Task<List<MobileAlertResponse>> AlertsAsync(Guid companyId)
+        => _db.Notifications
+            .Where(n => n.CompanyId == companyId && !n.IsRead && !n.IsDeleted)
+            .OrderByDescending(n => n.CreatedAt)
+            .Take(10)
+            .Select(n => new MobileAlertResponse(n.Type.ToString(), n.Title, n.Message, n.ActionUrl, n.CreatedAt))
+            .ToListAsync();
+
+    public async Task<MobileDashboardResponse> GetMobileDashboardAsync(Guid companyId, bool includeFinancials = true)
     {
+        // รอบ 284 ฝ่ายค้าน HIGH-1: ไม่มีสิทธิ์ดูตัวเลขการเงิน ⇒ ส่งเฉพาะจำนวนงาน/การแจ้งเตือน (เหมือนหน้าหลักโหมดง่าย) · ยอดเงินไม่ถูกคำนวณเลย
+        if (!includeFinancials)
+            return new MobileDashboardResponse(0m, 0m, 0m, await PendingApprovalCountAsync(companyId), await OverdueInvoiceCountAsync(companyId), 0m, 0m,
+                await AlertsAsync(companyId), FinancialsHidden: true, FinancialsHiddenNotice: Accounting.Helpers.FinancialReportAccess.NoFinancialAccessNotice);
         var now = DateTime.UtcNow;
         var todayStart = new DateTime(now.Year, now.Month, now.Day, 0, 0, 0, DateTimeKind.Utc);
         var monthStart = new DateTime(now.Year, now.Month, 1, 0, 0, 0, DateTimeKind.Utc);
@@ -243,18 +264,8 @@ public class MobileApiService : IMobileApiService
                 && !d.IsDeleted)
             .SumAsync(d => d.BalanceDue);
 
-        // Pending approvals
-        var pendingApprovals = await _db.ApprovalRequests
-            .CountAsync(ar => ar.CompanyId == companyId
-                && ar.OverallStatus == ApprovalStatus.Pending
-                && !ar.IsDeleted);
-
-        // Overdue invoices
-        var overdueInvoices = await _db.Documents
-            .CountAsync(d => d.CompanyId == companyId
-                && (d.DocumentType == DocumentType.Invoice || d.DocumentType == DocumentType.TaxInvoice)
-                && d.Status == DocumentStatus.Overdue
-                && !d.IsDeleted);
+        var pendingApprovals = await PendingApprovalCountAsync(companyId);
+        var overdueInvoices = await OverdueInvoiceCountAsync(companyId);
 
         // Today's revenue: payments received today
         var todayRevenue = await _db.Payments
@@ -272,19 +283,7 @@ public class MobileApiService : IMobileApiService
                 && !p.IsDeleted)
             .SumAsync(p => p.Amount);
 
-        // Alerts: recent important notifications for the company
-        var alerts = await _db.Notifications
-            .Where(n => n.CompanyId == companyId && !n.IsRead && !n.IsDeleted)
-            .OrderByDescending(n => n.CreatedAt)
-            .Take(10)
-            .Select(n => new MobileAlertResponse(
-                n.Type.ToString(),
-                n.Title,
-                n.Message,
-                n.ActionUrl,
-                n.CreatedAt
-            ))
-            .ToListAsync();
+        var alerts = await AlertsAsync(companyId);
 
         return new MobileDashboardResponse(
             cashBalance,

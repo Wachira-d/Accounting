@@ -92,6 +92,9 @@ public interface IDocumentPayLinkService
     /// <summary>รอบ 264 P4 (คำตัดสิน 264-5-11): เป้าหมายรายการชำระของเอกสารสำหรับ "จ่ายจากระบบของคู่ค้า" — ตัดสินด้วย <see cref="PublicViewAsync"/> ตัวเดียวกับหน้าชำระ
     /// (โทเคนของลิงก์ที่ใช้อยู่ของใบ — ไม่มีลิงก์/ใช้ไม่ได้ ⇒ null) · ผู้เรียกต้องตรวจว่าเป็นคู่ค้าที่ใบนี้ถูกส่งถึงแล้ว</summary>
     Task<Accounting.Services.Payments.PublicPayTarget?> PartnerPayTargetAsync(Guid companyId, Guid documentId, CancellationToken ct = default);
+    /// <summary>รอบ 282 (คำสั่งเจ้าของ 282-7): โทเคนลิงก์ชำระที่ใช้อยู่ ⇒ รหัสเอกสารของผู้ขาย (ค้นด้วย hash + ยืนยันเวลาคงที่ · เพิกถอน/หมดอายุ ⇒ null) ·
+    /// ผู้เรียกเดียว <c>PartnerOutboundPaymentService.PurchaseForPayLinkAsync</c> (ฝั่งผู้ซื้อที่ล็อกอิน — ผลไม่ออกจากบริษัทผู้ซื้อ)</summary>
+    Task<Guid?> DocumentIdForTokenAsync(Guid companyId, string token, CancellationToken ct = default);
     /// <summary>รอบ 253 (WP-10): ลูกค้าเลือก "ไม่หัก ณ ที่จ่าย" — บันทึกการยอมรับแล้วคืนเป้าหมายยอดเต็ม · <c>Target</c> null = ไม่พบ token</summary>
     Task<NoWhtAcceptResult> AcceptNoWhtAsync(Guid companyId, string token, NoWhtAcceptRequest request, CancellationToken ct = default);
     /// <summary>รอบ 253 (WP-10): ผูกการยอมรับ "ไม่หัก" กับรายการชำระที่สร้างตามมา</summary>

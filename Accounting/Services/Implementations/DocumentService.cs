@@ -2988,6 +2988,12 @@ public partial class DocumentService : IDocumentService
             .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
 
+        // รอบ 283 ฝ่ายค้าน MED-A1: ใบหลักฐานคู่การชำระ (ใบสำคัญจ่ายหลักฐาน · ใบเสร็จหลักฐานฝั่งขาย) แก้ได้เฉพาะหมายเหตุ — เดิมร่างแก้ยอด/ภาษีได้ ⇒ อนุมัติแล้ว 50 ทวิ
+        // ใบที่สอง + VAT เข้าแดชบอร์ด · ส่งค่าเดิมทั้งชุด (ฟอร์ม) ⇒ บันทึกหมายเหตุ · แตะยอด/บรรทัด/ผู้ติดต่อ/วันที่ ⇒ ปฏิเสธพร้อมทางไปต่อ (ไม่ silent no-op)
+        // (ขอเปลี่ยนใบต้นทาง = ด่าน RL-SOURCE เดิมด้านล่างปฏิเสธใบหลักฐานเอง — ไม่ดักที่นี่เพื่อให้รหัสกฎเดิม)
+        if (doc.IsSettlementReceipt && (request.RelatedDocumentId == null || request.RelatedDocumentId == doc.RelatedDocumentId))
+            return await UpdateSettlementEvidenceNotesAsync(companyId, doc, request);
+
         // ── Document revision: เอกสาร operational ที่อนุมัติ/ส่งแล้ว "แก้ได้" ──
         // เกณฑ์เดียว: เอกสารที่ **ไม่มี JE / ไม่ขยับสต๊อก / ไม่เข้ารายงานภาษี**
         // แก้หลังอนุมัติได้โดยไม่กระทบบัญชี ตามธรรมเนียมการค้า (เลขที่คงเดิม +
@@ -10251,6 +10257,35 @@ public partial class DocumentService : IDocumentService
         // RevertSourceDocumentAdjustments → ลบ PaidAmount ของใบแจ้งหนี้ทั้งที่
         // Payment + JE ยังอยู่ → AR ติดลบ + เก็บเงินซ้ำได้ (audit B3). ทางถูก:
         // ยกเลิก "การชำระเงิน" (payment) → ระบบ void ใบเสร็จนี้ให้เอง (cascade ครบ)
+        // รอบ 283 (283-4): ใบสำคัญจ่ายหลักฐานคู่การจ่าย — ยกเลิกใบ = ยกเลิกการจ่าย (เส้นเดิมตัวเดียว: กลับ JE · คืนยอดหนี้ · 50 ทวิ ตามกติกาเดิม · ใบนี้ยกเลิกตาม) ·
+        // การจ่ายถูกยกเลิกไปแล้ว ⇒ ยกเลิกใบนี้อย่างเดียว (ไม่มี JE ให้กลับ)
+        if (doc.IsSettlementReceipt && doc.DocumentType == DocumentType.PaymentVoucher && doc.SettlementPaymentId is Guid settledPayId)
+        {
+            var livePayment = await _db.Payments.AsNoTracking()
+                .Where(p => p.Id == settledPayId && p.CompanyId == companyId && !p.IsDeleted).Select(p => (Guid?)p.Id).FirstOrDefaultAsync();
+            if (livePayment is Guid lp) return await VoidPaymentAsync(companyId, lp);
+            var orphanPayment = await _db.Payments.IgnoreQueryFilters()
+                .FirstOrDefaultAsync(p => p.Id == settledPayId && p.CompanyId == companyId);
+            if (orphanPayment != null) await VoidSettlementPaymentVouchersOfPaymentAsync(companyId, orphanPayment);
+            else
+            {
+                // ฝ่ายค้าน LOW-A4: ไม่พบแถวการจ่ายเลย ⇒ ยกเลิกใบหลักฐานอย่างเดียว + audit (เดิมไม่มีร่องรอย)
+                var before = doc.Status;
+                doc.Status = DocumentStatus.Voided; doc.UpdatedAt = DateTime.UtcNow;
+                _db.AddChainedAuditLog(new AuditLog
+                {
+                    CompanyId = companyId, Action = AuditAction.Update, EntityType = "Document", EntityId = doc.Id.ToString(),
+                    NewValues = System.Text.Json.JsonSerializer.Serialize(new
+                    {
+                        @event = "SettlementPaymentVoucherVoidedNoPayment", documentNumber = doc.DocumentNumber, from = before.ToString(),
+                        settlementPaymentId = settledPayId, ruleCode = Accounting.Helpers.SettlementPaymentVoucher.RuleCode,
+                    }),
+                    Timestamp = DateTime.UtcNow,
+                });
+            }
+            await _db.SaveChangesAsync();
+            return PaymentVoidResult.None;
+        }
         if (doc.IsSettlementReceipt)
             throw new InvalidOperationException(
                 "ใบเสร็จนี้ออกอัตโนมัติจากการบันทึกชำระเงิน — กรุณา 'ยกเลิกการชำระเงิน' แทน " +
@@ -12490,6 +12525,7 @@ public partial class DocumentService : IDocumentService
 
         // ใบเสร็จรับเงินหลักฐานที่ออกคู่กับการชำระนี้ (ถ้ามี) — ยกเลิก หรือติดธง "ต้องยกเลิกทาง e-Tax" ตามคำตัดสินด้านบน (รอบ 200 ทีม V1)
         var etaxCancellationFlag = await ApplyAutoReceiptOnPaymentVoidAsync(companyId, receiptDecision, receiptDoc, payment.PaymentNumber);
+        await VoidSettlementPaymentVouchersOfPaymentAsync(companyId, payment);   // รอบ 283: ใบสำคัญจ่ายหลักฐานคู่การจ่าย (คงแถว · audit)
 
         // Restore document balance (รวมค่าธรรมเนียมที่เคยล้างเอกสารด้วย)
         // + หนี้ที่เคยปิดด้วยบรรทัดปรับ (รอบ 193 — ขา JE ถูกกลับพร้อม JE การชำระข้างบนแล้ว)
@@ -12842,6 +12878,7 @@ public partial class DocumentService : IDocumentService
 
         // 4) ใบเสร็จหลักฐานที่ออกคู่กับการชำระ (evidence-only ไม่มี JE) — ยกเลิก หรือติดธง "ต้องยกเลิกทาง e-Tax" (รอบ 200 ทีม V1)
         var etaxCancellationFlag = await ApplyAutoReceiptOnPaymentVoidAsync(companyId, receiptDecision, receiptDoc, pn);
+        await VoidSettlementPaymentVouchersOfPaymentAsync(companyId, payment);   // รอบ 283
         foreach (var own in allocationReceipts.Values)
             etaxCancellationFlag = CombineNotices(etaxCancellationFlag,
                 await ApplyAutoReceiptOnPaymentVoidAsync(companyId, own.Decision, own.Receipt, pn));
@@ -15328,6 +15365,22 @@ public partial class DocumentService : IDocumentService
     /// ใบกำกับ) → VatAmount=0. สร้างตรงเป็น Status=Paid ไม่ผ่าน ApproveDocumentAsync
     /// จึงไม่ตัดหนี้ซ้ำผ่าน ApplySourceDocumentAdjustments. หัวพิมพ์ = "ใบเสร็จรับเงิน"
     /// (Receipt + VAT=0 ไม่ upgrade เป็นใบกำกับ).</summary>
+    /// <summary>ในธุรกรรมของ <see cref="CreatePaymentAsync"/>: ตัดสิน + สร้างใบสำคัญจ่ายหลักฐาน · <paramref name="strict"/> (ผู้เรียกขอเอง เช่น ท่ออัตโนมัติ) + ออกไม่ได้ ⇒ โยน
+    /// (การจ่ายทั้งก้อน rollback — ไม่มี "จ่ายแล้วไม่มีใบ" เงียบ ๆ) · ผู้เรียกรัน IssuedDocumentHooks ของใบนี้หลัง commit · ไม่ strict (ค่าตั้งต้นของใบจากคู่ค้า) + ออกไม่ได้ ⇒ คืนเหตุให้ผู้เรียกแสดงในคำตอบการจ่าย (null = ออกแล้ว/มีอยู่แล้ว)</summary>
+    private async Task<(Document? Voucher, string? SkipNote)> IssueSettlementPaymentVoucherInPaymentAsync(Guid companyId, Document source, Payment payment, string actor, bool strict)
+    {
+        var decision = Accounting.Helpers.SettlementPaymentVoucher.Decide(await SettlementVoucherFactsAsync(companyId, payment, source));
+        if (decision.Action == Accounting.Helpers.SettlementPaymentVoucher.IssueAction.AlreadyIssued) return (null, null);
+        if (decision.Action != Accounting.Helpers.SettlementPaymentVoucher.IssueAction.Issue)
+        {
+            if (strict) throw new Accounting.Helpers.BusinessRuleException(decision.Reason, Accounting.Helpers.SettlementPaymentVoucher.RuleCode, 409);
+            return (null, "ไม่ได้ออกใบสำคัญจ่ายของการจ่ายนี้: " + decision.Reason);
+        }
+        var pv = await CreateSettlementPaymentVoucherCoreAsync(companyId, source, payment, actor, backfilled: false);
+        await _db.SaveChangesAsync();
+        return (pv, null);
+    }
+
     private async Task<Document> CreateSettlementReceiptAsync(
         Guid companyId, Document invoice, Payment payment, string createdBy,
         bool issueApproved = true, bool carryVatFromSource = false,
@@ -15340,6 +15393,17 @@ public partial class DocumentService : IDocumentService
         carryVatFromSource = roleMode == Accounting.Helpers.SettlementTaxInvoiceRole.Mode.FullCopy;
         var installment = roleMode == Accounting.Helpers.SettlementTaxInvoiceRole.Mode.Installment && taxInvoicePlan is { VatAmount: > 0m };
         var labels = Accounting.Services.Implementations.Pdf.DocumentLabels.For(invoice.DocumentLanguage);
+        // รอบ 284 (284-8 · T3 LOW-5): ใบเสร็จเปล่าแสดงยอดที่ลูกค้าชำระเต็ม (เงินเข้า + ค่าธรรมเนียมฝั่งผู้รับ) — ตัวตัดสินเดียว
+        var paperAmount = Accounting.Helpers.SettlementReceiptTotals.ReceiptPaperAmount(payment.Amount, payment.FeeAmount);
+        // รอบ 284 (T3 LOW-2): ชื่อใบต้นทางบนบรรทัดรายการ = หัวที่ใบนั้นพิมพ์จริง (ตัวตัดสินเดียวกับ PDF) เมื่อภาษาตรงกัน · ไม่พบ ⇒ ชื่อชนิดเดิม
+        var srcHeadingSource = new Accounting.Helpers.SettlementReceiptTotals.Source(invoice.DocumentType, invoice.DocumentNumber, invoice.DocumentDate, 0m, 0m, 0m, 0m);
+        try
+        {
+            var h = await PdfGenerationService.ResolveDocumentHeadingAsync(_db, companyId, invoice.Id);
+            srcHeadingSource = srcHeadingSource with { Heading = h.Title, HeadingLanguage = h.Language };
+        }
+        catch (KeyNotFoundException) { /* ใบต้นทางไม่อยู่ในชุดที่มองเห็น — ใช้ชื่อชนิด */ }
+        var srcLabel = labels.SourceHeadingLabel(srcHeadingSource);
         // carryVatFromSource (เคส ข): ใบแจ้งหนี้บริการ (VAT พัก 21913) รับครบงวด
         // เดียว → ใบเสร็จนี้ทำหน้าที่ "ใบกำกับภาษี ณ วันรับเงิน" (§78/1) — copy
         // บรรทัด + Sub/VAT/WHT/Total จากใบแจ้งหนี้ (เหมือนผลแปลงใบแจ้งหนี้→ใบเสร็จ)
@@ -15412,14 +15476,14 @@ public partial class DocumentService : IDocumentService
             BranchId = invoice.BranchId,   // และสาขาที่ออกใบกำกับต้นทาง (§87)
             DocumentTemplateId = invoice.DocumentTemplateId,
             ProjectId = invoice.ProjectId,
-            SubTotal = installment ? taxInvoicePlan!.SubTotal : carryVatFromSource ? invoice.SubTotal : payment.Amount,
+            SubTotal = installment ? taxInvoicePlan!.SubTotal : carryVatFromSource ? invoice.SubTotal : paperAmount,
             DiscountAmount = carryVatFromSource ? invoice.DiscountAmount : 0m,
             // ปกติ: VAT อยู่ที่ใบกำกับต้นทางแล้ว — ไม่คิดซ้ำ (VAT=0)
             // carryVat: ใบนี้คือใบกำกับ ณ วันรับเงิน → ถือ VAT ของใบแจ้งหนี้ · งวดงานบริการ → VAT ตามส่วนของงวดนี้ (ตัวตัดสินคิดให้)
             VatAmount = installment ? taxInvoicePlan!.VatAmount : carryVatFromSource ? invoice.VatAmount : 0m,
             WithholdingTaxAmount = installment ? taxInvoicePlan!.WithholdingTaxAmount : carryVatFromSource ? invoice.WithholdingTaxAmount : 0m,
-            TotalAmount = installment ? taxInvoicePlan!.TotalAmount : carryVatFromSource ? invoice.TotalAmount : payment.Amount,
-            PaidAmount = installment ? taxInvoicePlan!.TotalAmount : carryVatFromSource ? invoice.TotalAmount : payment.Amount,
+            TotalAmount = installment ? taxInvoicePlan!.TotalAmount : carryVatFromSource ? invoice.TotalAmount : paperAmount,
+            PaidAmount = installment ? taxInvoicePlan!.TotalAmount : carryVatFromSource ? invoice.TotalAmount : paperAmount,
             BalanceDue = 0m,
             // ช่องทางเงินของใบเสร็จ = ของการชำระ (ธนาคาร หรือผังตรงที่เลือก/สืบทอด — PC#5 · เอกสารลูกสืบทอด กฎ #4 A)
             BankAccountId = payment.BankAccountId,
@@ -15488,7 +15552,7 @@ public partial class DocumentService : IDocumentService
                 {
                     DocumentId = receipt.Id,
                     LineOrder = ln++,
-                    Description = labels.SettlementReceiptLine(invoice.DocumentType, invoice.DocumentNumber, installment: !taxInvoicePlan.ClosesSource),
+                    Description = labels.SettlementReceiptLine(srcLabel, invoice.DocumentNumber, installment: !taxInvoicePlan.ClosesSource),
                     Quantity = 1m,
                     Unit = labels.SettlementUnitItem,
                     UnitPrice = rl.Base,
@@ -15504,11 +15568,11 @@ public partial class DocumentService : IDocumentService
             {
                 DocumentId = receipt.Id,
                 LineOrder = 1,
-                Description = labels.SettlementReceiptLine(invoice.DocumentType, invoice.DocumentNumber, installment: false),
+                Description = labels.SettlementReceiptLine(srcLabel, invoice.DocumentNumber, installment: false),
                 Quantity = 1m,
                 Unit = labels.SettlementUnitItem,
-                UnitPrice = payment.Amount,
-                Amount = payment.Amount,
+                UnitPrice = paperAmount,
+                Amount = paperAmount,
                 VatRate = 0m,
                 VatAmount = 0m,
             });
@@ -15794,6 +15858,7 @@ public partial class DocumentService : IDocumentService
         // ใบเสร็จ settlement ที่ออกในรอบนี้ — ส่งให้ผลข้างเคียงหลังออกเอกสาร **หลัง commit** (C-3)
         // (reset ทุกรอบของ execution strategy — รอบที่ rollback ต้องไม่ค้างค่า)
         Document? issuedSettlementReceipt = null;
+        Document? issuedSettlementVoucher = null;   // รอบ 283: ใบสำคัญจ่ายหลักฐานของการจ่ายนี้ — ผลข้างเคียงหลังออกเอกสารหลัง commit
         string? receiptIssueFailure = null;   // รอบ 258-3 F-M2
         // Lock document row to prevent concurrent overpayment
         var doc = await _db.Documents
@@ -16210,6 +16275,14 @@ public partial class DocumentService : IDocumentService
                 whtCertNotice = whtOutcome.UserNotice;
             }
 
+            // รอบ 283 (คำสั่งเจ้าของ · 283-1): ผู้ขอ (ท่ออัตโนมัติคู่ค้า) ต้องการใบสำคัญจ่ายเป็นเอกสาร ⇒ ใบหลักฐานคู่การจ่ายนี้ (ไม่ลง JE ซ้ำ · อ้าง 50 ทวิ ข้างบน) ·
+            // ในธุรกรรมเดียวกัน — ออกไม่ได้ = โยน ⇒ การจ่ายทั้งก้อน rollback (ไม่มี "จ่ายแล้วไม่มีใบ" เงียบ ๆ)
+            // ผู้ประสานงาน ข้อ 2: ใบซื้อจากคู่ค้า ⇒ ทุกทางเข้า (ปุ่มเดียว · แจ้งโอน P4 · บันทึกชำระมือ) ได้ PV เหมือนท่อ — ตัวตัดสินเดียว · ใบซื้อทั่วไปไม่แตะ
+            string? voucherSkipNote = null;
+            if (Accounting.Helpers.SettlementPaymentVoucher.IssueOnPayment(request.IssuePaymentVoucherDocument, doc.DocumentType, doc.PartnerSourceLinkId != null))
+                (issuedSettlementVoucher, voucherSkipNote) = await IssueSettlementPaymentVoucherInPaymentAsync(companyId, doc, payment, createdBy,
+                    Accounting.Helpers.SettlementPaymentVoucher.StrictOnPayment(request.IssuePaymentVoucherDocument));
+
             // tax point §78/1: รับชำระใบแจ้งหนี้บริการ (modal ชำระเงิน) → VAT ที่พัก
             // 21913 ถึงกำหนด → reclass Dr 21913 / Cr 21911 + stamp เข้า ภ.พ.30
             // งวดที่รับเงิน (GL-driven; no-op สำหรับใบเก่า/ใบสินค้า/reclass แล้ว)
@@ -16230,6 +16303,9 @@ public partial class DocumentService : IDocumentService
 
             // ★ รอบ 193 ฝ่ายค้าน C-3 — ใบเสร็จที่เป็นใบกำกับ ณ วันรับเงิน (§78/1) ได้ e-Tax อัตโนมัติเหมือนเส้นอนุมัติ
             // (hook ไม่ throw · ใบเสร็จเปล่า/ร่าง = ข้ามในตัว hook)
+            // รอบ 283 (approved_status_writer_check): ใบสำคัญจ่ายหลักฐานที่เกิดมาออกแล้ว ⇒ ผลข้างเคียงหลังออกเอกสารตัวเดียวกับเส้นอนุมัติ · หลัง commit · hook ไม่โยน
+            if (issuedSettlementVoucher != null)
+                await _issuedHooks.RunAsync(companyId, issuedSettlementVoucher);
             if (issuedSettlementReceipt != null)
             {
                 await _issuedHooks.RunAsync(companyId, issuedSettlementReceipt);
@@ -16260,7 +16336,9 @@ public partial class DocumentService : IDocumentService
             // SyncWhtCreditReceivedAsync (ในธุรกรรมข้างบน — แถวรอ 50 ทวิ มีก่อนงานตรวจ) · ทางเข้าที่มีเส้นใบเสร็จของตัวเอง = แถว Skipped พร้อมเหตุ ·
             // ไม่โยน (เงินบันทึกแล้ว — Error log)
             await PostPaymentAutomationService.EnqueueCoreAsync(_db, _logger, companyId, payment.Id, source, createdBy, CancellationToken.None);
-            await NotifyPartnerOfSellerPaymentAsync(companyId, payment.Id, source);   // รอบ 264 P3 (C-04): แจ้งผู้ซื้อคู่ค้าจากทุกทางเข้า · ไม่โยน
+            // รอบ 286 (ฝ่ายค้าน MED-1): การรับเงินล่วงหน้าที่ธนาคารยังไม่ยืนยันไม่แจ้งผู้ซื้อคู่ค้า — ตัวตรวจย้อนแจ้งเมื่อยืนยันแล้ว
+            if (!await TrustedSlipVerifyService.DeliveryHeldAsync(_db, companyId, payment.Id))
+                await NotifyPartnerOfSellerPaymentAsync(companyId, payment.Id, source);   // รอบ 264 P3 (C-04): แจ้งผู้ซื้อคู่ค้าจากทุกทางเข้า · ไม่โยน
 
             // Webhooks — payment.received (always) + document.paid
             // (when BalanceDue is now zero). Both fire outside the
@@ -16296,7 +16374,7 @@ public partial class DocumentService : IDocumentService
                 HasPayerSignature: !string.IsNullOrWhiteSpace(payment.PayerSignatureBase64),
                 PayerSignatureName: payment.PayerSignatureName,
                 WhtCertNotice: whtCertNotice,
-                Warnings: whtAboveNetWarning != null ? new[] { whtAboveNetWarning } : null);
+                Warnings: whtAboveNetWarning != null || voucherSkipNote != null ? new[] { whtAboveNetWarning, voucherSkipNote }.OfType<string>().ToArray() : null);
         }
         catch
         {
@@ -16921,6 +16999,21 @@ public partial class DocumentService : IDocumentService
             return (null, null);
         }
 
+        // รอบ 286 (ฝ่ายค้าน LOW): ป้ายรับล่วงหน้าของการชำระที่มาจากรายการชำระ (PAY-INTENT-…) — ตัวตั้งเดียว TrustedSlipPayerRule.StatusLabel
+        var intentIdOf = new Dictionary<Guid, Guid>();
+        foreach (var p in payments)
+            if (GatewayPaymentRecord.TryParseIntentId(p.Reference, out var iid)) intentIdOf[p.Id] = iid;
+        var trustLabels = new Dictionary<Guid, string>();
+        if (intentIdOf.Count > 0)
+        {
+            var iids = intentIdOf.Values.Distinct().ToList();
+            var trustRows = await _db.PaymentIntents.AsNoTracking()
+                .Where(i => i.CompanyId == companyId && iids.Contains(i.Id) && i.TrustProvisionalAt != null)
+                .Select(i => new { i.Id, i.TrustProvisionalAt, i.TrustVerifiedAt, i.TrustFailedAt }).ToListAsync();
+            foreach (var t in trustRows)
+                if (TrustedSlipPayerRule.StatusLabel(t.TrustProvisionalAt, t.TrustVerifiedAt, t.TrustFailedAt) is string tl) trustLabels[t.Id] = tl;
+        }
+
         var rows = payments.Select(p =>
         {
             var rec = ReceiptOf(p);   // คำนวณครั้งเดียวต่อแถว
@@ -16940,7 +17033,8 @@ public partial class DocumentService : IDocumentService
                 // (หน้าเว็บไม่เสนอ "ออกใบเสร็จ" ของการชำระก้อนที่ผูกใบอื่นเป็นหลัก)
                 UnappliedCredit: p.UnappliedAmount,
                 Source: documentId.HasValue && PaymentEffectiveDocument.Of(p) != documentId.Value ? "allocation" : "payment",
-                AllocatedToDocument: allocatedToDoc.TryGetValue(p.Id, out var allocatedHere) ? allocatedHere : (decimal?)null);
+                AllocatedToDocument: allocatedToDoc.TryGetValue(p.Id, out var allocatedHere) ? allocatedHere : (decimal?)null,
+                ProvisionalLabel: intentIdOf.TryGetValue(p.Id, out var pi) && trustLabels.TryGetValue(pi, out var plabel) ? plabel : null);
         }).ToList();
 
         // ── รวมเอกสาร settle จากเส้น "แปลงเอกสาร" (ไม่มี Payment row) ──
@@ -22211,6 +22305,8 @@ public partial class DocumentService : IDocumentService
         // ต้อง echo กลับ ไม่งั้นร่องรอยอยู่แต่ในฐานข้อมูลกับ audit ผู้ใช้ไม่เห็น
         InternalNotes: d.InternalNotes,
         OriginModule: d.OriginModule,
+        OriginLabel: Accounting.Helpers.SettlementPaymentVoucher.OriginLabel(d.OriginModule),
+        PayNextStepHint: Accounting.Helpers.SettlementPaymentVoucher.PayNextStepHint(d.DocumentType, d.PartnerSourceLinkId != null),
         EtaxAutoFailed: Accounting.Helpers.EtaxAutoFailedNote.Has(d.InternalNotes),
         PartnerRoutingFailed: Accounting.Helpers.PartnerRoutingFailedNote.Has(d.InternalNotes),
         ReplacedByDocumentId: d.ReplacedByDocumentId,

@@ -7493,3 +7493,54 @@ LOW-1 "ส่งได้บางส่วน" · LOW-2 การ์ด `#HeyNe
 - MED-2/LOW-1/LOW-2: ผูกผู้ติดต่อไม่ซ้ำ · ไม่ผูกเลขผิด/เลขขยะ/ผู้ติดต่อจากเงินเดือน · ธุรกรรมเดียว · `FindPartnerContactAsync` เลือกแบบกำหนดได้
 - LOW-3 ซ่อนยอดอีกฝั่งในเส้นทาง/การแจ้ง · LOW-4 โหลดเส้นทางเป็นชุด · LOW-5 แจ้งหลัง commit เสมอ · LOW-6 ธงคัดลอกค่าตั้งต่อบริษัท — commit 94c52138
 
+
+### รอบ 282 — สลิปค่าสินค้า/บริการจากกลุ่ม LINE/อีเมล ⇒ บันทึกรับเงินเอง/หน้ายืนยัน + วิธีสำรองแหล่งเงินทั้งสองฝั่ง + เลือกบัญชีบนหน้าชำระของคู่ค้า (คำตัดสิน 282-1…282-7)
+- 282-1: ตัวจัดเส้นเดียวใน `TaxSlipIntakeService.IntakeAsync` (อ่านครั้งเดียว · สลิปรัฐ = 272 · อื่น = `LineChatSlipService.HandleForwardedAsync`) — ปิด 275-D-4 · แกนเดียว `CoreAsync` ของแชต OA บริษัท/กลุ่ม OA กลาง/อีเมล
+- 282-2/3: `Helpers/SlipAutoRecordRule` + `SlipAutoRecordService` (ค่าตั้ง `SlipAutoRecordEnabled` ค่าตั้งต้นปิด) ⇒ เส้นยืนยันตัวเดียว `Services/Payments/SlipIntentConfirmService` (แยกจาก `ConfirmManually` โดยไม่เปลี่ยนพฤติกรรม · กติกา 250A/260-2 ย้ายตาม)
+- 282-4/5: ไม่มั่นใจ ⇒ รายการรอยืนยันเดิม + `AutoRecordReason` บนหน้ารายการรับชำระ + แจ้ง `autopilot.slip_needs_confirm` · อีเมลยืนยันผู้ส่งไม่ได้ ⇒ ไม่บันทึกเอง ไม่ตอบกลับ
+- 282-6 (คำสั่งเจ้าของ): `Helpers/SlipMoneySource` ตัวตัดสินแหล่งเงินเดียว · ฝั่ง B สลิปตรงบัญชีเดียวบันทึกเองได้ (กลับ 264-P2 M1) · แจ้ง `partner.pay_source_needs_confirm` · เตือนซ้ำ 1/3 วัน เพดาน 2 (`AutopilotJob` ขั้น `SlipConfirmReminders`)
+- 282-7 (คำสั่งเจ้าของ): `pay-document.html` + session ผู้ซื้อคู่ค้า ⇒ `for-pay-link` ⇒ ช่อง "จ่ายจากบัญชี" + ปุ่ม "จ่ายจากระบบของเรา" เดิม (บัญชีเก็บฝั่งผู้ซื้อ)
+- migration `Round282Migration` · เทสต์ pure `SlipAutoRecordRound282Tests` · Db `SlipAutoRecordRound282DbTests` + `PartnerOutboundRound264P4DbTests` (หน้าชำระ) · คอมมิต 14abedf7
+
+### รอบ 282 ชุดแก้ฝ่ายค้าน (HIGH 1 · คำตัดสิน 282-8…282-11)
+- HIGH-1: สลิปอย่างเดียวไม่บันทึกรับเงิน — บันทึกเองเฉพาะเมื่อรายการเดินบัญชีตรงผ่านตัวตัดสินเงินเข้าเดียว (`EvaluateLineAsync`) · ไม่ผ่าน ⇒ หน้ายืนยัน + ป้าย QR · `SlipAutoRecordService` ไม่เรียกเส้นยืนยันเองแล้ว
+- MED-1 ประทับตามความจริงหลังล้ม (`RecordedAsync`) · MED-2 ฝั่ง B สลิปผู้โอนต้องเลขท้าย ≥ 4 + ชื่อตรง (`SlipMoneySource.PayerSlipStrong`) · LOW งวดปิด/ภ.พ.30 ยื่นแล้ว ⇒ `PeriodLocked`
+- คอมมิต 181fe606
+
+### รอบ 283 — ใบสำคัญจ่ายเป็นเอกสารจากท่ออัตโนมัติคู่ค้า (คำสั่งเจ้าของ · คำตัดสิน 283-1…283-6 · `erp-review/2026-11-21/dev-283-partner-pv.md`)
+- 283-1: ท่อของผู้ซื้อขอ `IssuePaymentVoucherDocument: true` ⇒ `CreatePaymentAsync` ออกใบสำคัญจ่ายหลักฐานคู่การจ่ายในธุรกรรมเดียวกัน (ไม่ลง JE · ไม่ตัดหนี้ · VAT/ภาษีหักบนใบ = 0 · เลข 50 ทวิ บนบรรทัด) · ล้ม = การจ่าย rollback
+- 283-2/3: เลขจากเล่ม PV ตามสิทธิ์อนุมัติ · 50 ทวิ ใบเดียวผูกด้วยกุญแจการจ่าย (ไม่ย้าย `DocumentId` · ไม่ออกใหม่)
+- 283-4: ยกเลิก PV = ยกเลิกการจ่าย · ยกเลิกการจ่าย (ใบเดียว/หลายใบ) ⇒ PV ยกเลิกตาม คงแถว + audit
+- 283-5: รายงาน + ออกย้อนหลังทีละรายการ (`partner-payments/without-voucher` · `partner-payments/{id}/payment-voucher`) · ป้าย `OriginLabel` บนรายการเอกสาร
+- เทสต์ pure `SettlementPaymentVoucherRound283Tests` · Db `PartnerSettlementVoucherRound283DbTests` (2) · กติกา `_R283_*` (+7) · คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว (ฐาน `accounting_test_r283`) · commit 699edd9d
+- ชุดสอง (ผู้ประสานงาน): ทุกการจ่ายของใบซื้อจากคู่ค้าได้ PV ผ่าน `SettlementPaymentVoucher.IssueOnPayment` (ปุ่มเดียว · แจ้งโอน P4 · บันทึกชำระมือ) · ใบซื้อทั่วไปไม่แตะ · `PayNextStepHint` · การ์ดออกย้อนหลังใน partners.html
+- ชุดสอง (ฝ่ายค้าน): MED-A1 ใบหลักฐานแก้ได้เฉพาะหมายเหตุ + 50 ทวิ ข้ามใบหลักฐาน + แดชบอร์ดไม่นับ VAT · MED-A2 ด่านเฉพาะร่าง ⇒ ร่าง · LOW-A3 กระทบยอดธนาคารไม่นับซ้ำ · LOW-A4 audit · commit c83fb6d1
+- ด่าน approved_status_writer_check: PV หลักฐานรัน IssuedDocumentHooks หลัง commit ทั้งเส้นจ่ายและออกย้อนหลัง (ไม่เพิ่ม baseline) · commit c463de2a
+
+## รอบ 284 (2026-11-21 · แพ็ก F งานคงค้างจากผลตรวจรายสัปดาห์ · `erp-review/2026-11-21/dev-284-pack-f.md`)
+
+- 284-1 (T4 L-1): `Helpers/EmployeeIdDuplicateScan` — ตัวจับซ้ำนำเข้าพนักงานข้ามเลขบัตรเดิมที่ถอดรหัสไม่ได้ + คำเตือน `employee-id-unreadable` ที่ศูนย์นำเข้า/ทางตรวจซ้ำเดิม
+- 284-2 (T4 L-9): `Program.cs` เลือกคีย์คอลัมน์ PII ด้วย `EncryptionKeyResolver.Resolve` (env ว่างไม่ชนะ config) · runbook หมุนคีย์ระบุช่องว่างท้ายคีย์
+- 284-3 (T4 L-6): ไฟล์โอนเงินเดือน Excel มีแผ่น "สรุป" พร้อมโอน X จาก Y ราย + ยอด
+- 284-4 (T3 MED-5 ส่วนที่ค้าง): `GET document/{id}/receipt-line-default` — ฟอร์มใบเสร็จไม่มีสำเนาข้อความไทย
+- 284-6: ข้อความ "URL ของระบบ" ชี้หน้า `/admin/system-email.html` ช่อง App Base URL (`SystemBaseUrl.AdminPagePath/AdminPageHint`) + ป้าย app.nextacc.com ไม่ใช่โดเมนเรา
+- 284-5: ด่าน `reports/month-snapshot` — ไม่ทำแยก (รายงานทั้ง AccountingController ไม่มีคีย์สิทธิ์) ⇒ คำถามเจ้าของ · เทสต์ `PackFRound284Tests` + Db `PackFRound284DbTests` · commit 6e5036e6
+- 284-7…284-11 (ชุดสอง · ผู้ประสานงานตัดสินตามที่เจ้าของมอบอำนาจ): ด่านรายงานการเงิน `FinancialReportAccess` (ไม่ผูกบทบาท = เดิม) + `Round284Migration` · ใบเสร็จแสดงยอดชำระเต็มรวมค่าธรรมเนียม · หักมัดจำในตัวไล่ยอด · ชื่อใบต้นทางตามหัวจริง · แถว [สรุป] ตามการติ๊ก · commit f90fef74
+
+_รอบ 285 (2026-11-21): ยืนยันเลขผู้เสียภาษีของบริษัท + ตอบ 275-E-7 (คำตัดสิน 285-1…285-7 · `erp-review/2026-11-21/dev-285-taxid-verify-pnd1.md`)_
+- 285-1/2: บริษัทยื่น ภ.พ.20/หนังสือรับรอง (`settings.html` · `POST …/tax-id-verification`) · ชื่อเทียบทะเบียนตรงตัว (ไม่ fuzzy · ขัด = ยื่นไม่ได้) · ผู้ดูแลแพลตฟอร์มอนุมัติ/ปฏิเสธ/ถอนที่ `/admin/taxid-verifications.html` · audit ทุกครั้ง
+- 285-3: ยืนยันแล้ว ⇒ เปิดคำขอเชื่อมคู่ค้าที่ส่งก่อนสมัครได้ (ย้อนกลับข้อจำกัด 280-10 เฉพาะบริษัทที่ยืนยัน) · 285-4: เปลี่ยนเลข = หลุดสถานะ · 285-5: การ์ดคำขอบอกว่าเลขผู้ขอยืนยันหรือยัง
+- 285-7: ภ.ง.ด.1 ช่อง 5 ของผู้ไม่มีเลข 13 หลัก — คงเติม 0 + ป้ายเดิม (สเปก RD เปิดไม่ได้จาก session · บันทึกที่ค้นแล้ว)
+- migration `Round285Migration` · เทสต์ pure `CompanyTaxIdVerificationRound285Tests` · Db `CompanyTaxIdVerificationRound285DbTests` · กติกา `_R285_*` · คอมมิต ae317b36
+- ข้อเพิ่ม + ฝ่ายค้าน (285-8…285-12): แจ้งผู้ดูแลแพลตฟอร์มเมื่อยื่น · แจ้งบริษัทเมื่อตัดสินพร้อมเหตุ · หลักฐานผ่าน `IFileStorage` (ไม่ใช่ FileAttachments) เก็บ 5 ปี เปิดได้เฉพาะเจ้าของ+ผู้ดูแล + PiiAccessLog ·
+  เลข+สาขาหนึ่งยืนยันได้บริษัทเดียว (ต้องถอนของเดิมก่อน) · ชื่อขัดทะเบียนยื่นได้ติดธง อนุมัติต้องมีเหตุ · ทะเบียนไม่ตอบ LogWarning · Db `CompanyTaxIdVerificationAdminNotifyRound285DbTests` · คอมมิต baca6f2d + 6c0c61fd
+
+## รอบ 286 (2026-11-21 · ผู้จ่ายที่ไว้ใจได้ · `erp-review/2026-11-21/dev-286-trusted-payer-slip.md`)
+
+- คำสั่งเจ้าของ: สลิปที่เคยยืนยัน + จับผู้โอน/เลขบัญชีได้ ⇒ ครั้งถัดไปที่เหมือนเดิม (ต่างแค่วันที่/ref) อนุมัติเอง — ทำพร้อมรั้ว: ความไว้ใจเกิดจากรายการเดินบัญชีจริงเท่านั้น ·
+  บันทึก**ล่วงหน้า** (ค่าตั้งต้นปิด · ≤ ยอดสูงสุด × 1.5 · เพดานต่อวัน) แล้วตรวจย้อนในงานตัดชำระเดิม · ไม่พบใน N วันทำการ ⇒ แจ้งแรง + ถอนอัตโนมัติ (ไม่ยกเลิกเงินเอง)
+- `Helpers/TrustedSlipPayerRule` · `TrustedSlipPayerService` · `TrustedSlipVerifyService` · ตาราง `TrustedSlipPayers` · `Round286Migration` · หน้าตั้งค่าแท็บ LINE + `line-config/trusted-payers`
+- เทสต์ `TrustedSlipPayerRound286Tests` + Db `TrustedSlipPayerRound286DbTests` · คำตัดสิน 286-1…286-9 · commit 19445ff6
+- 284-12…16 (ชุดแก้ฝ่ายค้าน HIGH 3 · MED 3 · LOW): มือถือ · LINE ดูยอด · รายงานตั้งเวลา (`ScheduledReportAccess`) · TaxController · สมุดรายวันทั้งบริษัท · `Reports.Budget` · Risk/AdvancedArAp — `FinancialReportAccess` ตัวเดียว · commit 568b40e5
+- ชุดแก้ฝ่ายค้าน 286 (คำตัดสิน 286-10…286-15 · commit afac9dcf): ตัวพิสูจน์เดียว (การชำระของรายการเอง/ที่ 282 ตัดให้ + เลขอ้างอิงตรง · หนึ่งการชำระหนึ่งรายการ) · ผูกไม่มีเลขอ้างอิงเฉพาะเมื่อไม่มีผู้อ้างสิทธิ์อื่น (หลังใบค้าง) ·
+  เพดานยอดค้างยืนยันต่อผู้ติดต่อ/บริษัท + ล้มแล้วล็อกผู้ติดต่อ + รอได้ ≤ 5 วันทำการ · กักการส่งเอกสารถึงผู้ซื้อจนธนาคารยืนยัน · CAS ก่อนผูก · ป้าย/ตัวกรองรับล่วงหน้า

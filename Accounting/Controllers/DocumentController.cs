@@ -2061,6 +2061,30 @@ public class DocumentController : ControllerBase
         return Ok(new ApiResponse<IssuedReceiptResult>(true, result, msg));
     }
 
+    /// <summary>รอบ 284 (แพ็ก F · audit T3 MED-5 ส่วนที่ค้าง): ค่าตั้งต้นของบรรทัดใบเสร็จที่ผูกใบต้นทาง (ฟอร์มมือ) — ข้อความ/หน่วยผ่าน
+    /// <c>DocumentLabels</c> ตามภาษาของใบต้นทาง ตัวเดียวกับใบเสร็จที่ระบบออกเอง (<c>DocumentService</c> · <c>DocumentLabels.For(invoice.DocumentLanguage)</c>) ·
+    /// เดิมหน้าเว็บประกอบ "รับชำระเงินตาม…เลขที่ …" ภาษาไทยเอง ⇒ ใบเสร็จอังกฤษมีบรรทัดไทย · ผู้ใช้ยังแก้ข้อความได้ (ค่าตั้งต้นเท่านั้น)</summary>
+    [HttpGet("{documentId:guid}/receipt-line-default")]
+    public async Task<ActionResult<ApiResponse<object>>> ReceiptLineDefault(Guid companyId, Guid documentId,
+        [FromServices] AccountingDbContext db, CancellationToken ct)
+    {
+        var deny = await DenyDocAsync(companyId, JwtHelper.GetUserIdFromClaims(User), DocumentType.Receipt, DocPerm.Create, "ออกใบเสร็จรับเงินสำหรับการชำระของ");
+        if (deny != null) return Forbid403<object>(deny);
+        var src = await db.Documents.AsNoTracking()
+            .Where(d => d.CompanyId == companyId && d.Id == documentId)
+            .Select(d => new { d.DocumentType, d.DocumentNumber, d.DocumentLanguage })
+            .FirstOrDefaultAsync(ct);
+        if (src == null) return NotFound(new ApiResponse<object>(false, null, "ไม่พบเอกสาร"));
+        var labels = Accounting.Services.Implementations.Pdf.DocumentLabels.For(src.DocumentLanguage);
+        var h = await PdfGenerationService.ResolveDocumentHeadingAsync(db, companyId, documentId);   // T3 LOW-2: ชื่อที่ใบต้นทางพิมพ์จริง
+        var srcLabel = labels.SourceHeadingLabel(new SettlementReceiptTotals.Source(src.DocumentType, src.DocumentNumber, default, 0m, 0m, 0m, 0m, h.Title, h.Language));
+        return Ok(new ApiResponse<object>(true, new
+        {
+            description = labels.SettlementReceiptLine(srcLabel, src.DocumentNumber, installment: false),
+            unit = labels.SettlementUnitItem,
+        }, null));
+    }
+
     /// <summary>รอบ 275 แพ็ก C — คิว "รับเงินแล้วยังไม่มีใบกำกับภาษี" (อ่านอย่างเดียว · คำตัดสิน 4.1: ใบเก่าไม่แก้ย้อนหลัง ผู้ทำบัญชีออกใบกำกับเพิ่มจากคิว)</summary>
     [HttpGet("received-without-tax-invoice")]
     public async Task<ActionResult<ApiResponse<IReadOnlyList<ReceivedWithoutTaxInvoiceRow>>>> ReceivedWithoutTaxInvoice(Guid companyId, CancellationToken ct)

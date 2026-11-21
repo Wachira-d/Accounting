@@ -29,7 +29,9 @@ public static class PartnerPaySourceAccount
     /// <summary>ผลจับคู่สลิปของผู้ซื้อ (ผล <c>SlipAccountMatch</c> ของแพ็ก P2 · ตัวแปลงเดียว <c>PartnerPayablePipeline.SlipKindOf</c> · ไม่มีผลอ่าน ⇒ null)</summary>
     public enum SlipKind { None, Unique, Many, NotOurs, Unreadable }
 
-    public sealed record Slip(SlipKind Kind, Guid? AccountId = null);
+    /// <param name="VisibleDigits">ฝ่ายค้าน MED-2 (รอบ 282): จำนวนหลักเลขบัญชีผู้โอนที่เห็นบนสลิป</param>
+    /// <param name="PayerNameMatches">ชื่อผู้โอนบนสลิปตรงชื่อบริษัทผู้ซื้อ (ตัวเทียบชื่อนิติบุคคล — ไม่ fuzzy) · false = ไม่รู้/ไม่ตรง</param>
+    public sealed record Slip(SlipKind Kind, Guid? AccountId = null, int VisibleDigits = 0, bool PayerNameMatches = false);
 
     /// <param name="Tier">ลำดับชั้น (เลขน้อย = แข็งกว่า)</param>
     /// <param name="AllowsAuto">ชั้นนี้บันทึกเองได้ไหม (เมื่อไม่ขัดกัน)</param>
@@ -39,9 +41,11 @@ public static class PartnerPaySourceAccount
     /// <summary>ตารางลำดับชั้น (team-264-a2b-design §3.1) — ข้อมูลตัวเดียว · เทสต์อ้างตารางนี้</summary>
     public static IReadOnlyList<PrecedenceRow> Precedence { get; } = new[]
     {
-        new PrecedenceRow(Origin.BankLine, 1, true, 1.00m, "ข้อเท็จจริง — เงินออกจากบัญชีนั้นจริง (รายการเดินบัญชี)"),
+        new PrecedenceRow(Origin.BankLine, 1, SlipMoneySource.AllowsAuto(SlipMoneySource.Evidence.BankLine), 1.00m, "ข้อเท็จจริง — เงินออกจากบัญชีนั้นจริง (รายการเดินบัญชี)"),
         new PrecedenceRow(Origin.PayerDeclared, 2, true, 0.95m, "ประกาศของคนก่อนจ่าย (เลือกตอนชำระจากระบบของเรา)"),
-        new PrecedenceRow(Origin.SlipUnique, 3, false, 0.90m, "สลิปตรงบัญชีเดียวของเรา (preselect เท่านั้น · ไม่บันทึกเอง — ฝ่ายค้าน 264-P2 M1 · แบบ 268-1-1 จนกว่ารายการเดินบัญชี P4 ยืนยัน)"),
+        // รอบ 282 (คำสั่งเจ้าของ 282-6 แทน 264-P2 M1): "ถ้ามีสลิปก็อ่าน และเช็คจับกับบัญชีที่ตั้งค่าไว้" ⇒ ผู้โอนบนสลิปตรงบัญชีเดียวของเรา = บันทึกเองได้ ·
+        // นโยบายชั้นที่บันทึกเองได้อยู่ที่ตัวตั้งเดียวของทั้งสองฝั่ง SlipMoneySource.AllowsAuto (ผู้ขายรับเงินใช้ตัวเดียวกัน)
+        new PrecedenceRow(Origin.SlipUnique, 3, SlipMoneySource.AllowsAuto(SlipMoneySource.Evidence.SlipUnique), 0.90m, "สลิปตรงบัญชีเดียวของเรา (ธนาคาร + เลขท้ายที่เห็น · SlipAccountMatch) — บันทึกเองได้ตามคำสั่งเจ้าของ 282-6"),
         // คำตัดสิน 268-1-1 (แทน 264-3-14): ชั้นนี้ไม่ใช่หลักฐานว่าเงินออกจากบัญชีนั้นจริง ⇒ preselect บนปุ่มเดียวได้ แต่ไม่บันทึกเอง จนกว่าจะมีชั้นรายการเดินบัญชี (P4)
         new PrecedenceRow(Origin.ConsentDefault, 4, false, 0.85m, "ค่าตั้งของคน — บัญชีจ่ายคู่ค้านี้ที่ตั้งไว้ในความยินยอม (preselect เท่านั้น · ไม่บันทึกเอง — 268-1-1)"),
         new PrecedenceRow(Origin.HistoryHint, 5, false, 0.50m, "สัญญาณอ่อน — เคยจ่ายผู้ขายนี้จากบัญชีนี้ / บัญชีบนใบซื้อ (คำแนะนำเท่านั้น)"),
@@ -178,6 +182,18 @@ public static class PartnerPaySourceAccount
         // ฝ่ายค้าน 264-P2 M1: สลิปตรงบัญชีเดียว = อ่านจาก OCR 3–4 หลักของรูปในบริษัทผู้ขาย ⇒ preselect + เหตุตรง ๆ (ไม่บันทึกเองจนกว่ารายการเดินบัญชียืนยัน)
         if (!auto && win.Origin == Origin.SlipUnique)
             why = SlipUniqueNotAutoReason + " · " + win.Label;
+        // ฝ่ายค้าน MED-2 (รอบ 282): สลิปผู้โอนบันทึกเองได้เฉพาะหลักฐานแน่น (เลขท้าย ≥ 4 หลัก + ชื่อผู้โอนตรงชื่อบริษัท) — บัญชีส่วนตัวกรรมการเลขท้ายเหมือนไม่ถูกจับ
+        if (auto && win.Origin == Origin.SlipUnique && !SlipMoneySource.PayerSlipStrong(f.SlipMatch?.VisibleDigits ?? 0, f.SlipMatch?.PayerNameMatches ?? false))
+        {
+            auto = false;
+            why = SlipUniqueNotAutoReason + " · " + SlipMoneySource.PayerSlipWeakReason + " · " + win.Label;
+        }
+        // รอบ 282: สลิปบันทึกเองได้ (282-6) ยกเว้นรายการเดินบัญชีชี้บัญชีที่ใช้จ่ายไม่ได้ (ปิดใช้/นอกชุด) — หลักฐานข้อเท็จจริงขัดกับสลิป ⇒ คนตัดสิน
+        if (auto && win.Origin == Origin.SlipUnique && f.BankLine is Guid outside && !f.Usable.ContainsKey(outside))
+        {
+            auto = false;
+            why = BankLineOutsideReason + " · " + win.Label;
+        }
         return new Decision(win.BankAccountId, win.Origin, auto, row.Confidence, why, win.Label, losers, hint, hintLabel, false);
     }
 
@@ -187,6 +203,9 @@ public static class PartnerPaySourceAccount
 
     /// <summary>บัญชีนี้อยู่ในชุดที่ใช้จ่ายได้ของบริษัทผู้เรียกไหม (null/นอกชุด = ไม่ใช่หลักฐาน)</summary>
     private static bool InUsableSet(IReadOnlyDictionary<Guid, string> usable, Guid? id) => id is Guid g && usable.ContainsKey(g);
+
+    /// <summary>รอบ 282: รายการเดินบัญชีของการจ่ายนี้อยู่บัญชีที่ใช้จ่ายไม่ได้ แต่สลิปชี้อีกบัญชี — ไม่บันทึกเอง</summary>
+    public const string BankLineOutsideReason = "ยังไม่บันทึกเอง — รายการเดินบัญชีของการจ่ายนี้อยู่บัญชีที่ใช้จ่ายไม่ได้ (ปิดใช้/ไม่ผูกผัง) แต่สลิปชี้อีกบัญชี — หลักฐานขัดกัน ตรวจแล้วกด “บันทึกจ่าย”";
 
     public const string PayerVsSlipReason = "บัญชีที่ผู้จ่ายเลือกไม่ตรงบัญชีบนสลิป — หลักฐานขัดกัน ระบบไม่บันทึกเอง (เลือกบัญชีที่จ่ายจริง)";
 

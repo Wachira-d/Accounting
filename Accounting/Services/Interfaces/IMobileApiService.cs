@@ -15,7 +15,8 @@ public interface IMobileApiService
     Task<List<SyncQueueResponse>> GetPendingChangesAsync(Guid companyId, Guid userId, DateTime? since = null);
 
     // Mobile-optimized endpoints
-    Task<MobileDashboardResponse> GetMobileDashboardAsync(Guid companyId);
+    /// <param name="includeFinancials">รอบ 284: false ⇒ ไม่คำนวณ/ไม่ส่งยอดเงิน (ผู้เรียกตัดสินด้วย <c>FinancialReportAccess</c>)</param>
+    Task<MobileDashboardResponse> GetMobileDashboardAsync(Guid companyId, bool includeFinancials = true);
     /// <summary>นับเฉพาะคำขอที่รอผู้ใช้คนนี้อนุมัติ (ผู้อนุมัติของขั้นปัจจุบัน — ด่านเดียวกับ SubmitActionAsync)</summary>
     Task<MobileQuickActionsResponse> GetQuickActionsAsync(Guid companyId, Guid userId);
     /// <param name="acknowledgeWarnings">รอบ 193: ผู้ใช้กด "รับทราบ" คำเตือนยอดจากสแกนแล้ว — false + มีคำเตือน ⇒ คืน

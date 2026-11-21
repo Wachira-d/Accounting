@@ -32,8 +32,13 @@ public class MobileController : ControllerBase
     }
 
     [HttpGet("companies/{companyId:guid}/dashboard")]
-    public async Task<ActionResult<ApiResponse<MobileDashboardResponse>>> GetDashboard(Guid companyId)
-        => Ok(new ApiResponse<MobileDashboardResponse>(true, await _service.GetMobileDashboardAsync(companyId)));
+    public async Task<ActionResult<ApiResponse<MobileDashboardResponse>>> GetDashboard(Guid companyId,
+        [FromServices] Accounting.Data.AccountingDbContext db, [FromServices] IPermissionService permissions)
+    {
+        // รอบ 284 ฝ่ายค้าน HIGH-1: เงินสด/ลูกหนี้/เจ้าหนี้/รายได้ = ตัวเลขการเงินรวม ⇒ ด่านเดียวกับยอดเดือนของหน้าหลักโหมดง่าย
+        var financials = await FinancialReportAccess.AllowsAsync(db, permissions, companyId, JwtHelper.GetUserIdFromClaims(User), FinancialReportAccess.MonthSnapshot);
+        return Ok(new ApiResponse<MobileDashboardResponse>(true, await _service.GetMobileDashboardAsync(companyId, financials)));
+    }
 
     [HttpGet("companies/{companyId:guid}/quick-actions")]
     public async Task<ActionResult<ApiResponse<MobileQuickActionsResponse>>> GetQuickActions(Guid companyId)

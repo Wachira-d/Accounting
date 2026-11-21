@@ -321,8 +321,9 @@ public class TaxSlipRound272Tests
     }
 
     [Fact]
-    public void Bank_เส้นคู่ค้าเดิมไม่ถูกแตะ_SlipUniqueยังไม่บันทึกเอง()
-        => Assert.False(PartnerPaySourceAccount.Precedence.Single(p => p.Origin == PartnerPaySourceAccount.Origin.SlipUnique).AllowsAuto);
+    public void Bank_เส้นคู่ค้า_SlipUnique_อ่านนโยบายจากตัวตั้งเดียวของรอบ282()
+        => Assert.Equal(SlipMoneySource.AllowsAuto(SlipMoneySource.Evidence.SlipUnique),
+            PartnerPaySourceAccount.Precedence.Single(p => p.Origin == PartnerPaySourceAccount.Origin.SlipUnique).AllowsAuto);
 
     // ═══════════ P2 · ProviderConsent ═══════════
 

@@ -316,6 +316,10 @@ public static class DatabaseMigrationHelper
         list.AddRange(Accounting.Helpers.Round278Migration.Statements());   // รอบ 278 — ชื่อเล่นต่อบริษัท + แช่แข็งผู้ลงนาม (ใบเก่า = ไม่รวม)
         list.AddRange(Accounting.Helpers.Round277Migration.Statements());   // รอบ 277 — คำเชิญเข้าบริษัท (token เก็บเป็น hash) + สมาชิกยังไม่ได้รับสิทธิ์
         list.AddRange(Accounting.Helpers.Round280Migration.Statements());   // รอบ 280 — ช่องทางแจ้งคำขอเชื่อมคู่ค้า (กลุ่ม LINE/อีเมลของผู้ติดต่อ) + บันทึกผลการแจ้ง
+        list.AddRange(Accounting.Helpers.Round282Migration.Statements());   // รอบ 282 — สลิปจากกลุ่ม/อีเมล ⇒ บันทึกรับเงินเอง/หน้ายืนยัน + เตือนยืนยันแหล่งเงินทั้งสองฝั่ง
+        list.AddRange(Accounting.Helpers.Round284Migration.Statements());   // รอบ 284 — บทบาทเดิมที่ติ๊กเมนูรายงานได้คีย์ของหน้า (ครั้งเดียว · หลัง OneShotDataFixesTableSql)
+        list.AddRange(Accounting.Helpers.Round285Migration.Statements());   // รอบ 285 — ยืนยันเลขผู้เสียภาษีของบริษัท (หลักฐาน + ผู้ดูแลแพลตฟอร์มอนุมัติ)
+        list.AddRange(Accounting.Helpers.Round286Migration.Statements());   // รอบ 286 — ผู้จ่ายที่ไว้ใจได้ (เรียนจากรายการเดินบัญชี · บันทึกล่วงหน้า + ตรวจย้อน)
         return list;
     }
 

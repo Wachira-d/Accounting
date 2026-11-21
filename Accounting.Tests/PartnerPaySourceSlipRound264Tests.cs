@@ -40,8 +40,9 @@ public class PartnerPaySourceSlipRound264Tests
     [Fact]
     public void ผลจับคู่_เป็นชนิดของชั้นสลิป()
     {
-        Assert.Equal(new PartnerPaySourceAccount.Slip(SlipKind.Unique, BKb), PartnerPayablePipeline.SlipKindOf("004", "xxx-x-x0621-x", Accounts));
-        Assert.Equal(new PartnerPaySourceAccount.Slip(SlipKind.Unique, BScb), PartnerPayablePipeline.SlipKindOf("014", "xxx-xxx189-5", Accounts));
+        // รอบ 282 ฝ่ายค้าน MED-2: ผลจับคู่พกจำนวนหลักที่เห็น + ชื่อผู้โอน (การแจ้งไม่เก็บชื่อ ⇒ false เสมอ)
+        Assert.Equal(new PartnerPaySourceAccount.Slip(SlipKind.Unique, BKb, 4, false), PartnerPayablePipeline.SlipKindOf("004", "xxx-x-x0621-x", Accounts));
+        Assert.Equal(new PartnerPaySourceAccount.Slip(SlipKind.Unique, BScb, 4, false), PartnerPayablePipeline.SlipKindOf("014", "xxx-xxx189-5", Accounts));
         // ธนาคารไม่ตรง (เลขท้ายเหมือน SCB แต่บอกเป็นกรุงไทย) ⇒ ไม่ใช่ของเรา (กรรมการ/พนักงานจ่ายแทน — G5)
         Assert.Equal(SlipKind.NotOurs, PartnerPayablePipeline.SlipKindOf("006", "xxx-x-xx189-5", Accounts)!.Kind);
         // mask ที่ไม่ใช่รูปบัญชี ⇒ อ่านไม่ได้ (ไม่จับคู่)
@@ -52,12 +53,13 @@ public class PartnerPaySourceSlipRound264Tests
     }
 
     [Fact]
-    public void ชั้นสลิปป้อนแล้ว_preselect_ไม่บันทึกเอง_และขัดบัญชีที่ตั้งไว้_ไม่อัตโนมัติ()
+    public void ชั้นสลิปป้อนแล้ว_ไม่มีชื่อผู้โอน_ไม่บันทึกเอง_และขัดบัญชีที่ตั้งไว้_ไม่อัตโนมัติ()
     {
         var usable = new Dictionary<Guid, string> { [BKb] = "กสิกรไทย ••0621", [BScb] = "SCB ••1895" };
         var slip = PartnerPayablePipeline.SlipKindOf("004", "xxx-x-x0621-x", Accounts);
         var d = PartnerPaySourceAccount.Decide(new(usable, SlipMatch: slip));
-        // ฝ่ายค้าน 264-P2 M1: preselect เท่านั้น (ไม่บันทึกเอง) + เหตุตรง ๆ
+        // รอบ 282 (คำสั่งเจ้าของ 282-6 แทน 264-P2 M1): สลิปตรงบัญชีเดียวของเรา ⇒ บันทึกเองได้ (ตัวตั้งเดียว SlipMoneySource.AllowsAuto)
+        // รอบ 282 ฝ่ายค้าน MED-2: การแจ้งไม่มีชื่อผู้โอน ⇒ สลิปผู้โอนเสนอค่าได้ แต่ไม่บันทึกเอง (แจ้งยืนยัน)
         Assert.Equal((BKb, Origin.SlipUnique, false), (d.BankAccountId!.Value, d.Origin, d.AllowsAuto));
         Assert.StartsWith(PartnerPaySourceAccount.SlipUniqueNotAutoReason, d.Reason);
         Assert.False(d.UsedAi);

@@ -45,7 +45,7 @@ public class PartnerFlowRound281DbTests
     }
 
     /// <summary>เครื่องแจ้งเตือนที่จดทุกการส่ง (บริษัท · คีย์ · หัวข้อ) — แทน NotificationEngine (ตัวตัดสินช่องอยู่ที่ engine เดิม ไม่ใช่ขอบเขตของรอบนี้)</summary>
-    private sealed class Spy : INotificationEngine
+    internal sealed class Spy : INotificationEngine
     {
         public readonly List<(Guid Company, string Key, string Title)> Sent = new();
         public Task DispatchAsync(Guid companyId, string eventKey, NotificationContext context)
@@ -56,13 +56,13 @@ public class PartnerFlowRound281DbTests
         public bool Has(Guid company, string key) { lock (Sent) return Sent.Any(s => s.Company == company && s.Key == key); }
     }
 
-    private sealed record Seed(Company Seller, Company Buyer, Guid PartnershipId, Contact BuyerAtSeller, Guid OwnerB, Guid BankA, Guid BankB,
+    internal sealed record Seed(Company Seller, Company Buyer, Guid PartnershipId, Contact BuyerAtSeller, Guid OwnerB, Guid BankA, Guid BankB,
         Guid ArA, Guid RevA, Guid UndueA);
 
     private static ChartOfAccount Acc(Guid companyId, string code, string name, AccountType type)
         => new() { CompanyId = companyId, AccountCode = code, AccountName = name, AccountType = type, Level = 4, IsActive = true };
 
-    private static async Task<Seed> SeedAsync(AccountingDbContext db, bool consent = true)
+    internal static async Task<Seed> SeedAsync(AccountingDbContext db, bool consent = true)
     {
         await DbTestDatabase.ApplyDdlAsync(db, PartnerConsentMigration.Statements());
         var tag = Guid.NewGuid().ToString("N")[..6];
@@ -123,7 +123,7 @@ public class PartnerFlowRound281DbTests
     private static CrossTenantWorkflowService Xt(AccountingDbContext db, Spy spy) => new(db, NullLogger<CrossTenantWorkflowService>.Instance, null, spy);
 
     /// <summary>DocumentService จริง — ต่อ CrossTenantWorkflowService (ใบเสร็จ ณ วันรับเงิน → ระบบคู่ค้า) + ตัวออก 50 ทวิ จริง + เครื่องแจ้งเตือนจด</summary>
-    private static DocumentService Docs(AccountingDbContext db, Spy spy)
+    internal static DocumentService Docs(AccountingDbContext db, Spy spy)
         => new(db, new AccountingService(db), RecurringTransactionDbTests.AllowAll<ISubscriptionService>.Create(),
             new WithholdingTaxCertService(db, null!, null!, NullLogger<WithholdingTaxCertService>.Instance), null!,
             NullLogger<DocumentService>.Instance, null!,
@@ -132,7 +132,7 @@ public class PartnerFlowRound281DbTests
 
     /// <summary>ใบแจ้งหนี้ค่าบริการของผู้ขาย 10,000 + VAT 700 = 10,700 · หัก 3% = 300 ⇒ ยอดค้าง (หลังหัก) 10,400 · อนุมัติแล้ว + JE ตั้งลูกหนี้เต็ม 10,700
     /// (เกณฑ์เงินสด — 11910 ลงตอนรับเงิน) · ภาษีขายพัก 21913 (งานบริการ §78/1)</summary>
-    private static async Task<Document> InvoiceAsync(AccountingDbContext db, Seed s)
+    internal static async Task<Document> InvoiceAsync(AccountingDbContext db, Seed s)
     {
         var no = "INV-281-" + Guid.NewGuid().ToString("N")[..8];
         var d = new Document
@@ -162,7 +162,7 @@ public class PartnerFlowRound281DbTests
     }
 
     /// <summary>ส่งใบเข้าระบบผู้ซื้อ (ทางเข้าเดียวกับตอนอนุมัติ) ⇒ ใบซื้อร่าง ⇒ ผู้ซื้ออนุมัติ (จำลองผลอนุมัติ: เลขจริง + เปิดออก 50 ทวิ ตอนจ่าย)</summary>
-    private static async Task<Guid> RouteAndApproveAsync(Seed s, Document inv, Spy spy)
+    internal static async Task<Guid> RouteAndApproveAsync(Seed s, Document inv, Spy spy)
     {
         using (var c = DbTestDatabase.TryCreateContext()!)
         {
@@ -182,7 +182,7 @@ public class PartnerFlowRound281DbTests
     }
 
     /// <summary>ผู้ซื้อจ่ายผ่านลิงก์ของผู้ขาย — เส้นบันทึกรับชำระจริงของผู้ขาย (ทางเข้า Gateway · หัก 3% ตามที่ผู้จ่ายหัก)</summary>
-    private static async Task<Guid> BuyerPaysThroughLinkAsync(Seed s, Guid invoiceId, decimal cash, decimal wht, Spy spy)
+    internal static async Task<Guid> BuyerPaysThroughLinkAsync(Seed s, Guid invoiceId, decimal cash, decimal wht, Spy spy)
     {
         using var c = DbTestDatabase.TryCreateContext()!;
         var r = await Docs(c, spy).CreatePaymentAsync(s.Seller.Id,
@@ -211,7 +211,7 @@ public class PartnerFlowRound281DbTests
             => Task.FromResult<(Guid?, string?)>((account, "(เทสต์ 281)"));
     }
 
-    private static async Task<int> BuyerPipelineAsync(Seed s, Spy spy, bool bankEvidence = true)
+    internal static async Task<int> BuyerPipelineAsync(Seed s, Spy spy, bool bankEvidence = true)
     {
         using var c = DbTestDatabase.TryCreateContext()!;
         var pipe = new PartnerPayablePipeline(c, Docs(c, spy), new PipelineScopes(), NullLogger<PartnerPayablePipeline>.Instance, null, spy,

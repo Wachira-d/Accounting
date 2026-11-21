@@ -1,0 +1,421 @@
+using System.Text.Json;
+using Accounting.Data;
+using Accounting.Helpers;
+using Accounting.Models.Constants;
+using Accounting.Models.Entities;
+using Accounting.Models.Enums;
+using Accounting.Services.Interfaces;
+using Microsoft.EntityFrameworkCore;
+
+namespace Accounting.Services.Implementations;
+
+/// <summary>
+/// **รอบ 286 — ผู้จ่ายที่ไว้ใจได้: เรียนรู้จากรายการเดินบัญชีจริง · ตรวจย้อนรายการรับเงินล่วงหน้า · ถอนความไว้ใจเมื่อไม่พบเงินเข้า** (คำตัดสิน 286-2/286-4/286-5)
+/// <list type="bullet">
+/// <item><see cref="LearnAsync"/>: กุญแจบนรายการชำระ (<c>PaymentIntent.TrustKeyHash</c>) เกิดความไว้ใจเฉพาะเมื่อเอกสารมีการชำระยอดเดียวกันที่<b>ผูกกับรายการเดินบัญชีเงินเข้า</b>
+/// ของบัญชีผู้รับในกุญแจ (ตัดชำระจากรายการเดินบัญชี หรือผู้ขายยืนยันแล้วรายการเดินบัญชีถูกจับคู่ภายหลัง) — การกดยืนยันอย่างเดียวไม่นับ</item>
+/// <item><see cref="TryVerifyLineAsync"/>: ผู้เรียก <c>BankReceiptSettleService.EvaluateLineAsync</c> (งานตัดชำระเดิม — ก่อนหาใบค้าง) — รายการเดินบัญชีที่ตรงรายการล่วงหน้า
+/// ⇒ ผูกกับการชำระเดิม (ไม่สร้างการชำระที่สอง) + ประทับ "ยืนยันแล้ว"</item>
+/// <item><see cref="SweepAsync"/>: ผู้เรียก <c>AutopilotJob</c> ขั้น TrustedSlipPayers — เรียนกุญแจที่พิสูจน์แล้ว · ตรวจย้อนรายการล่วงหน้า · ครบกำหนดไม่พบ ⇒ แจ้งแรง + ถอนความไว้ใจ
+/// (ไม่ยกเลิกการรับเงินเอง — ผู้ขายเลือก)</item>
+/// <item>ทุก query ผูกบริษัทของแถว · ไม่มี AI (kill-switch)</item>
+/// </list>
+/// </summary>
+public sealed class TrustedSlipVerifyService
+{
+    private readonly AccountingDbContext _db;
+    private readonly ILogger<TrustedSlipVerifyService> _logger;
+    private readonly INotificationEngine? _notify;
+
+    public TrustedSlipVerifyService(AccountingDbContext db, ILogger<TrustedSlipVerifyService> logger, INotificationEngine? notify = null)
+    { _db = db; _logger = logger; _notify = notify; }
+
+    public const string Actor = "slip-trusted-verify";
+    public const int Batch = 200;
+    /// <summary>เรียนจากรายการชำระที่สร้างไม่เกินกี่วัน (รายการเดินบัญชีมักตามมาภายในสัปดาห์)</summary>
+    public const int LearnLookbackDays = 60;
+    /// <summary>รายการเดินบัญชีลงวันที่ได้ตั้งแต่ 1 วันก่อน ถึง 7 วันหลังวันที่บนสลิป (โอนข้ามคืน/วันหยุด)</summary>
+    public const int LineBeforeDays = 1;
+    public const int LineAfterDays = 7;
+
+    private static readonly string[] LinkBlocked = { BankReceiptAutoSettle.Stamps.Applying, BankReceiptAutoSettle.Stamps.Settled };
+
+    // ═══════════════ เรียนรู้ ═══════════════
+
+    /// <summary>ผู้สมัครเรียน (กรองหยาบในฐาน): มีกุญแจ · ยังไม่เรียน/ไม่ล้ม · รายการล่วงหน้าต้องยืนยันแล้ว · เอกสารมีการชำระยอดเท่าสลิปที่ผูกกับรายการเดินบัญชีของบัญชีในกุญแจ —
+    /// การตัดสินจริงอยู่ที่ <see cref="Proven"/> (ฝ่ายค้าน HIGH-1)</summary>
+    private IQueryable<PaymentIntent> LearnCandidates(IQueryable<PaymentIntent> q)
+        => q.Where(i => i.TrustKeyHash != null && i.TrustKeyAccountId != null && i.TrustLearnedAt == null && i.TrustFailedAt == null
+            && (i.TrustProvisionalAt == null || i.TrustVerifiedAt != null)
+            && _db.Payments.IgnoreQueryFilters().Any(p => p.CompanyId == i.CompanyId && p.DocumentId == i.SourceId && !p.IsDeleted
+                && p.Amount == i.Amount && p.CreatedAt >= i.CreatedAt
+                && _db.BankTransactions.IgnoreQueryFilters().Any(t => t.CompanyId == i.CompanyId && t.MatchedPaymentId == p.Id && !t.IsDeleted
+                    && t.TransactionType == BankTransactionType.Deposit && t.BankAccountId == i.TrustKeyAccountId
+                    && (t.Amount == i.Amount || t.Amount == -i.Amount))));
+
+    private sealed record LearnFacts(Guid Id, PaymentIntentStatus Status, string? SlipBankRef, Guid? ProofPaymentId, string? KeyHash, string? KeyLabel,
+        Guid? KeyAccountId, decimal Amount, Guid SourceId, DateTime CreatedAt, DateTime? LearnedAt, DateTime? FailedAt, DateTime? ProvisionalAt, DateTime? VerifiedAt);
+
+    /// <summary>ฝ่ายค้าน HIGH-1/HIGH-2 — การชำระที่พิสูจน์กุญแจของรายการนี้ได้จริง (ตัวตั้งเดียวของการเรียน):
+    /// (1) การชำระของรายการเอง (<c>PAY-INTENT-{id}</c> · รายการรับเงินแล้ว) หรือการชำระที่ผู้เรียกระบุว่าเส้น 282 ตัดจากรายการเดินบัญชีให้สลิปนี้ ·
+    /// (2) ยอดเท่าสลิป ผูกกับรายการเดินบัญชีเงินเข้าของบัญชีในกุญแจ · (3) <b>เลขอ้างอิงบนรายการเดินบัญชีตรงเลขบนสลิป</b> (ผูกแบบไม่มีเลขอ้างอิงไม่สร้าง/ไม่เสริมความไว้ใจ) ·
+    /// (4) การชำระนั้นยังไม่เคยพิสูจน์รายการอื่น (หนึ่งการชำระ = หนึ่งรายการ = หนึ่งกุญแจ) · null = ไม่พิสูจน์</summary>
+    private async Task<Guid?> ProvenAsync(Guid companyId, LearnFacts i, Guid? boundPaymentId, CancellationToken ct)
+    {
+        if (i.KeyHash == null || i.KeyAccountId is not Guid acc || i.LearnedAt != null || i.FailedAt != null) return null;
+        if (i.ProvisionalAt != null && i.VerifiedAt == null) return null;
+        var ownRef = GatewayPaymentRecord.Reference(i.Id);
+        var own = i.Status == PaymentIntentStatus.Succeeded;
+        var bound = boundPaymentId ?? i.ProofPaymentId;
+        var rows = await (from p in _db.Payments.AsNoTracking().IgnoreQueryFilters()
+                          join t in _db.BankTransactions.AsNoTracking().IgnoreQueryFilters() on p.Id equals t.MatchedPaymentId
+                          where p.CompanyId == companyId && t.CompanyId == companyId && p.DocumentId == i.SourceId && !p.IsDeleted && !t.IsDeleted
+                              && p.Amount == i.Amount && p.CreatedAt >= i.CreatedAt
+                              && ((own && p.Reference == ownRef) || (bound != null && p.Id == bound))
+                              && t.TransactionType == BankTransactionType.Deposit && t.BankAccountId == acc && (t.Amount == i.Amount || t.Amount == -i.Amount)
+                          select new { PaymentId = p.Id, t.Reference }).Take(5).ToListAsync(ct);
+        var proof = rows.FirstOrDefault(r => SlipEvidenceRule.RefMatchesLine(i.SlipBankRef, r.Reference));
+        if (proof == null) return null;
+        var usedElsewhere = await _db.PaymentIntents.AsNoTracking().IgnoreQueryFilters()
+            .AnyAsync(x => x.CompanyId == companyId && x.Id != i.Id && x.TrustProofPaymentId == proof.PaymentId, ct);
+        return usedElsewhere ? null : proof.PaymentId;
+    }
+
+    /// <summary>เรียนกุญแจของรายการนี้ถ้ามีหลักฐานจริง (<see cref="ProvenAsync"/> · ครั้งเดียวต่อรายการ — compare-and-set) · ผู้ติดต่อที่ถูกล็อกไม่เรียน · คืน true = เรียนแล้ว</summary>
+    /// <param name="boundPaymentId">เส้น 282: การชำระที่ตัวตัดสินเงินเข้าเพิ่งสร้างจากรายการเดินบัญชีที่ตรงสลิปนี้</param>
+    public async Task<bool> LearnAsync(Guid companyId, Guid intentId, DateTime nowUtc, CancellationToken ct = default, Guid? boundPaymentId = null)
+    {
+        var i = await _db.PaymentIntents.AsNoTracking().IgnoreQueryFilters().Where(x => x.Id == intentId && x.CompanyId == companyId)
+            .Select(x => new LearnFacts(x.Id, x.Status, x.SlipBankRef, x.TrustProofPaymentId, x.TrustKeyHash, x.TrustKeyLabel, x.TrustKeyAccountId, x.Amount,
+                x.SourceId, x.CreatedAt, x.TrustLearnedAt, x.TrustFailedAt, x.TrustProvisionalAt, x.TrustVerifiedAt)).FirstOrDefaultAsync(ct);
+        if (i == null) return false;
+        if (await ProvenAsync(companyId, i, boundPaymentId, ct) is not Guid proofPaymentId) return false;
+        var contact = await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
+            .Where(c => c.CompanyId == companyId && _db.Documents.IgnoreQueryFilters().Any(d => d.Id == i.SourceId && d.CompanyId == companyId && d.ContactId == c.Id))
+            .Select(c => new { c.Id, c.SlipTrustBlockedAt }).FirstOrDefaultAsync(ct);
+        if (contact == null || contact.SlipTrustBlockedAt != null) return false;   // ฝ่ายค้าน HIGH-3: ล็อกแล้วไม่สร้าง/ไม่เสริมกุญแจจนผู้ขายปลด
+        Guid? contactId = contact.Id;
+
+        var strategy = _db.Database.CreateExecutionStrategy();
+        return await strategy.ExecuteAsync(async () =>
+        {
+            await using var tx = await _db.Database.BeginTransactionAsync(ct);
+            var claimed = await _db.PaymentIntents.IgnoreQueryFilters()
+                .Where(x => x.Id == intentId && x.CompanyId == companyId && x.TrustLearnedAt == null)
+                .ExecuteUpdateAsync(u => u.SetProperty(x => x.TrustLearnedAt, (DateTime?)nowUtc).SetProperty(x => x.TrustProofPaymentId, (Guid?)proofPaymentId), ct);
+            if (claimed == 0) { await tx.RollbackAsync(ct); return false; }
+            // แถวกุญแจหนึ่งแถวต่อบริษัท × ลายนิ้วมือ (unique) — สร้างถ้ายังไม่มี (ON CONFLICT) แล้วล็อกแถวก่อนแก้ ⇒ สองรายการพร้อมกันนับครบ ไม่ชน unique
+            var hash = i.KeyHash!;
+            var label = i.KeyLabel ?? "";
+            var account = i.KeyAccountId!.Value;
+            await _db.Database.ExecuteSqlInterpolatedAsync($"""
+                INSERT INTO "TrustedSlipPayers" ("Id", "CompanyId", "ContactId", "KeyHash", "Label", "ReceivingBankAccountId", "MaxConfirmedAmount", "ConfirmedCount",
+                    "FirstTrustedAt", "LastConfirmedAt", "LearnedFromIntentId", "CreatedAt", "CreatedBy", "IsDeleted")
+                VALUES ({Guid.NewGuid()}, {companyId}, {contactId.Value}, {hash}, {label}, {account}, {i.Amount}, 0, {nowUtc}, {nowUtc}, {intentId}, {nowUtc}, {Actor}, false)
+                ON CONFLICT ("CompanyId", "KeyHash") DO NOTHING
+                """, ct);
+            await _db.Database.ExecuteSqlInterpolatedAsync(
+                $"SELECT 1 FROM \"TrustedSlipPayers\" WHERE \"CompanyId\" = {companyId} AND \"KeyHash\" = {hash} FOR UPDATE", ct);
+            var row = await _db.TrustedSlipPayers.IgnoreQueryFilters().FirstAsync(t => t.CompanyId == companyId && t.KeyHash == hash, ct);
+            var created = row.ConfirmedCount == 0;
+            // ถูกถอนแล้วคงถอน (ผู้ขายให้คืนเองที่หน้าตั้งค่า) — นับหลักฐานเพิ่มได้
+            row.MaxConfirmedAmount = created ? i.Amount : Math.Max(row.MaxConfirmedAmount, i.Amount);
+            row.ConfirmedCount += 1;
+            row.LastConfirmedAt = nowUtc;
+            if (!created) { row.UpdatedAt = nowUtc; row.UpdatedBy = Actor; }
+            _db.AddChainedAuditLog(new AuditLog
+            {
+                CompanyId = companyId, UserId = null, UserEmail = Actor, Action = created ? AuditAction.Create : AuditAction.Update,
+                EntityType = "TrustedSlipPayer", EntityId = row.Id.ToString(),
+                NewValues = JsonSerializer.Serialize(new
+                {
+                    @event = created ? "TrustedPayerLearned" : "TrustedPayerConfirmedAgain", intentId, proofPaymentId, amount = i.Amount, maxConfirmed = row.MaxConfirmedAmount,
+                    count = row.ConfirmedCount, revoked = row.RevokedAt != null, label = row.Label,
+                    ruleCode = TrustedSlipPayerRule.RuleCode, legalReference = TrustedSlipPayerRule.LegalReference, usedAi = false,
+                }),
+                Timestamp = nowUtc,
+            });
+            await _db.SaveChangesAsync(ct);
+            await tx.CommitAsync(ct);
+            return true;
+        });
+    }
+
+    // ═══════════════ ตรวจย้อนรายการล่วงหน้า ═══════════════
+
+    private sealed record ProvisionalRow(Guid Id, Guid CompanyId, Guid SourceId, decimal Amount, Guid AccountId, DateTime? PaidAt, DateTime ProvisionalAt,
+        string? SlipBankRef, string? KeyHash, DateTime? FailedAt);
+
+    /// <summary>รายการเดินบัญชีเงินเข้าหนึ่งรายการ ⇒ ตรงรายการรับเงินล่วงหน้าที่ยังไม่ยืนยันไหม (บัญชี · ยอด · วันในช่วง · เลขอ้างอิงธนาคารก่อน) · ตรงหนึ่งเดียว ⇒ ผูกกับการชำระเดิม ·
+    /// คืน true = บรรทัดนี้ถูกใช้ยืนยันแล้ว (ผู้เรียกไม่ต้องหาใบค้างต่อ)</summary>
+    /// <param name="refOnly">ฝ่ายค้าน HIGH-2: true = ผูกเฉพาะเมื่อเลขอ้างอิงธนาคารตรง (ผู้เรียกเรียกก่อนหาใบค้าง) · false = เรียกหลังตัวตัดสินใบค้างไม่ตัดใบใด —
+    /// ผูกแบบไม่มีเลขอ้างอิงได้เฉพาะเมื่อไม่มีใบค้าง/สลิปรอตรวจของผู้ติดต่ออื่นยอดเท่ากัน (<see cref="OtherClaimantsAsync"/>)</param>
+    public async Task<bool> TryVerifyLineAsync(Guid companyId, BankTransaction line, DateTime nowUtc, CancellationToken ct = default, bool refOnly = true)
+    {
+        if (line.TransactionType != BankTransactionType.Deposit || line.MatchedPaymentId != null || line.MatchedJournalEntryId != null
+            || line.ReconciliationStatus != ReconciliationStatus.Unmatched) return false;
+        var amount = Math.Abs(line.Amount);
+        var from = line.TransactionDate.Date.AddDays(-LineAfterDays);
+        var to = line.TransactionDate.Date.AddDays(LineBeforeDays + 1);
+        var cands = await _db.PaymentIntents.AsNoTracking()
+            .Where(i => i.CompanyId == companyId && i.TrustProvisionalAt != null && i.TrustVerifiedAt == null
+                && i.TrustKeyAccountId == line.BankAccountId && i.Amount == amount && i.PaidAt >= from && i.PaidAt < to)
+            .Select(i => new ProvisionalRow(i.Id, i.CompanyId, i.SourceId, i.Amount, i.TrustKeyAccountId!.Value, i.PaidAt, i.TrustProvisionalAt!.Value, i.SlipBankRef,
+                i.TrustKeyHash, i.TrustFailedAt))
+            .Take(5).ToListAsync(ct);
+        var (pick, byRef) = Pick(cands, line.Reference);
+        if (pick == null) return false;
+        if (!byRef && (refOnly || await OtherClaimantsAsync(pick, amount, ct))) return false;
+        return await LinkAsync(pick, line.Id, nowUtc, ct);
+    }
+
+    /// <summary>ฝ่ายค้าน HIGH-2: มีผู้อื่นที่อาจเป็นเจ้าของเงินก้อนนี้ไหม — ใบค้างของผู้ติดต่ออื่นยอดค้างใกล้ยอดนี้ (รวมส่วนหัก ณ ที่จ่ายได้ถึง 4%) หรือสลิปรอตรวจของผู้ติดต่ออื่นยอดเท่ากัน ·
+    /// มี ⇒ ห้ามผูกแบบไม่มีเลขอ้างอิง (เงินของลูกค้าสุจริตต้องไม่ถูกใช้ยืนยันสลิปที่อาจแต่งขึ้น)</summary>
+    private async Task<bool> OtherClaimantsAsync(ProvisionalRow p, decimal amount, CancellationToken ct)
+    {
+        var companyId = p.CompanyId;
+        var contactId = await _db.Documents.AsNoTracking().IgnoreQueryFilters().Where(d => d.Id == p.SourceId && d.CompanyId == companyId)
+            .Select(d => (Guid?)d.ContactId).FirstOrDefaultAsync(ct);
+        if (contactId == null) return true;
+        var openDoc = new[] { DocumentStatus.Approved, DocumentStatus.Sent, DocumentStatus.PartiallyPaid, DocumentStatus.Overdue };
+        var hi = amount * 1.04m;
+        if (await _db.Documents.AsNoTracking().AnyAsync(d => d.CompanyId == companyId && !d.IsDeleted && d.ContactId != contactId
+                && openDoc.Contains(d.Status) && d.BalanceDue >= amount && d.BalanceDue <= hi, ct)) return true;
+        var open = PaymentIntentPolicy.OpenStatuses;
+        return await (from i in _db.PaymentIntents.AsNoTracking()
+                      join d in _db.Documents.AsNoTracking() on i.SourceId equals d.Id
+                      where i.CompanyId == companyId && d.CompanyId == companyId && i.Id != p.Id && i.Amount == amount && open.Contains(i.Status)
+                          && i.SourceKind == PaymentSourceKind.Document && d.ContactId != contactId
+                      select i.Id).AnyAsync(ct);
+    }
+
+    /// <summary>เลขอ้างอิงธนาคารตรงหนึ่งเดียว ⇒ ตัวนั้น · ไม่มีใครตรงเลขและมีผู้สมัครเดียว ⇒ ตัวนั้น · อื่น ๆ ⇒ ไม่เดา</summary>
+    private static (ProvisionalRow? Row, bool ByRef) Pick(IReadOnlyList<ProvisionalRow> cands, string? lineReference)
+    {
+        var byRef = cands.Where(c => SlipEvidenceRule.RefMatchesLine(c.SlipBankRef, lineReference)).ToList();
+        if (byRef.Count == 1) return (byRef[0], true);
+        if (byRef.Count > 1) return (null, false);
+        return cands.Count == 1 ? (cands[0], false) : (null, false);
+    }
+
+    /// <summary>ผูกบรรทัดกับการชำระของรายการล่วงหน้า + ประทับยืนยัน + audit ในธุรกรรมเดียว · การชำระต้องยังอยู่ ยอด/บัญชีตรง</summary>
+    private async Task<bool> LinkAsync(ProvisionalRow p, Guid lineId, DateTime nowUtc, CancellationToken ct)
+    {
+        var companyId = p.CompanyId;
+        var reference = GatewayPaymentRecord.Reference(p.Id);
+        var pay = await _db.Payments.AsNoTracking().IgnoreQueryFilters()
+            .Where(x => x.CompanyId == companyId && x.Reference == reference && !x.IsDeleted)
+            .Select(x => new { x.Id, x.Amount, x.BankAccountId, x.OverrideBankAccountId, x.DocumentId }).FirstOrDefaultAsync(ct);
+        if (pay == null || pay.Amount != p.Amount || (pay.BankAccountId != p.AccountId && pay.OverrideBankAccountId != p.AccountId)) return false;
+
+        var why = "ยืนยันรายการรับเงินล่วงหน้าจากผู้จ่ายที่ไว้ใจได้ด้วยรายการเดินบัญชีนี้ (ยอด/บัญชี/วันตรง)";
+        var strategy = _db.Database.CreateExecutionStrategy();
+        var linked = await strategy.ExecuteAsync(async () =>
+        {
+            await using var tx = await _db.Database.BeginTransactionAsync(ct);
+            // ฝ่ายค้าน MED-2: จองรายการก่อน (compare-and-set) — สองบรรทัด/สองเครื่องแข่งกัน ⇒ ผู้ชนะคนเดียว · แพ้ ⇒ rollback (บรรทัดไม่ถูกผูก)
+            var claimed = await _db.PaymentIntents.Where(i => i.Id == p.Id && i.CompanyId == companyId && i.TrustVerifiedAt == null)
+                .ExecuteUpdateAsync(u => u.SetProperty(i => i.TrustVerifiedAt, (DateTime?)nowUtc)
+                    .SetProperty(i => i.AutoRecordReason, (string?)("รับเงินล่วงหน้าแล้ว — รายการเดินบัญชียืนยันเงินเข้าแล้ว" + (p.FailedAt != null ? " (หลังครบกำหนด)" : ""))), ct);
+            if (claimed == 0) { await tx.RollbackAsync(ct); return false; }
+            var n = await _db.BankTransactions
+                .Where(t => t.Id == lineId && t.CompanyId == companyId && !t.IsDeleted && t.ReconciliationStatus == ReconciliationStatus.Unmatched
+                    && t.MatchedPaymentId == null && t.MatchedJournalEntryId == null && (t.AutoSettleVerdict == null || !LinkBlocked.Contains(t.AutoSettleVerdict)))
+                .ExecuteUpdateAsync(u => u
+                    .SetProperty(t => t.MatchedPaymentId, (Guid?)pay.Id)
+                    .SetProperty(t => t.ReconciliationStatus, ReconciliationStatus.Matched)
+                    .SetProperty(t => t.ReconciledAt, (DateTime?)nowUtc)
+                    .SetProperty(t => t.ReconciledBy, Actor)
+                    .SetProperty(t => t.MatchRuleCode, TrustedSlipPayerRule.RuleCode)
+                    .SetProperty(t => t.MatchReason, why)
+                    .SetProperty(t => t.AutoSettleVerdict, BankReceiptAutoSettle.Stamps.Settled)
+                    .SetProperty(t => t.AutoSettleReason, why)
+                    .SetProperty(t => t.AutoSettleDocumentId, (Guid?)pay.DocumentId), ct);
+            if (n == 0) { await tx.RollbackAsync(ct); return false; }
+            _db.AddChainedAuditLog(new AuditLog
+            {
+                CompanyId = companyId, UserId = null, UserEmail = Actor, Action = AuditAction.Update, EntityType = "PaymentIntent", EntityId = p.Id.ToString(),
+                NewValues = JsonSerializer.Serialize(new
+                {
+                    @event = "SlipTrustedVerified", bankTransactionId = lineId, paymentId = pay.Id, amount = p.Amount, late = p.FailedAt != null,
+                    ruleCode = TrustedSlipPayerRule.RuleCode, legalReference = TrustedSlipPayerRule.LegalReference, usedAi = false,
+                }),
+                Timestamp = nowUtc,
+            });
+            await _db.SaveChangesAsync(ct);
+            await tx.CommitAsync(ct);
+            return true;
+        });
+        if (!linked) return false;
+        await ReleaseDeliveryAsync(companyId, pay.Id, nowUtc, ct);
+        if (p.FailedAt == null) await LearnAsync(companyId, p.Id, nowUtc, ct);
+        else
+            await NotifyAsync(companyId, NotificationEvents.AutopilotSlipTrustedProvisional,
+                $"พบเงินเข้า {p.Amount:N2} บาท ของรายการรับเงินล่วงหน้าแล้ว (หลังครบกำหนด)",
+                "รายการเดินบัญชียืนยันแล้ว — ความไว้ใจของผู้โอนนี้ยังถูกถอนอยู่ ให้คืนได้ที่หน้าตั้งค่า LINE ถ้าตรวจแล้วถูกต้อง",
+                "/pages/documents.html?openDoc=" + pay.DocumentId, p.Id, ct);
+        return true;
+    }
+
+    /// <summary>หนึ่งรอบ (ทุกบริษัท · ใต้ JobLock ของขั้น) — เรียนกุญแจที่พิสูจน์แล้ว · ตรวจย้อนรายการล่วงหน้า · คืนจำนวนงานที่ทำ</summary>
+    public async Task<int> SweepAsync(DateTime nowUtc, CancellationToken ct = default)
+    {
+        var n = 0;
+        var since = nowUtc.AddDays(-LearnLookbackDays);
+        var learn = await LearnCandidates(_db.PaymentIntents.AsNoTracking().IgnoreQueryFilters().Where(i => i.CreatedAt >= since))
+            .OrderBy(i => i.CreatedAt).Select(i => new { i.Id, i.CompanyId }).Take(Batch).ToListAsync(ct);
+        foreach (var l in learn)
+            if (await LearnAsync(l.CompanyId, l.Id, nowUtc, ct)) n++;
+
+        var pending = await _db.PaymentIntents.AsNoTracking().IgnoreQueryFilters()
+            .Where(i => i.TrustProvisionalAt != null && i.TrustVerifiedAt == null && i.TrustFailedAt == null && i.TrustKeyAccountId != null)
+            .OrderBy(i => i.TrustReviewDueAt).Take(Batch)
+            .Select(i => new { P = new ProvisionalRow(i.Id, i.CompanyId, i.SourceId, i.Amount, i.TrustKeyAccountId!.Value, i.PaidAt, i.TrustProvisionalAt!.Value, i.SlipBankRef,
+                i.TrustKeyHash, i.TrustFailedAt), i.TrustReviewDueAt })
+            .ToListAsync(ct);
+        foreach (var r in pending)
+        {
+            if (await VerifyOneAsync(r.P, r.TrustReviewDueAt, nowUtc, ct)) n++;
+        }
+        return n;
+    }
+
+    /// <summary>หนึ่งรายการล่วงหน้า: ผูกแล้วทางอื่น ⇒ ยืนยัน · หาเจอ ⇒ ผูก · ผู้ขายยกเลิกการรับเงิน หรือครบกำหนดไม่พบ ⇒ ล้ม + ถอนความไว้ใจ + แจ้งแรง</summary>
+    private async Task<bool> VerifyOneAsync(ProvisionalRow p, DateTime? dueUtc, DateTime nowUtc, CancellationToken ct)
+    {
+        var companyId = p.CompanyId;
+        var reference = GatewayPaymentRecord.Reference(p.Id);
+        var pay = await _db.Payments.AsNoTracking().IgnoreQueryFilters()
+            .Where(x => x.CompanyId == companyId && x.Reference == reference && !x.IsDeleted)
+            .Select(x => new { x.Id, x.DocumentId }).FirstOrDefaultAsync(ct);
+        if (pay == null)
+            return await FailAsync(p, "ผู้ขายยกเลิกการรับเงินรายการนี้แล้ว (ไม่พบการชำระ) — ถอนความไว้ใจของผู้โอนนี้", nowUtc, ct);
+
+        // คน/ทางอื่นจับคู่รายการเดินบัญชีกับการชำระนี้แล้ว (หน้ากระทบยอด) ⇒ ยืนยัน (ผลจริง ไม่ประทับเอง)
+        if (await _db.BankTransactions.AsNoTracking().AnyAsync(t => t.CompanyId == companyId && t.MatchedPaymentId == pay.Id && !t.IsDeleted
+                && t.BankAccountId == p.AccountId && (t.Amount == p.Amount || t.Amount == -p.Amount), ct))
+        {
+            var n = await _db.PaymentIntents.Where(i => i.Id == p.Id && i.CompanyId == companyId && i.TrustVerifiedAt == null)
+                .ExecuteUpdateAsync(u => u.SetProperty(i => i.TrustVerifiedAt, (DateTime?)nowUtc)
+                    .SetProperty(i => i.AutoRecordReason, (string?)"รับเงินล่วงหน้าแล้ว — รายการเดินบัญชียืนยันเงินเข้าแล้ว"), ct);
+            if (n > 0) { await ReleaseDeliveryAsync(companyId, pay.Id, nowUtc, ct); await LearnAsync(companyId, p.Id, nowUtc, ct); }
+            return n > 0;
+        }
+
+        if (p.PaidAt is DateTime day)
+        {
+            var from = day.Date.AddDays(-LineBeforeDays);
+            var to = day.Date.AddDays(LineAfterDays + 1);
+            var lines = await _db.BankTransactions.AsNoTracking()
+                .Where(t => t.CompanyId == companyId && !t.IsDeleted && t.BankAccountId == p.AccountId && t.TransactionType == BankTransactionType.Deposit
+                    && (t.Amount == p.Amount || t.Amount == -p.Amount) && t.TransactionDate >= from && t.TransactionDate < to
+                    && t.ReconciliationStatus == ReconciliationStatus.Unmatched && t.MatchedPaymentId == null && t.MatchedJournalEntryId == null
+                    && (t.AutoSettleVerdict == null || !LinkBlocked.Contains(t.AutoSettleVerdict)))
+                .Select(t => new { t.Id, t.Reference }).Take(3).ToListAsync(ct);
+            var byRef = lines.Where(l => SlipEvidenceRule.RefMatchesLine(p.SlipBankRef, l.Reference)).ToList();
+            // ฝ่ายค้าน HIGH-2: ไม่มีเลขอ้างอิงตรง ⇒ ผูกได้เฉพาะบรรทัดเดียวและไม่มีผู้อ้างสิทธิ์อื่นยอดเท่ากัน
+            var line = byRef.Count == 1 ? byRef[0] : byRef.Count == 0 && lines.Count == 1 && !await OtherClaimantsAsync(p, p.Amount, ct) ? lines[0] : null;
+            if (line != null && await LinkAsync(p, line.Id, nowUtc, ct)) return true;
+        }
+
+        if (dueUtc is DateTime due && nowUtc >= due)
+            return await FailAsync(p, "ครบกำหนดแล้วยังไม่พบรายการเดินบัญชีเงินเข้า (ยอด/บัญชี/วันตรง) — อาจเป็นสลิปที่แต่งขึ้น หรือยังไม่ได้นำเข้ารายการเดินบัญชี", nowUtc, ct);
+        return false;
+    }
+
+    /// <summary>ล้ม: ประทับบนรายการ + ถอนความไว้ใจของกุญแจ + audit ในธุรกรรมเดียว (compare-and-set) แล้วแจ้งแรง · <b>ไม่ยกเลิกการรับเงินเอง</b></summary>
+    private async Task<bool> FailAsync(ProvisionalRow p, string reason, DateTime nowUtc, CancellationToken ct)
+    {
+        var companyId = p.CompanyId;
+        var strategy = _db.Database.CreateExecutionStrategy();
+        var failed = await strategy.ExecuteAsync(async () =>
+        {
+            await using var tx = await _db.Database.BeginTransactionAsync(ct);
+            var r = LineMessageLimits.Truncate(reason, 500);
+            var n = await _db.PaymentIntents.IgnoreQueryFilters()
+                .Where(i => i.Id == p.Id && i.CompanyId == companyId && i.TrustFailedAt == null && i.TrustVerifiedAt == null)
+                .ExecuteUpdateAsync(u => u.SetProperty(i => i.TrustFailedAt, (DateTime?)nowUtc)
+                    .SetProperty(i => i.AutoRecordCode, TrustedSlipPayerRule.Codes.Unverified)
+                    .SetProperty(i => i.AutoRecordReason, r), ct);
+            if (n == 0) { await tx.RollbackAsync(ct); return false; }
+            // ฝ่ายค้าน HIGH-3: ถอนทุกกุญแจของผู้ติดต่อนี้ + ล็อกผู้ติดต่อ (ห้ามสร้างกุญแจใหม่จนผู้ขายปลดเอง)
+            var contactId = await _db.Documents.AsNoTracking().IgnoreQueryFilters().Where(d => d.Id == p.SourceId && d.CompanyId == companyId)
+                .Select(d => (Guid?)d.ContactId).FirstOrDefaultAsync(ct);
+            var revoked = await _db.TrustedSlipPayers.IgnoreQueryFilters()
+                .Where(t => t.CompanyId == companyId && (t.KeyHash == p.KeyHash || (contactId != null && t.ContactId == contactId)) && t.RevokedAt == null)
+                .ExecuteUpdateAsync(u => u.SetProperty(t => t.RevokedAt, (DateTime?)nowUtc).SetProperty(t => t.RevokedBy, "system")
+                    .SetProperty(t => t.RevokeReason, r).SetProperty(t => t.UpdatedAt, (DateTime?)nowUtc), ct);
+            if (contactId != null)
+                await _db.Contacts.IgnoreQueryFilters().Where(c => c.Id == contactId && c.CompanyId == companyId && c.SlipTrustBlockedAt == null)
+                    .ExecuteUpdateAsync(u => u.SetProperty(c => c.SlipTrustBlockedAt, (DateTime?)nowUtc).SetProperty(c => c.SlipTrustBlockedReason, r), ct);
+            _db.AddChainedAuditLog(new AuditLog
+            {
+                CompanyId = companyId, UserId = null, UserEmail = Actor, Action = AuditAction.Update, EntityType = "PaymentIntent", EntityId = p.Id.ToString(),
+                NewValues = JsonSerializer.Serialize(new
+                {
+                    @event = "SlipTrustedUnverified", reason, keysRevoked = revoked, contactBlocked = contactId, amount = p.Amount,
+                    ruleCode = TrustedSlipPayerRule.RuleCode, legalReference = TrustedSlipPayerRule.LegalReference, usedAi = false,
+                }),
+                Timestamp = nowUtc,
+            });
+            await _db.SaveChangesAsync(ct);
+            await tx.CommitAsync(ct);
+            return true;
+        });
+        if (!failed) return false;
+        var number = await _db.Documents.AsNoTracking().IgnoreQueryFilters().Where(d => d.Id == p.SourceId && d.CompanyId == companyId)
+            .Select(d => d.DocumentNumber).FirstOrDefaultAsync(ct);
+        await NotifyAsync(companyId, NotificationEvents.AutopilotSlipTrustedUnverified,
+            $"⚠️ ไม่พบเงินเข้า {p.Amount:N2} บาท ของ {number ?? "เอกสาร"} ที่ระบบรับเงินล่วงหน้าไว้",
+            reason + " · ระบบถอนความไว้ใจทุกผู้โอนของผู้ติดต่อนี้และล็อกไว้แล้ว (ปลดได้ที่หน้าตั้งค่า LINE) · ตรวจรายการเดินบัญชี — ถ้าเงินไม่เข้าจริง ให้ยกเลิกการรับเงินนี้ที่เอกสาร (ใบเสร็จ/ใบกำกับที่ออกต้องออกใบยกเลิก) · ระบบไม่ยกเลิกเอง",
+            "/pages/documents.html?openDoc=" + p.SourceId, p.Id, ct);
+        return true;
+    }
+
+    // ═══════════════ ฝ่ายค้าน MED-1: กักการส่งเอกสารถึงผู้ซื้อของการรับล่วงหน้า ═══════════════
+
+    /// <summary>การชำระนี้มาจากรายการรับเงินล่วงหน้าที่ธนาคารยังไม่ยืนยันไหม (ตัวตั้งเดียวของ "ห้ามส่งถึงผู้ซื้อ") — ผู้อ่าน:
+    /// <c>DocumentService.CreatePaymentAsync</c> (ไม่แจ้งผู้ซื้อคู่ค้า) · <c>PostPaymentAutomationService</c> (ออกใบในระบบได้ ไม่ส่งอีเมล/LINE)</summary>
+    public static async Task<bool> DeliveryHeldAsync(AccountingDbContext db, Guid companyId, Guid paymentId, CancellationToken ct = default)
+    {
+        var reference = await db.Payments.AsNoTracking().IgnoreQueryFilters().Where(x => x.Id == paymentId && x.CompanyId == companyId)
+            .Select(x => x.Reference).FirstOrDefaultAsync(ct);
+        if (!GatewayPaymentRecord.TryParseIntentId(reference, out var intentId)) return false;
+        var i = await db.PaymentIntents.AsNoTracking().IgnoreQueryFilters().Where(x => x.Id == intentId && x.CompanyId == companyId)
+            .Select(x => new { x.TrustProvisionalAt, x.TrustVerifiedAt }).FirstOrDefaultAsync(ct);
+        return i != null && TrustedSlipPayerRule.Unverified(i.TrustProvisionalAt, i.TrustVerifiedAt);
+    }
+
+    /// <summary>ธนาคารยืนยันแล้ว ⇒ ปล่อยงานส่งเอกสารที่กักไว้ (รอบถัดไปของงานหลังรับชำระ) + แจ้งผู้ซื้อคู่ค้าที่ข้ามไว้ · ไม่โยน</summary>
+    private async Task ReleaseDeliveryAsync(Guid companyId, Guid paymentId, DateTime nowUtc, CancellationToken ct)
+    {
+        try
+        {
+            var pending = PostPaymentAutomationPolicy.StatusPending;
+            await _db.PostPaymentAutomationRuns.Where(r => r.CompanyId == companyId && r.PaymentId == paymentId && r.Status == pending)
+                .ExecuteUpdateAsync(u => u.SetProperty(r => r.NextAttemptAt, nowUtc), ct);
+            await PartnerPaymentNoticeService.NotifyForSellerPaymentAsync(_db, _notify, _logger, companyId, paymentId, PaymentEntrySource.Gateway, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogError(ex, "ปล่อยการส่งเอกสารของการชำระ {Payment} หลังธนาคารยืนยันไม่สำเร็จ — ส่งเองจากหน้าเอกสารได้", paymentId);
+        }
+    }
+
+    private async Task NotifyAsync(Guid companyId, string eventKey, string title, string message, string url, Guid entityId, CancellationToken ct)
+    {
+        if (_notify == null) return;
+        try
+        {
+            await _notify.DispatchAsync(companyId, eventKey, new NotificationContext
+            {
+                Title = title, Message = message, ActionUrl = url, EntityType = "PaymentIntent", EntityId = entityId,
+            });
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _ = ct;
+            _logger.LogError(ex, "แจ้งบริษัท {Company} เรื่องผู้จ่ายที่ไว้ใจได้ ({Event}) ไม่สำเร็จ — สถานะ/เหตุบันทึกบนรายการชำระแล้ว", companyId, eventKey);
+        }
+    }
+}

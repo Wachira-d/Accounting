@@ -266,6 +266,20 @@ public class CompanySettings : TenantEntity
     /// ปิด ⇒ รูปในกลุ่มกลับไปพฤติกรรมเดิม (ไม่อ่าน) ยกเว้นกลุ่มของลูกค้าที่เคยอนุญาต ได้คำตอบ "ระบบปิดรับสลิปชั่วคราว" · ผู้อ่าน <c>TaxSlipIntakeService</c> ·
     /// ผู้เขียน หน้า <c>tax-slip-desk.html</c></summary>
     public bool TaxSlipIntakeEnabled { get; set; } = true;
+
+    /// <summary>รอบ 282 (คำตัดสิน 282-3 · ค่าตั้งต้นปิด): บันทึกรับเงินจากสลิปเองเมื่อผ่านทุกด่าน (<c>SlipAutoRecordRule</c>: ยอดตรงใบเดียว · QR ธนาคาร · วันที่ ·
+    /// บัญชีผู้รับบนสลิปตรงบัญชีเดียวของบริษัท) · ปิด ⇒ สลิปผูกใบแล้วรอคนยืนยันเหมือนรอบ 260 · ผู้อ่าน <c>SlipAutoRecordService.TryAutoAsync</c> · echo ที่แท็บ LINE</summary>
+    public bool SlipAutoRecordEnabled { get; set; } = false;
+    /// <summary>รอบ 286 (คำสั่งเจ้าของ · ค่าตั้งต้นปิด): อนุมัติอัตโนมัติจากผู้จ่ายที่ไว้ใจได้ — สลิปที่ตรงกุญแจผู้โอนที่เคยยืนยันด้วยรายการเดินบัญชี ⇒ บันทึกรับเงิน<b>ล่วงหน้า</b>
+    /// แล้วตรวจย้อน (<c>Helpers/TrustedSlipPayerRule</c>) · ต้องเปิด <see cref="SlipAutoRecordEnabled"/> ด้วย · ผู้อ่าน <c>TrustedSlipPayerService.TryProvisionalAsync</c> · echo ที่แท็บ LINE</summary>
+    public bool SlipTrustedAutoEnabled { get; set; } = false;
+    /// <summary>รอบ 286: เพดานยอดรวมต่อวันต่อผู้จ่ายที่ไว้ใจได้ (บาท) · ≤ 0 = ไม่บันทึกล่วงหน้า · ผู้อ่าน <c>TrustedSlipPayerService.TryProvisionalAsync</c></summary>
+    public decimal SlipTrustedDailyCapPerKey { get; set; } = Accounting.Helpers.TrustedSlipPayerRule.DefaultDailyCapPerKey;
+    /// <summary>รอบ 286: จำนวนวันทำการที่รอรายการเดินบัญชียืนยันรายการล่วงหน้า (ตั้งต้น 3) · ผู้อ่าน <c>TrustedSlipPayerService.TryProvisionalAsync</c> (ประทับกำหนดบนรายการ)</summary>
+    public int SlipTrustedReviewBusinessDays { get; set; } = Accounting.Helpers.TrustedSlipPayerRule.DefaultReviewBusinessDays;
+    /// <summary>รอบ 286 (ฝ่ายค้าน HIGH-3): เพดานยอดรับเงินล่วงหน้าที่ยังไม่ยืนยันรวมทั้งบริษัท (บาท · ตั้งต้น 100,000 · = ความเสียหายสูงสุด ณ เวลาใดเวลาหนึ่ง) ·
+    /// ผู้อ่าน <c>TrustedSlipPayerService.TryProvisionalAsync</c></summary>
+    public decimal SlipTrustedCompanyOutstandingCap { get; set; } = Accounting.Helpers.TrustedSlipPayerRule.DefaultCompanyOutstandingCap;
     public DateTime? LineLastTestedAt { get; set; }
     public string? LineLastTestStatus { get; set; }
     /// <summary>รอบ 260-4 (team-A L8 · คำตัดสิน 260-4-1): ชั่วโมงเงียบของการ์ด LINE ถึงลูกค้า (เวลาไทย) — ตัวตัดสิน <c>Helpers/LineQuietHours</c> ·

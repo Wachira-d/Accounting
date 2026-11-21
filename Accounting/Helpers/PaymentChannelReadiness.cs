@@ -59,7 +59,7 @@ public static class PaymentChannelReadiness
                     "ลูกค้ายังเปิดหน้าชำระจากพอร์ทัล/ลิงก์ที่ส่งเองได้", payLink.Href, payLink.HrefLabel));
             else if (!f.SystemBaseUrlConfigured)
                 items.Add(new("PAY-LINK", "ส่ง", AutopilotReadiness.Warn, AutopilotReadiness.SystemBaseUrlMissingTitle,
-                    "ลิงก์ชำระสร้างจาก URL ของระบบ — แจ้งผู้ดูแลระบบให้ตั้งที่หน้าแอดมิน → ตั้งค่าระบบ", AutopilotReadiness.SystemSettingsUrl, "ตั้ง URL ของระบบ (ผู้ดูแลระบบ)"));
+                    "ลิงก์ชำระสร้างจาก URL ของระบบ — แจ้งผู้ดูแลระบบให้ตั้งที่ " + SystemBaseUrl.AdminPageHint, AutopilotReadiness.SystemSettingsUrl, "ตั้ง URL ของระบบ (ผู้ดูแลระบบ)"));
             else if (!onlineOk)
                 items.Add(new("PAY-LINK", "ส่ง", AutopilotReadiness.Warn, AutopilotReadiness.PayLinkNoOnlineTitle,
                     gateway?.StatusLabel, null, null));

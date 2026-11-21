@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ยืนยันเลขผู้เสียภาษีของบริษัท - Admin Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/admin/admin.css">
+  <style>
+    .muted { color:#64748b; font-size:12px }
+    .warn { color:#b45309; font-size:12px }
+    .pill { display:inline-block; font-size:11px; font-weight:600; padding:2px 9px; border-radius:9999px; background:#f1f5f9; color:#475569 }
+    .actions { display:flex; gap:6px; flex-wrap:wrap }
+  </style>
+</head>
+<body>
+  <!-- รอบ 285 (คำตัดสิน 285-1…285-6): คิวตรวจหลักฐานเลขผู้เสียภาษีของบริษัท — อนุมัติได้หรือไม่ (ApproveProblem) + ป้ายทั้งหมดมาจากเซิร์ฟเวอร์ · หน้านี้แสดงอย่างเดียว -->
+  <div id="pageContent">
+    <div class="info-box" id="guidance">กำลังโหลด...</div>
+    <div class="admin-card">
+      <div class="admin-card-header">
+        <span class="admin-card-title">🪪 คำขอยืนยันเลขผู้เสียภาษี
+          <select id="statusSel">
+            <option value="Pending">รอตรวจ</option>
+            <option value="Approved">ยืนยันแล้ว</option>
+            <option value="Rejected">ถูกปฏิเสธ</option>
+            <option value="Revoked">ถูกถอน</option>
+            <option value="All">ทั้งหมด</option>
+          </select></span>
+      </div>
+      <div id="list">กำลังโหลด...</div>
+    </div>
+  </div>
+
+  <script src="/admin/admin-api.js"></script>
+  <script src="/admin/admin-layout.js"></script>
+  <script>
+    const Page = {
+      base: '/tax-id-verifications',
+      rows: [],
+
+      init() {
+        AdminLayout.init('taxid-verifications');
+        document.getElementById('statusSel').addEventListener('change', () => this.load());
+        document.getElementById('list').addEventListener('click', (ev) => {
+          const btn = ev.target.closest('button[data-act]');
+          if (btn) this.act(btn.dataset.act, btn.dataset.id);
+        });
+        this.load();
+      },
+
+      fmt(t) { return t ? new Date(t).toLocaleString('th-TH') : '-'; },
+
+      async load() {
+        const st = document.getElementById('statusSel').value;
+        try {
+          const res = await AdminAPI.get(`${this.base}?status=${encodeURIComponent(st)}`);
+          this.render(res.data || {});
+        } catch (e) {
+          document.getElementById('list').innerHTML = `<div style="color:#dc2626">${AdminLayout.esc(e.message)}</div>`;
+        }
+      },
+
+      render(d) {
+        document.getElementById('guidance').textContent = d.guidance || '';
+        const rows = this.rows = d.rows || [];
+        const esc = AdminLayout.esc;
+        document.getElementById('list').innerHTML = rows.length === 0
+          ? '<div class="muted">ไม่มีคำขอในสถานะนี้</div>'
+          : `<div class="admin-table-wrap"><table class="admin-table">
+              <thead><tr><th>ยื่นเมื่อ</th><th>บริษัท</th><th>เลขผู้เสียภาษี</th><th>หลักฐาน</th><th>ทะเบียน</th><th>สถานะ</th><th></th></tr></thead>
+              <tbody>${rows.map(r => `<tr>
+                <td class="muted">${esc(this.fmt(r.submittedAt))}</td>
+                <td><strong>${esc(r.companyName || '-')}</strong><div class="muted">ชื่อตอนยื่น: ${esc(r.nameAtSubmit || '-')} · ${esc(r.branchLabel || '')}</div></td>
+                <td>${esc(r.requestTaxId || '-')}${r.currentTaxId !== r.requestTaxId ? `<div class="warn">เลขปัจจุบัน: ${esc(r.currentTaxId || '-')}</div>` : ''}</td>
+                <td>${esc(r.evidenceLabel || '')}<div><button class="admin-btn admin-btn-outline admin-btn-sm" data-act="evidence" data-id="${esc(r.id)}">เปิดไฟล์</button></div></td>
+                <td class="${r.registryResult === 'Match' ? 'muted' : 'warn'}">${esc(r.registryLabel || '')}</td>
+                <td><span class="pill">${esc(r.statusLabel || r.status)}</span>${r.reviewNote ? `<div class="muted">${esc(r.reviewNote)}</div>` : ''}
+                  ${r.conflictLabel ? `<div style="color:#b91c1c;font-weight:700">⚠️ ${esc(r.conflictLabel)}</div>${r.conflictRequestId ? `<button class="admin-btn admin-btn-outline admin-btn-sm" data-act="revoke" data-id="${esc(r.conflictRequestId)}">ถอนของเดิม</button>` : ''}` : ''}
+                  ${r.status === 'Pending' && r.approveProblem ? `<div class="warn">${esc(r.approveProblem)}</div>` : ''}</td>
+                <td><div class="actions">
+                  ${r.status === 'Pending' ? `<button class="admin-btn admin-btn-primary admin-btn-sm" data-act="approve" data-id="${esc(r.id)}" ${r.approveProblem ? 'disabled' : ''}>อนุมัติ</button>
+                    <button class="admin-btn admin-btn-outline admin-btn-sm" data-act="reject" data-id="${esc(r.id)}">ปฏิเสธ</button>` : ''}
+                  ${r.status === 'Approved' ? `<button class="admin-btn admin-btn-outline admin-btn-sm" data-act="revoke" data-id="${esc(r.id)}">ถอนการยืนยัน</button>` : ''}
+                </div></td>
+              </tr>`).join('')}</tbody></table></div>`;
+      },
+
+      async act(kind, id) {
+        try {
+          if (kind === 'evidence') { await AdminAPI.downloadFile(`${this.base}/${encodeURIComponent(id)}/evidence`, `taxid-evidence-${id}`); return; }
+          let note = null;
+          if (kind === 'approve') {
+            if (!confirm('ยืนยันว่าเปิดไฟล์หลักฐานแล้ว และเลข/ชื่อบนเอกสารตรงกับคำขอ?')) return;
+            const row = this.rows.find(x => x.id === id) || {};
+            // ฝ่ายค้าน MED-B2: ชื่อไม่ตรงทะเบียน ⇒ เซิร์ฟเวอร์บังคับเหตุผล (needsApproveReason มาจากเซิร์ฟเวอร์)
+            note = prompt(row.needsApproveReason === true ? 'เหตุผลที่อนุมัติทั้งที่ชื่อไม่ตรงทะเบียน (บังคับ · บันทึกใน audit)' : 'หมายเหตุ (ไม่บังคับ)');
+            if (note === null) return;
+            note = note || null;
+          } else {
+            note = prompt(kind === 'reject' ? 'เหตุผลที่ปฏิเสธ (บริษัทจะเห็น)' : 'เหตุผลที่ถอนการยืนยัน (บริษัทจะเห็น)');
+            if (note === null) return;
+          }
+          const res = await AdminAPI.post(`${this.base}/${encodeURIComponent(id)}/${kind}`, { note });
+          AdminLayout.toast(res.message || 'บันทึกแล้ว');
+          await this.load();
+        } catch (e) { AdminLayout.toast(e.message, 'error'); }
+      },
+    };
+    Page.init();
+  </script>
+</body>
+</html>

@@ -233,6 +233,10 @@ public class PartnerPaymentNotice : TenantEntity
     public string? AutoBlockedReason { get; set; }
     /// <summary>รหัสเหตุ (ชื่อคงที่) — audit <c>PartnerPaymentAutoBlocked</c> ครั้งแรกต่อเหตุ (ไม่สแปม)</summary>
     public string? AutoBlockedCode { get; set; }
+    /// <summary>รอบ 282 (คำสั่งเจ้าของ 282-6): ไม่รู้บัญชีที่จ่าย (<c>PartnerAutoRecordPolicy.Codes.Source</c>) ⇒ แจ้งผู้ซื้อให้ยืนยันครั้งแรกเมื่อ · เตือนซ้ำ (จำนวน/ล่าสุด) ตาราง <c>SlipMoneySource.ReminderDue</c></summary>
+    public DateTime? SourceNoticeAt { get; set; }
+    public int SourceRemindCount { get; set; }
+    public DateTime? SourceRemindedAt { get; set; }
     /// <summary>ท่อประเมินแถวนี้ล่าสุดเมื่อไร (UTC)</summary>
     public DateTime? AutoEvaluatedAt { get; set; }
     /// <summary>เงินที่ผู้ขายรับจริง (หลังผู้ซื้อหัก ณ ที่จ่าย)</summary>

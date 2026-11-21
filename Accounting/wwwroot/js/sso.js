@@ -162,9 +162,9 @@ window.Sso = {
     const name = this.displayName(provider);
     return provider === 'Google'
       ? 'ยังเข้าสู่ระบบด้วย Google ไม่ได้ — ผู้ดูแลระบบต้องตั้ง "Google Client Secret" '
-        + 'และ "URL ของระบบ" ในหน้าแอดมิน แล้วเพิ่ม Callback URL เดียวกันใน Google Cloud Console'
+        + 'และ "URL ของระบบ" (แอดมิน → อีเมลระบบ (SMTP) → App Base URL) แล้วเพิ่ม Callback URL เดียวกันใน Google Cloud Console'
       : 'ยังเข้าสู่ระบบด้วย ' + name + ' ไม่ได้ — ผู้ดูแลระบบต้องตั้ง "URL ของระบบ" '
-        + 'ในหน้าแอดมิน ให้ตรงกับ Callback URL ที่ลงทะเบียนไว้';
+        + '(แอดมิน → อีเมลระบบ (SMTP) → App Base URL) ให้ตรงกับ Callback URL ที่ลงทะเบียนไว้';
   },
 
   /** เหตุผลล่าสุดที่ begin() คืน false (null = ยังไม่มี) */

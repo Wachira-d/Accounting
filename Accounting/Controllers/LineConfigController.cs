@@ -109,7 +109,14 @@ public class LineConfigController : ControllerBase
         if (req.QuietHoursEnabled is bool quietOn) s.LineQuietHoursEnabled = quietOn;
         if (req.QuietStartHour is int qs) s.LineQuietStartHour = qs;
         if (req.QuietEndHour is int qe) s.LineQuietEndHour = qe;
-        if (req.ChatSlipIntake is bool chatSlip) s.LineChatSlipIntakeEnabled = chatSlip;   // รอบ 260 · null = คงเดิม (ปุ่มล้างรหัสไม่แตะ)
+        if (req.ChatSlipIntake is bool chatSlip) s.LineChatSlipIntakeEnabled = chatSlip;
+        if (TrustedSlipPayerRule.SettingsProblem(req.SlipTrustedDailyCap, req.SlipTrustedReviewDays, req.SlipTrustedCompanyCap) is string trustProblem)
+            return BadRequest(new ApiResponse<LineConfigResponse>(false, null, trustProblem));
+        if (req.SlipTrustedAuto is bool trustedAuto) s.SlipTrustedAutoEnabled = trustedAuto;   // รอบ 286 · ผู้อ่าน TrustedSlipPayerService.TryProvisionalAsync
+        if (req.SlipTrustedDailyCap is decimal trustCap) s.SlipTrustedDailyCapPerKey = trustCap;
+        if (req.SlipTrustedReviewDays is int trustDays) s.SlipTrustedReviewBusinessDays = trustDays;
+        if (req.SlipTrustedCompanyCap is decimal trustCompanyCap) s.SlipTrustedCompanyOutstandingCap = trustCompanyCap;   // ฝ่ายค้าน HIGH-3
+        if (req.SlipAutoRecord is bool slipAuto) s.SlipAutoRecordEnabled = slipAuto;   // รอบ 282 · null = คงเดิม (ผู้อ่าน SlipAutoRecordService)   // รอบ 260 · null = คงเดิม (ปุ่มล้างรหัสไม่แตะ)
         // รอบ 257 C-M1: null = คงเดิม · "" = ล้าง · ค่า = ตั้งใหม่ (เดิม "" ถูกถือว่าคงเดิม ⇒ ล้างไม่ได้เงียบ ๆ)
         var tokenCleared = LineOwnOaGuard.Classify(req.ChannelAccessToken) == LineOwnOaGuard.InputKind.Clear;
         var secretCleared = LineOwnOaGuard.Classify(req.ChannelSecret) == LineOwnOaGuard.InputKind.Clear;
@@ -343,5 +350,37 @@ public class LineConfigController : ControllerBase
         QuietHoursEnabled: s.LineQuietHoursEnabled,
         QuietStartHour: s.LineQuietStartHour,
         QuietEndHour: s.LineQuietEndHour,
-        ChatSlipIntake: s.LineChatSlipIntakeEnabled);
+        ChatSlipIntake: s.LineChatSlipIntakeEnabled,
+        SlipAutoRecord: s.SlipAutoRecordEnabled,
+        SlipTrustedAuto: s.SlipTrustedAutoEnabled,
+        SlipTrustedDailyCap: s.SlipTrustedDailyCapPerKey,
+        SlipTrustedReviewDays: s.SlipTrustedReviewBusinessDays,
+        SlipTrustedRiskNotice: TrustedSlipPayerRule.RiskNotice,
+        SlipTrustedCompanyCap: s.SlipTrustedCompanyOutstandingCap);
+
+    // ═══ รอบ 286: ผู้จ่ายที่ไว้ใจได้ — ผู้ขายดู/ถอน/ให้คืนรายกุญแจ (ด่านเดียวกับหน้าตั้งค่า LINE · ห้ามคีย์ API · ไม่มีชื่อผู้โอนใน DTO) ═══
+
+    [HttpGet("trusted-payers")]
+    [Accounting.Filters.RequirePermission(Accounting.Models.Constants.PermissionKeys.CompanySettingsEdit)]
+    [Accounting.Filters.RejectApiKey("ดูผู้จ่ายที่ไว้ใจได้")]
+    public async Task<ActionResult<ApiResponse<IReadOnlyList<TrustedSlipPayerService.Row>>>> TrustedPayers(Guid companyId,
+        [FromServices] TrustedSlipPayerService trusted)
+        => Ok(new ApiResponse<IReadOnlyList<TrustedSlipPayerService.Row>>(true, await trusted.ListAsync(companyId, HttpContext?.RequestAborted ?? default)));
+
+    [HttpPost("trusted-payers/{rowId:guid}/revoke")]
+    [Accounting.Filters.RequirePermission(Accounting.Models.Constants.PermissionKeys.CompanySettingsEdit)]
+    [Accounting.Filters.RejectApiKey("ถอนความไว้ใจผู้จ่าย")]
+    public async Task<ActionResult<ApiResponse<bool>>> RevokeTrustedPayer(Guid companyId, Guid rowId, [FromBody] TrustedSlipPayerRevokeRequest? req,
+        [FromServices] TrustedSlipPayerService trusted)
+        => await trusted.SetTrustAsync(companyId, rowId, false, JwtHelper.GetUserIdFromClaims(User), req?.Reason, HttpContext?.RequestAborted ?? default)
+            ? Ok(new ApiResponse<bool>(true, true, "ถอนความไว้ใจแล้ว — สลิปของผู้โอนนี้จะเข้าหน้ายืนยันทุกใบ"))
+            : NotFound(new ApiResponse<bool>(false, false, "ไม่พบผู้จ่ายนี้ในบริษัท"));
+
+    [HttpPost("trusted-payers/{rowId:guid}/reinstate")]
+    [Accounting.Filters.RequirePermission(Accounting.Models.Constants.PermissionKeys.CompanySettingsEdit)]
+    [Accounting.Filters.RejectApiKey("ให้ความไว้ใจผู้จ่ายอีกครั้ง")]
+    public async Task<ActionResult<ApiResponse<bool>>> ReinstateTrustedPayer(Guid companyId, Guid rowId, [FromServices] TrustedSlipPayerService trusted)
+        => await trusted.SetTrustAsync(companyId, rowId, true, JwtHelper.GetUserIdFromClaims(User), null, HttpContext?.RequestAborted ?? default)
+            ? Ok(new ApiResponse<bool>(true, true, "ให้ความไว้ใจอีกครั้งแล้ว"))
+            : NotFound(new ApiResponse<bool>(false, false, "ไม่พบผู้จ่ายนี้ในบริษัท"));
 }

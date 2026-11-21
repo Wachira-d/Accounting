@@ -74,7 +74,7 @@ public static class PaymentLiveGate
 
     /// <summary>รอบ 227: ข้อความด่าน "URL ของระบบ" — ตัวเดียวของด่านและหน้าแอดมิน</summary>
     public const string SystemBaseUrlMissing =
-        "ยังไม่ได้ตั้ง \"URL ของระบบ\" (ผู้ดูแลระบบ → ตั้งค่าเว็บไซต์) — ผู้จ่ายที่กลับจากหน้าธนาคาร/ลิงก์ชำระจะถูกพาไปโดเมนค่าเริ่มต้นที่ไม่ใช่ของ NextAcc";
+        "ยังไม่ได้ตั้ง \"URL ของระบบ\" (" + SystemBaseUrl.AdminPageHint + ") — ผู้จ่ายที่กลับจากหน้าธนาคาร/ลิงก์ชำระจะถูกพาไปโดเมนค่าเริ่มต้นที่ไม่ใช่ของ NextAcc";
 
     /// <summary>รอบ 227: ข้อความด่าน "ไม่มีวิธีชำระที่ใช้ได้"</summary>
     public const string NoPayableMethod =

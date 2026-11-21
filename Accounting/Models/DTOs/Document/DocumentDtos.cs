@@ -987,6 +987,10 @@ public record DocumentResponse(
     string? InternalNotes = null,
     /// <summary>โมดูลที่สร้างเอกสารนี้ (Lodging/Pos/…) — หน้าเว็บใช้ติดป้าย "มาจากระบบจอง"</summary>
     string? OriginModule = null,
+    /// <summary>รอบ 283: ป้ายที่มาของใบ (เซิร์ฟเวอร์ตัดสิน · <c>Helpers/SettlementPaymentVoucher.OriginLabel</c>) — เช่น "⚙️ ระบบสร้างจากคู่ค้า" · null = ไม่มีป้าย</summary>
+    string? OriginLabel = null,
+    /// <summary>รอบ 283: ข้อความ "ขั้นต่อไป" ของใบตั้งหนี้ฝั่งซื้อ (บันทึกชำระแล้วได้ใบสำคัญจ่ายไหม) — <c>SettlementPaymentVoucher.PayNextStepHint</c> · null = ไม่ใช่ใบตั้งหนี้ฝั่งซื้อ</summary>
+    string? PayNextStepHint = null,
     /// <summary>มีป้าย "ออก e-Tax อัตโนมัติไม่สำเร็จ" ค้างอยู่ (<c>Helpers/EtaxAutoFailedNote</c>) — เซิร์ฟเวอร์ตัดสิน
     /// หน้าเว็บแสดงแถบเตือน (ห้ามค้นป้ายเองใน JS) · ป้ายถูกล้างเมื่อออก e-Tax สำเร็จ (รอบ 193 ฝ่ายค้าน P-3)</summary>
     bool EtaxAutoFailed = false,
@@ -1825,7 +1829,11 @@ public record CreatePaymentRequest(
     decimal? ExpectedExcess = null,
     /// <summary>ฝ่ายค้าน 267-P5 MED-5: เส้นหลายใบ — ผู้เรียกจะเรียก <c>AfterPaymentRecordedAsync</c> พร้อมทางเข้าจริงเอง (งานหลังรับชำระ + แจ้งผู้ซื้อคู่ค้า) ·
     /// false (ค่าเดิม) = เส้นหลายใบแจ้งผู้ซื้อคู่ค้าเองแบบบันทึกมือ</summary>
-    bool AfterCommitByCaller = false);
+    bool AfterCommitByCaller = false,
+    /// <summary>รอบ 283 (คำสั่งเจ้าของ · 283-1): ออก "ใบสำคัญจ่าย" (Document) เป็นหลักฐานคู่การจ่ายใบซื้อ/ใบบันทึกค่าใช้จ่ายนี้ ในธุรกรรมเดียวกัน —
+    /// ไม่ลง JE ซ้ำ (การจ่ายลงแล้ว) · ไม่ถือ VAT/ภาษีหัก · อ้าง 50 ทวิ ของการจ่ายนี้ · ตัวตัดสิน <c>Helpers/SettlementPaymentVoucher</c> ·
+    /// ออกไม่ได้ ⇒ การจ่ายทั้งก้อน rollback · null/false (ค่าเดิม) = ไม่ออก (ผู้ใช้ทุกทางเข้าเดิม · ผู้ขอ: ท่ออัตโนมัติคู่ค้า)</summary>
+    bool? IssuePaymentVoucherDocument = null);
 
 /// <summary>บรรทัดปรับหนึ่งบรรทัดของการชำระ — <c>Amount</c> มีเครื่องหมาย: + = จ่ายเกินยอดหนี้ด้วยรายการนี้ (Dr ผังนี้) ·
 /// − = ปิดหนี้โดยไม่ต้องจ่ายเงิน (Cr ผังนี้)</summary>
@@ -1908,7 +1916,10 @@ public record PaymentResponse(
     IReadOnlyList<string>? Warnings = null,
     /// <summary>รอบ 258: ยอดของการรับชำระนี้ที่จัดสรรให้<b>เอกสารที่ถาม</b> (<c>GET payments?documentId=</c>) — มีค่าเมื่อการรับชำระจัดสรรหลายใบ/จัดสรรทีหลัง
     /// (<c>Amount</c> คือยอดเงินทั้งก้อน) · null = การชำระใบเดียว (ยอดของใบ = <c>Amount</c>)</summary>
-    decimal? AllocatedToDocument = null);
+    decimal? AllocatedToDocument = null,
+    /// <summary>รอบ 286 (ฝ่ายค้าน LOW): ป้าย "รับล่วงหน้า — รอยืนยันจากธนาคาร/ยืนยันแล้ว/ไม่พบ" ของการรับเงินจากผู้จ่ายที่ไว้ใจได้ (<c>TrustedSlipPayerRule.StatusLabel</c>) ·
+    /// null = ไม่ใช่การรับล่วงหน้า</summary>
+    string? ProvisionalLabel = null);
 
 /// <summary>
 /// ทีม A (2a · 2026-10-13): ภาษีหัก ณ ที่จ่ายที่ระบบแนะนำสำหรับการจ่ายงวดนี้ (<c>GET document/{id}/payment-wht-suggestion</c>) —

@@ -34,8 +34,9 @@ internal static class SettlementReceiptTotalsLoader
             .Select(d => new
             {
                 Src = new SettlementReceiptTotals.Source(d.DocumentType, d.DocumentNumber, d.DocumentDate,
-                    d.SubTotal, d.VatAmount, d.WithholdingTaxAmount, d.TotalAmount),
+                    d.SubTotal, d.VatAmount, d.WithholdingTaxAmount, d.TotalAmount, null, null),
                 d.BalanceDue,
+                d.DepositAppliedAmount,
             })
             .FirstOrDefaultAsync();
         if (parent == null) return;
@@ -54,7 +55,7 @@ internal static class SettlementReceiptTotalsLoader
             var rows = await db.Documents.AsNoTracking().IgnoreQueryFilters()
                 .Where(d => kids.Contains(d.Id) && d.CompanyId == companyId)
                 .Select(d => new { d.Id, Src = new SettlementReceiptTotals.Source(d.DocumentType, d.DocumentNumber, d.DocumentDate,
-                    d.SubTotal, d.VatAmount, d.WithholdingTaxAmount, d.TotalAmount) })
+                    d.SubTotal, d.VatAmount, d.WithholdingTaxAmount, d.TotalAmount, null, null) })
                 .ToListAsync();
             var ordered = kids.Select(id => rows.FirstOrDefault(r => r.Id == id)?.Src).Where(s => s != null).Select(s => s!).ToList();
             doc.SettlementTotals = SettlementReceiptTotals.Decide(Facts(ordered) with
@@ -67,6 +68,13 @@ internal static class SettlementReceiptTotalsLoader
         var sourcesOne = new[] { parent.Src };
         // ไม่เข้าเงื่อนไข (ใบถือ VAT เอง · ต้นทางไม่มี VAT ฯลฯ) ⇒ ไม่ต้องโหลดรายการตัดยอด
         if (SettlementReceiptTotals.Decide(Facts(sourcesOne)) == null) return;
+        // รอบ 284 (T3 LOW-2): หัวที่ใบต้นทางพิมพ์จริง — ตัวตัดสินเดียวกับ PDF ของใบนั้น (ใบถูกลบ/ไม่พบ ⇒ ชื่อชนิดเดิม) · โหลดเฉพาะใบที่ใช้แถวยอดนี้
+        try
+        {
+            var heading = await PdfGenerationService.ResolveDocumentHeadingAsync(db, companyId, srcId);
+            sourcesOne = new[] { parent.Src with { Heading = heading.Title, HeadingLanguage = heading.Language } };
+        }
+        catch (KeyNotFoundException) { /* ใบต้นทางถูกลบ (อ่านผ่าน IgnoreQueryFilters) — ใช้ชื่อชนิด */ }
 
         var me = await ThisSettlementAsync(db, companyId, doc, srcId);
         var events = await LedgerEventsAsync(db, companyId, doc.Id, srcId, me.PaymentId, me.ExcludeAllocationIds);
@@ -75,6 +83,7 @@ internal static class SettlementReceiptTotalsLoader
             This = me.This,
             Events = events,
             SourcesOutstandingNow = parent.BalanceDue,
+            SourcesHaveDepositApplied = parent.DepositAppliedAmount > 0.005m,   // รอบ 284 (284-9)
         });
     }
 

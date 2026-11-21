@@ -93,6 +93,10 @@ public class TaxSlipChannelService
         return string.Join(" · ", results);
     }
 
+    /// <summary>รอบ 282: ตอบผู้ส่งอีเมลสลิปค่าสินค้า/บริการ (ผลจากเส้นจับคู่ใบแจ้งหนี้) — ผู้เรียกเดียว <c>TaxSlipIntakeService.IntakeAsync</c> เฉพาะผู้ส่งที่ยืนยันโดเมนได้</summary>
+    public Task<bool> SendPaymentSlipReplyAsync(string to, string text)
+        => TrySendEmailAsync(to, "ผลการรับสลิปโอนเงิน", TaxSlipReplyCard.Clean(text));
+
     private async Task<bool> TrySendEmailAsync(string to, string subject, string body)
     {
         if (_email == null) return false;

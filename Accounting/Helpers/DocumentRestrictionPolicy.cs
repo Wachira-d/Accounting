@@ -113,6 +113,7 @@ public static class DocumentRestrictionPolicy
         new("GET", DId + "/conversion-targets", true, false),
         new("GET", DId + "/fulfillment", true, false),
         new("GET", DId + "/approval-request", true, false),
+        new("GET", DId + "/receipt-line-default", true, false),   // รอบ 284: ค่าตั้งต้นบรรทัดใบเสร็จ (ร่างใบเสร็จของตัวเอง · ตัวกรองแถวตัดใบของคนอื่น)
         new("GET", C + "documents/{sourceid:guid}/clone/preview", true, false),
         new("POST", C + "document-templates/generate-pdf", true, DraftWrite: true),
         new("POST", C + "document-templates/generate-html", true, true),

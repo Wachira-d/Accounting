@@ -40,8 +40,11 @@ public static class SettlementReceiptTotals
     /// <param name="SubTotal">มูลค่าก่อน VAT (หลังส่วนลด)</param>
     /// <param name="WithholdingTaxAmount">ภาษีหักทั้งใบ — <b>ไม่พิมพ์</b>บนใบเสร็จแล้ว (L1: พิมพ์ของการรับครั้งนี้ <see cref="ThisSettlement.WithholdingTaxAmount"/>)</param>
     /// <param name="TotalAmount">ยอดที่ลูกค้าต้องจ่ายตามใบ (สุทธิหลังภาษีหัก ณ ที่จ่าย — <c>WhtGrossUp.PayeeTotal</c>)</param>
+    /// <param name="Heading">รอบ 284 (T3 LOW-2): หัวเอกสารที่ใบต้นทางพิมพ์จริง (<c>ResolveDocumentHeadingAsync</c> — หัวรวม "ใบแจ้งหนี้/ใบกำกับภาษี" · หัวที่บริษัทตั้งเอง) ·
+    /// <paramref name="HeadingLanguage"/> = ภาษาของหัวนั้น · ใช้แทนชื่อชนิดตายตัวเมื่อภาษาตรงกับใบเสร็จ · null = ชื่อชนิดเดิม</param>
     public sealed record Source(DocumentType Type, string Number, DateTime Date,
-        decimal SubTotal, decimal VatAmount, decimal WithholdingTaxAmount, decimal TotalAmount);
+        decimal SubTotal, decimal VatAmount, decimal WithholdingTaxAmount, decimal TotalAmount,
+        string? Heading = null, string? HeadingLanguage = null);
 
     /// <summary>ชนิดรายการที่ตัดยอดใบต้นทาง (นอกเหนือจากการรับครั้งนี้)</summary>
     public enum EventKind { Payment, CreditNote, Receipt }
@@ -80,7 +83,8 @@ public static class SettlementReceiptTotals
         ThisSettlement? This = null,
         IReadOnlyList<LedgerEvent>? Events = null,
         decimal? SourcesOutstandingNow = null,
-        BillingNoteRef? ViaBillingNote = null);
+        BillingNoteRef? ViaBillingNote = null,
+        bool SourcesHaveDepositApplied = false);
 
     /// <summary>หมายเหตุ VAT ท้ายบรรทัดอ้างอิง (L2)</summary>
     public enum VatNote
@@ -105,7 +109,14 @@ public static class SettlementReceiptTotals
         IReadOnlyList<Source> References,
         bool BalanceKnown = false, decimal BalanceBefore = 0m, decimal BalanceAfter = 0m,
         IReadOnlyList<LedgerEvent>? PriorCreditNotes = null, decimal PriorSettled = 0m,
-        ThisSettlement? This = null, VatNote Note = VatNote.TaxInvoiced, BillingNoteRef? ViaBillingNote = null);
+        ThisSettlement? This = null, VatNote Note = VatNote.TaxInvoiced, BillingNoteRef? ViaBillingNote = null, decimal PriorOther = 0m);
+
+    /// <summary>รอบ 284 (คำตัดสิน 284-8 · T3 LOW-5 — ผู้ประสานงานตัดสินตามที่เจ้าของมอบอำนาจ): ยอดบนใบเสร็จรับชำระที่ไม่ถือ VAT =
+    /// <b>ยอดที่ลูกค้าชำระเต็ม</b> = เงินที่เข้าบัญชี + ค่าธรรมเนียมที่ธนาคาร/gateway หักฝั่งผู้รับ (ค่าใช้จ่ายของผู้ขาย — JE ของการรับชำระลง Dr ค่าธรรมเนียมแล้ว ·
+    /// เอกสารถูกล้างที่ยอดเต็ม) · เดิมใบเสร็จแสดงเงินสุทธิหลังหัก (748,970 แทน 749,000) · บรรทัดปรับ (<c>SettlementAdjustmentAmount</c>) <b>ไม่</b>รวม
+    /// (ส่วนลด/ค่าส่งที่ลูกค้าไม่ได้จ่าย) · ใบที่ออกแล้วไม่แก้ย้อนหลัง · ใบเสร็จรับชำระไม่ลงบัญชี (<c>IsSettlementReceipt</c>) ⇒ ไม่กระทบ GL</summary>
+    public static decimal ReceiptPaperAmount(decimal cashAmount, decimal feeAmount)
+        => Math.Round(cashAmount + Math.Max(0m, feeAmount), 2, MidpointRounding.AwayFromZero);
 
     /// <summary>ชนิดใบเสร็จที่ตัวนี้ดูแล (ใบรับเงินฝั่งขาย)</summary>
     public static bool IsReceiptType(DocumentType t) => t is DocumentType.Receipt or DocumentType.ReceiptVoucher;
@@ -144,7 +155,8 @@ public static class SettlementReceiptTotals
         var partial = after > Eps;
         return new View(f.ReceiptTotalAmount, gross, partial, sourcesTotal, sources,
             BalanceKnown: true, BalanceBefore: Round2(before), BalanceAfter: Round2(Math.Max(0m, after)),
-            PriorCreditNotes: w.PriorCreditNotes, PriorSettled: Round2(w.PriorSettled), This: me, Note: note, ViaBillingNote: f.ViaBillingNote);
+            PriorCreditNotes: w.PriorCreditNotes, PriorSettled: Round2(w.PriorSettled), This: me, Note: note, ViaBillingNote: f.ViaBillingNote,
+            PriorOther: f.SourcesHaveDepositApplied ? w.PriorOther : 0m);   // บรรทัด "ตัดยอดด้วยเงินมัดจำ" เฉพาะใบที่หักมัดจำจริง (ยอดคงค้างแก้ทุกใบ)
     }
 
     /// <summary>ผลการไล่ยอดคงค้างของใบต้นทางรอบการรับครั้งนี้ (ตัวไล่ตัวเดียว — ใช้ทั้งแถวยอดใบเสร็จ <see cref="Decide"/> และ
@@ -154,8 +166,11 @@ public static class SettlementReceiptTotals
     /// <param name="PriorCreditNotes">ใบลดหนี้ที่ลดหนี้ก่อนรับครั้งนี้ (ยอดที่ลดจริง)</param>
     /// <param name="PriorSettled">การรับ/ตัดชำระก่อนครั้งนี้รวม (เท่าที่ไล่ได้)</param>
     /// <param name="HasLater">มีรายการตัดยอดหลังการรับครั้งนี้</param>
+    /// <param name="PriorOther">รอบ 284 (คำตัดสิน 284-9 · T3 LOW-6): ยอดที่ใบต้นทางถูกตัดด้วยช่องทางที่ไม่มีแถวรายการ (หักเงินมัดจำที่รับแล้ว —
+    /// <c>ApplyDepositAsync</c> บวก <c>PaidAmount</c> โดยไม่มีแถวการชำระ) = ยอดไล่ได้ทั้งหมด − ยอดค้างจริง · นับเป็น<b>การตัดยอดก่อนการรับครั้งนี้</b>
+    /// (ไม่ใช่ส่วนลด) ⇒ "คงค้างก่อนรับ" คงที่ไม่ว่าจะมีงวดถัดไปหรือไม่ · VAT ของมัดจำไม่ถูกนับซ้ำ (ภาษีที่ยังพักอ่านจาก 21913 ที่การหักมัดจำย้ายแล้ว)</param>
     public sealed record LedgerWalk(decimal BalanceBefore, decimal BalanceAfterRaw, IReadOnlyList<LedgerEvent> PriorCreditNotes,
-        decimal PriorSettled, bool HasLater);
+        decimal PriorSettled, bool HasLater, decimal PriorOther = 0m);
 
     /// <summary>MED-1 (รอบ 273): ไล่ยอดคงค้างตามลำดับเวลา — ใบลดหนี้ลดหนี้ได้เฉพาะตอนยังค้าง (ใบที่ออกหลังชำระครบ = คืนเงิน ไม่ลดหนี้) ·
     /// ไม่มีรายการหลังครั้งนี้ ⇒ ยึดยอดค้างปัจจุบันของใบต้นทาง (ครอบการตัดชำระช่องทางที่ไม่ได้ไล่ เช่น หักมัดจำ)</summary>
@@ -185,12 +200,32 @@ public static class SettlementReceiptTotals
         }
         var before = Math.Max(0m, bal);
         var after = before - me.Settled;
+        var other = 0m;
         if (!later && sourcesOutstandingNow is decimal now)
         {
             after = now;
-            before = Math.Max(0m, now + me.Settled);
+            var anchored = Math.Max(0m, now + me.Settled);
+            other = Math.Max(0m, before - anchored);   // ส่วนที่ไล่จากแถวไม่ได้ (หักมัดจำ) — ยอดเดิมไม่เปลี่ยน แค่บอกที่มา
+            before = anchored;
         }
-        return new LedgerWalk(before, after, priorCn, priorSettled, later);
+        else if (later && sourcesOutstandingNow is decimal nowLater)
+        {
+            // รอบ 284 (284-9 · LOW-6): มีรายการหลังครั้งนี้ — ไล่ต่อจนจบแล้วเทียบยอดค้างจริง · ส่วนต่าง = ตัดยอดช่องทางอื่น (หักมัดจำ) ⇒ ย้ายไปก่อนการรับครั้งนี้
+            var b = before - me.Settled;
+            foreach (var e in ordered.Where(e => !Before(e.Date, e.RecordedAt, me.Date, me.RecordedAt)))
+            {
+                if (e.Kind == EventKind.CreditNote) { if (b > Eps) b -= Math.Min(e.Amount, b); }
+                else b -= e.Amount;
+            }
+            var unexplained = b - nowLater;
+            if (unexplained > Eps)
+            {
+                other = Math.Min(unexplained, before);
+                before -= other;
+                after = before - me.Settled;
+            }
+        }
+        return new LedgerWalk(before, after, priorCn, priorSettled, later, Round2(other));
     }
 
     private static decimal Round2(decimal x) => Math.Round(x, 2, MidpointRounding.AwayFromZero);

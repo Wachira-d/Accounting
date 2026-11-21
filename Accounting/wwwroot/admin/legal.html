@@ -273,8 +273,8 @@
         document.getElementById('curEnVersion').textContent = d.current.version || '-';
         document.getElementById('curBodyEn').value = d.current.bodyMarkdownEn || '';
         document.getElementById('baseUrlNote').textContent = d.baseUrlFromSettings
-          ? 'โดเมนมาจาก "URL ของระบบ" (ตั้งค่าเว็บไซต์)'
-          : 'ยังไม่ได้ตั้ง "URL ของระบบ" ที่หน้าตั้งค่าเว็บไซต์ — URL นี้ใช้โดเมนที่เปิดหน้าแอดมินอยู่';
+          ? 'โดเมนมาจาก "URL ของระบบ" (อีเมลระบบ (SMTP) → ช่อง App Base URL)'
+          : 'ยังไม่ได้ตั้ง "URL ของระบบ" (หน้าอีเมลระบบ (SMTP) → ช่อง App Base URL · /admin/system-email.html) — URL นี้ใช้โดเมนที่เปิดหน้าแอดมินอยู่';
         document.getElementById('upcomingBox').innerHTML = d.upcoming
           ? `📣 ประกาศล่วงหน้า: ฉบับ <b>${esc(d.upcoming.version)}</b> มีผล ${esc(this.thaiDate(d.upcoming.effectiveDate))}${d.upcoming.changeSummary ? ' — ' + esc(d.upcoming.changeSummary) : ''}`
           : '';

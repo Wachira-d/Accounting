@@ -126,14 +126,14 @@ public class BankPaymentLineMatchTests
     private static IReadOnlyDictionary<Guid, string> Usable => new Dictionary<Guid, string> { [AccB] = "กสิกร ••3334", [AccB2] = "กสิกร ••0821" };
 
     [Fact]
-    public void สลิปตรงบัญชีเดียว_ไม่มีรายการเดินบัญชี_ยัง_preselect_ไม่บันทึกเอง()
+    public void สลิปตรงบัญชีเดียว_ไม่มีรายการเดินบัญชี_หลักฐานผู้โอนไม่ครบ_ไม่บันทึกเอง()
     {
         var f = new PartnerPaySourceAccount.Facts(Usable, SlipMatch: new PartnerPaySourceAccount.Slip(SlipKind.Unique, AccB));
         var d = PartnerPaySourceAccount.Decide(f);
         Assert.Equal(Origin.SlipUnique, d.Origin);
         Assert.Equal(AccB, d.BankAccountId);
-        Assert.False(d.AllowsAuto);
-        Assert.False(PartnerPaySourceAccount.Row(Origin.SlipUnique).AllowsAuto);   // สลิปไม่เคยบันทึกเอง — ผู้บันทึกเองคือรายการเดินบัญชี
+        Assert.False(d.AllowsAuto);   // รอบ 282 ฝ่ายค้าน MED-2: ไม่มีเลขท้าย ≥4/ชื่อผู้โอน ⇒ ไม่บันทึกเอง
+        Assert.True(PartnerPaySourceAccount.Row(Origin.SlipUnique).AllowsAuto);   // ชั้นบันทึกเองได้ (282-6) เมื่อหลักฐานแน่น
     }
 
     [Fact]

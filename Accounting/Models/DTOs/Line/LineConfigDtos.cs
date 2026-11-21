@@ -38,10 +38,20 @@ public record LineConfigResponse(
     string? QuietHoursNote = null,
     /// <summary>รอบ 260: รับสลิปจากแชต LINE ⇒ ผูกเอกสาร (<c>CompanySettings.LineChatSlipIntakeEnabled</c> · echo กลับให้ฟอร์ม)</summary>
     bool ChatSlipIntake = true,
+    /// <summary>รอบ 282 (คำตัดสิน 282-3): บันทึกรับเงินจากสลิปเองเมื่อผ่านทุกด่าน (<c>CompanySettings.SlipAutoRecordEnabled</c> · ค่าตั้งต้นปิด · echo กลับให้ฟอร์ม)</summary>
+    bool SlipAutoRecord = false,
     /// <summary>รอบ 262 (คำตัดสิน 262-1-7): ประโยค "ส่งเอกสารถึงผู้ติดต่อทาง LINE" (<c>ProviderCentralOa.ContactSendNotice</c>) — บริษัทผู้ให้บริการไม่อ้างส่วนที่ถูกซ่อน</summary>
     string? ContactSendNotice = null,
     /// <summary>รอบ 262 (คำตัดสิน 262-1-7): แถวความพร้อม "ส่งเอกสารถึงผู้ติดต่อผ่าน LINE OA กลาง" ของบริษัทผู้ให้บริการ (<c>ProviderCentralOa.ReadinessRows</c>) · บริษัทอื่น = ว่าง</summary>
-    IReadOnlyList<global::Accounting.Helpers.LineOaHealth.Row>? ProviderLineReadiness = null);
+    IReadOnlyList<global::Accounting.Helpers.LineOaHealth.Row>? ProviderLineReadiness = null,
+    /// <summary>รอบ 286 (คำสั่งเจ้าของ · ค่าตั้งต้นปิด): อนุมัติอัตโนมัติจากผู้จ่ายที่ไว้ใจได้ (<c>CompanySettings.SlipTrustedAutoEnabled</c>) + เพดานต่อวันต่อผู้โอน +
+    /// วันทำการที่รอรายการเดินบัญชี + ประโยคความเสี่ยง (<c>TrustedSlipPayerRule.RiskNotice</c> · server computes) — echo กลับให้ฟอร์ม</summary>
+    bool SlipTrustedAuto = false,
+    decimal SlipTrustedDailyCap = 50_000m,
+    int SlipTrustedReviewDays = 3,
+    string? SlipTrustedRiskNotice = null,
+    /// <summary>รอบ 286 (ฝ่ายค้าน HIGH-3): เพดานยอดล่วงหน้าที่รอยืนยันรวมทั้งบริษัท</summary>
+    decimal SlipTrustedCompanyCap = 100_000m);
 
 /// <summary>รอบ 259 (A-M6) · รอบ 260-4 (คำตัดสิน 260-4-3): ปลายทางทดสอบหนึ่งตัว — <paramref name="Key"/> = <c>LineOaHealth.TeamGroupTargetKey</c> หรือ
 /// <c>LineOaHealth.EndpointTargetKey</c> (เซิร์ฟเวอร์อ่าน id เอง · ไม่มี LINE id ใน DTO) · <paramref name="ReachesContact"/> = ข้อความทดสอบถึงผู้รับของผู้ติดต่อ (หน้าถามยืนยันก่อน)</summary>
@@ -79,7 +89,17 @@ public record UpdateLineConfigRequest(
     int? QuietStartHour = null,
     int? QuietEndHour = null,
     /// <summary>รอบ 260: รับสลิปจากแชต LINE ⇒ ผูกเอกสาร · null = คงเดิม</summary>
-    bool? ChatSlipIntake = null);
+    bool? ChatSlipIntake = null,
+    /// <summary>รอบ 282: บันทึกรับเงินจากสลิปเอง · null = คงเดิม</summary>
+    bool? SlipAutoRecord = null,
+    /// <summary>รอบ 286: ผู้จ่ายที่ไว้ใจได้ · null = คงเดิม</summary>
+    bool? SlipTrustedAuto = null,
+    decimal? SlipTrustedDailyCap = null,
+    int? SlipTrustedReviewDays = null,
+    decimal? SlipTrustedCompanyCap = null);
+
+/// <summary>รอบ 286: ผู้ขายถอนความไว้ใจรายกุญแจ (เหตุไม่บังคับ)</summary>
+public record TrustedSlipPayerRevokeRequest(string? Reason);
 
 /// <param name="TargetKey">รอบ 259 (A-M6): ปลายทางที่ระบบรู้จัก (รอบ 260-4: <c>GET line-config/test-targets</c>) — มีค่า ⇒ ใช้แทน <paramref name="ToLineId"/></param>
 public record TestLineConfigRequest(string? ToLineId, string? TargetKey = null);
