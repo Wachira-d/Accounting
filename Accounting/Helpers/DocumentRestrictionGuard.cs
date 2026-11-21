@@ -127,6 +127,11 @@ public static class DocumentRestrictionGuard
     public static async Task<bool> MayFinalizeAsync(AccountingDbContext db, Guid companyId, string? actor, CancellationToken ct = default)
         => !(db.DocumentDraftOnlyRequest || (await ForActorAsync(db, companyId, actor, ct)).DraftOnly);
 
+    /// <summary>รอบ 288: ผู้ใช้คนนี้ (ไม่ใช่คำขอปัจจุบัน) ถูกตั้งให้ "ทำได้เฉพาะร่าง" ในบริษัทนี้ไหม — ผู้อ่าน: ด่านสิทธิ์ของผู้ให้ความยินยอม
+    /// (<c>PartnerConsentService.HasNeedAsync</c>) ซึ่งตรวจ<b>ผู้ให้</b> ไม่ใช่ผู้เปิดหน้า (ธงของคำขอไม่เกี่ยว)</summary>
+    public static async Task<bool> UserIsDraftOnlyAsync(AccountingDbContext db, Guid companyId, Guid userId, CancellationToken ct = default)
+        => (await ForUserAsync(db, companyId, userId, ct)).Restriction.DraftOnly;
+
     public static async Task EnsureMayFinalizeAsync(AccountingDbContext db, Guid companyId, string? actor, string verb, CancellationToken ct = default)
     {
         if (db.DocumentDraftOnlyRequest || (await ForActorAsync(db, companyId, actor, ct)).DraftOnly)

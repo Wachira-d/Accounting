@@ -164,6 +164,13 @@ public class CrossTenantDocumentLink : BaseEntity
     public string? SnapshotJson { get; set; }
 
     public string? Comment { get; set; }
+    /// <summary>รอบ 288 (ขอบเขต AutoApprovePurchase): ผลประเมิน "อนุมัติใบซื้อร่างเองไหม" ครั้งล่าสุดของใบซื้อปลายทาง (ชื่อคงที่ <c>PartnerAutoApprovePolicy.Codes</c>) ·
+    /// ผู้เขียนเดียว <c>PartnerPayablePipeline.AutoApproveDraftsAsync</c> · เหตุเปลี่ยน ⇒ หมายเหตุบนใบ + audit + แจ้งเตือนครั้งเดียว · null = ยังไม่เคยประเมิน</summary>
+    public string? AutoApproveCode { get; set; }
+    /// <summary>รอบ 288: เหตุ (ข้อความไทยถึงผู้ใช้) ของ <see cref="AutoApproveCode"/></summary>
+    public string? AutoApproveReason { get; set; }
+    /// <summary>รอบ 288: ประเมินล่าสุดเมื่อไร (UTC) — watermark ของท่อ (ประเมินซ้ำเมื่อพ้น <c>PartnerAutoApprovePolicy.ReevaluateEvery</c> หรือใบถูกแก้หลังจากนั้น)</summary>
+    public DateTime? AutoApproveEvaluatedAt { get; set; }
 }
 
 /// <summary>
@@ -260,4 +267,11 @@ public class PartnerPaymentNotice : TenantEntity
     /// <c>PartnerPayablePipeline.ScrubSlipPayerAsync</c> · ผู้โอนไม่ใช่บัญชีของผู้ซื้อ (NotOurs) หรือการแจ้งจบแล้ว ⇒ ล้าง <see cref="SlipPayerAccountMask"/>/<see cref="SlipPayerBankCode"/>
     /// เหลือแค่ชนิดนี้ (ตัวตัดสินอ่านชนิดแทนเลข) · null = ยังไม่เคยตรวจ</summary>
     public string? SlipPayerMatch { get; set; }
+    /// <summary>รอบ 288 (ขอบเขต ReceiveSlipCopy ของผู้ซื้อ): ไฟล์แนบในบริษัทผู้ซื้อที่เป็นสำเนาสลิปของการชำระนี้ (แนบที่ใบซื้อ <see cref="TargetDocumentId"/>) ·
+    /// ผู้เขียนเดียว <c>PartnerPayablePipeline.CopySlipsAsync</c> · null = ยังไม่ได้รับสำเนา</summary>
+    public Guid? SlipCopyAttachmentId { get; set; }
+    /// <summary>รอบ 288: ตรวจเรื่องสำเนาสลิปของการแจ้งนี้จบแล้ว (ได้สำเนา / ไม่มีสลิป / สลิปเป็นของเราเอง / ลองครบแล้ว) — ไม่ตรวจซ้ำ</summary>
+    public DateTime? SlipCopyCheckedAt { get; set; }
+    /// <summary>รอบ 288: จำนวนครั้งที่ลองคัดสำเนาแล้วล้มชั่วคราว (อ่านไฟล์ไม่ได้) · ครบ <c>PartnerSlipCopyRule.MaxAttempts</c> ⇒ เลิกลอง</summary>
+    public int SlipCopyAttempts { get; set; }
 }

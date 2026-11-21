@@ -49,7 +49,7 @@ public class SlipEvidenceService
     public const string ChannelEmail = "email-customer";
     /// <summary>รอบ 264 P4 (design §6.2 · คำตัดสิน 264-5-12): ผู้ซื้อคู่ค้า NextAcc แจ้งโอนจากระบบของเขาเอง ⇒ สำเนาสลิปเข้าคิวรอยืนยันของเรา (ยังไม่ใช่เงินเข้า) ·
     /// ผู้เรียกเดียว <c>PartnerOutboundPaymentService.NotifyTransferAsync</c> ภายใต้ความยินยอม <c>ReceiveSlipCopy</c> ของเรา · ไฟล์ไม่เสิร์ฟตรง (มาจากนอกบริษัท)</summary>
-    public const string ChannelPartnerNextAcc = "partner-nextacc";
+    public const string ChannelPartnerNextAcc = Accounting.Helpers.PartnerSlipCopyRule.OwnChannel;   // รอบ 288: ค่าตัวเดียว (ผู้อ่านอีกฝั่ง: ไม่ส่งสลิปของผู้ซื้อกลับหาผู้ซื้อ)
 
     /// <param name="contactId">พอร์ทัล = ผู้ติดต่อในโทเคน (ด่านความเป็นเจ้าของ) · ลิงก์ชำระ = ผู้ติดต่อของใบ (โทเคนพิสูจน์แล้ว)</param>
     /// <param name="amount">null = ยอดค้างของใบ</param>
@@ -146,11 +146,15 @@ public class SlipEvidenceService
             }
 
             // หลักฐานกันซ้ำบนรายการเดียวกับที่คนยืนยัน (ไม่ใช่ตารางที่สอง) · เลขอ้างอิงเป็นตัวระบุตัวให้ BankReceiptAutoSettle เมื่อรายการเดินบัญชีจริงมาถึง
+            // รอบ 288: ลิงก์รายการ → ไฟล์สลิปของรายการนี้ (ผู้อ่าน: สำเนาสลิปให้ผู้ซื้อคู่ค้าที่ยินยอม ReceiveSlipCopy — ไม่เดาไฟล์จากเวลา)
+            var slipAttachmentId = Guid.NewGuid();
             await _db.PaymentIntents.Where(i => i.Id == intent.Id && i.CompanyId == companyId)
-                .ExecuteUpdateAsync(u => u.SetProperty(i => i.SlipFileSha256, slipSha).SetProperty(i => i.SlipBankRef, slipRef), ct);
+                .ExecuteUpdateAsync(u => u.SetProperty(i => i.SlipFileSha256, slipSha).SetProperty(i => i.SlipBankRef, slipRef)
+                    .SetProperty(i => i.SlipAttachmentId, (Guid?)slipAttachmentId), ct);
 
             _db.Set<FileAttachment>().Add(new FileAttachment
             {
+                Id = slipAttachmentId,
                 CompanyId = companyId,
                 FileName = storedName,
                 OriginalFileName = "slip" + ext,

@@ -113,7 +113,7 @@ public static class PartnerAutoRecordPolicy
         if (!string.Equals((f.Currency ?? "").Trim(), "THB", StringComparison.OrdinalIgnoreCase))
             return One(Codes.Currency, "ใบซื้อไม่ใช่สกุลบาท — ระบบไม่บันทึกเอง (อัตราแลกเปลี่ยน ณ วันจ่ายต้องมีคนยืนยัน)");
         if (!f.SellerPaymentKnown)
-            return One(Codes.SellerPaymentUnknown, "การแจ้งรุ่นก่อนรอบ 264 ไม่ผูกการรับชำระของผู้ขาย — ระบบตรวจสดไม่ได้ว่าผู้ขายยกเลิกหรือไม่ จึงไม่บันทึกเอง (กดบันทึกจ่ายเองได้)");
+            return One(Codes.SellerPaymentUnknown, "การแจ้งรุ่นเก่า (ก่อนระบบผูกการรับชำระของผู้ขาย) ไม่ผูกการรับชำระของผู้ขาย — ระบบตรวจสดไม่ได้ว่าผู้ขายยกเลิกหรือไม่ จึงไม่บันทึกเอง (กดบันทึกจ่ายเองได้)");
         if (!f.ConsentOk) return One(Codes.Consent, "ไม่บันทึกเอง: " + (string.IsNullOrWhiteSpace(f.ConsentReason) ? "ยังไม่ได้ให้ความยินยอม" : f.ConsentReason!.Trim()));
         if (f.UnexplainedPurchasePayment) return One(Codes.OtherPayment, OtherPaymentReason);
         if (f.Plan.Warning != null) return One(Codes.PlanWarning, "ไม่บันทึกเอง — " + f.Plan.Warning);
