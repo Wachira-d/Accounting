@@ -7551,4 +7551,4 @@ _รอบ 285 (2026-11-21): ยืนยันเลขผู้เสียภ
   ตัวตัดสิน `TrustedSlipPayerRule.HoldDelivery` (ล้มแล้วกักเสมอ) · แจ้งเตือนตรวจย้อนล้มระบุว่าส่งไปแล้ว + ทางไปต่อ (`FailedNextStep` · `DeliveredAsync`)
 - `Round287Migration` · เทสต์ `TrustedSlipSendImmediatelyRound287Tests` + Db `TrustedSlipSendImmediatelyRound287DbTests` · กติกา `_R287_*` · คำตัดสิน 287-1…287-5 · commit 0fdbd4f3
 - ชุดแก้ฝ่ายค้าน 287 (คำตัดสิน 287-6/7 · commit 7aee8ad4): งานที่กักตรวจซ้ำตาม `HoldRecheck` แทน 30 วันเสมอ + ปลุกเมื่อเปิดค่าตั้ง/หลัง deploy · คิว LINE ตรวจตัวตัดสินก่อนยิง · LINE นับส่งจาก `SentAt` · `FailAsync` กรองการชำระที่ยกเลิก
-- แก้ CI 44895480747: `DefaultSendImmediately` แทน `new CompanySettings()` · `SweepAsync(onlyCompanyId)` + เทสต์ Db 286/287 จำกัดบริษัทของตัวเอง (ฐานร่วมรันขนาน)
+- แก้ CI 44895480747 (commit f65a7f4e): `DefaultSendImmediately` แทน `new CompanySettings()` · `SweepAsync(onlyCompanyId)` + เทสต์ Db 286/287 จำกัดบริษัทของตัวเอง (ฐานร่วมรันขนาน)

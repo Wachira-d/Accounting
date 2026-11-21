@@ -31,7 +31,7 @@ public static class TrustedSlipPayerRule
     public const int MaxReviewBusinessDays = 5;
     /// <summary>ฝ่ายค้าน HIGH-3: เพดานยอดล่วงหน้าที่ยังไม่ยืนยันรวมทั้งบริษัท (ตั้งต้น) — ความเสียหายสูงสุด ณ เวลาใดเวลาหนึ่งตามค่าตั้งต้น</summary>
     public const decimal DefaultCompanyOutstandingCap = 100_000m;
-    /// <summary>รอบ 287 (คำสั่งเจ้าของ · 287-1): ค่าตั้งต้นของ "ส่งเอกสารทันที" = เปิด — ตัวตั้งเดียวของ entity และของผู้อ่านเมื่อไม่มีแถวค่าตั้ง</summary>
+    /// <summary>รอบ 287 (คำสั่งเจ้าของ · 287-1): ค่าตั้งต้นของ "ส่งเอกสารทันที" = เปิด — ตัวตั้งเดียวของ entity และของผู้อ่านเมื่อไม่มีแถวค่าตั้ง (commit f65a7f4e)</summary>
     public const bool DefaultSendImmediately = true;
     /// <summary>ฝ่ายค้าน HIGH-3: เพดานยอดล่วงหน้าที่ยังไม่ยืนยันรวมต่อผู้ติดต่อ = ยอดสูงสุดที่เคยยืนยันจริงของผู้ติดต่อนั้น × ค่านี้</summary>
     public const decimal ContactOutstandingFactor = 1m;
