@@ -2990,7 +2990,8 @@ public partial class DocumentService : IDocumentService
 
         // รอบ 283 ฝ่ายค้าน MED-A1: ใบหลักฐานคู่การชำระ (ใบสำคัญจ่ายหลักฐาน · ใบเสร็จหลักฐานฝั่งขาย) แก้ได้เฉพาะหมายเหตุ — เดิมร่างแก้ยอด/ภาษีได้ ⇒ อนุมัติแล้ว 50 ทวิ
         // ใบที่สอง + VAT เข้าแดชบอร์ด · ส่งค่าเดิมทั้งชุด (ฟอร์ม) ⇒ บันทึกหมายเหตุ · แตะยอด/บรรทัด/ผู้ติดต่อ/วันที่ ⇒ ปฏิเสธพร้อมทางไปต่อ (ไม่ silent no-op)
-        if (doc.IsSettlementReceipt)
+        // (ขอเปลี่ยนใบต้นทาง = ด่าน RL-SOURCE เดิมด้านล่างปฏิเสธใบหลักฐานเอง — ไม่ดักที่นี่เพื่อให้รหัสกฎเดิม)
+        if (doc.IsSettlementReceipt && (request.RelatedDocumentId == null || request.RelatedDocumentId == doc.RelatedDocumentId))
         {
             var cur = doc.Lines.Where(l => !l.IsDeleted).OrderBy(l => l.LineOrder)
                 .Select(l => (l.Quantity, l.UnitPrice, l.DiscountPercent, l.VatRate, l.WithholdingTaxRate)).ToList();

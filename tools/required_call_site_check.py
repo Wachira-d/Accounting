@@ -22595,7 +22595,7 @@ RULES += [
 ]
 REVIEWER_CASES += [
     ("R283-1", "ProcessAsync", "IssuePaymentVoucherDocument: true", "IssuePaymentVoucherDocument: false", True),
-    ("R283-4", "UpdateDocumentAsync", "if (doc.IsSettlementReceipt)\n        {\n            var cur", "if (false)\n        {\n            var cur", True),
+    ("R283-4", "UpdateDocumentAsync", "if (doc.IsSettlementReceipt && (request.RelatedDocumentId == null", "if (false && (request.RelatedDocumentId == null", True),
     ("R283-3", "CreatePaymentAsync", "doc.PartnerSourceLinkId != null)", "false)", True),
     ("R283-2", "CreateSettlementPaymentVoucherCoreAsync", "WithholdingTaxAmount = SettlementPaymentVoucher.WithholdingTaxAmount", "WithholdingTaxAmount = payment.WithholdingTaxAmount", True),
 ]

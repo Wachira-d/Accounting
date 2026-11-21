@@ -99,10 +99,10 @@ public class SettlementPaymentVoucherRound283Tests
         var cur = new List<(decimal, decimal, decimal, decimal, decimal)> { (1m, 10_400m, 0m, 0m, 0m) };
         var c = Guid.NewGuid(); var d = new DateTime(2026, 11, 21);
         Assert.False(SettlementPaymentVoucher.EvidenceEditTouchesMoney(cur, null, c, null, d, null));
-        Assert.False(SettlementPaymentVoucher.EvidenceEditTouchesMoney(cur, new() { (1m, 10_400m, 0m, 0m, 0m) }, c, c, d, d));
-        Assert.True(SettlementPaymentVoucher.EvidenceEditTouchesMoney(cur, new() { (1m, 10_400m, 0m, 7m, 0m) }, c, c, d, d));
-        Assert.True(SettlementPaymentVoucher.EvidenceEditTouchesMoney(cur, new() { (1m, 10_400m, 0m, 0m, 3m) }, c, null, d, null));
-        Assert.True(SettlementPaymentVoucher.EvidenceEditTouchesMoney(cur, new(), c, null, d, null));
+        Assert.False(SettlementPaymentVoucher.EvidenceEditTouchesMoney(cur, new List<(decimal, decimal, decimal, decimal, decimal)> { (1m, 10_400m, 0m, 0m, 0m) }, c, c, d, d));
+        Assert.True(SettlementPaymentVoucher.EvidenceEditTouchesMoney(cur, new List<(decimal, decimal, decimal, decimal, decimal)> { (1m, 10_400m, 0m, 7m, 0m) }, c, c, d, d));
+        Assert.True(SettlementPaymentVoucher.EvidenceEditTouchesMoney(cur, new List<(decimal, decimal, decimal, decimal, decimal)> { (1m, 10_400m, 0m, 0m, 3m) }, c, null, d, null));
+        Assert.True(SettlementPaymentVoucher.EvidenceEditTouchesMoney(cur, new List<(decimal, decimal, decimal, decimal, decimal)>(), c, null, d, null));
         Assert.True(SettlementPaymentVoucher.EvidenceEditTouchesMoney(cur, null, c, Guid.NewGuid(), d, null));
         Assert.True(SettlementPaymentVoucher.EvidenceEditTouchesMoney(cur, null, c, null, d, d.AddDays(1)));
     }
