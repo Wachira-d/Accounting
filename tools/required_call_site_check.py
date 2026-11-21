@@ -22683,7 +22683,7 @@ RULES += [
                "i.Status == PaymentIntentStatus.Succeeded", "TrustedSlipPayerRule.ReviewDueUtc(",
                "CompanyOutstandingCap: settings?.SlipTrustedCompanyOutstandingCap", "ContactBlocked: blocked"],
          before=[("JobLock.RunExclusiveAsync(", "new SlipIntentConfirmService(")],
-         forbid=["CreatePaymentAsync(", "ApplyChargeAsync(", "TrustVerifiedAt"],
+         forbid=["CreatePaymentAsync(", "ApplyChargeAsync(", "SetProperty(i => i.TrustVerifiedAt"],
          why=_R286_WHY + "บันทึกล่วงหน้าเฉพาะเมื่อด่าน 282 ผ่านครบ + ค่าตั้งทั้งสองเปิด · เพดานต่อวันตัดสินซ้ำใต้ล็อกต่อกุญแจ · เงินลงผ่านเส้นยืนยันตัวเดียว · "
              + "ผลจริงจากสถานะรายการ · ห้ามประทับ \"ยืนยันแล้ว\" เอง (F2 ข้อ 3)"),
     dict(file=_R286_TRUST, method="StampKeyFromSlipAsync", must=["TrustedSlipPayerRule.KeyFrom(", "money.Auto ? money.AccountId : null", "Fingerprint(companyId, key)"],

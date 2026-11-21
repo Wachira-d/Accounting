@@ -292,7 +292,7 @@ public class TrustedSlipPayerRound286DbTests
     {
         using var db = DbTestDatabase.TryCreateContext();
         if (db == null) { _out.WriteLine(Skip); return; }
-        var s = await SeedAsync(db, dailyCap: 2_000m);
+        var s = await SeedAsync(db);
         var v = Build(db, s);
         await FirstTrustedAsync(db, s, v);
         // ต่อครั้ง: 1,070 × 1.5 = 1,605 ⇒ 2,140 เกิน

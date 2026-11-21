@@ -140,15 +140,17 @@ public sealed class SlipAutoRecordService
         }
         // รอบ 286 (คำสั่งเจ้าของ): ด่าน 282 ผ่านครบเหลือแต่ "ไม่มีรายการเดินบัญชี" ⇒ ผู้จ่ายที่ไว้ใจได้บันทึกล่วงหน้า (ตัวตัดสินเดียว TrustedSlipPayerRule · ตรวจย้อนภายหลัง) ·
         // ทุกสลิปที่ผูกใบประทับกุญแจไว้ให้เรียนเมื่อรายการเดินบัญชีตามมา · ไม่ใช่ผู้จ่ายที่ไว้ใจได้/เกินเพดาน ⇒ หน้ายืนยันเหมือน 282 + เหตุ
+        var trustNote = "";
         if (_trusted != null && doc != null)
         {
             var trusted = await _trusted.TryProvisionalAsync(companyId, intentId, reading, verdict, money, sourceKind, ct);
             if (trusted.Recorded) return new(true, trusted.Code, trusted.Reason);
             if (verdict.Code == SlipAutoRecordRule.Codes.NoBankLine && trusted.Code is TrustedSlipPayerRule.Codes.Revoked or TrustedSlipPayerRule.Codes.OverMax
-                    or TrustedSlipPayerRule.Codes.OverDaily or TrustedSlipPayerRule.Codes.NoCap or SlipAutoRecordRule.Codes.ConfirmFailed)
-                lineNote = (lineNote == null ? "" : lineNote + " · ") + "ผู้จ่ายที่ไว้ใจได้: " + trusted.Reason;
+                    or TrustedSlipPayerRule.Codes.OverDaily or TrustedSlipPayerRule.Codes.NoCap or TrustedSlipPayerRule.Codes.OverOutstanding
+                    or TrustedSlipPayerRule.Codes.ContactBlocked or SlipAutoRecordRule.Codes.ConfirmFailed)
+                trustNote = "ผู้จ่ายที่ไว้ใจได้: " + trusted.Reason + " · ";   // ขึ้นก่อน (เหตุบนรายการตัดที่ 500 ตัวอักษร)
         }
-        var reason = verdict.Reason + (lineNote == null ? "" : " · " + lineNote);
+        var reason = trustNote + verdict.Reason + (lineNote == null ? "" : " · " + lineNote);
         await StampAsync(companyId, intentId, verdict.Code, reason, "SlipAutoRecordBlocked", verdict, money, ct);
         // ค่าตั้งปิด = พฤติกรรม 260 เดิม (ประตูแจ้งโอนแจ้งทีมแล้ว) · อื่น ๆ = วิธีสำรองของคำสั่งเจ้าของ: แจ้งให้ยืนยันพร้อมเหตุ + ลิงก์หน้ายืนยัน
         if (verdict.Code != SlipAutoRecordRule.Codes.SettingOff)
