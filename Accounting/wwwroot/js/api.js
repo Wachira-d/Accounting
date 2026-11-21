@@ -1645,6 +1645,9 @@ const API = {
       getPartnerPaymentNotices: () => API.get(`${base}/partner-payment-notices`),
       // รอบ 281: "เส้นทางของใบนี้" ระหว่างคู่ค้า (ทั้งสองทิศตามสิทธิ์ · สถานะจากเซิร์ฟเวอร์)
       getPartnerJourney: (documentId) => API.get(`${base}/partner-journey${documentId ? `?documentId=${encodeURIComponent(documentId)}` : ''}`),
+      // รอบ 283: การจ่ายใบซื้อจากคู่ค้าที่ยังไม่มีใบสำคัญจ่าย + ออกย้อนหลังทีละรายการ (ไม่ลงบัญชีซ้ำ)
+      getPartnerPaymentsWithoutVoucher: () => API.get(`${base}/partner-payments/without-voucher`),
+      issuePartnerPaymentVoucher: (paymentId) => API.post(`${base}/partner-payments/${encodeURIComponent(paymentId)}/payment-voucher`, {}),
       recordPartnerPaymentNotice: (id, d) => API.post(`${base}/partner-payment-notices/${encodeURIComponent(id)}/record`, d || {}),
       dismissPartnerPaymentNotice: (id, reason) => API.post(`${base}/partner-payment-notices/${encodeURIComponent(id)}/dismiss`, { reason: reason || null }),
       confirmPartnerOriginal: (id, kind) => API.post(`${base}/partner-purchase-drafts/${encodeURIComponent(id)}/confirm-original`, { kind: kind || 'Paper' }),

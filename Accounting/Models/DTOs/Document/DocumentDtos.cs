@@ -989,6 +989,8 @@ public record DocumentResponse(
     string? OriginModule = null,
     /// <summary>รอบ 283: ป้ายที่มาของใบ (เซิร์ฟเวอร์ตัดสิน · <c>Helpers/SettlementPaymentVoucher.OriginLabel</c>) — เช่น "⚙️ ระบบสร้างจากคู่ค้า" · null = ไม่มีป้าย</summary>
     string? OriginLabel = null,
+    /// <summary>รอบ 283: ข้อความ "ขั้นต่อไป" ของใบตั้งหนี้ฝั่งซื้อ (บันทึกชำระแล้วได้ใบสำคัญจ่ายไหม) — <c>SettlementPaymentVoucher.PayNextStepHint</c> · null = ไม่ใช่ใบตั้งหนี้ฝั่งซื้อ</summary>
+    string? PayNextStepHint = null,
     /// <summary>มีป้าย "ออก e-Tax อัตโนมัติไม่สำเร็จ" ค้างอยู่ (<c>Helpers/EtaxAutoFailedNote</c>) — เซิร์ฟเวอร์ตัดสิน
     /// หน้าเว็บแสดงแถบเตือน (ห้ามค้นป้ายเองใน JS) · ป้ายถูกล้างเมื่อออก e-Tax สำเร็จ (รอบ 193 ฝ่ายค้าน P-3)</summary>
     bool EtaxAutoFailed = false,
