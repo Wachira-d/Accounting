@@ -3319,6 +3319,33 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
 - เทสต์ pure `SlipAutoRecordRound282Tests` · Db `SlipAutoRecordRound282DbTests` + `PartnerOutboundRound264P4DbTests` (รอบ282_หน้าชำระ…) · migration `Round282Migration` ·
   Last verified commit 181fe606 (ชุดแก้ฝ่ายค้าน) · 14abedf7
 
+### 2.12g-286 รอบ 286 "ผู้จ่ายที่ไว้ใจได้ — สลิปเหมือนเดิม ต่างแค่วันที่/เลขอ้างอิง ⇒ บันทึกรับเงินล่วงหน้า + ตรวจย้อน" (คำสั่งเจ้าของ · คำตัดสิน 286-1…286-9)
+
+- **กุญแจ (286-1)** — `Helpers/TrustedSlipPayerRule.KeyFrom`: บริษัท + ผู้ติดต่อของใบ + ธนาคารผู้โอน + เลขบัญชีผู้โอนตามรูปบนสลิป (เห็น ≥ 4 หลัก) + ชื่อผู้โอน
+  (ปรับช่องว่าง/ตัวพิมพ์เท่านั้น · ไม่ fuzzy · ไม่ตัดคำนำหน้า) + บัญชีผู้รับของเรา (ต้องตรงบัญชีเดียว `SlipMoneySource.Decide` Auto) · เก็บ HMAC (`Fingerprint`
+  · กุญแจจาก Jwt:Secret · fail-fast) บน `PaymentIntent.TrustKeyHash/Label/AccountId` — **ไม่เก็บชื่อดิบ** · ทุกสลิปที่ผูกใบผ่าน 282 ถูกประทับกุญแจ (`TrustedSlipPayerService.StampKeyFromSlipAsync`)
+- **เกิดความไว้ใจ (286-2)** — `TrustedSlipVerifyService.LearnAsync` (ตัวตั้ง `Proven`): การชำระของเอกสารยอดเท่าสลิป ผูกกับรายการเดินบัญชีเงินเข้าของบัญชีในกุญแจ —
+  (ก) เส้น 282 ตัดชำระจากรายการเดินบัญชีทันที (เรียนทันทีใน `SlipAutoRecordService.TryAutoAsync`) · (ข) ผู้ขายกดยืนยันแล้วรายการเดินบัญชีถูกจับคู่ภายหลัง (รอบงาน) ·
+  **กดยืนยันอย่างเดียวไม่เกิด** · ตาราง `TrustedSlipPayers` (unique บริษัท × ลายนิ้วมือ · ยอดสูงสุดที่ยืนยัน · จำนวน · ถอน) · audit `TrustedPayerLearned/ConfirmedAgain`
+- **ใช้ความไว้ใจ (286-3)** — `TrustedSlipPayerRule.Decide` หลังด่าน 282 ผ่านครบเหลือแต่ `NoBankLine`: ค่าตั้ง `SlipTrustedAutoEnabled` (ค่าตั้งต้น**ปิด**) **และ** `SlipAutoRecordEnabled` ·
+  กุญแจตรงทุกช่อง · ไม่ถูกถอน · ยอด ≤ ยอดสูงสุดที่ยืนยัน × 1.5 · รวมวันนี้ของกุญแจ ≤ `SlipTrustedDailyCapPerKey` (ตั้งต้น 50,000 · ตัดสินซ้ำใต้ `JobLock` ต่อกุญแจ) ⇒
+  `SlipIntentConfirmService.ConfirmAsync` (actor `slip-trusted` · วันรับเงิน = วันบนสลิป · บัญชีที่สลิปชี้) ⇒ `CreatePaymentAsync` เดิม · ประทับ `TrustProvisionalAt` +
+  `TrustReviewDueAt` (สิ้นวันทำการที่ N หลังวันบนสลิป · `SlipTrustedReviewBusinessDays` ตั้งต้น 3 · `BusinessDayCalendar.AddBusinessDays` + วันหยุดแพลตฟอร์ม) ·
+  `AutoRecordCode = TrustedProvisional` · audit `SlipTrustedProvisional` · แจ้ง `autopilot.slip_trusted_provisional` · ตอบผู้ซื้อ "บันทึกรับเงินแล้ว" ·
+  ไม่ผ่าน (ไม่ไว้ใจ/ถอน/เกินเพดาน) ⇒ หน้ายืนยันของ 282 + เหตุของผู้จ่ายที่ไว้ใจได้ต่อท้าย
+- **ใบเสร็จ/ใบกำกับ (286-6)** — ออกทันทีตามเส้นเดิมของ `CreatePaymentAsync` (เหมือนผู้ขายกดยืนยัน) ไม่รอรายการเดินบัญชี — เหตุ: งานบริการ §78/1 จุดความรับผิด = วันรับเงิน
+  ต้องออกใบกำกับทันที (ไม่ออก/ออกช้า = §89(2)) และ ภ.พ.30 ของเดือนนั้นต้องรวม · สลิปปลอม ⇒ ผู้ขายยกเลิกการรับเงิน + ออกใบยกเลิก (ภาษีขายเกินชั่วคราว = ทิศที่ไม่ถูกปรับ)
+- **ตรวจย้อน (286-4)** — `BankReceiptSettleService.EvaluateLineAsync` เรียก `TrustedSlipVerifyService.TryVerifyLineAsync` **ก่อน**หาใบค้าง: บัญชี/ยอดตรง · วันบรรทัด −1…+7 วันจากวันบนสลิป ·
+  เลขอ้างอิงธนาคารตรงหนึ่งเดียว หรือผู้สมัครเดียว ⇒ ผูกบรรทัดกับการชำระ**เดิม** (ไม่สร้างการชำระที่สอง · `MatchRuleCode = SLIP-TRUSTED-PAYER`) + `TrustVerifiedAt` + audit
+  `SlipTrustedVerified` + นับเข้ากุญแจ · รอบงาน `AutopilotJob` ขั้น TrustedSlipPayers (`SweepAsync`) ทำซ้ำ + ยอมรับการจับคู่มือที่หน้ากระทบยอด
+- **ไม่พบ (286-5)** — ครบกำหนด หรือการชำระถูกยกเลิก ⇒ `FailAsync`: `TrustFailedAt` + `AutoRecordCode = TrustUnverified` + **ถอนความไว้ใจของกุญแจอัตโนมัติ** (`RevokedBy = system`) + audit
+  `SlipTrustedUnverified` + แจ้งแรง `autopilot.slip_trusted_unverified` (ลิงก์เอกสาร · ทางเลือก "ยกเลิกการรับเงินนี้") — **ระบบไม่ยกเลิกเงินเอง** · บรรทัดมาหลังกำหนด ⇒ ยืนยัน (ความไว้ใจยังถอน)
+- **ผู้ขายดู/ถอน/ให้คืน (286-7)** — แท็บ LINE ของหน้าตั้งค่า: ค่าตั้ง 3 ช่อง + ประโยคความเสี่ยง (`TrustedSlipPayerRule.RiskNotice` · server computes) + รายชื่อ
+  `GET line-config/trusted-payers` (ป้ายธนาคาร + เลขปิดบาง · ไม่มีชื่อ) · `POST …/{id}/revoke|reinstate` (สิทธิ์แก้ค่าตั้งบริษัท · ห้ามคีย์ API · audit)
+- ทุกทางเข้า (แชต/กลุ่ม OA บริษัท · กลุ่ม OA กลาง · อีเมล) เดินผ่าน `SlipAutoRecordService.TryAutoAsync` ตัวเดียว · ไม่มี AI (กติกาเชิงกุญแจ · kill-switch) ·
+  เทสต์ pure `TrustedSlipPayerRound286Tests` · Db `TrustedSlipPayerRound286DbTests` · migration `Round286Migration` · กติกา `_R286_*`
+  Last verified commit (เติมในคอมมิตตามหลัง)
+
 ### 2.12g-264-P2 รอบ 264 แพ็ก P2 "อ่านบัญชีจากสลิป — QR ตรวจสลิป + ผู้โอน/ผู้รับ" (`erp-review/2026-11-12/team-264-a2b-design.md` §3.2/§4 · คำตัดสิน 264-4-1…8)
 
 - **QR (264-4-1)** — `TesseractSlipImageReader.ReadAsync` ถอด QR ในเครื่องก่อน OCR (`SlipQrImageDecoder` = SkiaSharp → ZXing.Net 0.16.9 · ไม่เรียกเครือข่าย · ล้ม = null) ⇒

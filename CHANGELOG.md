@@ -7515,3 +7515,10 @@ LOW-1 "ส่งได้บางส่วน" · LOW-2 การ์ด `#HeyNe
 - 284-4 (T3 MED-5 ส่วนที่ค้าง): `GET document/{id}/receipt-line-default` — ฟอร์มใบเสร็จไม่มีสำเนาข้อความไทย
 - 284-6: ข้อความ "URL ของระบบ" ชี้หน้า `/admin/system-email.html` ช่อง App Base URL (`SystemBaseUrl.AdminPagePath/AdminPageHint`) + ป้าย app.nextacc.com ไม่ใช่โดเมนเรา
 - 284-5: ด่าน `reports/month-snapshot` — ไม่ทำแยก (รายงานทั้ง AccountingController ไม่มีคีย์สิทธิ์) ⇒ คำถามเจ้าของ · เทสต์ `PackFRound284Tests` + Db `PackFRound284DbTests` · commit 6e5036e6
+
+## รอบ 286 (2026-11-21 · ผู้จ่ายที่ไว้ใจได้ · `erp-review/2026-11-21/dev-286-trusted-payer-slip.md`)
+
+- คำสั่งเจ้าของ: สลิปที่เคยยืนยัน + จับผู้โอน/เลขบัญชีได้ ⇒ ครั้งถัดไปที่เหมือนเดิม (ต่างแค่วันที่/ref) อนุมัติเอง — ทำพร้อมรั้ว: ความไว้ใจเกิดจากรายการเดินบัญชีจริงเท่านั้น ·
+  บันทึก**ล่วงหน้า** (ค่าตั้งต้นปิด · ≤ ยอดสูงสุด × 1.5 · เพดานต่อวัน) แล้วตรวจย้อนในงานตัดชำระเดิม · ไม่พบใน N วันทำการ ⇒ แจ้งแรง + ถอนอัตโนมัติ (ไม่ยกเลิกเงินเอง)
+- `Helpers/TrustedSlipPayerRule` · `TrustedSlipPayerService` · `TrustedSlipVerifyService` · ตาราง `TrustedSlipPayers` · `Round286Migration` · หน้าตั้งค่าแท็บ LINE + `line-config/trusted-payers`
+- เทสต์ `TrustedSlipPayerRound286Tests` + Db `TrustedSlipPayerRound286DbTests` · คำตัดสิน 286-1…286-9

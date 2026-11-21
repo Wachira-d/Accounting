@@ -22568,5 +22568,49 @@ REVIEWER_CASES += [
     ("R284-3", "ExportBankTransfer", "PayrollExportSheets.BankTransferSummaryOf(rows)", "default!", True),
 ]
 
+# รอบ 286 (คำสั่งเจ้าของ: ผู้จ่ายที่ไว้ใจได้ — สลิปเหมือนเดิมต่างแค่วันที่/ref ⇒ อนุมัติอัตโนมัติ + รั้วที่ทีมเพิ่ม) — คำตัดสิน 286-1…286-9
+_R286_WHY = "รอบ 286 (ผู้จ่ายที่ไว้ใจได้): "
+_R286_TRUST = "Services/Implementations/TrustedSlipPayerService.cs"
+_R286_VERIFY = "Services/Implementations/TrustedSlipVerifyService.cs"
+RULES += [
+    dict(file=_R282_AUTO, method="TryAutoAsync",
+         must=["_trusted.TryProvisionalAsync(companyId, intentId, reading, verdict, money, sourceKind, ct)", "_trusted.StampKeyFromSlipAsync(",
+               "_trustVerify.LearnAsync(companyId, intentId,"],
+         before=[("var verdict = SlipAutoRecordRule.Decide(", "_trusted.TryProvisionalAsync(")],
+         why=_R286_WHY + "ทุกทางเข้าของสลิปเดินตัวตัดสินเดียวหลังด่าน 282 · สลิปที่รายการเดินบัญชียืนยันแล้วเรียนกุญแจทันที"),
+    dict(file=_R286_TRUST, method="TryProvisionalAsync",
+         must=["TrustedSlipPayerRule.Decide(", "slipVerdict.Code == SlipAutoRecordRule.Codes.NoBankLine", "SlipTrustedAutoEnabled: true, SlipAutoRecordEnabled: true",
+               "JobLock.RunExclusiveAsync(_db, AdvisoryLockKey.TrustedSlipPayer,", "new SlipIntentConfirmService(_db, _intents).ConfirmAsync(",
+               "i.Status == PaymentIntentStatus.Succeeded", "TrustedSlipPayerRule.ReviewDueUtc("],
+         before=[("JobLock.RunExclusiveAsync(", "new SlipIntentConfirmService(")],
+         forbid=["CreatePaymentAsync(", "ApplyChargeAsync(", "TrustVerifiedAt"],
+         why=_R286_WHY + "บันทึกล่วงหน้าเฉพาะเมื่อด่าน 282 ผ่านครบ + ค่าตั้งทั้งสองเปิด · เพดานต่อวันตัดสินซ้ำใต้ล็อกต่อกุญแจ · เงินลงผ่านเส้นยืนยันตัวเดียว · "
+             + "ผลจริงจากสถานะรายการ · ห้ามประทับ \"ยืนยันแล้ว\" เอง (F2 ข้อ 3)"),
+    dict(file=_R286_TRUST, method="StampKeyFromSlipAsync", must=["TrustedSlipPayerRule.KeyFrom(", "money.Auto ? money.AccountId : null", "Fingerprint(companyId, key)"],
+         why=_R286_WHY + "กุญแจจากผลอ่านสลิป (ไม่ใช่ความคล้ายรูป) · บัญชีผู้รับต้องตรงบัญชีเดียวของบริษัท · ลายนิ้วมือ HMAC ตัวเดียว (ไม่เก็บชื่อ)"),
+    dict(file=_R286_VERIFY, method="Proven",
+         must=["t.MatchedPaymentId == p.Id", "t.BankAccountId == i.TrustKeyAccountId", "p.Amount == i.Amount", "i.TrustProvisionalAt == null || i.TrustVerifiedAt != null"],
+         why=_R286_WHY + "ความไว้ใจเกิดเฉพาะเมื่อการชำระยอดเดียวกันผูกกับรายการเดินบัญชีของบัญชีในกุญแจ — การกดยืนยันอย่างเดียวไม่พอ · รายการล่วงหน้าต้องผ่านการตรวจก่อน"),
+    dict(file=_R286_VERIFY, method="LinkAsync",
+         must=["t.ReconciliationStatus == ReconciliationStatus.Unmatched", "t.MatchedPaymentId == null", "pay.Amount != p.Amount", "await tx.CommitAsync(ct)"],
+         forbid=["CreatePaymentAsync("],
+         why=_R286_WHY + "รายการเดินบัญชีผูกกับการชำระเดิม (ไม่สร้างการชำระที่สอง) · ยอด/บัญชีต้องตรง · ประทับยืนยัน + audit ในธุรกรรมเดียว"),
+    dict(file=_R286_VERIFY, method="FailAsync",
+         must=["i.TrustFailedAt == null && i.TrustVerifiedAt == null", "t.RevokedAt, (DateTime?)nowUtc", "NotificationEvents.AutopilotSlipTrustedUnverified"],
+         forbid=["IsDeleted, true", "DeletePaymentAsync(", "VoidPaymentAsync("],
+         why=_R286_WHY + "ไม่พบเงินเข้า ⇒ ถอนความไว้ใจอัตโนมัติ + แจ้งแรง · ระบบไม่ยกเลิกการรับเงินเอง (ผู้ขายเลือก)"),
+    dict(file="Services/Implementations/BankReceiptSettleService.cs", method="EvaluateLineAsync",
+         must=["_trustVerify.TryVerifyLineAsync(companyId, line, nowUtc, ct)"],
+         before=[("_trustVerify.TryVerifyLineAsync(", "await DecideAsync(companyId, line, companyEnabled, ct)")],
+         why=_R286_WHY + "งานตัดชำระเดิมตรวจย้อนรายการล่วงหน้าก่อนหาใบค้าง (ไม่งั้นบรรทัดไปตัดใบอื่น/รายการล่วงหน้าถูกแจ้งว่าไม่พบเงินผิด ๆ)"),
+    dict(file="Services/Background/AutopilotJob.cs", method="ExecuteAsync", must=["GetRequiredService<TrustedSlipVerifyService>().SweepAsync(DateTime.UtcNow, stoppingToken)"],
+         why=_R286_WHY + "รอบงานเรียน/ตรวจย้อน/ถอนอัตโนมัติถูกต่อสาย"),
+]
+REVIEWER_CASES += [
+    ("R286-1", "TryProvisionalAsync", "slipVerdict.Code == SlipAutoRecordRule.Codes.NoBankLine", "true", True),
+    ("R286-2", "Proven", "t.MatchedPaymentId == p.Id", "true", True),
+    ("R286-3", "EvaluateLineAsync", "_trustVerify.TryVerifyLineAsync(companyId, line, nowUtc, ct)", "false", True),
+]
+
 if __name__ == "__main__":
     sys.exit(main())
