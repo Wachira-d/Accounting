@@ -31,7 +31,7 @@ public class TrustedSlipPayerRound286DbTests
 
     private sealed record Seed(Guid CompanyId, Guid ContactId, Guid BankId, LocalDiskFileStorage Storage);
 
-    private static async Task<Seed> SeedAsync(AccountingDbContext db, bool trustedOn = true, decimal dailyCap = 50_000m)
+    private static async Task<Seed> SeedAsync(AccountingDbContext db, bool trustedOn = true, decimal dailyCap = 50_000m, decimal companyCap = 100_000m)
     {
         var tag = Guid.NewGuid().ToString("N")[..6];
         var company = new Company { Name = "สำนักงาน 286 " + tag, TaxId = "0105556000007", IsVatRegistered = true };
@@ -39,7 +39,7 @@ public class TrustedSlipPayerRound286DbTests
         await db.SaveChangesAsync();
         db.CompanySettings.Add(new CompanySettings
         {
-            CompanyId = company.Id, SlipAutoRecordEnabled = true, BankAutoSettleEnabled = true, SlipTrustedAutoEnabled = trustedOn, SlipTrustedDailyCapPerKey = dailyCap,
+            CompanyId = company.Id, SlipAutoRecordEnabled = true, BankAutoSettleEnabled = true, SlipTrustedAutoEnabled = trustedOn, SlipTrustedDailyCapPerKey = dailyCap, SlipTrustedCompanyOutstandingCap = companyCap,
         });
         ChartOfAccount Gl(string code, string name, AccountType type)
         {
@@ -169,9 +169,9 @@ public class TrustedSlipPayerRound286DbTests
             Assert.DoesNotContain("สมชาย", row.Label + row.KeyHash);   // PDPA: ไม่เก็บชื่อผู้โอน
         }
 
-        // สลิปครั้งที่สอง: ผู้โอนเดิมทุกช่อง ต่างแค่เลขอ้างอิง (+ ยอดไม่เกิน 1,605) · ยังไม่มีรายการเดินบัญชี ⇒ บันทึกล่วงหน้า
-        var inv2 = await InvoiceAsync(db, s, 1_200m);
-        var res2 = await v.Line.HandleForwardedAsync(Fwd(s, Slip(1_284m, "286SECONDREF002")));
+        // สลิปครั้งที่สอง: ผู้โอนเดิมทุกช่อง ต่างแค่เลขอ้างอิง · ยอดค้างยืนยันไม่เกินยอดสูงสุดที่เคยยืนยัน (ฝ่ายค้าน HIGH-3) · ยังไม่มีรายการเดินบัญชี ⇒ บันทึกล่วงหน้า
+        var inv2 = await InvoiceAsync(db, s);
+        var res2 = await v.Line.HandleForwardedAsync(Fwd(s, Slip(1_070m, "286SECONDREF002")));
         Assert.Contains("บันทึกรับเงิน", res2.Reply);
         using (var c = DbTestDatabase.TryCreateContext()!)
         {
@@ -182,13 +182,14 @@ public class TrustedSlipPayerRound286DbTests
             Assert.Null(intent.TrustVerifiedAt);
             Assert.Equal(TrustedSlipPayerRule.Codes.Provisional, intent.AutoRecordCode);
             var pay = await c.Payments.AsNoTracking().SingleAsync(p => p.CompanyId == s.CompanyId && p.DocumentId == inv2.Id);
-            Assert.Equal(1_284m, pay.Amount);
+            Assert.Equal(1_070m, pay.Amount);
+            Assert.True(await TrustedSlipVerifyService.DeliveryHeldAsync(c, s.CompanyId, pay.Id));   // ฝ่ายค้าน MED-1: ยังไม่ส่งถึงผู้ซื้อ
             Assert.Equal(SlipDay, pay.PaymentDate.Date);
             Assert.True(await c.AuditLogs.AnyAsync(a => a.CompanyId == s.CompanyId && a.EntityId == intent.Id.ToString() && a.NewValues!.Contains("SlipTrustedProvisional")));
         }
 
         // รายการเดินบัญชีตามมา ⇒ งานตัดชำระเดิม (EvaluateLineAsync) ยืนยันรายการล่วงหน้า — ผูกกับการชำระเดิม ไม่สร้างการชำระที่สอง
-        var lineId = await AddLineAsync(db, s, 1_284m, "286SECONDREF002");
+        var lineId = await AddLineAsync(db, s, 1_070m, "286SECONDREF002");
         await v.Bank.EvaluateLineAsync(s.CompanyId, lineId, true, DateTime.UtcNow);
         using (var c = DbTestDatabase.TryCreateContext()!)
         {
@@ -201,7 +202,8 @@ public class TrustedSlipPayerRound286DbTests
             Assert.Equal(TrustedSlipPayerRule.RuleCode, line.MatchRuleCode);
             var row = await c.TrustedSlipPayers.AsNoTracking().SingleAsync(t => t.CompanyId == s.CompanyId);
             Assert.Equal(2, row.ConfirmedCount);
-            Assert.Equal(1_284m, row.MaxConfirmedAmount);
+            Assert.Equal(1_070m, row.MaxConfirmedAmount);
+            Assert.False(await TrustedSlipVerifyService.DeliveryHeldAsync(c, s.CompanyId, pays[0].Id));   // ยืนยันแล้ว ⇒ ปล่อยการส่ง
         }
     }
 
@@ -245,7 +247,19 @@ public class TrustedSlipPayerRound286DbTests
             Assert.False(await c.Payments.AnyAsync(p => p.CompanyId == s.CompanyId && p.DocumentId == inv3.Id));
             var pending = await c.PaymentIntents.AsNoTracking().SingleAsync(i => i.CompanyId == s.CompanyId && i.SourceId == inv3.Id);
             Assert.Equal(SlipAutoRecordRule.Codes.NoBankLine, pending.AutoRecordCode);
-            Assert.Contains("ถูกถอน", pending.AutoRecordReason);
+            Assert.Contains("ถูกล็อก", pending.AutoRecordReason);
+            Assert.NotNull((await c.Contacts.AsNoTracking().SingleAsync(x => x.Id == s.ContactId)).SlipTrustBlockedAt);
+        }
+
+        // ฝ่ายค้าน HIGH-3: ผู้ติดต่อถูกล็อก ⇒ สลิปจริงของผู้โอนใหม่ (ชื่ออื่น) ที่รายการเดินบัญชียืนยันก็ไม่สร้างกุญแจใหม่
+        var invNew = await InvoiceAsync(db, s, 1_100m);
+        await AddLineAsync(db, s, 1_177m, "286BLOCKEDNEW15");
+        await v.Line.HandleForwardedAsync(Fwd(s, Slip(1_177m, "286BLOCKEDNEW15", payerName: "นาย ใหม่ ทดลอง")));
+        await v.Verify.SweepAsync(DateTime.UtcNow);
+        using (var c = DbTestDatabase.TryCreateContext()!)
+        {
+            Assert.True(await c.Payments.AnyAsync(p => p.CompanyId == s.CompanyId && p.DocumentId == invNew.Id));   // เงินจริงลงตามเส้น 282
+            Assert.Equal(1, await c.TrustedSlipPayers.CountAsync(t => t.CompanyId == s.CompanyId));                  // แต่ไม่เกิดกุญแจใหม่
         }
     }
 
@@ -274,7 +288,7 @@ public class TrustedSlipPayerRound286DbTests
     }
 
     [Fact]
-    public async Task T286_04_เกินเพดานต่อครั้ง_และเกินเพดานต่อวัน_หน้ายืนยัน()
+    public async Task T286_04_เกินเพดานต่อครั้ง_และยอดค้างยืนยันต่อผู้ติดต่อ_หน้ายืนยัน()
     {
         using var db = DbTestDatabase.TryCreateContext();
         if (db == null) { _out.WriteLine(Skip); return; }
@@ -284,7 +298,7 @@ public class TrustedSlipPayerRound286DbTests
         // ต่อครั้ง: 1,070 × 1.5 = 1,605 ⇒ 2,140 เกิน
         var big = await InvoiceAsync(db, s, 2_000m);
         await v.Line.HandleForwardedAsync(Fwd(s, Slip(2_140m, "286OVERMAX00007")));
-        // ต่อวัน 2,000: ใบแรก 1,070 ผ่าน · ใบที่สอง 1,070 (รวม 2,140) เกิน
+        // ยอดค้างยืนยันต่อผู้ติดต่อ ≤ ยอดสูงสุดที่เคยยืนยัน 1,070 (ฝ่ายค้าน HIGH-3): ใบแรก 1,070 ผ่าน · ใบที่สองค้างรวม 2,140 เกิน (เพดานต่อวันอยู่ในเทสต์ pure)
         var d1 = await InvoiceAsync(db, s);
         await v.Line.HandleForwardedAsync(Fwd(s, Slip(1_070m, "286DAILY0000008")));
         var d2 = await InvoiceAsync(db, s);
@@ -296,7 +310,7 @@ public class TrustedSlipPayerRound286DbTests
         Assert.NotNull((await c.PaymentIntents.AsNoTracking().SingleAsync(x => x.CompanyId == s.CompanyId && x.SourceId == d1.Id)).TrustProvisionalAt);
         var i2 = await c.PaymentIntents.AsNoTracking().SingleAsync(x => x.CompanyId == s.CompanyId && x.SourceId == d2.Id);
         Assert.Null(i2.TrustProvisionalAt);
-        Assert.Contains("เพดานต่อวัน", i2.AutoRecordReason);
+        Assert.Contains("ยังรอยืนยันของผู้ติดต่อนี้", i2.AutoRecordReason);
         Assert.False(await c.Payments.AnyAsync(p => p.CompanyId == s.CompanyId && (p.DocumentId == big.Id || p.DocumentId == d2.Id)));
     }
 
@@ -364,5 +378,124 @@ public class TrustedSlipPayerRound286DbTests
         using var c3 = DbTestDatabase.TryCreateContext()!;
         var row = await c3.TrustedSlipPayers.AsNoTracking().SingleAsync(t => t.CompanyId == s.CompanyId);
         Assert.Equal(1_070m, row.MaxConfirmedAmount);
+    }
+
+    private static async Task<Guid> PayByOtherMeansAsync(AccountingDbContext db, Seed s, Document inv, decimal amount, string? lineRef)
+    {
+        var pay = await DocSvc(db).CreatePaymentAsync(s.CompanyId, new Accounting.Models.DTOs.Document.CreatePaymentRequest(
+            DocumentId: inv.Id, PaymentDate: SlipDay, Amount: amount, PaymentMethod: PaymentMethod.BankTransfer, Reference: "OTHER-" + Guid.NewGuid().ToString("N")[..8],
+            BankAccount: null, Notes: "ทางอื่น", OverrideBankAccountId: s.BankId, WithholdingTaxAmount: 0m), "test", PaymentEntrySource.Manual);
+        var lineId = await AddLineAsync(db, s, amount, lineRef);
+        await db.BankTransactions.Where(t => t.Id == lineId).ExecuteUpdateAsync(u => u.SetProperty(t => t.MatchedPaymentId, (Guid?)pay.Id)
+            .SetProperty(t => t.ReconciliationStatus, ReconciliationStatus.Matched));
+        return pay.Id;
+    }
+
+    [Fact]
+    public async Task T286_07_ฝ่ายค้านHIGH1_สลิปแต่งKรูป_โอนจริงครั้งเดียว_ได้กุญแจเดียวของสลิปที่ผูกจริง()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var s = await SeedAsync(db);
+        var v = Build(db, s);
+        // สลิปแต่ง 3 รูป (ชื่อผู้โอนต่างกัน) ผูก 3 ใบ · ไม่มีรายการเดินบัญชี ⇒ รอยืนยัน · ต่อมาใบทั้งสามถูกจ่ายจริงด้วยทางอื่น (รายการเดินบัญชีไม่มีเลขของสลิป)
+        var fakes = new List<Document>();
+        for (var k = 0; k < 3; k++)
+        {
+            var inv = await InvoiceAsync(db, s);
+            await v.Line.HandleForwardedAsync(Fwd(s, Slip(1_070m, "286FAKE00000" + k, payerName: "นาย ปลอม " + k)));
+            fakes.Add(inv);
+            await PayByOtherMeansAsync(db, s, inv, 1_070m, null);   // ใบนี้ถูกจ่ายจริงด้วยทางอื่น (ปิดก่อนใบถัดไป — ตัวจับคู่สลิปเห็นใบค้างเดียว)
+        }
+        using (var c0 = DbTestDatabase.TryCreateContext()!)
+            Assert.Equal(3, await c0.PaymentIntents.CountAsync(i => i.CompanyId == s.CompanyId && i.TrustKeyHash != null));   // สลิปแต่งถูกประทับกุญแจไว้ (ผู้สมัคร)
+        // สลิปจริงหนึ่งใบ + รายการเดินบัญชีเลขตรง (เส้น 282)
+        await FirstTrustedAsync(db, s, v);
+        await v.Verify.SweepAsync(DateTime.UtcNow);
+        using var c = DbTestDatabase.TryCreateContext()!;
+        var rows = await c.TrustedSlipPayers.AsNoTracking().Where(t => t.CompanyId == s.CompanyId).ToListAsync();
+        Assert.Single(rows);
+        var learned = await c.PaymentIntents.AsNoTracking().Where(i => i.CompanyId == s.CompanyId && i.TrustLearnedAt != null).ToListAsync();
+        Assert.Single(learned);
+        Assert.Equal("286FIRSTREF0001", learned[0].SlipBankRef);
+        Assert.NotNull(learned[0].TrustProofPaymentId);
+    }
+
+    [Fact]
+    public async Task T286_08_ฝ่ายค้านHIGH2_ลูกค้าสุจริตโอนยอดเท่ากันไม่มีเลขอ้างอิง_ไม่ยืนยันสลิปล่วงหน้า()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var s = await SeedAsync(db);
+        var v = Build(db, s);
+        await FirstTrustedAsync(db, s, v);
+        var inv2 = await InvoiceAsync(db, s);
+        await v.Line.HandleForwardedAsync(Fwd(s, Slip(1_070m, "286SUSPECT00016")));   // ล่วงหน้า (อาจแต่ง)
+        // ลูกค้าสุจริตอีกราย มีใบค้างยอดเท่ากัน — โอนจริงโดยรายการเดินบัญชีไม่มีเลขอ้างอิง
+        var honest = new Contact { CompanyId = s.CompanyId, Name = "ร้าน สุจริต จำกัด", IsCustomer = true, ContactType = ContactType.Individual, Address = "2 ถนนพระราม 4" };
+        db.Contacts.Add(honest);
+        await db.SaveChangesAsync();
+        var vat = 70m;
+        var honestInv = new Document
+        {
+            CompanyId = s.CompanyId, ContactId = honest.Id, DocumentType = DocumentType.Invoice, Status = DocumentStatus.Approved,
+            DocumentNumber = "INV286H-" + Random.Shared.Next(100000, 999999), DocumentDate = DateTime.UtcNow.AddHours(7).Date.AddDays(-3),
+            SubTotal = 1_000m, VatAmount = vat, TotalAmount = 1_070m, BalanceDue = 1_070m, Currency = "THB",
+        };
+        honestInv.Lines.Add(new DocumentLine { LineOrder = 1, Description = "ค่าบริการ", Quantity = 1, UnitPrice = 1_000m, Amount = 1_000m, VatRate = 7m, VatAmount = vat });
+        db.Documents.Add(honestInv);
+        await db.SaveChangesAsync();
+        var lineId = await AddLineAsync(db, s, 1_070m, null);
+        await v.Bank.EvaluateLineAsync(s.CompanyId, lineId, true, DateTime.UtcNow);
+        await v.Verify.SweepAsync(DateTime.UtcNow);
+        using var c = DbTestDatabase.TryCreateContext()!;
+        var intent = await c.PaymentIntents.AsNoTracking().SingleAsync(i => i.CompanyId == s.CompanyId && i.SourceId == inv2.Id);
+        Assert.Null(intent.TrustVerifiedAt);
+        var suspectPay = await c.Payments.AsNoTracking().SingleAsync(p => p.CompanyId == s.CompanyId && p.DocumentId == inv2.Id);
+        var line = await c.BankTransactions.AsNoTracking().SingleAsync(t => t.Id == lineId);
+        Assert.NotEqual(suspectPay.Id, line.MatchedPaymentId);
+        Assert.Equal(1, (await c.TrustedSlipPayers.AsNoTracking().SingleAsync(t => t.CompanyId == s.CompanyId)).ConfirmedCount);   // ไม่เสริมกุญแจ
+    }
+
+    [Fact]
+    public async Task T286_09_ฝ่ายค้านMED2_สองรายการเดินบัญชีแข่งกันยืนยันรายการเดียว_ผูกได้บรรทัดเดียว()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var s = await SeedAsync(db);
+        var v = Build(db, s);
+        await FirstTrustedAsync(db, s, v);
+        var inv2 = await InvoiceAsync(db, s);
+        await v.Line.HandleForwardedAsync(Fwd(s, Slip(1_070m, "286RACEREF00017")));
+        var l1 = await AddLineAsync(db, s, 1_070m, "286RACEREF00017");
+        var l2 = await AddLineAsync(db, s, 1_070m, "286RACEREF00017");
+        using var c1 = DbTestDatabase.TryCreateContext()!;
+        using var c2 = DbTestDatabase.TryCreateContext()!;
+        var v1 = new TrustedSlipVerifyService(c1, NullLogger<TrustedSlipVerifyService>.Instance);
+        var v2 = new TrustedSlipVerifyService(c2, NullLogger<TrustedSlipVerifyService>.Instance);
+        var line1 = await c1.BankTransactions.AsNoTracking().SingleAsync(t => t.Id == l1);
+        var line2 = await c2.BankTransactions.AsNoTracking().SingleAsync(t => t.Id == l2);
+        var results = await Task.WhenAll(v1.TryVerifyLineAsync(s.CompanyId, line1, DateTime.UtcNow), v2.TryVerifyLineAsync(s.CompanyId, line2, DateTime.UtcNow));
+        Assert.Equal(1, results.Count(x => x));
+        using var c = DbTestDatabase.TryCreateContext()!;
+        var pay = await c.Payments.AsNoTracking().SingleAsync(p => p.CompanyId == s.CompanyId && p.DocumentId == inv2.Id);
+        Assert.Equal(1, await c.BankTransactions.CountAsync(t => t.CompanyId == s.CompanyId && t.MatchedPaymentId == pay.Id));
+    }
+
+    [Fact]
+    public async Task T286_10_ฝ่ายค้านHIGH3_เพดานยอดค้างยืนยันทั้งบริษัท_เกินแล้วหน้ายืนยัน()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var s = await SeedAsync(db, companyCap: 1_000m);
+        var v = Build(db, s);
+        await FirstTrustedAsync(db, s, v);
+        var inv2 = await InvoiceAsync(db, s);
+        await v.Line.HandleForwardedAsync(Fwd(s, Slip(1_070m, "286COMPANYCAP18")));
+        using var c = DbTestDatabase.TryCreateContext()!;
+        var i = await c.PaymentIntents.AsNoTracking().SingleAsync(x => x.CompanyId == s.CompanyId && x.SourceId == inv2.Id);
+        Assert.Null(i.TrustProvisionalAt);
+        Assert.Contains("ทั้งบริษัท", i.AutoRecordReason);
+        Assert.False(await c.Payments.AnyAsync(p => p.CompanyId == s.CompanyId && p.DocumentId == inv2.Id));
     }
 }
