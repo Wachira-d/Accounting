@@ -3311,7 +3311,7 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
   `PartnerOutboundPaymentService.PurchaseForPayLinkAsync`: โทเคนที่ใช้อยู่ ⇒ ใบผู้ขาย · ลิงก์ InvoiceFlow ปลายทาง = บริษัทผู้ใช้ · คู่ค้า Accepted · สิทธิ์ดูใบซื้อ) ⇒ ช่อง "จ่ายจากบัญชี"
   จาก `Options` เดิม ⇒ ปุ่ม "จ่ายจากระบบของเรา" เดิม (`StartGatewayAsync` — แผนชั้น PayerDeclared อยู่ฝั่งผู้ซื้อ · ผู้ขายเห็นแค่รายการชำระ) · ไม่ล็อกอิน/ไม่ใช่คู่ค้า ⇒ หน้าเดิม
 - เทสต์ pure `SlipAutoRecordRound282Tests` · Db `SlipAutoRecordRound282DbTests` + `PartnerOutboundRound264P4DbTests` (รอบ282_หน้าชำระ…) · migration `Round282Migration` ·
-  Last verified commit (เติมในคอมมิตตามหลัง)
+  Last verified commit 14abedf7
 
 ### 2.12g-264-P2 รอบ 264 แพ็ก P2 "อ่านบัญชีจากสลิป — QR ตรวจสลิป + ผู้โอน/ผู้รับ" (`erp-review/2026-11-12/team-264-a2b-design.md` §3.2/§4 · คำตัดสิน 264-4-1…8)
 

@@ -33,7 +33,7 @@
 
 | ข้อ | สถานะ |
 | --- | --- |
-| 1 ตัวจัดเส้นเดียว | แก้แล้ว — `TaxSlipIntakeService.IntakeAsync` ⇒ `LineChatSlipService.HandleForwardedAsync` ⇒ `CoreAsync` (ปิด 275-D-4 · T1 M5/M6) |
+| 1 ตัวจัดเส้นเดียว | แก้แล้ว 14abedf7 — `TaxSlipIntakeService.IntakeAsync` ⇒ `LineChatSlipService.HandleForwardedAsync` ⇒ `CoreAsync` (ปิด 275-D-4 · T1 M5/M6) |
 | 2 จับคู่ด้วยกุญแจ | แก้แล้ว — ตัวจับคู่ 260 เดิม + `SlipMoneySource` + กันซ้ำ ref QR (`SlipBankRef`) · กันซ้ำแบบ HMAC ของ 272 ใช้กับสลิปภาษีเท่านั้น (สลิปโอนใช้เลขธนาคารจาก QR ตรง ๆ ตามประตูแจ้งโอนเดิม) |
 | 3 มั่นใจ ⇒ บันทึก | แก้แล้ว — ค่าตั้งใหม่ `SlipAutoRecordEnabled` (260 ไม่มีค่าตั้งนี้ — ตรวจแล้ว) · เส้นยืนยันตัวเดียว `SlipIntentConfirmService` |
 | 4 ไม่มั่นใจ ⇒ หน้ายืนยัน | แก้แล้ว — ต่อยอดหน้ารายการรับชำระ + คิวสลิปของ 260 (ไม่สร้างหน้าใหม่) · รูปสลิปอยู่ที่ไฟล์แนบเอกสาร/คิวสลิป |
