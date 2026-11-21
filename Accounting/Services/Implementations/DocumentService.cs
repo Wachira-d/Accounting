@@ -16228,8 +16228,11 @@ public partial class DocumentService : IDocumentService
 
             // รอบ 283 (คำสั่งเจ้าของ · 283-1): ผู้ขอ (ท่ออัตโนมัติคู่ค้า) ต้องการใบสำคัญจ่ายเป็นเอกสาร ⇒ ใบหลักฐานคู่การจ่ายนี้ (ไม่ลง JE ซ้ำ · อ้าง 50 ทวิ ข้างบน) ·
             // ในธุรกรรมเดียวกัน — ออกไม่ได้ = โยน ⇒ การจ่ายทั้งก้อน rollback (ไม่มี "จ่ายแล้วไม่มีใบ" เงียบ ๆ)
-            if (request.IssuePaymentVoucherDocument == true)
-                await IssueSettlementPaymentVoucherInPaymentAsync(companyId, doc, payment, createdBy);
+            // ผู้ประสานงาน ข้อ 2: ใบซื้อจากคู่ค้า ⇒ ทุกทางเข้า (ปุ่มเดียว · แจ้งโอน P4 · บันทึกชำระมือ) ได้ PV เหมือนท่อ — ตัวตัดสินเดียว · ใบซื้อทั่วไปไม่แตะ
+            string? voucherSkipNote = null;
+            if (Accounting.Helpers.SettlementPaymentVoucher.IssueOnPayment(request.IssuePaymentVoucherDocument, doc.DocumentType, doc.PartnerSourceLinkId != null))
+                voucherSkipNote = await IssueSettlementPaymentVoucherInPaymentAsync(companyId, doc, payment, createdBy,
+                    Accounting.Helpers.SettlementPaymentVoucher.StrictOnPayment(request.IssuePaymentVoucherDocument));
 
             // tax point §78/1: รับชำระใบแจ้งหนี้บริการ (modal ชำระเงิน) → VAT ที่พัก
             // 21913 ถึงกำหนด → reclass Dr 21913 / Cr 21911 + stamp เข้า ภ.พ.30
@@ -16317,7 +16320,7 @@ public partial class DocumentService : IDocumentService
                 HasPayerSignature: !string.IsNullOrWhiteSpace(payment.PayerSignatureBase64),
                 PayerSignatureName: payment.PayerSignatureName,
                 WhtCertNotice: whtCertNotice,
-                Warnings: whtAboveNetWarning != null ? new[] { whtAboveNetWarning } : null);
+                Warnings: new[] { whtAboveNetWarning, voucherSkipNote }.Where(w => w != null).Select(w => w!).ToArray() is { Length: > 0 } ws ? ws : null);
         }
         catch
         {
@@ -22233,6 +22236,7 @@ public partial class DocumentService : IDocumentService
         InternalNotes: d.InternalNotes,
         OriginModule: d.OriginModule,
         OriginLabel: Accounting.Helpers.SettlementPaymentVoucher.OriginLabel(d.OriginModule),
+        PayNextStepHint: Accounting.Helpers.SettlementPaymentVoucher.PayNextStepHint(d.DocumentType, d.PartnerSourceLinkId != null),
         EtaxAutoFailed: Accounting.Helpers.EtaxAutoFailedNote.Has(d.InternalNotes),
         PartnerRoutingFailed: Accounting.Helpers.PartnerRoutingFailedNote.Has(d.InternalNotes),
         ReplacedByDocumentId: d.ReplacedByDocumentId,

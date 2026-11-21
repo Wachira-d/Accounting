@@ -94,6 +94,19 @@
       </div>
     </div>
 
+    <!-- รอบ 283: การจ่ายใบซื้อจากคู่ค้าที่ยังไม่มีใบสำคัญจ่าย (บันทึกก่อนรอบ 283) ⇒ ออกย้อนหลังทีละรายการ · สิทธิ์อนุมัติเอกสารซื้อ (เซิร์ฟเวอร์ตรวจ) -->
+    <div class="pt-card" id="partner-pv-backfill">
+      <h3>🧾 การจ่ายที่ยังไม่มีใบสำคัญจ่าย</h3>
+      <p class="pt-muted">การจ่ายใบซื้อจากคู่ค้าที่บันทึกไว้ก่อนระบบออกใบสำคัญจ่ายให้อัตโนมัติ — กด “ออกใบสำคัญจ่าย” เพื่อออกใบหลักฐานคู่การจ่ายย้อนหลัง
+        (ไม่ลงบัญชีซ้ำ · ไม่ออก 50 ทวิ ใหม่ · ยกเลิกใบนี้ = ยกเลิกการจ่าย)</p>
+      <div class="table-container">
+        <table class="table">
+          <thead><tr><th>วันที่จ่าย</th><th>ใบซื้อ / ผู้ขาย</th><th>เลขที่การจ่าย</th><th class="text-right">เงินออก</th><th class="text-right">ภาษีหัก</th><th>จัดการ</th></tr></thead>
+          <tbody id="ptPvBody"><tr><td colspan="6" class="text-center text-gray-400">กำลังโหลด...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
     <!-- รอบ 281 (คำตัดสิน 281-3): เส้นทางของใบนี้ — ใบแจ้งหนี้ → ใบซื้อร่าง → ชำระ → ใบเสร็จ/ใบกำกับ → ใบสำคัญจ่าย → 50 ทวิ ส่ง/รับ (ทั้งสองฝั่ง · สถานะ/ป้ายจากเซิร์ฟเวอร์) -->
     <div class="pt-card" id="partner-journey">
       <h3>🧭 เส้นทางของใบ (ระหว่างคู่ค้า)</h3>
@@ -182,6 +195,7 @@ const Page = {
     }
     this.render();
     await this.loadRequestCard();
+    await this.loadPvBackfill();
   },
 
   // รอบ 264: ลิงก์ในแจ้งเตือน ⇒ การ์ดยอมรับเด่นบนสุด (หนึ่งคลิกเชื่อม) · ไม่พบ/หมดอายุ/ไม่มีสิทธิ์ = ข้อความจากเซิร์ฟเวอร์
@@ -361,6 +375,33 @@ const Page = {
     });
   },
 
+  // รอบ 283: รายการ/ปุ่มจากเซิร์ฟเวอร์ (ListPartnerPaymentsWithoutVoucherAsync) — ไม่มีสิทธิ์ดูฝั่งซื้อ ⇒ บอกตรง ๆ
+  async loadPvBackfill() {
+    const body = document.getElementById('ptPvBody'); if (!body) return;
+    const api = Layout.api(); if (!api) return;
+    let rows;
+    try { rows = ((await api.getPartnerPaymentsWithoutVoucher()) || {}).data || []; }
+    catch (e) { body.innerHTML = `<tr><td colspan="6" class="text-center">${Layout.esc('โหลดไม่สำเร็จ / ไม่มีสิทธิ์ดูเอกสารฝั่งซื้อ: ' + (e.message || ''))}</td></tr>`; return; }
+    if (rows.length === 0) { body.innerHTML = '<tr><td colspan="6" class="text-center text-gray-400">ไม่มีการจ่ายที่ขาดใบสำคัญจ่าย</td></tr>'; return; }
+    body.innerHTML = rows.map(r => `<tr><td>${Layout.esc(Layout.date ? Layout.date(r.paymentDate) : String(r.paymentDate || '').slice(0, 10))}</td>
+      <td><a href="/pages/documents.html?openDoc=${encodeURIComponent(r.documentId)}">${Layout.esc(r.documentNumber)}</a><div class="pt-muted">${Layout.esc(r.contactName || '-')}</div></td>
+      <td>${Layout.esc(r.paymentNumber)}</td><td class="text-right">${Layout.esc(Layout.money(r.amount))}</td>
+      <td class="text-right">${Layout.esc(Layout.money(r.withholdingTaxAmount || 0))}</td>
+      <td><button class="btn btn-primary btn-sm" data-pv="${Layout.esc(r.paymentId)}">ออกใบสำคัญจ่าย</button></td></tr>`).join('');
+    body.querySelectorAll('[data-pv]').forEach(b => b.addEventListener('click', () => this.issuePv(b.dataset.pv, b)));
+  },
+  async issuePv(paymentId, btn) {
+    const api = Layout.api(); if (!api) return;
+    const ok = await Layout.confirm({ title: 'ออกใบสำคัญจ่ายย้อนหลัง', okText: 'ออกใบ',
+      message: 'ออกใบสำคัญจ่าย (หลักฐานคู่การจ่าย) ให้การจ่ายนี้ — ไม่ลงบัญชีซ้ำ · ไม่ออก 50 ทวิ ใหม่' });
+    if (!ok) return;
+    if (btn) btn.disabled = true;
+    try {
+      const r = await api.issuePartnerPaymentVoucher(paymentId);
+      Layout.toast((r && r.message) || 'ออกใบสำคัญจ่ายแล้ว', 'success');
+    } catch (e) { Layout.toast(e.message || 'ออกใบสำคัญจ่ายไม่สำเร็จ', 'error'); }
+    await this.loadPvBackfill();
+  },
   async recordNotice(id) {
     const api = Layout.api(); if (!api) return;
     const n = (this.notices || []).find(x => x.id === id);

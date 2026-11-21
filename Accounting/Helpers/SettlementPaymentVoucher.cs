@@ -27,7 +27,7 @@ public static class SettlementPaymentVoucher
     /// <summary>ค่า <c>Document.OriginModule</c> ของใบที่ท่อคู่ค้าสร้าง</summary>
     public const string PartnerOrigin = "PartnerAuto";
 
-    /// <summary>หัวหมายเหตุของการจ่ายที่ท่อบันทึกเอง — ตัวตั้งเดียวของผู้เขียน (<c>PartnerPayablePipeline</c>) และผู้คัด "ใบที่บันทึกก่อนรอบ 283" (<c>DocumentService.ListPartnerPaymentsWithoutVoucherAsync</c> — StartsWith ในคำค้น)</summary>
+    /// <summary>หัวหมายเหตุของการจ่ายที่ท่อบันทึกเอง (ไม่มีผู้กด) — ตัวตั้งเดียวของผู้เขียน (<c>PartnerPayablePipeline</c>)</summary>
     public const string PartnerAutoPaymentNotePrefix = "⚙️ ระบบบันทึกเอง (ไม่มีผู้กด)";
 
     /// <summary>ป้ายบนใบ (server computes · page displays)</summary>
@@ -36,6 +36,22 @@ public static class SettlementPaymentVoucher
     /// <summary>ป้ายของใบตามที่มา — null = ไม่ใช่ใบที่ระบบสร้างจากคู่ค้า</summary>
     public static string? OriginLabel(string? originModule)
         => originModule == PartnerOrigin ? PartnerOriginLabel : null;
+
+    /// <summary>รอบ 283 (ผู้ประสานงาน ข้อ 2): การจ่ายนี้ออกใบสำคัญจ่ายหลักฐานไหม — <b>ตัวตัดสินเดียวของทุกทางเข้า</b> ·
+    /// ผู้เรียกระบุมา (<c>IssuePaymentVoucherDocument</c>) ชนะ · ไม่ระบุ ⇒ ใบซื้อ/ค่าใช้จ่ายที่มาจากคู่ค้า (<c>PartnerSourceLinkId</c>) ออกเสมอ
+    /// (ท่อ · ปุ่มเดียว "บันทึกจ่ายตามที่ผู้ขายรับแล้ว" · แจ้งโอน P4 · บันทึกชำระมือบนใบนั้น — เหมือนกันทุกทาง) · ใบซื้อทั่วไป ⇒ ไม่ออก (พฤติกรรมเดิม)</summary>
+    public static bool IssueOnPayment(bool? requested, DocumentType sourceType, bool fromPartner)
+        => requested ?? (fromPartner && AppliesTo(sourceType));
+
+    /// <summary>ผู้เรียกขอเองชัดเจน ⇒ ออกไม่ได้ = โยน (การจ่าย rollback) · ค่าตั้งต้นของใบจากคู่ค้า ⇒ ออกไม่ได้ (เช่น ปิดด้วยบรรทัดปรับอย่างเดียว · มี PV แปลงแล้ว) = ข้าม + เหตุในคำตอบ</summary>
+    public static bool StrictOnPayment(bool? requested) => requested == true;
+
+    /// <summary>ข้อความ "ขั้นต่อไป" บนใบตั้งหนี้ฝั่งซื้อ (server computes · page displays) — ตรงกับ <see cref="IssueOnPayment"/> ของปุ่มบันทึกชำระ (ไม่ระบุคำขอ)</summary>
+    public static string? PayNextStepHint(DocumentType sourceType, bool fromPartner)
+        => !AppliesTo(sourceType) ? null
+            : IssueOnPayment(null, sourceType, fromPartner)
+                ? "ถึงกำหนดจ่ายให้กด “💰 บันทึกชำระเงิน” ด้านล่าง — ระบบบันทึกการจ่าย ล้างยอดเจ้าหนี้ และออกใบสำคัญจ่าย (หลักฐานคู่การจ่าย · ใบจากคู่ค้า) ให้อัตโนมัติ"
+                : "ถึงกำหนดจ่ายให้กด “💰 บันทึกชำระเงิน” ด้านล่าง — ระบบบันทึกการจ่ายและล้างยอดเจ้าหนี้ให้อัตโนมัติ (ไม่ออกใบสำคัญจ่ายแยก) · ต้องการใบสำคัญจ่ายเป็นเอกสาร ให้ใช้ “แปลงเอกสาร” → ใบสำคัญจ่าย แทนการบันทึกชำระ";
 
     /// <summary>ชนิดใบตั้งหนี้ฝั่งซื้อที่ออกใบสำคัญจ่ายหลักฐานได้ (ใบซื้อ · ใบบันทึกค่าใช้จ่าย)</summary>
     public static bool AppliesTo(DocumentType sourceType) => sourceType is DocumentType.PurchaseInvoice or DocumentType.Expense;
