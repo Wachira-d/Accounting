@@ -1546,3 +1546,11 @@ _Last verified against codebase: 2026-11-11 (รอบ 258 ฝ่ายค้า
 _Last verified against codebase: 2026-11-11 (รอบ 259 แพ็ก A — ตาราง `PaymentCreditMovements` (ขาออกของเงินรอจัดสรร) · `CompanySettings.CustomerCreditWriteOffCap` (เพดานตัดเศษ ตั้งต้น 1.00) · ผังไม่เพิ่ม (ใช้ 21630 · 54960 เดิม)) · commit 5a3b7fa1_
 _Last verified against codebase: 2026-11-12 (รอบ 262 — §6.2c: ใบ/ทวง/ใบเสร็จค่าบริการทาง LINE ของผู้ติดต่อผู้เช่าผ่าน OA กลาง (บริษัทผู้ให้บริการเท่านั้น) · `ContactLineInvites.OaScope` · ศูนย์บิลผูก LINE — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 81af94ae)_
 _Last verified against codebase: 2026-11-20 (รอบ 278 — `CompanyUser.AllowExternalPreparerBinding` + ตาราง `SignerAliases` ต่อบริษัท (เจ้าของอนุมัติ) — commit b8960a48)_
+
+## รอบ 285 — Company: สถานะ "ยืนยันเลขผู้เสียภาษีแล้ว" (คำตัดสิน 285-1…285-6)
+- `Company.TaxIdVerifiedAt` · `TaxIdVerifiedFor` (เลขที่ยืนยัน) · `TaxIdVerificationRequestId` — ตั้งทางเดียว `CompanyTaxIdVerificationService.ApproveAsync` (ผู้ดูแลแพลตฟอร์ม · SystemAdmin) ·
+  ตัวตัดสินเดียว `Helpers/CompanyTaxIdVerification.IsVerified` (เลขที่ยืนยันต้องตรงเลขปัจจุบัน) · เปลี่ยน `TaxId` ทุกทางเข้า ⇒ ล้าง (`StampTaxIdSetAt`)
+- ตารางใหม่ `CompanyTaxIdVerificationRequests` (tenant = บริษัทผู้ยื่น · หลักฐาน ภ.พ.20/หนังสือรับรองเป็นไฟล์แนบชนิด `CompanyTaxIdEvidence` · SHA-256 · ผลเทียบทะเบียน · สถานะ Pending/Approved/Rejected/Revoked · ไม่ลบ)
+- ผลที่ใช้: เปิดคำขอเชื่อมคู่ค้าที่ส่งก่อนสมัคร (285-3) · ป้ายบนการ์ดคำขอ (285-5) · บริษัทเดิม = ยังไม่ยืนยัน (`Round285Migration`)
+
+_Last verified against codebase: 2026-11-21 (รอบ 285 — `Company.TaxIdVerified*` + ตาราง `CompanyTaxIdVerificationRequests` · ผู้ดูแลแพลตฟอร์มอนุมัติ · เปลี่ยนเลข = หลุดสถานะ — commit (เติมในคอมมิตตามหลัง))_

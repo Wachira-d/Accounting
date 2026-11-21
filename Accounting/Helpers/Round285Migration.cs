@@ -1,0 +1,43 @@
+namespace Accounting.Helpers;
+
+/// <summary>
+/// รอบ 285 — ยืนยันเลขผู้เสียภาษีของบริษัท (<see cref="CompanyTaxIdVerification"/>) · idempotent (<c>IF NOT EXISTS</c>) · ชื่อ index ตรง <c>AccountingDbContext</c> ·
+/// บริษัทเดิมทั้งหมด = <b>ยังไม่ยืนยัน</b> (ช่องว่าง · ไม่ประทับเอง — สถานะ "ยืนยันแล้ว" ตั้งได้เฉพาะเมื่อผู้ดูแลแพลตฟอร์มอนุมัติหลักฐานจริง)
+/// </summary>
+public static class Round285Migration
+{
+    public static IReadOnlyList<string> Statements() => new List<string>
+    {
+        """ALTER TABLE "Companies" ADD COLUMN IF NOT EXISTS "TaxIdVerifiedAt" timestamp without time zone NULL;""",
+        """ALTER TABLE "Companies" ADD COLUMN IF NOT EXISTS "TaxIdVerifiedFor" character varying(13) NULL;""",
+        """ALTER TABLE "Companies" ADD COLUMN IF NOT EXISTS "TaxIdVerificationRequestId" uuid NULL;""",
+        """
+        CREATE TABLE IF NOT EXISTS "CompanyTaxIdVerificationRequests" (
+            "Id" uuid NOT NULL PRIMARY KEY DEFAULT gen_random_uuid(),
+            "CompanyId" uuid NOT NULL,
+            "TaxId" character varying(13) NOT NULL DEFAULT '',
+            "BranchCode" character varying(5) NULL,
+            "CompanyName" character varying(300) NOT NULL DEFAULT '',
+            "EvidenceKind" character varying(32) NOT NULL DEFAULT '',
+            "AttachmentId" uuid NULL,
+            "EvidenceSha256" character varying(64) NULL,
+            "RegistryName" character varying(300) NULL,
+            "RegistryResult" character varying(16) NOT NULL DEFAULT '',
+            "Status" character varying(16) NOT NULL DEFAULT '',
+            "SubmittedByUserId" uuid NOT NULL,
+            "SubmittedAt" timestamp without time zone NOT NULL,
+            "ReviewedByUserId" uuid NULL,
+            "ReviewedAt" timestamp without time zone NULL,
+            "ReviewNote" character varying(1000) NULL,
+            "CreatedAt" timestamp without time zone NOT NULL DEFAULT (now() at time zone 'utc'),
+            "CreatedBy" text NULL,
+            "UpdatedAt" timestamp without time zone NULL,
+            "UpdatedBy" text NULL,
+            "IsDeleted" boolean NOT NULL DEFAULT false,
+            CONSTRAINT "FK_CompanyTaxIdVerificationRequests_Companies_CompanyId" FOREIGN KEY ("CompanyId") REFERENCES "Companies"("Id") ON DELETE CASCADE
+        );
+        """,
+        """CREATE INDEX IF NOT EXISTS "IX_CompanyTaxIdVerificationRequests_Company_Status" ON "CompanyTaxIdVerificationRequests" ("CompanyId", "Status");""",
+        """CREATE INDEX IF NOT EXISTS "IX_CompanyTaxIdVerificationRequests_Status" ON "CompanyTaxIdVerificationRequests" ("Status");""",
+    };
+}

@@ -701,6 +701,8 @@ builder.Services.AddScoped<ITimeBillingService, TimeBillingService>();
 builder.Services.AddScoped<IWebhookService, WebhookService>();
 builder.Services.AddScoped<IMobileApiService, MobileApiService>();
 builder.Services.AddScoped<IDbdLookupService, DbdLookupService>();
+// รอบ 285: ยืนยันเลขผู้เสียภาษีของบริษัท (หลักฐาน + ผู้ดูแลแพลตฟอร์มอนุมัติ · Helpers/CompanyTaxIdVerification)
+builder.Services.AddScoped<CompanyTaxIdVerificationService>();
 builder.Services.AddHttpClient();
 
 // Webhook ขาออก — URL มาจากผู้เช่า (F-04)

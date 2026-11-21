@@ -7501,3 +7501,9 @@ LOW-1 "ส่งได้บางส่วน" · LOW-2 การ์ด `#HeyNe
 - 282-6 (คำสั่งเจ้าของ): `Helpers/SlipMoneySource` ตัวตัดสินแหล่งเงินเดียว · ฝั่ง B สลิปตรงบัญชีเดียวบันทึกเองได้ (กลับ 264-P2 M1) · แจ้ง `partner.pay_source_needs_confirm` · เตือนซ้ำ 1/3 วัน เพดาน 2 (`AutopilotJob` ขั้น `SlipConfirmReminders`)
 - 282-7 (คำสั่งเจ้าของ): `pay-document.html` + session ผู้ซื้อคู่ค้า ⇒ `for-pay-link` ⇒ ช่อง "จ่ายจากบัญชี" + ปุ่ม "จ่ายจากระบบของเรา" เดิม (บัญชีเก็บฝั่งผู้ซื้อ)
 - migration `Round282Migration` · เทสต์ pure `SlipAutoRecordRound282Tests` · Db `SlipAutoRecordRound282DbTests` + `PartnerOutboundRound264P4DbTests` (หน้าชำระ) · คอมมิต 14abedf7
+
+_รอบ 285 (2026-11-21): ยืนยันเลขผู้เสียภาษีของบริษัท + ตอบ 275-E-7 (คำตัดสิน 285-1…285-7 · `erp-review/2026-11-21/dev-285-taxid-verify-pnd1.md`)_
+- 285-1/2: บริษัทยื่น ภ.พ.20/หนังสือรับรอง (`settings.html` · `POST …/tax-id-verification`) · ชื่อเทียบทะเบียนตรงตัว (ไม่ fuzzy · ขัด = ยื่นไม่ได้) · ผู้ดูแลแพลตฟอร์มอนุมัติ/ปฏิเสธ/ถอนที่ `/admin/taxid-verifications.html` · audit ทุกครั้ง
+- 285-3: ยืนยันแล้ว ⇒ เปิดคำขอเชื่อมคู่ค้าที่ส่งก่อนสมัครได้ (ย้อนกลับข้อจำกัด 280-10 เฉพาะบริษัทที่ยืนยัน) · 285-4: เปลี่ยนเลข = หลุดสถานะ · 285-5: การ์ดคำขอบอกว่าเลขผู้ขอยืนยันหรือยัง
+- 285-7: ภ.ง.ด.1 ช่อง 5 ของผู้ไม่มีเลข 13 หลัก — คงเติม 0 + ป้ายเดิม (สเปก RD เปิดไม่ได้จาก session · บันทึกที่ค้นแล้ว)
+- migration `Round285Migration` · เทสต์ pure `CompanyTaxIdVerificationRound285Tests` · Db `CompanyTaxIdVerificationRound285DbTests` · กติกา `_R285_*` · คอมมิต (เติมในคอมมิตตามหลัง)

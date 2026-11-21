@@ -22534,5 +22534,44 @@ REVIEWER_CASES += [
     ("R282-2", "RemindPendingAsync", "i.ConfirmRemindCount == r.ConfirmRemindCount", "true", True),
 ]
 
+
+# ── รอบ 285: ยืนยันเลขผู้เสียภาษีของบริษัท (คำตัดสิน 285-1…285-6 · ตัวตัดสินเดียว Helpers/CompanyTaxIdVerification) ──
+_R285_WHY = "รอบ 285 (ยืนยันเลขผู้เสียภาษีของบริษัทด้วยหลักฐาน + ผู้ดูแลแพลตฟอร์มอนุมัติ): "
+_R285_SVC = "Services/Implementations/CompanyTaxIdVerificationService.cs"
+RULES += [
+    dict(file="Services/Implementations/CrossTenantWorkflowService.LinkRequests.cs", method="MaterializeIncomingLinkRequestsAsync",
+         must=["CompanyTaxIdVerification.IsVerified(me.TaxId, me.TaxIdVerifiedAt, me.TaxIdVerifiedFor)",
+               "CompanyTaxIdVerification.IncomingRequestCutoff(verified, me.TaxIdSetAt) is not DateTime setAt", "r.CreatedAt >= setAt"],
+         why=_R285_WHY + "285-3: ยืนยันแล้วเปิดคำขอย้อนหลัง · ยังไม่ยืนยัน = หลังตั้งเลข (ตัวตัดสินเดียว ห้ามประกอบเอง)"),
+    dict(file="Data/AccountingDbContext.cs", method="StampTaxIdSetAt", must=["CompanyTaxIdVerification.ClearOnTaxIdChange(entry.Entity)"],
+         why=_R285_WHY + "285-4: เปลี่ยนเลขภาษี (ทุกทางเข้า SaveChanges) ⇒ หลุดสถานะยืนยัน"),
+    dict(file=_R285_SVC, method="SubmitAsync",
+         must=["CompanyTaxIdVerification.SubmitProblem(", "UploadFileType.SniffAttachment(", "CompanyTaxIdVerification.CompareRegistryName(company.Name, registryName)",
+               "SHA256.HashData(content)", "CompanyTaxIdVerification.AttachmentEntityType", "_db.AddChainedAuditLog("],
+         forbid=["FuzzyMatcher", "Similarity("],
+         before=[("CompanyTaxIdVerification.CompareRegistryName(", "_files.UploadBytesAsync(")],
+         why=_R285_WHY + "285-1/285-2: ด่านยื่น · ชนิดไฟล์จากไบต์ · ชื่อขัดทะเบียน (ตรงตัว ไม่ fuzzy) ก่อนเก็บไฟล์ · hash หลักฐาน · audit"),
+    dict(file=_R285_SVC, method="ApproveAsync",
+         must=["_db.Database.ExecuteSqlRawAsync(", "CompanyTaxIdVerification.ApproveProblem(r.Status, r.TaxId, company.TaxId, r.RegistryResult, r.AttachmentId != null)",
+               "company.TaxIdVerifiedFor = r.TaxId", "Audit("],
+         before=[("CompanyTaxIdVerification.ApproveProblem(", "company.TaxIdVerifiedAt = nowUtc")],
+         why=_R285_WHY + "อนุมัติใต้ล็อกแถวบริษัท · เลขในคำขอต้องตรงเลขปัจจุบัน · audit"),
+    dict(file=_R285_SVC, method="RevokeAsync", must=["CompanyTaxIdVerification.ReasonProblem(reason)", "CompanyTaxIdVerification.ClearOnTaxIdChange(company)", "Audit("],
+         why=_R285_WHY + "ถอนต้องมีเหตุ · ล้างสถานะบริษัท · audit"),
+    dict(file=_R285_SVC, method="ReadEvidenceAsync", must=["_files.ReadBytesAsync(r.CompanyId, attId, ct)", "r.EvidenceSha256"],
+         why=_R285_WHY + "ผู้ดูแลเปิดไฟล์ด้วย tenant ของคำขอ · ไฟล์ถูกสลับ = ล้มดัง"),
+    dict(file="Controllers/CompanyTaxIdVerificationController.cs", method="Submit",
+         must=["_service.SubmitAsync(companyId, userId,", "JwtHelper.GetUserIdFromClaims(User)"],
+         why=_R285_WHY + "ยื่นหลักฐานผ่านบริการตัวเดียว (สิทธิ์ตั้งค่าบริษัทที่ attribute — write_permission_gate_check)"),
+    dict(file="Services/Implementations/CrossTenantWorkflowService.LinkRequests.cs", method="GetIncomingLinkRequestAsync",
+         must=["CompanyTaxIdVerification.IsVerified(requester.TaxId, requester.TaxIdVerifiedAt, requester.TaxIdVerifiedFor)",
+               "CompanyTaxIdVerification.PartnerTaxIdLabel(requesterVerified)"],
+         why=_R285_WHY + "285-5: ผู้รับเห็นว่าเลขของผู้ขอยืนยันแล้วหรือยัง (ป้ายจากเซิร์ฟเวอร์)"),
+]
+REVIEWER_CASES += [
+    ("R285-1", "MaterializeIncomingLinkRequestsAsync", "IncomingRequestCutoff(verified, me.TaxIdSetAt)", "IncomingRequestCutoff(true, me.TaxIdSetAt)", True),
+    ("R285-2", "ApproveAsync", "company.TaxIdVerifiedFor = r.TaxId", "company.TaxIdVerifiedFor = company.TaxId", True),
+]
+
 if __name__ == "__main__":
     sys.exit(main())
